@@ -1,4 +1,6 @@
 build/
+
+# Local payload and firmware artifacts.
 payload/**/*.bin
 payload/**/*.mbn
 payload/**/*.elf
@@ -7,6 +9,42 @@ payload/**/*.cab
 payload/**/*.deb
 payload/**/*.iso
 payload/**/*.img
+
+# Proprietary firmware, extracted device trees, and local driver payloads.
+*.bin
+*.cab
+*.dtb
+*.elf
+*.fw
+*.jsn
+*.mbn
+
+# Downloaded installers and generated disk images.
 *.iso
 *.img
+*.raw
+*.vhd
+*.vhdx
+*.qcow2
+*.xz
 *.zip
+
+# Kernel source/package build outputs.
+sp11-qcom-x1e-kernel-build/
+kernel-build/
+source/
+*.build
+*.buildinfo
+*.changes
+*.ddeb
+*.deb
+*.debian.tar.*
+*.diff.gz
+*.dsc
+*.orig.tar.*
+*.udeb
+
+# Local diagnostics and captured reports.
+sp11-linux-checks/
+report-*/
+*.log

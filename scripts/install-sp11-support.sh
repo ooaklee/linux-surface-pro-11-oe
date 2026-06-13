@@ -76,8 +76,9 @@ DTB_NAMES=(
 )
 
 find_dtb() {
-  local name pattern path
+  local name pattern path candidates
   for name in "${DTB_NAMES[@]}"; do
+    candidates=()
     for pattern in \
       "/usr/lib/firmware/*/device-tree/qcom/$name" \
       "/usr/lib/linux-image-*/qcom/$name" \
@@ -85,9 +86,13 @@ find_dtb() {
       "/boot/dtbs/*/$name" \
       "/boot/$name"; do
       for path in $pattern; do
-        [ -f "$path" ] && printf '%s\n' "$path" && return 0
+        [ -f "$path" ] && candidates+=("$path")
       done
     done
+    if [ "${#candidates[@]}" -gt 0 ]; then
+      printf '%s\n' "${candidates[@]}" | sort -V | tail -n 1
+      return 0
+    fi
   done
   return 1
 }

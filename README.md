@@ -54,7 +54,8 @@ auto-boot reliably, so direct mode is the verified live-USB path for now.
 
 Latest installed-system result, 2026-06-13: after running the pre-reboot
 installed-system prepare helper from the live USB, Ubuntu booted successfully
-from the internal NVMe install without the USB root filesystem.
+from the internal NVMe install without the USB root filesystem. Upgrading to
+`7.0.0-32-qcom-x1e` kept the system bootable, but Wi-Fi remained hard-blocked.
 
 | Feature | Expected status | Notes |
 | --- | --- | --- |
@@ -63,7 +64,7 @@ from the internal NVMe install without the USB root filesystem.
 | USB-C boot | Working with direct mode | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified path. |
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
-| Wi-Fi | Probes but hard-blocked after installed boot | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, and creates an interface, but `rfkill` reports `Hard blocked: yes`. This likely needs the SP11 `disable-rfkill` DTB/kernel handling from the Arch bring-up. |
+| Wi-Fi | Probes but hard-blocked after installed boot | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, and creates an interface, but `rfkill` reports `Hard blocked: yes`. The upgraded `7.0.0-32-qcom-x1e` ath12k modules still do not contain `disable-rfkill` support, so Wi-Fi needs a patched qcom-x1e kernel plus DTB property. |
 | Bluetooth | Not working in live USB | Firmware is present in Windows; Linux may still need firmware and MAC-address handling. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
@@ -275,11 +276,41 @@ The current verified installed-system failure is `phy0` hard-blocked by
 points to missing ath12k `disable-rfkill` kernel/DTB handling rather than a
 missing board file.
 
+If the diagnostic helper reports both `DT is missing disable-rfkill` and
+`disable-rfkill support not found in installed ath12k modules`, build the
+patched qcom-x1e kernel described in
+[How To: Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md).
+The short form on the installed Surface Pro 11 is:
+
+```bash
+cd "$SP11DATA/support"
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --install-deps \
+  --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
+
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --work-dir "$HOME/sp11-qcom-x1e-kernel-build" \
+  --install-only
+sudo reboot
+```
+
+Keep the previous qcom-x1e kernel installed as a GRUB fallback until the
+patched kernel has booted and Wi-Fi rfkill state has been validated. The helper
+refuses to install over the generated qcom-x1e ABI unless another installed
+qcom-x1e ABI is available as a fallback, unless explicitly overridden with
+`--allow-no-fallback`. The patched local packages may reinstall the same
+qcom-x1e ABI; the older `7.0.0-22-qcom-x1e` entry is the expected fallback on
+the verified system.
+
+After reboot, rerun the Wi-Fi rfkill diagnostic from the how-to before treating
+the patched kernel as successful.
+
 ## Test Notes
 
 - [2026-06-13 direct live USB test](docs/live-usb-test-20260613.md)
 - [2026-06-13 installed NVMe boot test](docs/installed-nvme-boot-test-20260613.md)
 - [2026-06-13 installed Wi-Fi rfkill test](docs/installed-wifi-rfkill-test-20260613.md)
+- [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
 
 ## Decision Records
 
@@ -303,6 +334,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR016: USB Data Mount and Installed-System Helpers](docs/adr/adr-0016-usb-data-mount-and-installed-system-helpers.md)
 - [ADR017: GRUB DTB Path for Separate Boot](docs/adr/adr-0017-grub-dtb-path-for-separate-boot.md)
 - [ADR018: Wi-Fi rfkill Bring-Up Gate](docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md)
+- [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](docs/adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
 
 ## Windows Firmware
 
@@ -341,6 +373,7 @@ The collector writes:
 
 - Surface Laptop 7 Ubuntu notes: <https://github.com/bryce-hoehn/linux-surface-laptop-7>
 - Surface Pro 11 Arch notes: <https://github.com/dwhinham/linux-surface-pro-11>
+- Surface Pro 11 kernel patches: [ath12k `disable-rfkill` support](https://github.com/dwhinham/kernel-surface-pro-11/commit/e0c52309e8380b33239b16a85fbedb5da7d12675) and [Denali DTB `disable-rfkill`](https://github.com/dwhinham/kernel-surface-pro-11/commit/906865c001c9a01d1e2271da4db926d519a95cd8)
 - linux-surface: <https://github.com/linux-surface/linux-surface>
 - Ubuntu Snapdragon X concept images: <https://people.canonical.com/~platform/images/ubuntu-concept/>
 - Fedora Snapdragon WoA install notes: <https://fedoraproject.org/wiki/Snapdragon_WoA_Laptop_Install>
