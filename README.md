@@ -55,7 +55,9 @@ auto-boot reliably, so direct mode is the verified live-USB path for now.
 Latest installed-system result, 2026-06-13: after running the pre-reboot
 installed-system prepare helper from the live USB, Ubuntu booted successfully
 from the internal NVMe install without the USB root filesystem. Upgrading to
-`7.0.0-32-qcom-x1e` kept the system bootable, but Wi-Fi remained hard-blocked.
+`7.0.0-32-qcom-x1e` kept the system bootable. Installing firmware from the
+Windows partition and cold-booting restored WCN7850 probe and interface
+creation, but Wi-Fi remained hard-blocked.
 
 | Feature | Expected status | Notes |
 | --- | --- | --- |
@@ -64,7 +66,7 @@ from the internal NVMe install without the USB root filesystem. Upgrading to
 | USB-C boot | Working with direct mode | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified path. |
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
-| Wi-Fi | Probes but hard-blocked after installed boot | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, and creates an interface, but `rfkill` reports `Hard blocked: yes`. The upgraded `7.0.0-32-qcom-x1e` ath12k modules still do not contain `disable-rfkill` support, so Wi-Fi needs a patched qcom-x1e kernel plus DTB property. |
+| Wi-Fi | Probes but hard-blocked after installed boot | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, and creates `wlP4p1s0` after a cold boot, but `rfkill` reports `Hard blocked: yes`. The upgraded `7.0.0-32-qcom-x1e` ath12k modules still do not contain `disable-rfkill` support, so Wi-Fi needs a patched qcom-x1e kernel plus DTB property. |
 | Bluetooth | Not working in live USB | Firmware is present in Windows; Linux may still need firmware and MAC-address handling. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
@@ -254,10 +256,18 @@ phone tethering. Without networking, mount the Windows partition and use
 `--windows-root` instead of `--download`:
 
 ```bash
+# The WINROOT will differ
+WINROOT="/run/media/$USER/Local Disk"
+test -d "$WINROOT/Windows" || { echo "Set WINROOT to the mounted Windows NTFS partition."; exit 1; }
+
 sudo ./scripts/finish-sp11-installed-system.sh \
-  --windows-root /path/to/windows \
+  --windows-root "$WINROOT" \
   --reboot
 ```
+
+Quote the Windows root path if it contains spaces. This must be the Windows
+NTFS partition containing `Windows/`, not the Linux `/boot/efi` mount or a path
+inside the EFI system partition.
 
 If you run firmware setup while booted from USB, the script leaves
 `adsp_dtb.mbn` disabled to avoid the known aDSP USB reset failure. Enable aDSP
@@ -293,6 +303,17 @@ cd "$SP11DATA/support"
   --out "$SP11DATA/sp11-kernel-source.env"
 ```
 
+The contents of your `sp11-kernel-source.env` will look something like this.
+
+```sh
+# Surface Pro 11 qcom-x1e kernel source metadata.
+# Generated on 2026-06-13T12:23:02Z.
+SP11_KERNEL_RELEASE='7.0.0-32-qcom-x1e'
+SP11_SOURCE_PACKAGE='linux-qcom-x1e'
+SP11_SOURCE_VERSION='7.0.0-32.32'
+SP11_BUILD_TARGET='binary-qcom-x1e'
+```
+
 On the Docker build host, from this repository root:
 
 ```bash
@@ -301,6 +322,14 @@ On the Docker build host, from this repository root:
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
+
+The host `--work-dir` stores Docker control files and copied artifacts. The
+actual kernel source and build tree live in the Docker Linux volume
+`sp11-qcom-x1e-kernel-build` at `/linux-work` so macOS case-insensitive
+filesystems do not collapse Linux kernel files whose names differ only by
+case. Successful builds copy generated packages back under
+`build/docker-sp11-qcom-x1e-kernel/artifacts/` and, when `--copy-to-payload`
+is set, into `payload/kernel-debs/`.
 
 After rebuilding and writing the USB image, install the payload packages on the
 Surface:
@@ -322,8 +351,9 @@ qcom-x1e ABI is available as a fallback, unless explicitly overridden with
 qcom-x1e ABI; the older `7.0.0-22-qcom-x1e` entry is the expected fallback on
 the verified system.
 
-After reboot, rerun the Wi-Fi rfkill diagnostic from the how-to before treating
-the patched kernel as successful.
+After reboot, rerun the Wi-Fi rfkill diagnostic from the
+[patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+before treating the patched kernel as successful.
 
 ## Test Notes
 
@@ -331,6 +361,7 @@ the patched kernel as successful.
 - [2026-06-13 installed NVMe boot test](docs/installed-nvme-boot-test-20260613.md)
 - [2026-06-13 installed Wi-Fi rfkill test](docs/installed-wifi-rfkill-test-20260613.md)
 - [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
+- [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
 
 ## Decision Records
 
@@ -356,6 +387,9 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR018: Wi-Fi rfkill Bring-Up Gate](docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md)
 - [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](docs/adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
 - [ADR020: Dockerized ARM64 Kernel Build](docs/adr/adr-0020-dockerized-arm64-kernel-build.md)
+- [ADR021: Git Fallback Kernel Build Toolchain](docs/adr/adr-0021-git-fallback-kernel-build-toolchain.md)
+- [ADR022: Docker Kernel Build Without fakeroot](docs/adr/adr-0022-docker-kernel-build-without-fakeroot.md)
+- [ADR023: Docker Kernel Build Case-Sensitive Work Volume](docs/adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
 
 ## Windows Firmware
 

@@ -35,6 +35,9 @@ Surface Pro 11 rfkill patches.
 - For the preferred off-device build: Docker on a host that can run
   `linux/arm64` containers. Native ARM64 is fastest; x86_64 hosts may use QEMU
   emulation and can be much slower.
+- Enough Docker storage for a persistent Linux work volume. The host work
+  directory only receives control files and copied artifacts; the kernel source
+  and object tree are kept in Docker's `sp11-qcom-x1e-kernel-build` volume.
 
 ## Procedure
 
@@ -85,9 +88,20 @@ USB payload.
   --copy-to-payload
 ```
 
-The wrapper runs Docker with `--platform linux/arm64`. It builds under
-`build/docker-sp11-qcom-x1e-kernel/` and copies generated qcom-x1e `.deb`
-files to `payload/kernel-debs/` when `--copy-to-payload` is set.
+The wrapper runs Docker with `--platform linux/arm64`. The host `--work-dir`
+stores Docker control files and copied artifacts. The actual kernel source and
+object tree build under `/linux-work` in the Docker volume
+`sp11-qcom-x1e-kernel-build`, which keeps the Linux kernel checkout on a
+case-sensitive filesystem even when the build host is macOS. Successful builds
+copy generated qcom-x1e `.deb` files to
+`build/docker-sp11-qcom-x1e-kernel/artifacts/`, then to
+`payload/kernel-debs/` when `--copy-to-payload` is set. Because the container
+runs as root, the wrapper also runs Ubuntu `debian/rules` directly instead of
+through `fakeroot`.
+
+Treat `build/docker-sp11-qcom-x1e-kernel/artifacts/` as managed scratch space.
+Real Docker runs clean it inside the container before copying new packages so
+stale `.deb` files cannot leak into `payload/kernel-debs/`.
 
 If the container cannot fetch the exact qcom-x1e source version, provide
 matching apt source configuration from the same repositories that provided the
@@ -112,7 +126,9 @@ apt source metadata:
 ```
 
 Treat git mode as a fallback because it may not match the exact qcom-x1e
-package version currently installed on the Surface.
+package version currently installed on the Surface. Git mode defaults to an
+`ubuntu:25.10` container because the current `qcom-x1e-7.0` git branch expects
+Rust 1.85 and LLVM 19 during Ubuntu config validation.
 
 5. Rebuild and write the live USB image so `payload/kernel-debs/` is copied to
    `SP11DATA`.
@@ -287,19 +303,48 @@ If a patch does not apply, stop and record the source package version. The
 Ubuntu qcom-x1e source may have changed enough that the patch needs to be
 refreshed.
 
-If the build runs out of disk space, remove the work directory and rerun with a
-larger filesystem:
+If a Docker build fails with `libfakeroot internal error: payload not
+recognized!`, make sure the inner build is running in the wrapper's default
+root container path. The root container does not need `fakeroot`, and the
+wrapper passes `--no-fakeroot` to assert that direct `debian/rules` path during
+the long parallel package build.
+
+If a Docker build logs `warning: the following paths have collided` and later
+fails with a missing target such as `net/netfilter/xt_DSCP.o`, the kernel
+source was checked out on a case-insensitive filesystem. Use the wrapper's
+default `/linux-work` Docker volume path. Do not force `--container-work-dir
+/work` on default macOS APFS unless `/work` is backed by a case-sensitive
+filesystem.
+
+For reruns in the default Docker volume path, pass `--reset-source` when you
+want a fresh checkout. The host wrapper cannot inspect the Docker volume
+without starting a container, so stale-source detection happens inside the
+inner build helper.
+
+If the build runs out of disk space, remove the host work directory. To also
+discard the persistent Docker source/build volume, remove it explicitly:
 
 ```bash
-rm -rf "$HOME/sp11-qcom-x1e-kernel-build"
+rm -rf build/docker-sp11-qcom-x1e-kernel
+docker volume rm sp11-qcom-x1e-kernel-build
 ```
 
 If the patched kernel boots but Wi-Fi is still hard-blocked, save the full
 troubleshooting output and compare the DT and ath12k support lines first.
+
+If Wi-Fi disappears from the desktop UI after firmware changes and the dmesg
+output shows `failed to start mhi: -34` or `failed to power up :-34`, do a full
+cold boot before changing firmware again. On the verified installed system, a
+cold boot restored WCN7850 probe and interface creation, after which Wi-Fi
+returned to the expected `phy0` hard-blocked state.
 
 ## Related Documents
 
 - [ADR018: Wi-Fi rfkill Bring-Up Gate](../adr/adr-0018-wifi-rfkill-bring-up-gate.md)
 - [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](../adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
 - [ADR020: Dockerized ARM64 Kernel Build](../adr/adr-0020-dockerized-arm64-kernel-build.md)
+- [ADR021: Git Fallback Kernel Build Toolchain](../adr/adr-0021-git-fallback-kernel-build-toolchain.md)
+- [ADR022: Docker Kernel Build Without fakeroot](../adr/adr-0022-docker-kernel-build-without-fakeroot.md)
+- [ADR023: Docker Kernel Build Case-Sensitive Work Volume](../adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
 - [Surface Pro 11 Wi-Fi rfkill test after qcom-x1e upgrade](../installed-wifi-rfkill-upgrade-test-20260613.md)
+- [Surface Pro 11 Wi-Fi test after Windows firmware and cold boot](../installed-wifi-windows-firmware-cold-boot-test-20260613.md)

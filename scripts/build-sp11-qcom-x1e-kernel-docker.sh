@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="ubuntu:26.04"
+IMAGE=""
 PLATFORM="linux/arm64"
 WORK_DIR="build/docker-sp11-qcom-x1e-kernel"
+CONTAINER_WORK_DIR="/linux-work"
+LINUX_WORK_VOLUME="sp11-qcom-x1e-kernel-build"
 METADATA=""
 SOURCE_MODE="apt"
 SOURCE_PACKAGE=""
@@ -41,9 +43,19 @@ Options:
   --source-version VER   apt source version. Usually comes from --metadata.
   --git-url URL          Kernel git URL for git mode.
   --git-branch BRANCH    Kernel git branch for git mode.
-  --image IMAGE          Docker image, default $IMAGE.
+  --image IMAGE          Docker image. Defaults to ubuntu:26.04 for apt mode
+                         and ubuntu:25.10 for git mode.
   --platform PLATFORM    Docker platform, default $PLATFORM.
-  --work-dir DIR         Host build directory, default $WORK_DIR.
+  --work-dir DIR         Host control/artifact directory, default $WORK_DIR.
+  --container-work-dir DIR
+                         Container build directory, default $CONTAINER_WORK_DIR.
+                         The default is backed by a Docker Linux volume so the
+                         kernel source is checked out on a case-sensitive
+                         filesystem.
+  --linux-work-volume NAME
+                         Docker volume for --container-work-dir, default
+                         $LINUX_WORK_VOLUME. Ignored when --container-work-dir
+                         is /work.
   --build-target TARGET  Kernel package target, default from metadata or script.
   --jobs N              Parallel build jobs passed to the inner build helper.
   --min-free-gb N        Free-space guard passed to the inner build helper.
@@ -58,6 +70,7 @@ Options:
 
 The script builds packages only. Install them on the Surface with
 scripts/build-sp11-qcom-x1e-kernel.sh --install-only so the fallback guard runs.
+The container runs as root, so the inner build helper bypasses fakeroot.
 EOF
 }
 
@@ -103,6 +116,18 @@ repo_abs_path() {
     /*) printf '%s\n' "$1" ;;
     *) printf '%s/%s\n' "$repo_dir" "$1" ;;
   esac
+}
+
+is_case_insensitive_dir() {
+  local dir probe count
+
+  dir="$1"
+  probe="$(mktemp -d "$dir/.case-check.XXXXXX")"
+  touch "$probe/sp11-case-check" "$probe/SP11-case-check"
+  count="$(find "$probe" -maxdepth 1 -type f | wc -l | tr -d '[:space:]')"
+  rm -rf "$probe"
+
+  [ "$count" -lt 2 ]
 }
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -152,6 +177,16 @@ while [ "$#" -gt 0 ]; do
     --work-dir)
       require_arg "$1" "${2:-}"
       WORK_DIR="$2"
+      shift 2
+      ;;
+    --container-work-dir)
+      require_arg "$1" "${2:-}"
+      CONTAINER_WORK_DIR="$2"
+      shift 2
+      ;;
+    --linux-work-volume)
+      require_arg "$1" "${2:-}"
+      LINUX_WORK_VOLUME="$2"
       shift 2
       ;;
     --build-target)
@@ -221,6 +256,34 @@ case "$SOURCE_MODE" in
     ;;
 esac
 
+if [ -z "$IMAGE" ]; then
+  case "$SOURCE_MODE" in
+    git) IMAGE="ubuntu:25.10" ;;
+    *) IMAGE="ubuntu:26.04" ;;
+  esac
+fi
+
+case "$CONTAINER_WORK_DIR" in
+  /*) ;;
+  *)
+    echo "--container-work-dir must be an absolute container path." >&2
+    exit 2
+    ;;
+esac
+
+case "$CONTAINER_WORK_DIR" in
+  /work/*)
+    echo "--container-work-dir must not be nested under /work." >&2
+    echo "Use /work for the host-mounted work dir or keep the default /linux-work volume." >&2
+    exit 2
+    ;;
+esac
+
+if [ "$CONTAINER_WORK_DIR" != "/work" ] && [ -z "$LINUX_WORK_VOLUME" ]; then
+  echo "--linux-work-volume must not be empty when --container-work-dir is not /work." >&2
+  exit 2
+fi
+
 if [ -n "$METADATA" ]; then
   METADATA="$(abs_path "$METADATA")"
   if [ ! -f "$METADATA" ]; then
@@ -258,6 +321,16 @@ if [ "$SOURCE_MODE" = "apt" ]; then
   fi
 fi
 
+if [ -n "$JOBS" ] && { ! [[ "$JOBS" =~ ^[0-9]+$ ]] || [ "$JOBS" -lt 1 ]; }; then
+  echo "--jobs must be a positive integer." >&2
+  exit 2
+fi
+
+if [ -n "$MIN_FREE_GB" ] && { ! [[ "$MIN_FREE_GB" =~ ^[0-9]+$ ]] || [ "$MIN_FREE_GB" -lt 1 ]; }; then
+  echo "--min-free-gb must be a positive integer." >&2
+  exit 2
+fi
+
 if [ -n "$APT_SOURCES_FILE" ]; then
   APT_SOURCES_FILE="$(abs_path "$APT_SOURCES_FILE")"
   if [ ! -f "$APT_SOURCES_FILE" ]; then
@@ -269,13 +342,25 @@ fi
 mkdir -p "$WORK_DIR"
 work_abs="$(abs_path "$WORK_DIR")"
 
+if [ "$CONTAINER_WORK_DIR" = "/work" ] && is_case_insensitive_dir "$work_abs"; then
+  echo "Refusing to build Linux kernel source on a case-insensitive host work directory:" >&2
+  echo "  $work_abs" >&2
+  echo "Use the default Docker Linux work volume, or pass a case-sensitive host filesystem." >&2
+  exit 1
+fi
+
+if [ "$DRY_RUN" != "true" ]; then
+  require_tool docker
+fi
+
 args_file="$work_abs/docker-build-args.txt"
 run_script="$work_abs/docker-build-inside.sh"
 
 inner_args=(
   --source "$SOURCE_MODE"
-  --work-dir /work
+  --work-dir "$CONTAINER_WORK_DIR"
   --install-deps
+  --no-fakeroot
 )
 
 case "$SOURCE_MODE" in
@@ -301,6 +386,11 @@ cat > "$run_script" <<'EOF'
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
+
+artifact_dir=/work/artifacts
+echo "Cleaning copied artifact shuttle directory: $artifact_dir"
+rm -rf "$artifact_dir"
+mkdir -p "$artifact_dir"
 
 enable_deb_src() {
   local file tmp
@@ -354,6 +444,33 @@ apt-get install -y --no-install-recommends ca-certificates git dpkg-dev
 
 mapfile -t build_args < /work/docker-build-args.txt
 /repo/scripts/build-sp11-qcom-x1e-kernel.sh "${build_args[@]}"
+
+find_qcom_kernel_debs() {
+  find "$1" -maxdepth 4 -type f \
+    \( -name 'linux-image-unsigned-*-qcom-x1e_*.deb' \
+    -o -name 'linux-image-*-qcom-x1e_*.deb' \
+    -o -name 'linux-modules-*-qcom-x1e_*.deb' \
+    -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
+    -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+    -o -name 'linux-qcom-x1e_*.deb' \
+    -o -name 'linux-image-qcom-x1e_*.deb' \
+    -o -name 'linux-headers-qcom-x1e_*.deb' \) \
+    -print | sort -u
+}
+
+container_work_dir="${SP11_CONTAINER_WORK_DIR:-/linux-work}"
+if [ "$container_work_dir" != "/work" ]; then
+  while IFS= read -r deb; do
+    [ -n "$deb" ] || continue
+    cp -f "$deb" "$artifact_dir/"
+  done < <(find_qcom_kernel_debs "$container_work_dir")
+
+  for manifest in \
+    "$container_work_dir/sp11-kernel-build-manifest.txt" \
+    "$container_work_dir/sp11-kernel-debs.txt"; do
+    [ -f "$manifest" ] && cp -f "$manifest" "$artifact_dir/"
+  done
+fi
 EOF
 chmod +x "$run_script"
 
@@ -363,9 +480,14 @@ docker_args=(
   --platform "$PLATFORM"
   -e "SP11_ENABLE_DEB_SRC=$ENABLE_DEB_SRC"
   -e "SP11_APT_SOURCES_NAME=$(basename "${APT_SOURCES_FILE:-sp11-qcom-x1e.sources}")"
+  -e "SP11_CONTAINER_WORK_DIR=$CONTAINER_WORK_DIR"
   -v "$repo_dir:/repo:ro"
   -v "$work_abs:/work"
 )
+
+if [ "$CONTAINER_WORK_DIR" != "/work" ]; then
+  docker_args+=(-v "$LINUX_WORK_VOLUME:$CONTAINER_WORK_DIR")
+fi
 
 if [ -n "$APT_SOURCES_FILE" ]; then
   docker_args+=(-v "$APT_SOURCES_FILE:/tmp/sp11-apt-sources:ro")
@@ -381,7 +503,8 @@ if [ "$DRY_RUN" = "true" ]; then
   exit 0
 fi
 
-if [ "$SOURCE_MODE" = "apt" ] && [ "$RESET_SOURCE" != "true" ] &&
+if [ "$CONTAINER_WORK_DIR" = "/work" ] &&
+  [ "$SOURCE_MODE" = "apt" ] && [ "$RESET_SOURCE" != "true" ] &&
   [ -d "$work_abs/source" ] &&
   find "$work_abs/source" -mindepth 1 -maxdepth 1 -type d | grep -q .; then
   echo "Existing apt source directories found under $work_abs/source." >&2
@@ -389,12 +512,26 @@ if [ "$SOURCE_MODE" = "apt" ] && [ "$RESET_SOURCE" != "true" ] &&
   exit 1
 fi
 
-require_tool docker
+set +e
 docker "${docker_args[@]}"
+docker_status=$?
+set -e
+if [ "$docker_status" -ne 0 ]; then
+  echo "Docker kernel build failed; inspect the log above for the first build error." >&2
+  echo "If the source tree was partially prepared, rerun with --reset-source after fixing the failure." >&2
+  exit "$docker_status"
+fi
 
 echo
-echo "Generated qcom-x1e kernel packages under: $work_abs"
-generated_debs="$(find_qcom_kernel_debs "$work_abs")"
+echo "Docker host control/artifact directory: $work_abs"
+if [ "$CONTAINER_WORK_DIR" != "/work" ]; then
+  echo "Docker Linux work volume: $LINUX_WORK_VOLUME mounted at $CONTAINER_WORK_DIR"
+  echo "Generated package artifacts copied under: $work_abs/artifacts"
+  generated_debs="$(find_qcom_kernel_debs "$work_abs/artifacts")"
+else
+  echo "Generated qcom-x1e kernel packages under: $work_abs"
+  generated_debs="$(find_qcom_kernel_debs "$work_abs")"
+fi
 if [ -n "$generated_debs" ]; then
   printf '%s\n' "$generated_debs"
 else

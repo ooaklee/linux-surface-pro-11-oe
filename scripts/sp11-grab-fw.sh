@@ -43,6 +43,23 @@ while booted from USB; enable it only after installing to NVMe.
 EOF
 }
 
+require_arg() {
+  if [ -z "${2:-}" ]; then
+    echo "Missing value for $1." >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+windows_path_hint() {
+  cat >&2 <<'EOF'
+The Windows root is the mounted NTFS partition containing the Windows directory.
+If the mount path contains spaces, quote it, for example:
+  --windows-root "/run/media/$USER/Local Disk"
+Do not pass the Linux /boot/efi mount or a path inside the EFI partition.
+EOF
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -d|--download)
@@ -50,13 +67,24 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     -w|--windows-root)
+      require_arg "$1" "${2:-}"
       MODE="windows"
       WINDOWS_ROOT="$2"
       shift 2
       ;;
+    --windows-root=*)
+      MODE="windows"
+      WINDOWS_ROOT="${1#*=}"
+      shift
+      ;;
     --dest)
+      require_arg "$1" "${2:-}"
       DEST_PREFIX="$2"
       shift 2
+      ;;
+    --dest=*)
+      DEST_PREFIX="${1#*=}"
+      shift
       ;;
     --usb-safe|--disable-adsp)
       ADSP_POLICY="disable"
@@ -76,6 +104,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     *)
       echo "Unknown argument: $1" >&2
+      if [ "$MODE" = "windows" ] && [ -n "$WINDOWS_ROOT" ]; then
+        windows_path_hint
+      fi
       usage >&2
       exit 2
       ;;
@@ -156,10 +187,12 @@ grab_download() {
 grab_windows() {
   if [ -z "$WINDOWS_ROOT" ]; then
     echo "--windows-root requires a mounted Windows root directory." >&2
+    windows_path_hint
     exit 2
   fi
   if [ ! -d "$WINDOWS_ROOT/Windows" ]; then
     echo "Not a Windows root: $WINDOWS_ROOT" >&2
+    windows_path_hint
     exit 1
   fi
 

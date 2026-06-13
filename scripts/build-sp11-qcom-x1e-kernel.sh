@@ -18,6 +18,7 @@ RESET_SOURCE="false"
 ALLOW_NON_ARM64="false"
 ALLOW_NO_FALLBACK="false"
 SKIP_CLEAN="false"
+NO_FAKEROOT="false"
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
 SOURCE_SPEC=""
 RESOLVED_SOURCE_PACKAGE=""
@@ -50,6 +51,7 @@ Options:
   --prepare-only        Clone/download and apply patches, then stop.
   --reset-source        Remove existing source directory before preparing.
   --skip-clean          Skip debian/rules clean before building.
+  --no-fakeroot         Run debian/rules directly when running as root.
   --allow-non-arm64     Allow prepare/build on a non-aarch64 host.
   --allow-no-fallback   Allow install with no older qcom-x1e kernel fallback.
   -h, --help            Show this help.
@@ -73,6 +75,23 @@ as_root() {
     require_tool sudo
     sudo "$@"
   fi
+}
+
+run_rules() {
+  local rules_file="$1"
+  shift
+
+  if [ "$(id -u)" -eq 0 ]; then
+    "$rules_file" "$@"
+    return
+  fi
+
+  if [ "$NO_FAKEROOT" = "true" ]; then
+    echo "--no-fakeroot requires running as root." >&2
+    exit 1
+  fi
+
+  fakeroot "$rules_file" "$@"
 }
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -141,6 +160,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-clean)
       SKIP_CLEAN="true"
+      shift
+      ;;
+    --no-fakeroot)
+      NO_FAKEROOT="true"
       shift
       ;;
     --allow-non-arm64)
@@ -217,33 +240,72 @@ mkdir -p "$source_parent"
 install_dependencies() {
   require_tool dpkg-query
 
-  local source_pkg
+  local deps source_pkg
+  deps=(
+    bc
+    bison
+    build-essential
+    cpio
+    debhelper
+    devscripts
+    dpkg-dev
+    dwarves
+    equivs
+    flex
+    git
+    kmod
+    libelf-dev
+    libssl-dev
+    python3
+    python3-dev
+    rsync
+  )
+
+  if [ "$(id -u)" -ne 0 ] && [ "$NO_FAKEROOT" != "true" ]; then
+    deps+=(fakeroot)
+  fi
 
   as_root apt-get update
-  as_root apt-get install -y --no-install-recommends \
-    bc \
-    bison \
-    build-essential \
-    cpio \
-    debhelper \
-    devscripts \
-    dpkg-dev \
-    dwarves \
-    equivs \
-    fakeroot \
-    flex \
-    git \
-    kmod \
-    libelf-dev \
-    libssl-dev \
-    python3 \
-    python3-dev \
-    rsync
+  as_root apt-get install -y --no-install-recommends "${deps[@]}"
 
   if [ "$SOURCE_MODE" = "apt" ]; then
     source_pkg="$(resolve_apt_source_package)"
-    as_root apt-get build-dep -y "$source_pkg"
+    if ! as_root apt-get build-dep -y "$source_pkg"; then
+      echo "apt build-dep failed for $source_pkg." >&2
+      echo "Enable matching deb-src entries for the repositories that provide the qcom-x1e source package, then rerun apt update." >&2
+      echo "For bring-up without matching source repositories, retry with --source git." >&2
+      exit 1
+    fi
   fi
+}
+
+install_source_build_dependencies() {
+  local control_file="$source_dir/debian/control" rules_file
+
+  [ "$INSTALL_DEPS" = "true" ] || return 0
+  [ "$SOURCE_MODE" = "git" ] || return 0
+
+  if [ ! -f "$control_file" ]; then
+    rules_file="$(find_rules_file)"
+    (
+      cd "$source_dir"
+      run_rules "$rules_file" debian/control
+    )
+  fi
+
+  if [ ! -f "$control_file" ]; then
+    echo "Cannot install git source build dependencies; missing $control_file." >&2
+    exit 1
+  fi
+
+  (
+    cd "$work_dir"
+    as_root mk-build-deps \
+      --install \
+      --remove \
+      --tool "apt-get -y --no-install-recommends" \
+      "$control_file"
+  )
 }
 
 check_free_space() {
@@ -485,6 +547,13 @@ write_manifest() {
     done
     echo "Build target: $BUILD_TARGET"
     echo "Jobs: $JOBS"
+    if [ "$(id -u)" -eq 0 ]; then
+      echo "Rules runner: direct-root"
+    elif [ "$NO_FAKEROOT" = "true" ]; then
+      echo "Rules runner: no-fakeroot-requested-non-root"
+    else
+      echo "Rules runner: fakeroot"
+    fi
   } > "$manifest"
 
   echo "Wrote build manifest: $manifest"
@@ -618,9 +687,9 @@ build_kernel() {
     cd "$source_dir"
     export DEB_BUILD_OPTIONS="parallel=$JOBS nocheck noautodbgsym"
     if [ "$SKIP_CLEAN" != "true" ]; then
-      fakeroot "$rules_file" clean
+      run_rules "$rules_file" clean
     fi
-    fakeroot "$rules_file" "$BUILD_TARGET"
+    run_rules "$rules_file" "$BUILD_TARGET"
   )
 }
 
@@ -677,6 +746,7 @@ esac
 
 echo "Using source tree: $source_dir"
 apply_patches
+install_source_build_dependencies
 write_manifest
 
 if [ "$PREPARE_ONLY" = "true" ]; then

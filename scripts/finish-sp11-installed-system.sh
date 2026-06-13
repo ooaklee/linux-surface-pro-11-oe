@@ -29,6 +29,23 @@ Options:
 EOF
 }
 
+require_arg() {
+  if [ -z "${2:-}" ]; then
+    echo "Missing value for $1." >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+windows_path_hint() {
+  cat >&2 <<'EOF'
+The Windows root is the mounted NTFS partition containing the Windows directory.
+If the mount path contains spaces, quote it, for example:
+  --windows-root "/run/media/$USER/Local Disk"
+Do not pass the Linux /boot/efi mount or a path inside the EFI partition.
+EOF
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --download)
@@ -36,9 +53,15 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --windows-root)
+      require_arg "$1" "${2:-}"
       FIRMWARE_MODE="windows"
       WINDOWS_ROOT="$2"
       shift 2
+      ;;
+    --windows-root=*)
+      FIRMWARE_MODE="windows"
+      WINDOWS_ROOT="${1#*=}"
+      shift
       ;;
     --skip-firmware)
       FIRMWARE_MODE="skip"
@@ -62,6 +85,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     *)
       echo "Unknown argument: $1" >&2
+      if [ "$FIRMWARE_MODE" = "windows" ] && [ -n "$WINDOWS_ROOT" ]; then
+        windows_path_hint
+      fi
       usage >&2
       exit 2
       ;;
@@ -77,6 +103,19 @@ if [ -z "$FIRMWARE_MODE" ]; then
   echo "Choose one firmware mode: --download, --windows-root DIR, or --skip-firmware." >&2
   usage >&2
   exit 2
+fi
+
+if [ "$FIRMWARE_MODE" = "windows" ]; then
+  if [ -z "$WINDOWS_ROOT" ]; then
+    echo "--windows-root requires a mounted Windows root directory." >&2
+    windows_path_hint
+    exit 2
+  fi
+  if [ ! -d "$WINDOWS_ROOT/Windows" ]; then
+    echo "Not a Windows root: $WINDOWS_ROOT" >&2
+    windows_path_hint
+    exit 1
+  fi
 fi
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
