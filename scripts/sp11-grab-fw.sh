@@ -88,12 +88,18 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 require_tools() {
+  local missing=()
   for tool in "$@"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      echo "Missing required tool: $tool" >&2
-      exit 1
+      missing+=("$tool")
     fi
   done
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Missing required tools: ${missing[*]}" >&2
+    echo "Install them with: sudo apt update && sudo apt install ${missing[*]}" >&2
+    exit 1
+  fi
 }
 
 install_fw_file() {

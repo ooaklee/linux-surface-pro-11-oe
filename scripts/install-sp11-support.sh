@@ -107,14 +107,22 @@ fi
 
 tmp="$(mktemp)"
 awk -v dtb="$BOOT_DTB_NAME" '
-  /^([[:space:]]*)linux[[:space:]]/ {
+  /^[ \t]*devicetree[ \t]+\/(boot\/)?(x1e80100-microsoft-denali(-oled|-oled-el2)?|sp11-denali)\.dtb([ \t]|$)/ {
+    next
+  }
+  /^[ \t]*linux[ \t]/ {
     print
     match($0, /^[ \t]*/)
     indent = substr($0, RSTART, RLENGTH)
-    print indent "devicetree /boot/" dtb
-    next
-  }
-  /devicetree \/boot\/(x1e80100-microsoft-denali(-oled|-oled-el2)?|sp11-denali)\.dtb/ {
+    rest = $0
+    sub(/^[ \t]*linux[ \t]+/, "", rest)
+    split(rest, fields, /[ \t]+/)
+    kernel = fields[1]
+    if (kernel ~ /^\/boot\//) {
+      print indent "devicetree /boot/" dtb
+    } else {
+      print indent "devicetree /" dtb
+    }
     next
   }
   { print }

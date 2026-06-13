@@ -19,6 +19,30 @@ The current verified target is:
 > Warning: this is not an official Ubuntu, Microsoft, or linux-surface release.
 > Keep Windows installed, keep a recovery USB nearby, and expect regressions.
 
+## Prerequisites
+
+Prepare these before building or booting the installer:
+
+- A Microsoft Surface Pro 11 with Snapdragon X Elite (`X1E80100`). This guide
+  is not for Surface Laptop 7/Romulus devices or Intel Surface devices.
+- A complete Windows backup and a saved BitLocker or Device Encryption recovery
+  key. Suspend or decrypt Windows device encryption before resizing partitions
+  or repeatedly booting experimental media.
+- Secure Boot disabled in Surface UEFI.
+- A Windows recovery USB or another confirmed way to restore the device if the
+  Ubuntu install or bootloader setup fails.
+- A USB-C flash drive, 16 GB or larger. The write script erases the entire
+  selected disk.
+- A macOS build host with Docker Desktop running, `git`, `diskutil`, and sudo
+  access for writing the raw USB image. Keep at least 20 GB free for the ISO,
+  Docker image/package setup, work directories, and generated raw images.
+- Temporary networking for post-install firmware work. Wi-Fi is not working in
+  the current live session, so prepare USB-C Ethernet, USB phone tethering, or
+  a mounted Windows partition for `sp11-grab-fw --windows-root`.
+- An external USB keyboard is recommended for installer recovery and text
+  entry. The direct GRUB mode avoids the broken interactive GRUB menu, but
+  normal keyboard text input in the desktop still needs confirmation.
+
 ## Current Status
 
 The Surface Pro 11 still needs a custom device tree and firmware handling. A
@@ -28,14 +52,18 @@ Latest live-USB result, 2026-06-13: the `--grub-mode direct` image boots to the
 Ubuntu desktop. The interactive GRUB menu still does not accept input or
 auto-boot reliably, so direct mode is the verified live-USB path for now.
 
+Latest installed-system result, 2026-06-13: after running the pre-reboot
+installed-system prepare helper from the live USB, Ubuntu booted successfully
+from the internal NVMe install without the USB root filesystem.
+
 | Feature | Expected status | Notes |
 | --- | --- | --- |
 | Display | Working in live USB | Direct boot reached the Ubuntu desktop. Night Light and screen brightness controls work. |
-| NVMe | Expected | Confirmed device uses standard NVMe storage. |
+| NVMe | Working for installed boot | Installed Ubuntu booted from `/dev/nvme0n1p5` with separate `/boot` and `/boot/efi` partitions after support setup. |
 | USB-C boot | Working with direct mode | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified path. |
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
-| Wi-Fi | Not working in live USB | Uses WCN7850/Qualcomm FastConnect 7800. The installed-system path still needs firmware and ath12k board-file follow-up. |
+| Wi-Fi | Probes but hard-blocked after installed boot | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, and creates an interface, but `rfkill` reports `Hard blocked: yes`. This likely needs the SP11 `disable-rfkill` DTB/kernel handling from the Arch bring-up. |
 | Bluetooth | Not working in live USB | Firmware is present in Windows; Linux may still need firmware and MAC-address handling. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
@@ -176,22 +204,21 @@ Because the live USB relies on explicit GRUB DTB injection, do not assume the
 installed system can boot without support setup. After the installer finishes,
 choose the option to continue testing instead of rebooting, keep the USB
 plugged in, and configure the installed target before the first USB-free boot.
-If the installer leaves the installed root mounted at `/target`, run:
+The USB image includes a helper for this under `/support/scripts`. If the
+installer leaves the installed root mounted at `/target`, run:
 
 ```bash
-SP11DATA="$(findmnt -rn -S LABEL=SP11DATA -o TARGET | head -n 1)"
-test -n "$SP11DATA" || { echo "Mount the SP11DATA USB partition first."; exit 1; }
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
 test -d /target/etc || { echo "Mount the installed Ubuntu root at /target first."; exit 1; }
 cd "$SP11DATA/support"
-sudo ./scripts/install-sp11-support.sh --installed-system --root /target
-sudo grep -q 'arm64.nopauth' /target/etc/default/grub.d/99-surface-pro-11.cfg || \
-  sudo sed -i 's/pd_ignore_unused /pd_ignore_unused arm64.nopauth /' /target/etc/default/grub.d/99-surface-pro-11.cfg
-sudo mkdir -p /target/dev /target/proc /target/sys /target/run
-for fs in dev proc sys run; do mountpoint -q /target/$fs || sudo mount --bind /$fs /target/$fs; done
-sudo chroot /target update-grub
-sudo chroot /target /usr/local/sbin/sp11-grub-inject-dtb
-sudo chroot /target update-initramfs -u -k all
-for fs in run sys proc dev; do sudo umount /target/$fs || true; done
+sudo ./scripts/prepare-sp11-installed-system.sh --target /target
 sudo reboot
 ```
 
@@ -199,31 +226,60 @@ If `/target` is not mounted, mount the installed Ubuntu root partition there
 first. If the installed system fails to boot, boot the direct live USB again
 and use it as the recovery environment.
 
+If GRUB reports `file '/boot/sp11-denali.dtb' not found` on an installed
+system with a separate `/boot` partition, rerun the current support helper.
+Older helper versions always injected `/boot/sp11-denali.dtb`; the current
+helper derives `/sp11-denali.dtb` vs `/boot/sp11-denali.dtb` from the generated
+GRUB kernel path.
+
 After first successful boot into installed Ubuntu, mount the USB data partition
 and rerun the support helpers on the installed system:
 
 ```bash
-SP11DATA="$(findmnt -rn -S LABEL=SP11DATA -o TARGET | head -n 1)"
-test -n "$SP11DATA" || { echo "Mount the SP11DATA USB partition first."; exit 1; }
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
 cd "$SP11DATA/support"
-sudo ./scripts/install-sp11-support.sh --installed-system
-sudo sp11-grab-fw --download
-sudo sp11-wifi-board-fixup || true
-sudo reboot
+sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
 ```
 
 Firmware download requires temporary networking, such as USB-C Ethernet or USB
 phone tethering. Without networking, mount the Windows partition and use
-`sudo sp11-grab-fw --windows-root /path/to/windows` instead of
-`sudo sp11-grab-fw --download`.
+`--windows-root` instead of `--download`:
+
+```bash
+sudo ./scripts/finish-sp11-installed-system.sh \
+  --windows-root /path/to/windows \
+  --reboot
+```
 
 If you run firmware setup while booted from USB, the script leaves
 `adsp_dtb.mbn` disabled to avoid the known aDSP USB reset failure. Enable aDSP
 only after the root filesystem is on NVMe.
 
+If Wi-Fi still toggles back off after installed boot, collect the rfkill
+diagnostic bundle:
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock
+```
+
+The current verified installed-system failure is `phy0` hard-blocked by
+`rfkill` even after firmware loads and the WCN7850 interface is created. That
+points to missing ath12k `disable-rfkill` kernel/DTB handling rather than a
+missing board file.
+
 ## Test Notes
 
 - [2026-06-13 direct live USB test](docs/live-usb-test-20260613.md)
+- [2026-06-13 installed NVMe boot test](docs/installed-nvme-boot-test-20260613.md)
+- [2026-06-13 installed Wi-Fi rfkill test](docs/installed-wifi-rfkill-test-20260613.md)
 
 ## Decision Records
 
@@ -244,6 +300,9 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR013: Standalone GRUB External Keyboard Test](docs/adr/adr-0013-standalone-grub-external-keyboard-test.md)
 - [ADR014: Direct GRUB Autoboot Diagnostic](docs/adr/adr-0014-direct-grub-autoboot-diagnostic.md)
 - [ADR015: Direct Live Desktop and Install Gate](docs/adr/adr-0015-direct-live-desktop-and-install-gate.md)
+- [ADR016: USB Data Mount and Installed-System Helpers](docs/adr/adr-0016-usb-data-mount-and-installed-system-helpers.md)
+- [ADR017: GRUB DTB Path for Separate Boot](docs/adr/adr-0017-grub-dtb-path-for-separate-boot.md)
+- [ADR018: Wi-Fi rfkill Bring-Up Gate](docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md)
 
 ## Windows Firmware
 

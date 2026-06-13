@@ -43,12 +43,22 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-for tool in curl python3; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "Missing required tool: $tool" >&2
+require_tools() {
+  local missing=()
+  for tool in "$@"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      missing+=("$tool")
+    fi
+  done
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Missing required tools: ${missing[*]}" >&2
+    echo "Install them with: sudo apt update && sudo apt install ${missing[*]}" >&2
     exit 1
   fi
-done
+}
+
+require_tools curl python3
 
 if [ ! -d "$FW_DIR" ]; then
   echo "Firmware directory not found: $FW_DIR" >&2
@@ -67,7 +77,8 @@ if [ -f "$FW_DIR/board-2.bin" ]; then
   cp "$FW_DIR/board-2.bin" .
 elif [ -f "$FW_DIR/board-2.bin.zst" ]; then
   if ! command -v zstd >/dev/null 2>&1; then
-    echo "board-2.bin is compressed; install zstd." >&2
+    echo "board-2.bin is compressed; missing required tool: zstd." >&2
+    echo "Install it with: sudo apt update && sudo apt install zstd" >&2
     exit 1
   fi
   zstd -dc "$FW_DIR/board-2.bin.zst" > board-2.bin
