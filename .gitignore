@@ -1,0 +1,12 @@
+build/
+payload/**/*.bin
+payload/**/*.mbn
+payload/**/*.elf
+payload/**/*.jsn
+payload/**/*.cab
+payload/**/*.deb
+payload/**/*.iso
+payload/**/*.img
+*.iso
+*.img
+*.zip
