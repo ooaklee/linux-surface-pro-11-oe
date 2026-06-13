@@ -230,6 +230,7 @@ rm -rf "$work_abs/support"
 mkdir -p "$work_abs/support"
 cp "$repo_dir/README.md" "$work_abs/support/"
 cp -R "$repo_dir/docs" "$work_abs/support/"
+cp -R "$repo_dir/patches" "$work_abs/support/"
 cp -R "$repo_dir/scripts" "$work_abs/support/"
 cp -R "$repo_dir/tools" "$work_abs/support/"
 

@@ -66,6 +66,15 @@ require_tool() {
   fi
 }
 
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    require_tool sudo
+    sudo "$@"
+  fi
+}
+
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 while [ "$#" -gt 0 ]; do
@@ -174,7 +183,7 @@ if ! [[ "$MIN_FREE_GB" =~ ^[0-9]+$ ]] || [ "$MIN_FREE_GB" -lt 1 ]; then
 fi
 
 PATCH_DIR="${PATCH_DIR:-$repo_dir/patches/ubuntu-qcom-x1e-7.0}"
-if [ ! -d "$PATCH_DIR" ]; then
+if [ "$INSTALL_ONLY" != "true" ] && [ ! -d "$PATCH_DIR" ]; then
   echo "Patch directory not found: $PATCH_DIR" >&2
   exit 1
 fi
@@ -195,7 +204,9 @@ if [ "$SOURCE_MODE" = "apt" ] && [ "$host_os" != "Linux" ]; then
   exit 1
 fi
 
-require_tool git
+if [ "$INSTALL_ONLY" != "true" ]; then
+  require_tool git
+fi
 
 mkdir -p "$WORK_DIR"
 work_dir="$(cd "$WORK_DIR" && pwd)"
@@ -204,13 +215,12 @@ source_dir=""
 mkdir -p "$source_parent"
 
 install_dependencies() {
-  require_tool sudo
   require_tool dpkg-query
 
   local source_pkg
 
-  sudo apt-get update
-  sudo apt-get install -y --no-install-recommends \
+  as_root apt-get update
+  as_root apt-get install -y --no-install-recommends \
     bc \
     bison \
     build-essential \
@@ -232,7 +242,7 @@ install_dependencies() {
 
   if [ "$SOURCE_MODE" = "apt" ]; then
     source_pkg="$(resolve_apt_source_package)"
-    sudo apt-get build-dep -y "$source_pkg"
+    as_root apt-get build-dep -y "$source_pkg"
   fi
 }
 
@@ -319,7 +329,7 @@ ensure_clean_source() {
 }
 
 prepare_git_source() {
-  local safe_branch dir
+  local safe_branch dir local_commits
   safe_branch="${GIT_BRANCH//\//-}"
   dir="$source_parent/git-$safe_branch"
 
@@ -329,6 +339,12 @@ prepare_git_source() {
   else
     git -C "$dir" fetch origin "$GIT_BRANCH"
     git -C "$dir" checkout "$GIT_BRANCH"
+    local_commits="$(git -C "$dir" rev-list --count "origin/$GIT_BRANCH..HEAD" 2>/dev/null || echo 0)"
+    if [ "$local_commits" != "0" ]; then
+      echo "Existing source tree has local commits not present in origin/$GIT_BRANCH: $dir" >&2
+      echo "Move them away or rerun with --reset-source." >&2
+      exit 1
+    fi
     git -C "$dir" reset --hard "origin/$GIT_BRANCH"
   fi
 
@@ -349,6 +365,10 @@ prepare_apt_source() {
   if [ "$RESET_SOURCE" = "true" ]; then
     rm -rf "$source_parent"
     mkdir -p "$source_parent"
+  elif find "$source_parent" -mindepth 1 -maxdepth 1 -type d | grep -q .; then
+    echo "Existing apt source directories found under $source_parent." >&2
+    echo "Rerun with --reset-source to avoid rebuilding from stale or modified source trees." >&2
+    exit 1
   fi
 
   case "$SOURCE_VERSION" in
@@ -471,14 +491,27 @@ write_manifest() {
 }
 
 collect_kernel_debs() {
-  find "$source_parent" -maxdepth 2 -type f \
-    \( -name 'linux-image-*-qcom-x1e_*.deb' \
-    -o -name 'linux-modules-*-qcom-x1e_*.deb' \
-    -o -name 'linux-headers-*-qcom-x1e_*.deb' \
-    -o -name 'linux-qcom-x1e_*.deb' \
-    -o -name 'linux-image-qcom-x1e_*.deb' \
-    -o -name 'linux-headers-qcom-x1e_*.deb' \) |
-    sort
+  {
+    find "$source_parent" -maxdepth 2 -type f \
+      \( -name 'linux-image-unsigned-*-qcom-x1e_*.deb' \
+      -o -name 'linux-image-*-qcom-x1e_*.deb' \
+      -o -name 'linux-modules-*-qcom-x1e_*.deb' \
+      -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
+      -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+      -o -name 'linux-qcom-x1e_*.deb' \
+      -o -name 'linux-image-qcom-x1e_*.deb' \
+      -o -name 'linux-headers-qcom-x1e_*.deb' \)
+    find "$work_dir" -maxdepth 2 -type f \
+      \( -name 'linux-image-unsigned-*-qcom-x1e_*.deb' \
+      -o -name 'linux-image-*-qcom-x1e_*.deb' \
+      -o -name 'linux-modules-*-qcom-x1e_*.deb' \
+      -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
+      -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+      -o -name 'linux-qcom-x1e_*.deb' \
+      -o -name 'linux-image-qcom-x1e_*.deb' \
+      -o -name 'linux-headers-qcom-x1e_*.deb' \)
+  } |
+    sort -u
 }
 
 deb_kernel_abi() {
@@ -554,9 +587,7 @@ ensure_kernel_fallback() {
       fallback_abi="$abi"
       break
     fi
-  done <<EOF
-$installed_abis
-EOF
+  done <<<"$installed_abis"
 
   if [ -z "$fallback_abi" ]; then
     echo "Refusing to install generated qcom-x1e kernel packages without an installed fallback ABI." >&2
@@ -594,7 +625,6 @@ build_kernel() {
 }
 
 install_kernel_debs() {
-  require_tool sudo
   require_tool dpkg-query
 
   local debs=()
@@ -617,13 +647,13 @@ install_kernel_debs() {
   printf 'Installing generated kernel debs:\n'
   printf '  %s\n' "${debs[@]}"
   ensure_kernel_fallback "${debs[@]}"
-  sudo apt install --reinstall "${debs[@]}"
+  as_root apt install --reinstall "${debs[@]}"
 
   if [ -x "$repo_dir/scripts/install-sp11-support.sh" ]; then
-    sudo "$repo_dir/scripts/install-sp11-support.sh" --installed-system
+    as_root "$repo_dir/scripts/install-sp11-support.sh" --installed-system
   elif command -v /usr/local/sbin/sp11-grub-inject-dtb >/dev/null 2>&1; then
-    sudo update-grub
-    sudo /usr/local/sbin/sp11-grub-inject-dtb
+    as_root update-grub
+    as_root /usr/local/sbin/sp11-grub-inject-dtb
   fi
 }
 
@@ -662,11 +692,11 @@ echo "Generated kernel packages:"
 generated_debs=()
 while IFS= read -r deb; do
   generated_debs+=("$deb")
-done < <(find "$source_parent" -maxdepth 2 -type f -name '*.deb' -print | sort)
+done < <(collect_kernel_debs)
 if [ "${#generated_debs[@]}" -gt 0 ]; then
   ls -lh "${generated_debs[@]}"
 else
-  echo "No .deb packages found under $work_dir."
+  echo "No qcom-x1e kernel packages found under $work_dir."
 fi
 
 if [ "$INSTALL_DEBS" = "true" ]; then

@@ -280,20 +280,40 @@ If the diagnostic helper reports both `DT is missing disable-rfkill` and
 `disable-rfkill support not found in installed ath12k modules`, build the
 patched qcom-x1e kernel described in
 [How To: Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md).
-The short form on the installed Surface Pro 11 is:
+The preferred path is to collect source metadata on the Surface, build the
+packages in a Docker ARM64 container on a stronger machine, rebuild the USB
+image with the generated packages in `payload/kernel-debs/`, then install those
+packages back on the Surface.
+
+On the Surface:
+
+```bash
+cd "$SP11DATA/support"
+./scripts/collect-sp11-kernel-source-metadata.sh \
+  --out "$SP11DATA/sp11-kernel-source.env"
+```
+
+On the Docker build host, from this repository root:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --metadata /path/to/sp11-kernel-source.env \
+  --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --copy-to-payload
+```
+
+After rebuilding and writing the USB image, install the payload packages on the
+Surface:
 
 ```bash
 cd "$SP11DATA/support"
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --install-deps \
-  --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
-
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir "$HOME/sp11-qcom-x1e-kernel-build" \
+  --work-dir "$SP11DATA/payload/kernel-debs" \
   --install-only
 sudo reboot
 ```
 
+If Docker is not available, the same how-to includes an on-device build path.
 Keep the previous qcom-x1e kernel installed as a GRUB fallback until the
 patched kernel has booted and Wi-Fi rfkill state has been validated. The helper
 refuses to install over the generated qcom-x1e ABI unless another installed
@@ -335,6 +355,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR017: GRUB DTB Path for Separate Boot](docs/adr/adr-0017-grub-dtb-path-for-separate-boot.md)
 - [ADR018: Wi-Fi rfkill Bring-Up Gate](docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md)
 - [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](docs/adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
+- [ADR020: Dockerized ARM64 Kernel Build](docs/adr/adr-0020-dockerized-arm64-kernel-build.md)
 
 ## Windows Firmware
 

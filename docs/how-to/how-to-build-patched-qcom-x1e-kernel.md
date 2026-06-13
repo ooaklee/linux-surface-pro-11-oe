@@ -32,6 +32,9 @@ Surface Pro 11 rfkill patches.
 - AC power connected. Kernel builds can take a long time.
 - An older known-good qcom-x1e kernel still installed. Do not run
   `apt autoremove` before this experiment.
+- For the preferred off-device build: Docker on a host that can run
+  `linux/arm64` containers. Native ARM64 is fastest; x86_64 hosts may use QEMU
+  emulation and can be much slower.
 
 ## Procedure
 
@@ -58,7 +61,113 @@ sudo ./scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock
 Continue only if Wi-Fi is still hard-blocked and the ath12k module scan says
 `disable-rfkill support not found`.
 
-3. Build from the installed Ubuntu source package version.
+## Dockerized ARM64 Build
+
+Use this path when you have a stronger build machine available. The Surface
+exports the exact qcom-x1e source package metadata, the build host compiles in
+a Docker ARM64 Linux container, and the generated packages are copied into the
+USB payload.
+
+3. On the Surface, write the running kernel source metadata to `SP11DATA`.
+
+```bash
+./scripts/collect-sp11-kernel-source-metadata.sh \
+  --out "$SP11DATA/sp11-kernel-source.env"
+```
+
+4. Move the USB back to the Docker build host, enter this repository root, then
+   build the patched packages.
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --metadata /path/to/sp11-kernel-source.env \
+  --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --copy-to-payload
+```
+
+The wrapper runs Docker with `--platform linux/arm64`. It builds under
+`build/docker-sp11-qcom-x1e-kernel/` and copies generated qcom-x1e `.deb`
+files to `payload/kernel-debs/` when `--copy-to-payload` is set.
+
+If the container cannot fetch the exact qcom-x1e source version, provide
+matching apt source configuration from the same repositories that provided the
+installed kernel:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --metadata /path/to/sp11-kernel-source.env \
+  --apt-sources /path/to/qcom-x1e.sources \
+  --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --copy-to-payload
+```
+
+For bring-up only, the Docker wrapper can use the public git branch instead of
+apt source metadata:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --copy-to-payload
+```
+
+Treat git mode as a fallback because it may not match the exact qcom-x1e
+package version currently installed on the Surface.
+
+5. Rebuild and write the live USB image so `payload/kernel-debs/` is copied to
+   `SP11DATA`.
+
+Use the same image-builder options that are working for the current test path,
+for example the direct-boot image from the README:
+
+```bash
+./scripts/build-sp11-live-usb-image.sh \
+  --iso path/to/ubuntu-x1e.iso \
+  --grub-mode direct \
+  --work-dir build/work-direct-boot \
+  --out build/sp11-ubuntu-live-direct.img \
+  --validate
+
+./scripts/write-image-to-macos-disk.sh build/sp11-ubuntu-live-direct.img /dev/diskX
+```
+
+Replace `/dev/diskX` with the verified removable USB disk.
+
+6. Boot back into installed Ubuntu, mount `SP11DATA`, and install the payload
+   packages with the Surface-side fallback guard.
+
+```bash
+cd "$SP11DATA/support"
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --work-dir "$SP11DATA/payload/kernel-debs" \
+  --install-only
+```
+
+The helper refuses to install if it cannot find another installed qcom-x1e
+kernel ABI to use as a GRUB fallback. Do not override that guard unless you are
+comfortable recovering through the direct live USB:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --work-dir "$SP11DATA/payload/kernel-debs" \
+  --install-only \
+  --allow-no-fallback
+```
+
+For debugging, inspect the generated package list before installing:
+
+```bash
+find "$SP11DATA/payload/kernel-debs" -maxdepth 1 -type f -name '*.deb' -print | sort
+```
+
+Use `--install-only` for the actual install so the fallback-kernel guard and
+post-install support helper run consistently.
+
+## On-Device Build Fallback
+
+Use this path when Docker is not available.
+
+1. Build from the installed Ubuntu source package version.
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
@@ -79,7 +188,7 @@ helper derives the source package and version from the running kernel packages,
 starting with `linux-modules-$(uname -r)`. Use `--source-version candidate`
 only when you intentionally want to build the apt source candidate instead.
 
-4. Install the generated qcom-x1e kernel packages.
+2. Install the generated qcom-x1e kernel packages.
 
 The helper can do this directly:
 
@@ -109,7 +218,9 @@ cat "$HOME/sp11-qcom-x1e-kernel-build/sp11-kernel-debs.txt"
 Use `--install-only` for the actual install so the fallback-kernel guard and
 post-install support helper run consistently.
 
-5. Confirm GRUB still injects the Surface Pro 11 DTB.
+## Reboot and Validate
+
+1. Confirm GRUB still injects the Surface Pro 11 DTB.
 
 ```bash
 grep -n "devicetree .*sp11-denali" /boot/grub/grub.cfg | head
@@ -121,7 +232,7 @@ For the verified separate `/boot` layout, the entries should use:
 devicetree /sp11-denali.dtb
 ```
 
-6. Reboot and choose the patched kernel.
+2. Reboot and choose the patched kernel.
 
 ```bash
 sudo reboot
@@ -190,4 +301,5 @@ troubleshooting output and compare the DT and ath12k support lines first.
 
 - [ADR018: Wi-Fi rfkill Bring-Up Gate](../adr/adr-0018-wifi-rfkill-bring-up-gate.md)
 - [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](../adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
+- [ADR020: Dockerized ARM64 Kernel Build](../adr/adr-0020-dockerized-arm64-kernel-build.md)
 - [Surface Pro 11 Wi-Fi rfkill test after qcom-x1e upgrade](../installed-wifi-rfkill-upgrade-test-20260613.md)

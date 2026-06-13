@@ -30,9 +30,11 @@ payload/**/*.img
 *.zip
 
 # Kernel source/package build outputs.
+payload/kernel-debs/
 sp11-qcom-x1e-kernel-build/
 kernel-build/
 source/
+sp11-kernel-source.env
 *.build
 *.buildinfo
 *.changes
