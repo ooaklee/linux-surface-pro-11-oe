@@ -24,17 +24,22 @@ The current verified target is:
 The Surface Pro 11 still needs a custom device tree and firmware handling. A
 standard ARM64 Ubuntu ISO is not enough.
 
+Latest live-USB result, 2026-06-13: the `--grub-mode direct` image boots to the
+Ubuntu desktop. The interactive GRUB menu still does not accept input or
+auto-boot reliably, so direct mode is the verified live-USB path for now.
+
 | Feature | Expected status | Notes |
 | --- | --- | --- |
-| Display | Experimental | Requires a Surface Pro 11 Denali DTB, such as Ubuntu's `x1e80100-microsoft-denali-oled.dtb` for X1E OLED devices, and the display workaround in the SP11 kernel work. |
+| Display | Working in live USB | Direct boot reached the Ubuntu desktop. Night Light and screen brightness controls work. |
 | NVMe | Expected | Confirmed device uses standard NVMe storage. |
-| USB-C boot | Expected | Use the USB-safe boot entry first. |
-| Wi-Fi | Experimental | Uses WCN7850/Qualcomm FastConnect 7800 and needs the ath12k board-file fixup. |
-| Bluetooth | Experimental | Firmware is present in Windows; Linux may still need MAC-address handling. |
-| Keyboard/cover | Experimental | Windows exposes Surface HID keyboard devices. Linux support depends on the SP11 Surface Aggregator patches. |
-| Touchscreen/pen | Not expected yet | SP11 Arch notes still list touchscreen and pen as not working. |
+| USB-C boot | Working with direct mode | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified path. |
+| Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
+| Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
+| Wi-Fi | Not working in live USB | Uses WCN7850/Qualcomm FastConnect 7800. The installed-system path still needs firmware and ath12k board-file follow-up. |
+| Bluetooth | Not working in live USB | Firmware is present in Windows; Linux may still need firmware and MAC-address handling. |
+| Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
-| Audio | Partial/risky | Upstream notes warn that speaker audio can be distorted. Keep volume low. |
+| Audio | Not working in live USB | GNOME reports `Dummy Output` when volume keys are pressed. Upstream speaker-audio work is still risky; keep volume low during future tests. |
 | Suspend | Partial/risky | Prefer testing boot/install first. |
 
 ## Recommended Path
@@ -80,6 +85,25 @@ files, ext4 filesystem creation, raw-image assembly, and optional validation.
 On Docker Desktop for macOS, the raw image copy/write phases can look quiet for
 several minutes.
 
+If GRUB displays the menu but the countdown never auto-boots and keyboard input
+does not select an entry, build a diagnostic image that bypasses the GRUB menu
+and immediately boots the default USB-safe `casper` path:
+
+```bash
+./scripts/build-sp11-live-usb-image.sh \
+  --iso path/to/ubuntu-x1e.iso \
+  --grub-mode direct \
+  --work-dir build/work-direct-boot \
+  --out build/sp11-ubuntu-live-direct.img \
+  --validate
+```
+
+The direct mode is intentionally diagnostic. It removes the interactive GRUB
+fallback entries for that image, so keep a normal menu image available while
+testing. If direct mode stops before the Ubuntu kernel starts, note the last
+message on screen; a stop around `Searching for SP11DATA...` points to an
+earlier GRUB storage or partition-discovery problem.
+
 To validate an already-built image without rebuilding:
 
 ```bash
@@ -88,10 +112,10 @@ To validate an already-built image without rebuilding:
 ```
 
 Validation reports the image size and SHA-256 hash, GPT layout, ESP contents,
-embedded GRUB menu hints, and the `/dtb/sp11-denali.dtb` file from the
-`SP11DATA` partition.
+embedded GRUB menu or direct-boot hints, and the `/dtb/sp11-denali.dtb` file
+from the `SP11DATA` partition.
 
-The image contains:
+The normal menu image contains:
 
 - an ARM64 removable-media EFI bootloader,
 - a USB-safe GRUB entry with `modprobe.blacklist=qcom_q6v5_pas`,
@@ -103,6 +127,9 @@ The image contains:
 - optional local payload files from `payload/`,
 - this repo's README, ADRs, tools, and support scripts under `/support` on the
   USB data partition.
+
+The direct-boot diagnostic image replaces the interactive GRUB menu entries
+with the same USB-safe `casper` path used by the first menu entry.
 
 ### 2. Write the USB
 
@@ -127,25 +154,76 @@ image to the USB device.
 
 1. Disable Secure Boot in the Surface UEFI.
 2. Boot from the USB.
-3. Choose `Ubuntu for Surface Pro 11 (USB-safe, casper iso-scan)`.
-4. If the screen goes black or the graphical installer does not appear, reboot
+3. For the normal menu image, choose
+   `Ubuntu for Surface Pro 11 (USB-safe, casper iso-scan)`.
+4. If the GRUB menu accepts no input or never auto-boots, rebuild and write the
+   direct image with `--grub-mode direct`.
+5. If the screen goes black or the graphical installer does not appear, reboot
    and choose `Ubuntu for Surface Pro 11 (USB-safe text/debug, casper iso-scan)`.
-5. If the casper `iso-scan` entries fail early, try
+6. If the casper `iso-scan` entries fail early, try
    `Ubuntu for Surface Pro 11 (USB-safe, ISO-native fallback)`.
-6. If the live session boots, install Ubuntu to a new partition. Do not delete
+7. If the live session boots, install Ubuntu to a new partition. Do not delete
    Windows.
-7. After first boot into installed Ubuntu, mount the USB data partition and run:
+
+### 4. Install Ubuntu Carefully
+
+Proceed with installation only if Windows is backed up, BitLocker recovery
+information is saved, Secure Boot is disabled, and you have a recovery path
+through the live USB. Use manual partitioning or an installer option that keeps
+Windows intact.
+
+Because the live USB relies on explicit GRUB DTB injection, do not assume the
+installed system can boot without support setup. After the installer finishes,
+choose the option to continue testing instead of rebooting, keep the USB
+plugged in, and configure the installed target before the first USB-free boot.
+If the installer leaves the installed root mounted at `/target`, run:
 
 ```bash
-cd /media/$USER/SP11DATA/support
-sudo ./scripts/install-sp11-support.sh --installed-system
-sudo sp11-grab-fw --download
+SP11DATA="$(findmnt -rn -S LABEL=SP11DATA -o TARGET | head -n 1)"
+test -n "$SP11DATA" || { echo "Mount the SP11DATA USB partition first."; exit 1; }
+test -d /target/etc || { echo "Mount the installed Ubuntu root at /target first."; exit 1; }
+cd "$SP11DATA/support"
+sudo ./scripts/install-sp11-support.sh --installed-system --root /target
+sudo grep -q 'arm64.nopauth' /target/etc/default/grub.d/99-surface-pro-11.cfg || \
+  sudo sed -i 's/pd_ignore_unused /pd_ignore_unused arm64.nopauth /' /target/etc/default/grub.d/99-surface-pro-11.cfg
+sudo mkdir -p /target/dev /target/proc /target/sys /target/run
+for fs in dev proc sys run; do mountpoint -q /target/$fs || sudo mount --bind /$fs /target/$fs; done
+sudo chroot /target update-grub
+sudo chroot /target /usr/local/sbin/sp11-grub-inject-dtb
+sudo chroot /target update-initramfs -u -k all
+for fs in run sys proc dev; do sudo umount /target/$fs || true; done
 sudo reboot
 ```
+
+If `/target` is not mounted, mount the installed Ubuntu root partition there
+first. If the installed system fails to boot, boot the direct live USB again
+and use it as the recovery environment.
+
+After first successful boot into installed Ubuntu, mount the USB data partition
+and rerun the support helpers on the installed system:
+
+```bash
+SP11DATA="$(findmnt -rn -S LABEL=SP11DATA -o TARGET | head -n 1)"
+test -n "$SP11DATA" || { echo "Mount the SP11DATA USB partition first."; exit 1; }
+cd "$SP11DATA/support"
+sudo ./scripts/install-sp11-support.sh --installed-system
+sudo sp11-grab-fw --download
+sudo sp11-wifi-board-fixup || true
+sudo reboot
+```
+
+Firmware download requires temporary networking, such as USB-C Ethernet or USB
+phone tethering. Without networking, mount the Windows partition and use
+`sudo sp11-grab-fw --windows-root /path/to/windows` instead of
+`sudo sp11-grab-fw --download`.
 
 If you run firmware setup while booted from USB, the script leaves
 `adsp_dtb.mbn` disabled to avoid the known aDSP USB reset failure. Enable aDSP
 only after the root filesystem is on NVMe.
+
+## Test Notes
+
+- [2026-06-13 direct live USB test](docs/live-usb-test-20260613.md)
 
 ## Decision Records
 
@@ -161,6 +239,11 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR008: Ubuntu Denali DTB Variants](docs/adr/adr-0008-ubuntu-denali-dtb-variants.md)
 - [ADR009: Default Casper ISO Scan Boot](docs/adr/adr-0009-default-casper-iso-scan-boot.md)
 - [ADR010: Image Validation Workflow](docs/adr/adr-0010-image-validation-workflow.md)
+- [ADR011: GRUB EFI Console Input](docs/adr/adr-0011-grub-efi-console-input.md)
+- [ADR012: GRUB Module Tree](docs/adr/adr-0012-grub-module-tree.md)
+- [ADR013: Standalone GRUB External Keyboard Test](docs/adr/adr-0013-standalone-grub-external-keyboard-test.md)
+- [ADR014: Direct GRUB Autoboot Diagnostic](docs/adr/adr-0014-direct-grub-autoboot-diagnostic.md)
+- [ADR015: Direct Live Desktop and Install Gate](docs/adr/adr-0015-direct-live-desktop-and-install-gate.md)
 
 ## Windows Firmware
 

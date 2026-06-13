@@ -9,6 +9,7 @@ WORK_DIR="build/work"
 IMAGE_EXTRA_MB=1536
 VALIDATE="false"
 VALIDATE_IMAGE=""
+GRUB_MODE="menu"
 
 usage() {
   cat <<EOF
@@ -22,6 +23,7 @@ Options:
   --payload DIR          Optional payload directory, default payload.
   --work-dir DIR         Temporary build directory, default $WORK_DIR.
   --extra-mb MB          Free space on data partition, default $IMAGE_EXTRA_MB.
+  --grub-mode MODE       GRUB config mode: menu or direct, default $GRUB_MODE.
   --validate             Validate the finished image after building.
   --validate-image PATH  Validate an existing image and exit.
 
@@ -93,7 +95,7 @@ mdir -i "$image@@$((esp_start * 512))" ::/
 mdir -i "$image@@$((esp_start * 512))" ::/EFI/BOOT
 mcopy -i "$image@@$((esp_start * 512))" ::/EFI/BOOT/BOOTAA64.EFI "$boot_copy"
 strings "$boot_copy" |
-  grep -E "USB-safe|casper iso-scan|ISO-native|insmod fdt|sp11-denali" |
+  grep -E "sp11_grub_mode|USB-safe|casper iso-scan|ISO-native|insmod fdt|sp11-denali" |
   sed -n "1,120p"
 
 echo
@@ -151,6 +153,10 @@ while [ "$#" -gt 0 ]; do
       IMAGE_EXTRA_MB="$2"
       shift 2
       ;;
+    --grub-mode)
+      GRUB_MODE="$2"
+      shift 2
+      ;;
     --validate)
       VALIDATE="true"
       shift
@@ -186,6 +192,15 @@ if [ -z "$ISO" ]; then
   exit 2
 fi
 
+case "$GRUB_MODE" in
+  menu|direct)
+    ;;
+  *)
+    echo "Invalid --grub-mode: $GRUB_MODE (expected menu or direct)" >&2
+    exit 2
+    ;;
+esac
+
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$repo_dir/$WORK_DIR" "$(dirname "$repo_dir/$OUT")"
 work_abs="$(cd "$repo_dir/$WORK_DIR" && pwd)"
@@ -218,10 +233,8 @@ cp -R "$repo_dir/docs" "$work_abs/support/"
 cp -R "$repo_dir/scripts" "$work_abs/support/"
 cp -R "$repo_dir/tools" "$work_abs/support/"
 
-cat > "$work_abs/grub.cfg" <<'EOF'
-set timeout=10
-set default=0
-
+write_grub_common() {
+  cat <<'EOF'
 insmod part_gpt
 insmod fat
 insmod ext2
@@ -237,14 +250,46 @@ set iso_path=/iso/ubuntu-x1e.iso
 set dtb_path=/dtb/sp11-denali.dtb
 set sp11_args="clk_ignore_unused pd_ignore_unused arm64.nopauth systemd.tpm2_wait=0"
 set usb_safe_args="modprobe.blacklist=qcom_q6v5_pas"
+EOF
+}
+
+write_grub_usb_safe_casper_boot() {
+  cat <<'EOF'
+search --label SP11DATA --set=data
+set root=($data)
+loopback loop ${iso_path}
+linux (loop)/casper/vmlinuz boot=casper iso-scan/filename=${iso_path} ${sp11_args} ${usb_safe_args} --- quiet splash console=tty0
+devicetree ${dtb_path}
+initrd (loop)/casper/initrd
+EOF
+}
+
+if [ "$GRUB_MODE" = "direct" ]; then
+{
+  echo "# sp11_grub_mode=direct"
+  echo
+  write_grub_common
+  echo
+  echo 'echo "Surface Pro 11 direct boot: USB-safe casper iso-scan"'
+  echo 'echo "Searching for SP11DATA..."'
+  write_grub_usb_safe_casper_boot
+  echo "boot"
+} > "$work_abs/grub.cfg"
+else
+{
+cat <<'EOF'
+# sp11_grub_mode=menu
+set timeout=10
+set default=0
+
+EOF
+write_grub_common
+cat <<'EOF'
 
 menuentry "Ubuntu for Surface Pro 11 (USB-safe, casper iso-scan)" {
-    search --label SP11DATA --set=data
-    set root=($data)
-    loopback loop ${iso_path}
-    linux (loop)/casper/vmlinuz boot=casper iso-scan/filename=${iso_path} ${sp11_args} ${usb_safe_args} --- quiet splash console=tty0
-    devicetree ${dtb_path}
-    initrd (loop)/casper/initrd
+EOF
+write_grub_usb_safe_casper_boot
+cat <<'EOF'
 }
 
 menuentry "Ubuntu for Surface Pro 11 (USB-safe text/debug, casper iso-scan)" {
@@ -274,6 +319,8 @@ menuentry "Ubuntu for Surface Pro 11 (normal aDSP allowed, casper iso-scan)" {
     initrd (loop)/casper/initrd
 }
 EOF
+} > "$work_abs/grub.cfg"
+fi
 
 cat > "$work_abs/build-inside.sh" <<'EOF'
 #!/usr/bin/env bash

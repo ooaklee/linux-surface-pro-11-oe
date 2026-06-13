@@ -127,7 +127,7 @@ chmod 0755 "$(target /usr/local/sbin/sp11-grub-inject-dtb)"
 
 cat > "$(target /etc/default/grub.d/99-surface-pro-11.cfg)" <<EOF
 # Surface Pro 11 / Snapdragon X Elite bring-up arguments.
-GRUB_CMDLINE_LINUX_DEFAULT="\${GRUB_CMDLINE_LINUX_DEFAULT} clk_ignore_unused pd_ignore_unused systemd.tpm2_wait=0"
+GRUB_CMDLINE_LINUX_DEFAULT="\${GRUB_CMDLINE_LINUX_DEFAULT} clk_ignore_unused pd_ignore_unused arm64.nopauth systemd.tpm2_wait=0"
 EOF
 
 if [ "$USB_SAFE" = "true" ]; then
