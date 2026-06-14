@@ -74,12 +74,13 @@ reasons emerged from successive tests:
   the hci0 symlink once firmware download completes. A `[ -d ... ]` test is a
   non-blocking stat call — it never enters D-state.
 
-- after the directory appears, `--settle-seconds` (60 in the generated unit)
-  runs **while bluetoothd is still running**, giving it time to finish
-  controller initialization. Only then is `bluetooth.service` stopped and
-  `btmgmt public-addr` issued. Without this settle, stopping bluetoothd too
-  early leaves the controller in an uninitialized state where `btmgmt` enters
-  D-state (uninterruptible kernel sleep) and `timeout` cannot kill it.
+- after the directory appears, the script settles for `--settle-seconds` (60 in
+  the generated unit) while bluetoothd is still running, giving it time to
+  complete controller initialization. It then stops `bluetooth.service` and
+  issues `btmgmt public-addr`. If the command times out (btmgmt enters D-state),
+  bluetoothd is restarted and settle increases by 60s per retry (attempt 1:
+  60s, attempt 2: 120s, attempt 3: 180s). Each retry cycle gives bluetoothd
+  more runtime to finish initializing the controller before the next stop/apply.
 
 - generate the boot unit **without** `ExecStartPre` or `ExecStopPost`. The
   script itself stops `bluetooth.service` after the controller is confirmed
@@ -101,12 +102,16 @@ manual use but are no longer enabled by the generated service.
 
 The helper now uses the verified working indexed command on the first attempt,
 skips the no-op/hanging batch in systemd context. Readiness is determined by
-polling for the `/sys/class/bluetooth/hci0` directory entry — the wcn7850
-driver creates the hci0 symlink after firmware download. A `[ -d ... ]` test
-is a non-blocking stat call that cannot hang in D-state, unlike `btmgmt info`.
-Once the controller is enumerated, the script stops `bluetooth.service`, sets
-the address, and the unit's `ExecStartPost` restarts bluetoothd so BlueZ binds
-the corrected address.
+polling for the `/sys/class/bluetooth/hci0` directory entry — a non-blocking
+stat call that cannot hang in D-state.
+
+Once enumerated, the script settles while bluetoothd runs (60s initial,
++60s per retry), then stops `bluetooth.service` and applies the address.
+If `btmgmt` times out (enters D-state because the controller needs more
+init time), bluetoothd is restarted and retried with increasing settle —
+progressively giving the controller more runtime to finish initializing.
+`ExecStartPost` restarts bluetoothd on success; on failure, bluetoothd is
+restarted in-script so the controller is never left orphaned.
 
 `wait_for_hci_ready` returns non-zero on timeout so callers can distinguish the
 initialized / not-initialized case. The script aborts cleanly when the

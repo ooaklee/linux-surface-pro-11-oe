@@ -168,12 +168,14 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 TimeoutStartSec=30min
-# On cold boot, the hci0 sysfs directory appears early (~11s in dmesg) but
-# the mgmt socket needs bluetoothd to finish controller initialization before
-# btmgmt public-addr can succeed. The settle happens while bluetoothd is still
-# running — giving it time to complete HCI setup. Only then is bluetoothd
-# stopped and the address applied. Use --no-batch to skip the interactive
-# btmgmt fallback which hangs in systemd context.
+# On cold boot, btmgmt enters D-state (uninterruptible kernel sleep)
+# during firmware init; even after the sysfs directory appears,
+# the mgmt socket needs bluetoothd running to fully initialize the
+# controller. Adaptive backoff: initial --settle-seconds of runtime
+# while bluetoothd runs, then stop bluetoothd, apply the address.
+# On timeout, bluetoothd is restarted and settle increases by 60s
+# per retry (attempt 1: 60s, attempt 2: 120s, attempt 3: 180s).
+# ExecStartPost restarts bluetoothd on success.
 ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 60 --btmgmt-timeout 15
 ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
 EOF
@@ -397,7 +399,6 @@ wait_for_hci_ready() {
   for poll_attempt in $(seq 1 $max_polls); do
     if [ -d "/sys/class/bluetooth/${HCI}" ]; then
       echo "${HCI} enumerated at poll attempt ${poll_attempt}."
-      sleep 1
       return 0
     fi
     sleep 5
@@ -440,18 +441,55 @@ apply_mac() {
   fi
 
   if [ "$NO_BATCH" = "true" ] && [ "$HCI" = "hci0" ]; then
-    if wait_for_hci_ready; then
-      if [ "$SETTLE_SECONDS" -gt 0 ]; then
-        sleep "$SETTLE_SECONDS"
+    if ! wait_for_hci_ready; then
+      echo "Controller did not enumerate in the readiness window. Aborting." >&2
+      exit 1
+    fi
+
+    local total_attempts="$ATTEMPTS"
+    for attempt in $(seq 1 "$total_attempts"); do
+      if [ "$attempt" -gt 1 ]; then
+        if [ "$stopped_bluetoothd" = "true" ] && command -v systemctl >/dev/null 2>&1; then
+          systemctl restart bluetooth.service || true
+          stopped_bluetoothd=false
+        fi
       fi
+
+      local backoff_seconds=0
+      if [ "$attempt" -eq 1 ]; then
+        backoff_seconds="$SETTLE_SECONDS"
+      else
+        backoff_seconds=$(( SETTLE_SECONDS + (attempt - 1) * 60 ))
+      fi
+      if [ "$backoff_seconds" -gt 0 ]; then
+        echo "Settling ${backoff_seconds}s while bluetoothd initializes (attempt ${attempt}/${total_attempts})."
+        sleep "$backoff_seconds"
+      fi
+
       if command -v systemctl >/dev/null 2>&1; then
         systemctl stop bluetooth.service || true
         stopped_bluetoothd=true
       fi
-    else
-      echo "Controller did not initialize in the readiness window. Aborting." >&2
-      exit 1
+
+      if set_public_address "$value"; then
+        if [ "$(current_hci_address)" = "$value" ]; then
+          echo "Configured Bluetooth public address for $HCI."
+        else
+          echo "Bluetooth public address was accepted for $HCI."
+          echo "Restart bluetooth.service, then validate with bluetoothctl show."
+        fi
+        return 0
+      fi
+
+      echo "Attempt ${attempt}/${total_attempts} failed to set the Bluetooth public address." >&2
+    done
+
+    echo "Failed to configure Bluetooth public address for $HCI after ${total_attempts} attempts." >&2
+    echo "Current $HCI address: $(format_mac_for_output "$(current_hci_address || true)")" >&2
+    if [ "$stopped_bluetoothd" = "true" ] && command -v systemctl >/dev/null 2>&1; then
+      systemctl restart bluetooth.service || true
     fi
+    exit 1
   else
     restart_bluetooth_before_apply
     if [ "$SETTLE_SECONDS" -gt 0 ]; then
