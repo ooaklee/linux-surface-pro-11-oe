@@ -74,13 +74,14 @@ reasons emerged from successive tests:
   the hci0 symlink once firmware download completes. A `[ -d ... ]` test is a
   non-blocking stat call — it never enters D-state.
 
-- after the directory appears, the script settles for `--settle-seconds` (60 in
-  the generated unit) while bluetoothd is still running, giving it time to
-  complete controller initialization. It then stops `bluetooth.service` and
-  issues `btmgmt public-addr`. If the command times out (btmgmt enters D-state),
-  bluetoothd is restarted and settle increases by 60s per retry (attempt 1:
-  60s, attempt 2: 120s, attempt 3: 180s). Each retry cycle gives bluetoothd
-  more runtime to finish initializing the controller before the next stop/apply.
+- after the directory appears, the script settles for `--settle-seconds` (300 in
+  the generated unit, i.e. 5 minutes) while bluetoothd is running. This gives
+  the wcn7850 controller uninterrupted init time via bluetoothd's HCI
+  management channel. Restarting bluetoothd between retries proved
+  counterproductive — it resets init progress without improving mgmt socket
+  responsiveness. The settle happens once, then bluetoothd is stopped and
+  `btmgmt public-addr` is attempted with `--btmgmt-timeout` (120s in the unit)
+  to give the mgmt command room to complete during early kernel init.
 
 - generate the boot unit **without** `ExecStartPre` or `ExecStopPost`. The
   script itself stops `bluetooth.service` after the controller is confirmed
@@ -105,11 +106,10 @@ skips the no-op/hanging batch in systemd context. Readiness is determined by
 polling for the `/sys/class/bluetooth/hci0` directory entry — a non-blocking
 stat call that cannot hang in D-state.
 
-Once enumerated, the script settles while bluetoothd runs (60s initial,
-+60s per retry), then stops `bluetooth.service` and applies the address.
-If `btmgmt` times out (enters D-state because the controller needs more
-init time), bluetoothd is restarted and retried with increasing settle —
-progressively giving the controller more runtime to finish initializing.
+Once enumerated, the script settles for 5 minutes while bluetoothd runs
+(honoring cold-boot timing), then stops `bluetooth.service` and applies the
+address with a 120s `btmgmt` timeout. Retries do not restart bluetoothd
+(restarting proved counterproductive — it resets init progress).
 `ExecStartPost` restarts bluetoothd on success; on failure, bluetoothd is
 restarted in-script so the controller is never left orphaned.
 
