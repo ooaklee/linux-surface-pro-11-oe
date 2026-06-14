@@ -71,10 +71,15 @@ reasons emerged from successive tests:
 - add a `wait_for_hci_ready()` poll that checks for the existence of the
   `/sys/class/bluetooth/hci0` directory (not the `address` pseudo-file, which
   the wcn7850 driver does not expose as a sysfs attribute). The kernel creates
-  the hci0 symlink once the controller is enumerated after firmware download.
-  A `[ -d ... ]` test is a non-blocking stat call — it never enters D-state.
-  This runs **while bluetoothd is running** so the controller gets fully
-  initialized first.
+  the hci0 symlink once firmware download completes. A `[ -d ... ]` test is a
+  non-blocking stat call — it never enters D-state.
+
+- after the directory appears, `--settle-seconds` (60 in the generated unit)
+  runs **while bluetoothd is still running**, giving it time to finish
+  controller initialization. Only then is `bluetooth.service` stopped and
+  `btmgmt public-addr` issued. Without this settle, stopping bluetoothd too
+  early leaves the controller in an uninitialized state where `btmgmt` enters
+  D-state (uninterruptible kernel sleep) and `timeout` cannot kill it.
 
 - generate the boot unit **without** `ExecStartPre` or `ExecStopPost`. The
   script itself stops `bluetooth.service` after the controller is confirmed

@@ -168,14 +168,13 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 TimeoutStartSec=30min
-# On cold boot, btmgmt blocks in D-state during firmware download
-# (timeout cannot kill D-state processes). Instead, poll the sysfs
-# address file (non-blocking read); once the kernel enumerates hci0,
-# stop bluetoothd, apply the address, and ExecStartPost restarts
-# bluetoothd. Use --settle-seconds 1 to give the controller a
-# heartbeat after enumeration. Use --no-batch to skip the interactive
-# btmgmt fallback (which would also hang in D-state during boot).
-ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 1 --btmgmt-timeout 15
+# On cold boot, the hci0 sysfs directory appears early (~11s in dmesg) but
+# the mgmt socket needs bluetoothd to finish controller initialization before
+# btmgmt public-addr can succeed. The settle happens while bluetoothd is still
+# running — giving it time to complete HCI setup. Only then is bluetoothd
+# stopped and the address applied. Use --no-batch to skip the interactive
+# btmgmt fallback which hangs in systemd context.
+ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 60 --btmgmt-timeout 15
 ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
 EOF
 
@@ -442,6 +441,9 @@ apply_mac() {
 
   if [ "$NO_BATCH" = "true" ] && [ "$HCI" = "hci0" ]; then
     if wait_for_hci_ready; then
+      if [ "$SETTLE_SECONDS" -gt 0 ]; then
+        sleep "$SETTLE_SECONDS"
+      fi
       if command -v systemctl >/dev/null 2>&1; then
         systemctl stop bluetooth.service || true
         stopped_bluetoothd=true
@@ -452,10 +454,9 @@ apply_mac() {
     fi
   else
     restart_bluetooth_before_apply
-  fi
-
-  if [ "$SETTLE_SECONDS" -gt 0 ]; then
-    sleep "$SETTLE_SECONDS"
+    if [ "$SETTLE_SECONDS" -gt 0 ]; then
+      sleep "$SETTLE_SECONDS"
+    fi
   fi
 
   for attempt in $(seq 1 "$ATTEMPTS"); do
