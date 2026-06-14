@@ -168,13 +168,12 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 TimeoutStartSec=30min
-# The wcn7850 controller needs several minutes of bluetoothd runtime
-# after cold boot before the mgmt socket becomes responsive. A single
-# long --settle-seconds while bluetoothd runs, followed by stop and apply.
-# Do not restart bluetoothd between retries — it resets init progress.
-# Longer --btmgmt-timeout gives the mgmt call room to complete during
-# early init when the kernel is still setting up the HCI channel.
-ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 300 --btmgmt-timeout 120
+# The wcn7850 controller needs bluetoothd runtime after cold boot
+# before the mgmt socket becomes responsive. Field testing shows
+# it works after ~3.5 min of bluetoothd uptime. Single 120s settle
+# while bluetoothd runs, then stop and apply with a generous udn
+# timeout (120s) for the early-init HCI channel.
+ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 120 --btmgmt-timeout 120
 ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
 EOF
 
