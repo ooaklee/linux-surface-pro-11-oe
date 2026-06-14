@@ -1,0 +1,33 @@
+From 906865c001c9a01d1e2271da4db926d519a95cd8 Mon Sep 17 00:00:00 2001
+From: Dale Whinham <daleyo@gmail.com>
+Date: Mon, 12 May 2025 18:39:55 +0000
+Subject: [PATCH 2/2] arm64: dts: qcom: x1-denali: disable rfkill for wifi
+
+Surface Pro 11 exposes WCN7850 Wi-Fi through the Denali devicetree. The
+platform reports the radio as hardware-blocked unless ath12k skips rfkill
+configuration for this node.
+
+Set the disable-rfkill boolean on the Denali WCN7850 PCIe node. This patch is
+paired with the ath12k devicetree-property support patch.
+
+Based on dwhinham/kernel-surface-pro-11 commit 906865c001.
+---
+ arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+index 2206eca8f0..9c1c2b15ac 100644
+--- a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
++++ b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+@@ -960,6 +960,8 @@ wifi@0 {
+ 		vddrfa1p8-supply = <&vreg_pmu_rfa_1p8>;
+ 		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
+ 		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
++
++		disable-rfkill;
+ 	};
+ };
+ 
+-- 
+2.50.0
+

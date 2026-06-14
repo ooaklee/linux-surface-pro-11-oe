@@ -45,6 +45,10 @@ module contents or the kernel source/patch set rather than relying on `modinfo`:
 
 Firmware and board-file helpers should not be rerun as the primary response to
 `Hard blocked: yes`, because they do not control the platform rfkill state.
+Do not replace the installed `board-2.bin` as a response to this state; keep
+the narrow `board.bin` fallback from [ADR005](adr-0005-wifi-board-fixup.md) and
+follow [ADR024](adr-0024-bluetooth-audio-and-board-data-gates.md) for adjacent
+Bluetooth and audio bring-up gates.
 
 The project will ship `scripts/troubleshoot-sp11-wifi-rfkill.sh` to collect the
 rfkill state, WCN7850 PCI probe, device-tree property state, installed ath12k

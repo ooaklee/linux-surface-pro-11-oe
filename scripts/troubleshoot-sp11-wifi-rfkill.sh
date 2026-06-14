@@ -130,7 +130,7 @@ if [ -n "$wifi_node" ]; then
   find "$wifi_node" -maxdepth 1 -type f -printf '  %f\n' 2>/dev/null | sort || true
 fi
 
-section "ath12k Module disable-rfkill Support"
+section "ath12k Module disable-rfkill String Scan"
 found=0
 if ! have strings; then
   echo "Missing tool: strings; cannot scan ath12k modules for disable-rfkill support"
@@ -148,7 +148,8 @@ else
   done < <(find "/lib/modules/$(uname -r)" -type f -path '*ath12k*' 2>/dev/null | sort)
 fi
 if [ "$found" != "1" ] && have strings; then
-  echo "disable-rfkill support not found in installed ath12k modules"
+  echo "disable-rfkill string not found in installed ath12k modules"
+  echo "Note: this string scan is best-effort; rfkill hard=0 with DT disable-rfkill is the runtime validation."
 fi
 
 section "Firmware Directory"

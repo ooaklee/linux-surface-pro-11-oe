@@ -52,9 +52,12 @@ Latest live-USB result, 2026-06-13: the `--grub-mode direct` image boots to the
 Ubuntu desktop. The interactive GRUB menu still does not accept input or
 auto-boot reliably, so direct mode is the verified live-USB path for now.
 
-Latest installed-system result, 2026-06-13: after running the pre-reboot
-installed-system prepare helper from the live USB, Ubuntu booted successfully
-from the internal NVMe install without the USB root filesystem.
+Latest installed-system result, 2026-06-14: a rebuilt direct USB image carrying
+the patched `7.0.0-22-qcom-x1e` kernel packages and current support scripts
+completed the clean installed-system flow. The support helper selected the
+rfkill-capable Denali OLED DTB, `/boot/sp11-denali.dtb` contained
+`disable-rfkill`, the system booted the patched kernel, and NetworkManager
+automatically reconnected to the previously saved Wi-Fi network after reboot.
 
 | Feature | Expected status | Notes |
 | --- | --- | --- |
@@ -63,11 +66,11 @@ from the internal NVMe install without the USB root filesystem.
 | USB-C boot | Working with direct mode | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified path. |
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
-| Wi-Fi | Probes but hard-blocked after installed boot | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, and creates an interface, but `rfkill` reports `Hard blocked: yes`. This likely needs the SP11 `disable-rfkill` DTB/kernel handling from the Arch bring-up. |
-| Bluetooth | Not working in live USB | Firmware is present in Windows; Linux may still need firmware and MAC-address handling. |
+| Wi-Fi | Working on patched kernel | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Continue validating normal reboots, suspend/resume, and package upgrades. |
+| Bluetooth | Needs MAC-address validation | Bluetooth rfkill is not hard-blocked in the installed cold-boot test, but BlueZ may need a valid public address set with `btmgmt`. Use the diagnostic and config-driven helper before enabling the systemd hook. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
-| Audio | Not working in live USB | GNOME reports `Dummy Output` when volume keys are pressed. Upstream speaker-audio work is still risky; keep volume low during future tests. |
+| Audio | Missing topology/UCM work | GNOME reports `Dummy Output`, and installed dmesg shows missing `qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`. Start with diagnostics; upstream speaker-audio work is still risky. |
 | Suspend | Partial/risky | Prefer testing boot/install first. |
 
 ## Recommended Path
@@ -253,10 +256,18 @@ phone tethering. Without networking, mount the Windows partition and use
 `--windows-root` instead of `--download`:
 
 ```bash
+# The WINROOT will differ
+WINROOT="/run/media/$USER/Local Disk"
+test -d "$WINROOT/Windows" || { echo "Set WINROOT to the mounted Windows NTFS partition."; exit 1; }
+
 sudo ./scripts/finish-sp11-installed-system.sh \
-  --windows-root /path/to/windows \
+  --windows-root "$WINROOT" \
   --reboot
 ```
+
+Quote the Windows root path if it contains spaces. This must be the Windows
+NTFS partition containing `Windows/`, not the Linux `/boot/efi` mount or a path
+inside the EFI system partition.
 
 If you run firmware setup while booted from USB, the script leaves
 `adsp_dtb.mbn` disabled to avoid the known aDSP USB reset failure. Enable aDSP
@@ -275,11 +286,137 @@ The current verified installed-system failure is `phy0` hard-blocked by
 points to missing ath12k `disable-rfkill` kernel/DTB handling rather than a
 missing board file.
 
+If the diagnostic helper reports both `DT is missing disable-rfkill` and
+`disable-rfkill support not found in installed ath12k modules`, build the
+patched qcom-x1e kernel described in
+[How To: Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md).
+The preferred path is to collect source metadata on the Surface, build the
+packages in a Docker ARM64 container on a stronger machine, rebuild the USB
+image with the generated packages in `payload/kernel-debs/`, then install those
+packages back on the Surface.
+
+On the Surface:
+
+```bash
+cd "$SP11DATA/support"
+./scripts/collect-sp11-kernel-source-metadata.sh \
+  --out "$SP11DATA/sp11-kernel-source.env"
+```
+
+The contents of your `sp11-kernel-source.env` will look something like this.
+
+```sh
+# Surface Pro 11 qcom-x1e kernel source metadata.
+# Generated on 2026-06-13T12:23:02Z.
+SP11_KERNEL_RELEASE='7.0.0-32-qcom-x1e'
+SP11_SOURCE_PACKAGE='linux-qcom-x1e'
+SP11_SOURCE_VERSION='7.0.0-32.32'
+SP11_BUILD_TARGET='binary-qcom-x1e'
+```
+
+On the Docker build host, from this repository root:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --metadata /path/to/sp11-kernel-source.env \
+  --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --copy-to-payload
+```
+
+The host `--work-dir` stores Docker control files and copied artifacts. The
+actual kernel source and build tree live in the Docker Linux volume
+`sp11-qcom-x1e-kernel-build` at `/linux-work` so macOS case-insensitive
+filesystems do not collapse Linux kernel files whose names differ only by
+case. Successful builds copy generated packages back under
+`build/docker-sp11-qcom-x1e-kernel/artifacts/` and, when `--copy-to-payload`
+is set, into `payload/kernel-debs/`.
+
+After rebuilding and writing the USB image, install the payload packages on the
+Surface:
+
+```bash
+cd "$SP11DATA/support"
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --work-dir "$SP11DATA/payload/kernel-debs" \
+  --install-only
+sudo reboot
+```
+
+If Docker is not available, the same how-to includes an on-device build path.
+Keep the previous qcom-x1e kernel installed as a GRUB fallback until the
+patched kernel has booted and Wi-Fi rfkill state has been validated. The helper
+refuses to install over the generated qcom-x1e ABI unless another installed
+qcom-x1e ABI is available as a fallback, unless explicitly overridden with
+`--allow-no-fallback`. In the first verified Docker git-fallback build, the
+Surface was already running unpatched `7.0.0-32-qcom-x1e`, but the git branch
+produced patched `7.0.0-22-qcom-x1e` packages. In that case, boot
+`7.0.0-22-qcom-x1e` for the Wi-Fi rfkill test and keep `7.0.0-32-qcom-x1e` as
+the fallback.
+
+After reboot, rerun the Wi-Fi rfkill diagnostic from the
+[patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+before treating the patched kernel as successful.
+
+Do not replace the installed `board-2.bin` as the next response to the verified
+`phy0 Hard blocked: yes` state. The current `board.bin` fallback is enough for
+the WCN7850 to probe and create `wlP4p1s0`; the remaining Wi-Fi blocker is the
+rfkill kernel/DTB path.
+
+For Bluetooth diagnostics:
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/troubleshoot-sp11-bluetooth.sh
+```
+
+If Windows or the service report gives you the Bluetooth MAC address, configure
+it explicitly and install the udev-triggered service:
+
+```bash
+BT_MAC="<your-bluetooth-mac>"
+sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
+sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
+sudo ./scripts/sp11-bluetooth-mac.sh --apply
+```
+
+Use the real Bluetooth MAC address for your device. The helper accepts Windows
+style `AA-BB-CC-DD-EE-FF` input and stores it as `AA:BB:CC:DD:EE:FF`. Do not
+share diagnostic output publicly until you have redacted MAC addresses, UUIDs,
+serials, and local network details.
+
+For audio diagnostics:
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/troubleshoot-sp11-audio.sh
+```
+
+Do not enable experimental speaker topology or UCM snippets until the topology
+file and routing are confirmed for Surface Pro 11.
+
 ## Test Notes
 
 - [2026-06-13 direct live USB test](docs/live-usb-test-20260613.md)
 - [2026-06-13 installed NVMe boot test](docs/installed-nvme-boot-test-20260613.md)
 - [2026-06-13 installed Wi-Fi rfkill test](docs/installed-wifi-rfkill-test-20260613.md)
+- [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
+- [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
+- [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
+- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-flow-test-20260614.md)
+
+### Visual Evidence
+
+Redacted visual evidence for the first successful Wi-Fi scan, connection, and
+throughput test is stored under `assets/wifi/`:
+
+- [Wi-Fi networks visible in GNOME](assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
+- [Browser speed test after Wi-Fi connection](assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
+
+## How-To Guides
+
+- [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+- [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
+- [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 
 ## Decision Records
 
@@ -303,6 +440,14 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR016: USB Data Mount and Installed-System Helpers](docs/adr/adr-0016-usb-data-mount-and-installed-system-helpers.md)
 - [ADR017: GRUB DTB Path for Separate Boot](docs/adr/adr-0017-grub-dtb-path-for-separate-boot.md)
 - [ADR018: Wi-Fi rfkill Bring-Up Gate](docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md)
+- [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](docs/adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
+- [ADR020: Dockerized ARM64 Kernel Build](docs/adr/adr-0020-dockerized-arm64-kernel-build.md)
+- [ADR021: Git Fallback Kernel Build Toolchain](docs/adr/adr-0021-git-fallback-kernel-build-toolchain.md)
+- [ADR022: Docker Kernel Build Without fakeroot](docs/adr/adr-0022-docker-kernel-build-without-fakeroot.md)
+- [ADR023: Docker Kernel Build Case-Sensitive Work Volume](docs/adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
+- [ADR024: Bluetooth, Audio, and Board-Data Bring-Up Gates](docs/adr/adr-0024-bluetooth-audio-and-board-data-gates.md)
+- [ADR025: rfkill-Capable DTB Selection](docs/adr/adr-0025-rfkill-capable-dtb-selection.md)
+- [ADR026: Prebuilt Kernel Release Artifacts](docs/adr/adr-0026-prebuilt-kernel-release-artifacts.md)
 
 ## Windows Firmware
 
@@ -339,9 +484,32 @@ The collector writes:
 
 ## Sources
 
-- Surface Laptop 7 Ubuntu notes: <https://github.com/bryce-hoehn/linux-surface-laptop-7>
-- Surface Pro 11 Arch notes: <https://github.com/dwhinham/linux-surface-pro-11>
-- linux-surface: <https://github.com/linux-surface/linux-surface>
-- Ubuntu Snapdragon X concept images: <https://people.canonical.com/~platform/images/ubuntu-concept/>
+This project is a synthesis of community bring-up work. The links below are
+kept as source credit and as an audit trail for future decisions.
+
+Base projects and install flow:
+
+- Surface Laptop 7 Ubuntu notes by Bryce Hoehn: <https://github.com/bryce-hoehn/linux-surface-laptop-7>
+- Surface Pro 11 Arch notes by Dan Whinham: <https://github.com/dwhinham/linux-surface-pro-11>
+- linux-surface project and Surface Pro 11 support discussion: <https://github.com/linux-surface/linux-surface> and <https://github.com/linux-surface/linux-surface/issues/1962>
+- Ubuntu Snapdragon X concept images and discussion: <https://people.canonical.com/~platform/images/ubuntu-concept/> and <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800>
 - Fedora Snapdragon WoA install notes: <https://fedoraproject.org/wiki/Snapdragon_WoA_Laptop_Install>
-- Surface Pro 11 support discussion: <https://github.com/linux-surface/linux-surface/issues/1962>
+- Debian ThinkPad X13s installation notes, useful for WoA boot and firmware patterns: <https://wiki.debian.org/InstallingDebianOn/Thinkpad/X13s>
+- WOA-Project Qualcomm reference drivers: <https://github.com/WOA-Project/Qualcomm-Reference-Drivers>
+
+Surface Pro 11 kernel and Wi-Fi rfkill:
+
+- Surface Pro 11 kernel patches by Dan Whinham: [ath12k `disable-rfkill` support](https://github.com/dwhinham/kernel-surface-pro-11/commit/e0c52309e8380b33239b16a85fbedb5da7d12675) and [Denali DTB `disable-rfkill`](https://github.com/dwhinham/kernel-surface-pro-11/commit/906865c001c9a01d1e2271da4db926d519a95cd8)
+- Ubuntu Discourse notes by `hot21shot` confirming Surface Pro 11 Bluetooth, Wi-Fi, and graphics progress: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1728>
+- Ubuntu Discourse Wi-Fi rfkill and Bluetooth MAC notes by `hot21shot`: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1731>
+- Ubuntu Discourse Wi-Fi hard-block report by `haider5c`: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1754>
+- Surface Pro 11/12 Hamoa and Purwa discussion by Joerg Glathe and contributors: <https://github.com/jglathe/linux_ms_dev_kit/discussions/57>
+
+Firmware, Bluetooth, and audio follow-up:
+
+- Ubuntu Discourse firmware, board-data, and audio direction by `tobhe`: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1689>
+- Zenbook A14 Snapdragon X1 board-data repacking notes by Alex Vinarskis: <https://github.com/alexVinarskis/linux-x1e80100-zenbook-a14#repack-board-2bin>
+- Qualcomm board-data encoder reference from QCA Swiss Army Knife: <https://github.com/qca/qca-swiss-army-knife/blob/master/tools/scripts/ath11k/ath11k-bdencoder>
+- Linux MSM AudioReach topology project: <https://github.com/linux-msm/audioreach-topology>
+- ALSA UCM x1e80100 example for TUXEDO Elite 14: <https://github.com/alsa-project/alsa-ucm-conf/commit/154c602e89fb0da142eac57142569766be606148>
+- BlueZ invalid Bluetooth address workaround discussion: <https://github.com/bluez/bluez/issues/107>

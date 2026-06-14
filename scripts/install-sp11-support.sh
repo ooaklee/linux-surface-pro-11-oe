@@ -60,6 +60,10 @@ install -d "$(target /usr/local/sbin)" "$(target /etc/default/grub.d)" \
 
 install -m 0755 "$repo_dir/scripts/sp11-grab-fw.sh" "$(target /usr/local/sbin/sp11-grab-fw)"
 install -m 0755 "$repo_dir/scripts/sp11-wifi-board-fixup.sh" "$(target /usr/local/sbin/sp11-wifi-board-fixup)"
+install -m 0755 "$repo_dir/scripts/sp11-bluetooth-mac.sh" "$(target /usr/local/sbin/sp11-bluetooth-mac)"
+install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-audio.sh" "$(target /usr/local/sbin/troubleshoot-sp11-audio)"
+install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-bluetooth.sh" "$(target /usr/local/sbin/troubleshoot-sp11-bluetooth)"
+install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-wifi-rfkill.sh" "$(target /usr/local/sbin/troubleshoot-sp11-wifi-rfkill)"
 
 cat > "$(target /usr/local/sbin/sp11-grub-inject-dtb)" <<'EOF'
 #!/usr/bin/env bash
@@ -76,8 +80,9 @@ DTB_NAMES=(
 )
 
 find_dtb() {
-  local name pattern path
+  local name pattern path candidates rfkill_candidates
   for name in "${DTB_NAMES[@]}"; do
+    candidates=()
     for pattern in \
       "/usr/lib/firmware/*/device-tree/qcom/$name" \
       "/usr/lib/linux-image-*/qcom/$name" \
@@ -85,9 +90,23 @@ find_dtb() {
       "/boot/dtbs/*/$name" \
       "/boot/$name"; do
       for path in $pattern; do
-        [ -f "$path" ] && printf '%s\n' "$path" && return 0
+        [ -f "$path" ] && candidates+=("$path")
       done
     done
+    if [ "${#candidates[@]}" -gt 0 ]; then
+      rfkill_candidates=()
+      for path in "${candidates[@]}"; do
+        if grep -a -q 'disable-rfkill' "$path" 2>/dev/null; then
+          rfkill_candidates+=("$path")
+        fi
+      done
+      if [ "${#rfkill_candidates[@]}" -gt 0 ]; then
+        printf '%s\n' "${rfkill_candidates[@]}" | sort -V | tail -n 1
+      else
+        printf '%s\n' "${candidates[@]}" | sort -V | tail -n 1
+      fi
+      return 0
+    fi
   done
   return 1
 }
@@ -99,6 +118,7 @@ if [ -z "$dtb" ]; then
 fi
 
 install -m 0644 "$dtb" "$BOOT_DTB"
+echo "Using Surface Pro 11 DTB: $dtb"
 
 if [ ! -f "$GRUB_CFG" ]; then
   echo "Warning: $GRUB_CFG not found; run update-grub first." >&2
