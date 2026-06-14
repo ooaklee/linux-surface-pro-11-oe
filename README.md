@@ -412,6 +412,12 @@ throughput test is stored under `assets/wifi/`:
 - [Wi-Fi networks visible in GNOME](assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
 - [Browser speed test after Wi-Fi connection](assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
 
+## How-To Guides
+
+- [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+- [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
+- [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
+
 ## Decision Records
 
 The major bring-up decisions are recorded in `docs/adr/`:
