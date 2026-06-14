@@ -15,6 +15,7 @@ BTMGMT_TIMEOUT_SET="false"
 RESTART_BLUETOOTH_BEFORE="${SP11_BLUETOOTH_RESTART_BLUETOOTH_BEFORE:-false}"
 RESTART_BLUETOOTH_BEFORE_SET="false"
 SHOW_ADDRESSES="false"
+NO_BATCH="${SP11_BLUETOOTH_NO_BATCH:-false}"
 
 usage() {
   cat <<EOF
@@ -41,6 +42,9 @@ Options:
   --restart-bluetooth-before
                       Restart bluetooth.service before applying the address.
                       Used by the cold-boot systemd unit.
+  --no-batch           Skip the interactive btmgmt batch fallback. Only issue
+                      the indexed btmgmt -i public-addr command. Used by the
+                      cold-boot systemd unit to avoid stdin hang.
   --write-config MAC  Write /etc/default/sp11-bluetooth-mac.
   --install-systemd   Install the udev-triggered systemd service.
   --uninstall-systemd Remove the systemd service and udev trigger.
@@ -99,6 +103,7 @@ SP11_BLUETOOTH_ATTEMPTS="$ATTEMPTS"
 SP11_BLUETOOTH_SETTLE_SECONDS="$SETTLE_SECONDS"
 SP11_BLUETOOTH_BTMGMT_TIMEOUT="$BTMGMT_TIMEOUT"
 SP11_BLUETOOTH_RESTART_BLUETOOTH_BEFORE="$RESTART_BLUETOOTH_BEFORE"
+SP11_BLUETOOTH_NO_BATCH="$NO_BATCH"
 EOF
   chmod 0600 "$CONFIG"
   echo "Wrote $CONFIG"
@@ -163,8 +168,16 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 TimeoutStartSec=30min
-ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --restart-bluetooth-before --attempts 12 --settle-seconds 20 --btmgmt-timeout 12
-ExecStartPost=-/usr/bin/systemctl try-restart bluetooth.service
+# Stop bluetooth.service so bluetoothd releases the controller. btmgmt
+# public-addr works against the stopped unconfigured controller; restarting
+# bluetooth.service causes bluetoothd to claim the controller and btmgmt gets
+# Permission Denied (0x14). Use --no-batch to skip the interactive btmgmt
+# fallback, which hangs in systemd because it opens a [mgmt]> prompt waiting
+# for stdin. The wait_for_hci_ready poll inside apply_mac waits up to 120s
+# for the controller to become reachable.
+ExecStartPre=-/usr/bin/systemctl stop bluetooth.service
+ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 1 --btmgmt-timeout 15
+ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
 EOF
 
   cat > /etc/udev/rules.d/99-surface-pro-11-bluetooth-mac.rules <<'EOF'
@@ -211,6 +224,9 @@ load_config() {
     fi
     if [ "$RESTART_BLUETOOTH_BEFORE_SET" != "true" ]; then
       RESTART_BLUETOOTH_BEFORE="${SP11_BLUETOOTH_RESTART_BLUETOOTH_BEFORE:-$RESTART_BLUETOOTH_BEFORE}"
+    fi
+    if [ "$NO_BATCH" != "true" ]; then
+      NO_BATCH="${SP11_BLUETOOTH_NO_BATCH:-false}"
     fi
   fi
 }
@@ -289,6 +305,28 @@ run_btmgmt_batch() {
 set_public_address() {
   local value="$1" first_sequence second_sequence
 
+  # The indexed single command is the path that actually configures the
+  # unconfigured wcn7850 controller on the Surface Pro 11's BlueZ 5.85:
+  #   btmgmt -i hci0 public-addr <mac>  ->  "Set Public Address complete"
+  # and after a bluetooth.service restart the controller comes up UP RUNNING.
+  # Piping a command script into interactive btmgmt is a silent no-op on this
+  # BlueZ build (it reads nothing and exits 0), so try the indexed call first
+  # and keep the community batch sequence only as a fallback for other BlueZ
+  # versions where interactive scripting executes.
+  #
+  # When --no-batch is set (cold-boot systemd unit), skip the interactive batch
+  # fallback entirely: piping commands into btmgmt without -i hangs in systemd
+  # because it opens an interactive [mgmt]> prompt waiting for stdin.
+  if run_btmgmt true public-addr "$value"; then
+    printf '%s\n' "$BTMGMT_OUTPUT" | grep -qi 'Set Public Address complete' && return 0
+  elif printf '%s\n' "$BTMGMT_OUTPUT" | grep -qi 'Set Public Address complete'; then
+    return 0
+  fi
+
+  if [ "$NO_BATCH" = "true" ]; then
+    return 1
+  fi
+
   # validate_mac restricts value to uppercase hex pairs and colons before this
   # function is called, so it is safe to place directly in btmgmt command input.
   first_sequence="$(cat <<EOF
@@ -315,10 +353,6 @@ EOF
     printf '%s\n' "$BTMGMT_OUTPUT" | grep -qi 'Set Public Address complete' && return 0
   elif printf '%s\n' "$BTMGMT_OUTPUT" | grep -qi 'Set Public Address complete'; then
     return 0
-  fi
-
-  if run_btmgmt true public-addr "$value"; then
-    printf '%s\n' "$BTMGMT_OUTPUT" | grep -qi 'Set Public Address complete' && return 0
   fi
 
   printf '%s\n' "$BTMGMT_OUTPUT" | grep -qi 'Set Public Address complete'
@@ -359,6 +393,24 @@ current_hci_address() {
   fi
 }
 
+wait_for_hci_ready() {
+  local poll_attempt max_polls btmgmt_timeout_saved
+  max_polls=24
+  btmgmt_timeout_saved="$BTMGMT_TIMEOUT"
+  BTMGMT_TIMEOUT=5
+  for poll_attempt in $(seq 1 $max_polls); do
+    if run_btmgmt false info 2>/dev/null && printf '%s\n' "$BTMGMT_OUTPUT" | grep -q '^hci0:.*Primary'; then
+      echo "hci0 ready at poll attempt $poll_attempt."
+      BTMGMT_TIMEOUT="$btmgmt_timeout_saved"
+      return 0
+    fi
+    sleep 5
+  done
+  BTMGMT_TIMEOUT="$btmgmt_timeout_saved"
+  echo "hci0 did not report ready after ${max_polls} polls (${max_polls}x5s), proceeding anyway." >&2
+  return 0
+}
+
 restart_bluetooth_before_apply() {
   if [ "$RESTART_BLUETOOTH_BEFORE" != "true" ]; then
     return 0
@@ -392,6 +444,10 @@ apply_mac() {
   fi
 
   restart_bluetooth_before_apply
+
+  if [ "$NO_BATCH" = "true" ] && [ "$HCI" = "hci0" ]; then
+    wait_for_hci_ready
+  fi
 
   if [ "$SETTLE_SECONDS" -gt 0 ]; then
     sleep "$SETTLE_SECONDS"
@@ -499,6 +555,10 @@ while [ "$#" -gt 0 ]; do
     --restart-bluetooth-before)
       RESTART_BLUETOOTH_BEFORE="true"
       RESTART_BLUETOOTH_BEFORE_SET="true"
+      shift
+      ;;
+    --no-batch)
+      NO_BATCH="true"
       shift
       ;;
     --write-config)

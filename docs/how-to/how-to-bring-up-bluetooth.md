@@ -121,27 +121,37 @@ sudo /usr/local/sbin/sp11-bluetooth-mac --install-systemd
 sudo udevadm trigger --subsystem-match=bluetooth
 ```
 
-The install step installs a udev trigger for `hci*` add events. When the
-controller appears, the generated service pulls in `bluetooth.service`, waits
-until it has started, restarts Bluetooth once, applies the public address with
-a cold-boot retry budget, and restarts Bluetooth again so BlueZ can bind the
-corrected controller. Reboot once and rerun the validation commands.
+The install step installs a udev trigger for `hci*` add events. The generated
+service pulls in `bluetooth.service` via `After=` and `Wants=`. When the
+controller appears via udev, the unit:
+
+1. Stops `bluetooth.service` so bluetoothd releases the controller.
+2. Polls `btmgmt -i hci0 info` every 5s (up to 120s) until the controller is
+   reachable via the management interface.
+3. Sets the public address with `btmgmt -i hci0 public-addr <mac>`.
+4. Restarts `bluetooth.service` so BlueZ binds the corrected address.
+
+Reboot once and rerun the validation commands.
 
 Each `btmgmt` operation is bounded by `--btmgmt-timeout` so the automatic hook
 does not hang indefinitely if the Bluetooth management interface stalls during
 boot. The generated systemd unit also has a 30-minute `TimeoutStartSec`, which
 keeps the recommended retry budget bounded without cutting it off too early.
 
-The boot-time unit deliberately uses `--attempts 12 --settle-seconds 20
---btmgmt-timeout 12` even if an older local config was written with the default
-five attempts. This keeps cold-boot persistence testing independent from the
-manual tuning values used during the first successful local apply.
+The boot-time unit uses `--no-batch --attempts 3 --settle-seconds 1
+--btmgmt-timeout 15` with `ExecStartPre=-/usr/bin/systemctl stop bluetooth.service`.
+`--no-batch` skips the interactive `btmgmt` (without `-i`) batch fallback, which
+hangs in systemd context because it opens a `[mgmt]>` prompt waiting for stdin.
+When `--no-batch` is set, the helper polls `btmgmt -i hci0 info` for controller
+readiness before issuing `public-addr`.
 
-Internally, the helper uses a scripted `btmgmt` batch for the address write:
-`info`, `power off`, `public-addr`, `info`, then a second `public-addr` batch.
-This mirrors the community Surface Pro 11 workaround and avoids relying only
-on separate one-command `btmgmt -i hci0 ...` calls, which timed out during
-cold-boot testing.
+The boot service stops `bluetooth.service` before applying the address.
+Restarting `bluetooth.service` causes bluetoothd to claim the controller, making
+`btmgmt public-addr` fail with status `0x14` (Permission Denied). Stopping
+bluetoothd frees the controller, and `btmgmt -i hci0 public-addr` works against
+the stopped unconfigured controller. After the address is set, the unit
+restarts `bluetooth.service` so BlueZ binds the corrected public address.
+See [ADR031](../adr/adr-0031-bluetooth-indexed-public-address.md).
 
 ## Expected Output
 
