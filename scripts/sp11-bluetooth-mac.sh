@@ -396,7 +396,7 @@ wait_for_hci_ready() {
   local poll_attempt max_polls
   max_polls=24
   for poll_attempt in $(seq 1 $max_polls); do
-    if [ -r "/sys/class/bluetooth/${HCI}/address" ]; then
+    if [ -d "/sys/class/bluetooth/${HCI}" ]; then
       echo "${HCI} enumerated at poll attempt ${poll_attempt}."
       sleep 1
       return 0

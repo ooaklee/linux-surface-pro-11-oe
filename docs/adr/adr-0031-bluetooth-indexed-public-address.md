@@ -68,14 +68,13 @@ reasons emerged from successive tests:
   The generated boot unit uses this flag to avoid the stdin hang in systemd
   context.
 
-- add a `wait_for_hci_ready()` poll that checks `/sys/class/bluetooth/hci0/address`
-  every 5 seconds (up to 24 polls) until the kernel enumerates the controller.
-  A sysfs file read never blocks in D-state, unlike `btmgmt info` which enters
-  uninterruptible kernel sleep during firmware download and cannot be killed by
-  `timeout`. This runs **while bluetoothd is running** so the controller gets
-  fully initialized first. If the poll times out the script exits with a
-  diagnostic (bluetoothd was never stopped). Only after the poll succeeds does
-  the script stop `bluetooth.service` and set the address.
+- add a `wait_for_hci_ready()` poll that checks for the existence of the
+  `/sys/class/bluetooth/hci0` directory (not the `address` pseudo-file, which
+  the wcn7850 driver does not expose as a sysfs attribute). The kernel creates
+  the hci0 symlink once the controller is enumerated after firmware download.
+  A `[ -d ... ]` test is a non-blocking stat call — it never enters D-state.
+  This runs **while bluetoothd is running** so the controller gets fully
+  initialized first.
 
 - generate the boot unit **without** `ExecStartPre` or `ExecStopPost`. The
   script itself stops `bluetooth.service` after the controller is confirmed
@@ -97,11 +96,11 @@ manual use but are no longer enabled by the generated service.
 
 The helper now uses the verified working indexed command on the first attempt,
 skips the no-op/hanging batch in systemd context. Readiness is determined by
-polling the sysfs address file (`/sys/class/bluetooth/hci0/address`) — a
-non-blocking read that cannot hang in D-state, unlike `btmgmt info` which
-enters uninterruptible kernel sleep during firmware download. Once the
-controller is enumerated, the script stops `bluetooth.service`, sets the
-address, and the unit's `ExecStartPost` restarts bluetoothd so BlueZ binds
+polling for the `/sys/class/bluetooth/hci0` directory entry — the wcn7850
+driver creates the hci0 symlink after firmware download. A `[ -d ... ]` test
+is a non-blocking stat call that cannot hang in D-state, unlike `btmgmt info`.
+Once the controller is enumerated, the script stops `bluetooth.service`, sets
+the address, and the unit's `ExecStartPost` restarts bluetoothd so BlueZ binds
 the corrected address.
 
 `wait_for_hci_ready` returns non-zero on timeout so callers can distinguish the

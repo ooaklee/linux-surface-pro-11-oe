@@ -125,11 +125,11 @@ The install step installs a udev trigger for `hci*` add events. The generated
 service pulls in `bluetooth.service` via `After=` and `Wants=`. When the
 controller appears via udev, the unit:
 
-1. Polls the sysfs address file (`/sys/class/bluetooth/hci0/address`) every 5s
+1. Polls for the `/sys/class/bluetooth/hci0` directory entry every 5s
    **while bluetoothd is running** until the kernel enumerates the controller.
-   This is a non-blocking file read — it never hangs in D-state, unlike
-   `btmgmt info` which enters uninterruptible kernel sleep during firmware
-   download.
+   The wcn7850 driver creates the hci0 symlink after firmware download. A
+   `[ -d ... ]` test is a non-blocking stat call — it never hangs in D-state,
+   unlike `btmgmt info` which enters uninterruptible kernel sleep.
 2. Stops `bluetooth.service` so bluetoothd releases the controller.
 3. Sets the public address with `btmgmt -i hci0 public-addr <mac>`.
 4. Restarts `bluetooth.service` so BlueZ binds the corrected address.
