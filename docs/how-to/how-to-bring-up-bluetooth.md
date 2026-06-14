@@ -130,12 +130,15 @@ controller appears via udev, the unit:
    The wcn7850 driver creates the hci0 symlink after firmware download. A
    `[ -d ... ]` test is a non-blocking stat call — it never hangs in D-state,
    unlike `btmgmt info` which enters uninterruptible kernel sleep.
-2. Settles for 2 minutes while bluetoothd runs — gives the controller
-   uninterrupted init time (verified working at 3.5 min uptime).
-3. Stops `bluetooth.service` so bluetoothd releases the controller.
-4. Sets the public address with `btmgmt -i hci0 public-addr <mac>` (120s
+2. Settles for 10s while bluetoothd runs — controller is responsive by
+   T+1.7 min on cold boot.
+3. Kills bluetoothd directly so the controller is released.
+4. Sets the public address with `btmgmt -i hci0 public-addr <mac>` (10s
    timeout, up to 3 attempts).
 5. Restarts `bluetooth.service` so BlueZ binds the corrected address.
+
+The command must be run manually from a terminal — the systemd service is
+unreliable on cold boot (root cause unknown, see ADR031).
 
 Reboot once and rerun the validation commands.
 

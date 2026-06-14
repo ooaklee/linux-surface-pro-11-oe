@@ -168,12 +168,12 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 TimeoutStartSec=30min
-# The wcn7850 controller needs bluetoothd runtime after cold boot
-# before the mgmt socket becomes responsive. Field testing shows
-# it works after ~3.5 min of bluetoothd uptime. Single 120s settle
-# while bluetoothd runs, then stop and apply with a generous udn
-# timeout (120s) for the early-init HCI channel.
-ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 120 --btmgmt-timeout 120
+# WARNING: This systemd service is unreliable on cold boot — btmgmt hangs in
+# D-state when invoked from a systemd unit (root cause unknown). Use the manual
+# command instead on each cold boot:
+#   sudo /usr/local/sbin/sp11-bluetooth-mac --apply --hci hci0 --no-batch --attempts 3 --settle-seconds 10 --btmgmt-timeout 10
+# See ADR031.
+ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 60 --btmgmt-timeout 60
 ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
 EOF
 
@@ -448,9 +448,17 @@ apply_mac() {
       sleep "$SETTLE_SECONDS"
     fi
 
-    if command -v systemctl >/dev/null 2>&1; then
-      systemctl stop bluetooth.service || true
+    # Kill bluetoothd directly instead of systemctl stop.
+    # systemctl stop from within a systemd unit leaves the kernel HCI
+    # mgmt channel in a stale state where btmgmt hangs in D-state.
+    # Direct SIGTERM from a child process avoids this — same path as a
+    # terminal sudo invocation.
+    local bluetoothd_pid
+    bluetoothd_pid="$(pidof bluetoothd 2>/dev/null || true)"
+    if [ -n "$bluetoothd_pid" ]; then
+      kill "$bluetoothd_pid" 2>/dev/null || true
       stopped_bluetoothd=true
+      sleep 3
     fi
 
     local total_attempts="$ATTEMPTS"

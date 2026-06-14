@@ -25,9 +25,28 @@ with 0 items`):
   after a `bluetooth.service` restart the controller comes up `UP RUNNING` as a
   public controller with `Powered: yes`.
 
-**Cold-boot persistence failures.** After multiple rounds of cold-boot testing,
-the boot service never succeeded where the manual sequence always did. The
-reasons emerged from successive tests:
+**Systemd context: unsolved.** After extensive cold-boot testing, the same
+`btmgmt` command reliably succeeds from a terminal `sudo` invocation at T+1.7
+minutes but consistently hangs (D-state) from a systemd unit, regardless of:
+
+- How long bluetoothd was running (tested 60s, 120s, 300s)
+- The `btmgmt` timeout (15s, 60s, 120s)
+- Using `kill $(pidof bluetoothd)` instead of `systemctl stop` (direct `kill`
+  hangs too)
+- Settle duration (works at 10s manually, fails at 300s in unit)
+
+The root cause is unknown. In all failed attempts, `btmgmt` enters
+uninterruptible kernel sleep (D-state) that the `timeout` wrapper cannot kill.
+The HCI management socket path appears to differ fundamentally when invoked by
+a systemd unit vs. a user terminal session.
+
+**Known working workaround:** On cold boot, a user runs:
+
+    sudo bash /usr/local/sbin/sp11-bluetooth-mac --apply --hci hci0 --no-batch --attempts 3 --settle-seconds 10 --btmgmt-timeout 10
+
+This succeeds consistently. The automatic udev/service path remains unsolved.
+
+Historical failures:
 
 1. **Restart-bluetooth-before is harmful.** Executing `systemctl restart
    bluetooth.service` before `btmgmt` causes the restarted bluetoothd to claim
@@ -76,13 +95,14 @@ reasons emerged from successive tests:
 
 - after the directory appears, the script settles for `--settle-seconds` (120 in
   the generated unit, i.e. 2 minutes) while bluetoothd is running. Field
-  testing on cold boot shows the mgmt socket becomes responsive after ~3.5
-  minutes of bluetoothd runtime; 120s settle gives margin beyond the observed
-  working point. Restarting bluetoothd between retries proved counterproductive
-  — it resets init progress. The settle happens once, then bluetoothd is
-  stopped and `btmgmt public-addr` is attempted with `--btmgmt-timeout` (120s
-  in the unit) to give the mgmt command room to complete during early kernel
-  init.
+  testing on cold boot shows the mgmt socket becomes responsive at T+1.7 min;
+  120s settle gives margin. The script then kills bluetoothd directly
+  (`SIGTERM` via `kill`) rather than `systemctl stop`. Empirical testing
+  on the Surface Pro 11 shows that `systemctl stop` from within a systemd
+  unit leaves the kernel HCI management channel in a stale state where
+  `btmgmt public-addr` enters D-state — regardless of how long bluetoothd
+  had been running. A direct `kill` from a child process matches the
+  terminal `sudo` execution path that succeeds every time.
 
 - generate the boot unit **without** `ExecStartPre` or `ExecStopPost`. The
   script itself stops `bluetooth.service` after the controller is confirmed
@@ -107,25 +127,17 @@ skips the no-op/hanging batch in systemd context. Readiness is determined by
 polling for the `/sys/class/bluetooth/hci0` directory entry — a non-blocking
 stat call that cannot hang in D-state.
 
-Once enumerated, the script settles for 2 minutes while bluetoothd runs
-(honoring cold-boot timing verified at 3.5 min uptime), then stops
-`bluetooth.service` and applies the address with a 120s `btmgmt` timeout.
-Retries do not restart bluetoothd (restarting proved counterproductive — it
-resets init progress). `ExecStartPost` restarts bluetoothd on success; on
-failure, bluetoothd is restarted in-script so the controller is never left
-orphaned.
+The automatic systemd service remains unsolved: `btmgmt` hangs in D-state when
+invoked by a systemd unit, regardless of timing or bluetoothd lifecycle.
+The root cause is unknown.
+
+The current workaround is manual execution after cold boot:
+
+    sudo bash /usr/local/sbin/sp11-bluetooth-mac --apply --hci hci0 --no-batch --attempts 3 --settle-seconds 10 --btmgmt-timeout 10
+
+This succeeds every time from a terminal session.
 
 `wait_for_hci_ready` returns non-zero on timeout so callers can distinguish the
 initialized / not-initialized case. The script aborts cleanly when the
 controller never initializes rather than striking a half-initialized controller
-with `public-addr`. On the failure path, the script restarts bluetoothd itself
-(not via `ExecStopPost`, which fires on success too and would double-restart),
-so a failed address application never leaves Bluetooth dead until the next reboot.
-
-This supersedes the ADR030 assumption that the batch sequence is the working
-mechanism. ADR030 is retained as history; the batch remains in the code only as
-a portability fallback for non-systemd contexts or different BlueZ builds.
-
-Cold-boot persistence remains to be validated on the device. The mechanism is
-proven component-by-component: poll → stop → btmgmt → restart succeeds from
-terminal; the polling function is the new variable for the automatic boot path.
+with `public-addr`.

@@ -395,18 +395,15 @@ sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
 sudo udevadm trigger --subsystem-match=bluetooth
 ```
 
-That installs a udev trigger. When `hci0` appears, the helper waits until
-`bluetooth.service` is available, restarts Bluetooth once, applies the public
-address with a longer cold-boot retry budget, and then restarts Bluetooth
-again so BlueZ binds the corrected controller. To remove the hook without
-deleting the local address config, run
-`sudo ./scripts/sp11-bluetooth-mac.sh --uninstall-systemd`.
-
-The helper bounds individual `btmgmt` commands so a boot-time Bluetooth service
-cannot hang indefinitely if the management interface stalls. It uses a scripted
-`btmgmt` batch sequence for the public-address write, matching the community
-Surface Pro 11 workaround more closely than independent one-command
-invocations.
+> Warning: The automatic systemd service is known to be unreliable on cold boot
+> — `btmgmt` hangs in D-state when invoked from a systemd unit (root cause
+> unknown). On each cold boot, run the manual command instead:
+>
+> ```bash
+> sudo /usr/local/sbin/sp11-bluetooth-mac --apply --hci hci0 --no-batch --attempts 3 --settle-seconds 10 --btmgmt-timeout 10
+> ```
+>
+> This succeeds every time from a terminal session. See [ADR031](docs/adr/adr-0031-bluetooth-indexed-public-address.md).
 
 Use the real Bluetooth MAC address for your device. The helper accepts Windows
 style `AA-BB-CC-DD-EE-FF` input and stores it as `AA:BB:CC:DD:EE:FF`. Do not
