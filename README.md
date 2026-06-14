@@ -67,7 +67,7 @@ automatically reconnected to the previously saved Wi-Fi network after reboot.
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
 | Wi-Fi | Working on patched kernel | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Continue validating normal reboots, suspend/resume, and package upgrades. |
-| Bluetooth | Needs MAC-address validation | Bluetooth rfkill is not hard-blocked in the installed cold-boot test, but BlueZ may need a valid public address set with `btmgmt`. Use the diagnostic and config-driven helper before enabling the systemd hook. |
+| Bluetooth | Controller works after public-address fix | Bluetooth rfkill is not hard-blocked and WCN7850 firmware loads. The tested install initially reported `hci0` as `DOWN RAW` with a placeholder-like `00:00:00:00:*` address and no BlueZ default controller. Applying the Windows Bluetooth MAC with `sp11-bluetooth-mac`, then restarting `bluetooth.service`, made `bluetoothctl show` report a powered public controller. Pairing, suspend/resume, and reboot persistence still need validation. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
 | Audio | Missing topology/UCM work | GNOME reports `Dummy Output`, and installed dmesg shows missing `qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`. Start with diagnostics; upstream speaker-audio work is still risky. |
@@ -369,15 +369,44 @@ cd "$SP11DATA/support"
 sudo ./scripts/troubleshoot-sp11-bluetooth.sh
 ```
 
-If Windows or the service report gives you the Bluetooth MAC address, configure
-it explicitly and install the udev-triggered service:
+If the diagnostic reports a suspicious `00:00:00:00:*` Bluetooth address or no
+default BlueZ controller, get the real Bluetooth MAC address from Windows as
+described in [How To: Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md).
+Then configure it explicitly:
 
 ```bash
 BT_MAC="<your-bluetooth-mac>"
-sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
-sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
+sudo ./scripts/sp11-bluetooth-mac.sh \
+  --write-config "$BT_MAC" \
+  --attempts 8 \
+  --settle-seconds 8 \
+  --btmgmt-timeout 8
+
+sudo systemctl restart bluetooth.service
 sudo ./scripts/sp11-bluetooth-mac.sh --apply
+sudo systemctl restart bluetooth.service
 ```
+
+Only install the automatic udev-triggered service after the manual apply makes
+the controller visible to BlueZ:
+
+```bash
+sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
+sudo udevadm trigger --subsystem-match=bluetooth
+```
+
+That installs a udev trigger. When `hci0` appears, the helper waits until
+`bluetooth.service` is available, restarts Bluetooth once, applies the public
+address with a longer cold-boot retry budget, and then restarts Bluetooth
+again so BlueZ binds the corrected controller. To remove the hook without
+deleting the local address config, run
+`sudo ./scripts/sp11-bluetooth-mac.sh --uninstall-systemd`.
+
+The helper bounds individual `btmgmt` commands so a boot-time Bluetooth service
+cannot hang indefinitely if the management interface stalls. It uses a scripted
+`btmgmt` batch sequence for the public-address write, matching the community
+Surface Pro 11 workaround more closely than independent one-command
+invocations.
 
 Use the real Bluetooth MAC address for your device. The helper accepts Windows
 style `AA-BB-CC-DD-EE-FF` input and stores it as `AA:BB:CC:DD:EE:FF`. Do not
@@ -403,18 +432,21 @@ file and routing are confirmed for Surface Pro 11.
 - [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
 - [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
 - [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-flow-test-20260614.md)
+- [2026-06-14 Bluetooth public address test](docs/installed-bluetooth-public-address-test-20260614.md)
 
 ### Visual Evidence
 
-Redacted visual evidence for the first successful Wi-Fi scan, connection, and
-throughput test is stored under `assets/wifi/`:
+Redacted visual evidence for the first successful Wi-Fi and Bluetooth bring-up
+is stored under `assets/`:
 
 - [Wi-Fi networks visible in GNOME](assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
 - [Browser speed test after Wi-Fi connection](assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
+- [Bluetooth settings with a paired speaker](assets/bluetooth/2026-06-14-sp11-bluetooth-search-connect-redacted.png)
 
 ## How-To Guides
 
 - [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+- [Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md)
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 
@@ -448,6 +480,10 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR024: Bluetooth, Audio, and Board-Data Bring-Up Gates](docs/adr/adr-0024-bluetooth-audio-and-board-data-gates.md)
 - [ADR025: rfkill-Capable DTB Selection](docs/adr/adr-0025-rfkill-capable-dtb-selection.md)
 - [ADR026: Prebuilt Kernel Release Artifacts](docs/adr/adr-0026-prebuilt-kernel-release-artifacts.md)
+- [ADR027: Bluetooth Public Address](docs/adr/adr-0027-bluetooth-public-address.md)
+- [ADR028: Bounded Bluetooth Management Hook](docs/adr/adr-0028-bounded-bluetooth-management-hook.md)
+- [ADR029: Bluetooth Cold-Boot Service Retry Profile](docs/adr/adr-0029-bluetooth-cold-boot-service-retry-profile.md)
+- [ADR030: Bluetooth btmgmt Batch Sequence](docs/adr/adr-0030-bluetooth-btmgmt-batch-sequence.md)
 
 ## Windows Firmware
 
@@ -480,6 +516,13 @@ The collector writes:
 
 ```text
 %USERPROFILE%\Desktop\sp11-linux-checks\sp11-linux-checks-<timestamp>.zip
+```
+
+To collect only the Bluetooth address candidates needed by the Bluetooth
+bring-up helper:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\collect-sp11-windows-bluetooth-address.ps1
 ```
 
 ## Sources
