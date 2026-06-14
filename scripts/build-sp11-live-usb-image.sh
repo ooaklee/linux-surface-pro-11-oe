@@ -159,6 +159,40 @@ elif [ -n "$payload_inode" ]; then
     fi
   fi
 fi
+
+echo
+echo "== Support Helpers =="
+support_listing="$(mktemp)"
+fls -r -p -o "$data_start" "$image" > "$support_listing"
+install_helper_inode="$(
+  awk '$0 ~ /support\/scripts\/install-sp11-support\.sh$/ { sub(/:/, "", $2); print $2; exit }' "$support_listing"
+)"
+if [ -z "$install_helper_inode" ]; then
+  echo "Missing /support/scripts/install-sp11-support.sh on SP11DATA." >&2
+  exit 1
+fi
+
+install_helper_copy="$(mktemp)"
+icat -o "$data_start" "$image" "$install_helper_inode" > "$install_helper_copy"
+if ! grep -F -q 'rfkill_candidates=()' "$install_helper_copy"; then
+  echo "Support helper is missing rfkill-capable DTB candidate tracking." >&2
+  exit 1
+fi
+if ! grep -F -q "grep -a -q 'disable-rfkill' \"\$path\"" "$install_helper_copy"; then
+  echo "Support helper is missing disable-rfkill DTB inspection." >&2
+  exit 1
+fi
+if ! grep -F -q '${rfkill_candidates[@]}' "$install_helper_copy"; then
+  echo "Support helper is missing rfkill-capable DTB preference selection." >&2
+  exit 1
+fi
+if ! grep -F -q 'Using Surface Pro 11 DTB:' "$install_helper_copy"; then
+  echo "Support helper is missing the DTB selection log marker." >&2
+  exit 1
+fi
+grep -F -n 'Using Surface Pro 11 DTB:' "$install_helper_copy"
+grep -F -n 'rfkill_candidates=()' "$install_helper_copy"
+grep -F -n "grep -a -q 'disable-rfkill' \"\$path\"" "$install_helper_copy"
 EOF
 }
 

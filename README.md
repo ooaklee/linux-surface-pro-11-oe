@@ -52,12 +52,12 @@ Latest live-USB result, 2026-06-13: the `--grub-mode direct` image boots to the
 Ubuntu desktop. The interactive GRUB menu still does not accept input or
 auto-boot reliably, so direct mode is the verified live-USB path for now.
 
-Latest installed-system result, 2026-06-13: after running the pre-reboot
-installed-system prepare helper from the live USB, Ubuntu booted successfully
-from the internal NVMe install without the USB root filesystem. Upgrading to
-`7.0.0-32-qcom-x1e` kept the system bootable. Installing firmware from the
-Windows partition and cold-booting restored WCN7850 probe and interface
-creation, but Wi-Fi remained hard-blocked.
+Latest installed-system result, 2026-06-14: a rebuilt direct USB image carrying
+the patched `7.0.0-22-qcom-x1e` kernel packages and current support scripts
+completed the clean installed-system flow. The support helper selected the
+rfkill-capable Denali OLED DTB, `/boot/sp11-denali.dtb` contained
+`disable-rfkill`, the system booted the patched kernel, and NetworkManager
+automatically reconnected to the previously saved Wi-Fi network after reboot.
 
 | Feature | Expected status | Notes |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ creation, but Wi-Fi remained hard-blocked.
 | USB-C boot | Working with direct mode | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified path. |
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
-| Wi-Fi | Working on patched kernel | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, connects, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Reboot stability still needs repeated validation. |
+| Wi-Fi | Working on patched kernel | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Continue validating normal reboots, suspend/resume, and package upgrades. |
 | Bluetooth | Needs MAC-address validation | Bluetooth rfkill is not hard-blocked in the installed cold-boot test, but BlueZ may need a valid public address set with `btmgmt`. Use the diagnostic and config-driven helper before enabling the systemd hook. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
@@ -402,6 +402,7 @@ file and routing are confirmed for Surface Pro 11.
 - [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
 - [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
 - [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
+- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-flow-test-20260614.md)
 
 ### Visual Evidence
 
