@@ -441,6 +441,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR023: Docker Kernel Build Case-Sensitive Work Volume](docs/adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
 - [ADR024: Bluetooth, Audio, and Board-Data Bring-Up Gates](docs/adr/adr-0024-bluetooth-audio-and-board-data-gates.md)
 - [ADR025: rfkill-Capable DTB Selection](docs/adr/adr-0025-rfkill-capable-dtb-selection.md)
+- [ADR026: Prebuilt Kernel Release Artifacts](docs/adr/adr-0026-prebuilt-kernel-release-artifacts.md)
 
 ## Windows Firmware
 
