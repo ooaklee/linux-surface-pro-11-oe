@@ -17,6 +17,13 @@ an exact Surface Pro 11 match.
 
 This is a bring-up workaround, not a permanent distribution-quality fix.
 
+Later installed-system testing showed that this board-file fixup is sufficient
+for WCN7850 to probe and create a wireless interface, but it does not resolve
+the Surface Pro 11 `phy0 Hard blocked: yes` rfkill state. That rfkill state is
+handled separately by [ADR018](adr-0018-wifi-rfkill-bring-up-gate.md),
+[ADR019](adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md), and
+[ADR024](adr-0024-bluetooth-audio-and-board-data-gates.md).
+
 ## Decision
 
 We will ship a helper that extracts the closest known WCN7850 board entry from

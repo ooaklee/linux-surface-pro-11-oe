@@ -51,6 +51,12 @@ function Write-Command {
 
 Start-Transcript -Path (Join-Path $reportDir "transcript.txt") -Force | Out-Null
 
+@"
+This report may contain hardware addresses, IP configuration, device serials,
+firmware paths, boot entries, and BitLocker status. Redact hardware addresses,
+UUIDs, serials, and local network details before sharing publicly.
+"@ | Out-File -FilePath (Join-Path $reportDir "privacy-note.txt") -Encoding UTF8
+
 Write-Section "computer-system" { Get-CimInstance Win32_ComputerSystem }
 Write-Section "computer-system-product" { Get-CimInstance Win32_ComputerSystemProduct }
 Write-Section "bios" { Get-CimInstance Win32_BIOS }
@@ -66,7 +72,28 @@ Write-Section "volume" { Get-Volume | Sort-Object DriveLetter }
 Write-Section "pnp-present" { Get-PnpDevice -PresentOnly | Sort-Object Class, FriendlyName }
 Write-Section "pnp-usb" { Get-PnpDevice -PresentOnly | Where-Object { $_.Class -match 'USB|Bluetooth|Net|HIDClass|Keyboard|Mouse|Surface' } | Sort-Object Class, FriendlyName }
 Write-Section "net-adapters" { Get-NetAdapter -IncludeHidden | Sort-Object Name }
+Write-Section "net-adapter-hardware-addresses" {
+    Get-NetAdapter -IncludeHidden |
+        Sort-Object Name |
+        Select-Object Name, InterfaceDescription, Status, MacAddress, PermanentAddress, LinkLayerAddress
+}
 Write-Section "net-ip" { Get-NetIPConfiguration }
+Write-Section "bluetooth-pnp-devices" {
+    Get-PnpDevice -PresentOnly |
+        Where-Object { $_.Class -match 'Bluetooth' -or $_.FriendlyName -match 'Bluetooth|WCN|Qualcomm|FastConnect' } |
+        Sort-Object Class, FriendlyName
+}
+Write-Section "bluetooth-pnp-properties" {
+    Get-PnpDevice -PresentOnly |
+        Where-Object { $_.Class -match 'Bluetooth' -or $_.FriendlyName -match 'Bluetooth|WCN|Qualcomm|FastConnect' } |
+        ForEach-Object {
+            $device = $_
+            Get-PnpDeviceProperty -InstanceId $device.InstanceId -ErrorAction SilentlyContinue |
+                Select-Object @{Name = "Device"; Expression = { $device.FriendlyName } },
+                              @{Name = "InstanceId"; Expression = { $device.InstanceId } },
+                              KeyName, Type, Data
+        }
+}
 Write-Section "firmware-files" {
     $roots = @(
         "$env:WINDIR\System32",
@@ -117,5 +144,6 @@ Compress-Archive -Path $reportDir -DestinationPath $zipPath -Force
 
 Write-Host ""
 Write-Host "Surface Pro 11 diagnostics complete."
+Write-Host "Privacy note: report may contain hardware addresses, UUIDs, serials, and network details."
 Write-Host "Report directory: $reportDir"
 Write-Host "Zip report:       $zipPath"

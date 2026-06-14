@@ -36,17 +36,19 @@ EOF
 
 validate_image() {
   local image="$1"
-  local image_dir image_base
+  local expect_kernel_debs image_dir image_base
 
   if [ ! -f "$image" ]; then
     echo "Image not found: $image" >&2
     exit 1
   fi
 
+  expect_kernel_debs="${SP11_EXPECT_KERNEL_DEBS:-false}"
   image_dir="$(cd "$(dirname "$image")" && pwd)"
   image_base="$(basename "$image")"
 
   docker run --rm -i --platform linux/arm64 \
+    -e "SP11_EXPECT_KERNEL_DEBS=$expect_kernel_debs" \
     -v "$image_dir:/image:ro" \
     ubuntu:24.04 \
     bash -s -- "$image_base" <<'EOF'
@@ -65,6 +67,7 @@ apt-get install -y --no-install-recommends \
   >/dev/null
 
 image="/image/$1"
+expect_kernel_debs="${SP11_EXPECT_KERNEL_DEBS:-false}"
 layout="$(mktemp)"
 dtb_copy="$(mktemp)"
 boot_copy="$(mktemp)"
@@ -124,6 +127,38 @@ icat -o "$data_start" "$image" "$dtb_file_inode" > "$dtb_copy"
 ls -lh "$dtb_copy"
 sha256sum "$dtb_copy"
 file "$dtb_copy"
+
+payload_inode="$(
+  fls -o "$data_start" "$image" |
+    awk '$3 == "payload" { sub(/:/, "", $2); print $2; exit }'
+)"
+if [ -z "$payload_inode" ]; then
+  if [ "$expect_kernel_debs" = "true" ]; then
+    echo "Missing /payload on SP11DATA; expected kernel deb payload." >&2
+    exit 1
+  fi
+elif [ -n "$payload_inode" ]; then
+  echo
+  echo "== Payload =="
+  fls -o "$data_start" "$image" "$payload_inode"
+  kernel_debs_inode="$(
+    fls -o "$data_start" "$image" "$payload_inode" |
+      awk '$3 == "kernel-debs" { sub(/:/, "", $2); print $2; exit }'
+  )"
+  if [ -z "$kernel_debs_inode" ]; then
+    if [ "$expect_kernel_debs" = "true" ]; then
+      echo "Missing /payload/kernel-debs on SP11DATA; expected kernel deb payload." >&2
+      exit 1
+    fi
+  elif [ -n "$kernel_debs_inode" ]; then
+    kernel_debs_listing="$(mktemp)"
+    fls -o "$data_start" "$image" "$kernel_debs_inode" | tee "$kernel_debs_listing"
+    if ! awk '$3 ~ /\.deb$/ { found = 1 } END { exit found ? 0 : 1 }' "$kernel_debs_listing"; then
+      echo "Missing .deb files under /payload/kernel-debs on SP11DATA." >&2
+      exit 1
+    fi
+  fi
+fi
 EOF
 }
 
@@ -488,5 +523,10 @@ mv -f "$work_abs/out/sp11-ubuntu-live.img" "$repo_dir/$OUT"
 echo "Wrote $repo_dir/$OUT"
 
 if [ "$VALIDATE" = "true" ]; then
+  if [ -z "${SP11_EXPECT_KERNEL_DEBS:-}" ] &&
+    [ -d "$repo_dir/$PAYLOAD_DIR/kernel-debs" ] &&
+    find "$repo_dir/$PAYLOAD_DIR/kernel-debs" -maxdepth 1 -type f -name '*.deb' | grep -q .; then
+    export SP11_EXPECT_KERNEL_DEBS="true"
+  fi
   validate_image "$repo_dir/$OUT"
 fi

@@ -66,6 +66,11 @@ The remaining Wi-Fi blocker is still the platform rfkill path: the loaded DTB
 does not contain `disable-rfkill`, and the installed ath12k modules do not
 contain support for that property.
 
+This result separates board data from rfkill. A missing board-data failure
+would show failed board-file lookup or firmware probe errors before interface
+creation. The verified state has a created `wlP4p1s0` interface and a hard
+rfkill block, so replacing `board-2.bin` is not the next fix for this machine.
+
 The transient post-firmware MHI/global-reset failure appears recoverable by a
 full cold boot. If it recurs consistently, retest with `adsp_dtb.mbn` disabled
 to isolate aDSP bring-up from Wi-Fi PCIe/MHI bring-up.

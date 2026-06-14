@@ -248,14 +248,27 @@ For the verified separate `/boot` layout, the entries should use:
 devicetree /sp11-denali.dtb
 ```
 
-2. Reboot and choose the patched kernel.
+2. Confirm the staged boot DTB contains the rfkill property.
+
+```bash
+sudo grep -a -q 'disable-rfkill' /boot/sp11-denali.dtb \
+  && echo "/boot/sp11-denali.dtb contains disable-rfkill" \
+  || echo "/boot/sp11-denali.dtb is missing disable-rfkill"
+```
+
+If the patched kernel ABI is older than another installed qcom-x1e fallback
+kernel, the support helper must prefer the rfkill-capable DTB rather than the
+newest unpatched DTB. This is recorded in
+[ADR025](../adr/adr-0025-rfkill-capable-dtb-selection.md).
+
+3. Reboot and choose the patched kernel.
 
 ```bash
 sudo reboot
 ```
 
-If the patched kernel fails, use GRUB advanced options to boot an older
-known-good qcom-x1e kernel such as the verified `7.0.0-22-qcom-x1e` entry, or
+If the patched kernel fails, use GRUB advanced options to boot another
+known-good qcom-x1e kernel such as the verified `7.0.0-32-qcom-x1e` entry, or
 boot the direct live USB and rerun the installed support helper.
 
 ## Expected Output
@@ -263,10 +276,11 @@ boot the direct live USB and rerun the installed support helper.
 The build should produce qcom-x1e kernel `.deb` packages under the selected
 work directory, including image, modules, and headers packages.
 
-After booting the patched kernel, `uname -r` may still show the same ABI string
-as the source package because the local build can reinstall that ABI in place.
-The important validation is whether the loaded ath12k module and device tree
-now expose `disable-rfkill`.
+After booting the patched kernel, `uname -r` should match the ABI that the
+build produced. For the first verified Docker git-fallback build this is
+`7.0.0-22-qcom-x1e`, even though the Surface had previously upgraded to
+`7.0.0-32-qcom-x1e`. The important validation is whether the loaded ath12k
+module and device tree now expose `disable-rfkill`.
 
 ## Validation
 
@@ -280,8 +294,12 @@ sudo ./scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock
 Passing validation for the patch experiment means:
 
 - `DT has disable-rfkill`,
-- `disable-rfkill support found in ...ath12k...`,
 - Wi-Fi `phy0` no longer reports `Hard blocked: yes`.
+
+The module string scan is best-effort. If it says support is not found but the
+running patched kernel, loaded DTB property, and `rfkill` hard state all match
+the expected values, treat the runtime rfkill result as authoritative and move
+on to Wi-Fi scan/connect validation.
 
 That proves the rfkill gate moved. It does not prove Bluetooth, suspend,
 touchscreen, audio, camera, or long-term Wi-Fi stability.
