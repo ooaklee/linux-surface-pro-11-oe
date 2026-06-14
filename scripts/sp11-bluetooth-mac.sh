@@ -168,14 +168,13 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 TimeoutStartSec=30min
-# Stop bluetooth.service so bluetoothd releases the controller. btmgmt
-# public-addr works against the stopped unconfigured controller; restarting
-# bluetooth.service causes bluetoothd to claim the controller and btmgmt gets
-# Permission Denied (0x14). Use --no-batch to skip the interactive btmgmt
-# fallback, which hangs in systemd because it opens a [mgmt]> prompt waiting
-# for stdin. The wait_for_hci_ready poll inside apply_mac waits up to 120s
-# for the controller to become reachable.
-ExecStartPre=-/usr/bin/systemctl stop bluetooth.service
+# On cold boot, btmgmt blocks in D-state during firmware download
+# (timeout cannot kill D-state processes). Instead, poll the sysfs
+# address file (non-blocking read); once the kernel enumerates hci0,
+# stop bluetoothd, apply the address, and ExecStartPost restarts
+# bluetoothd. Use --settle-seconds 1 to give the controller a
+# heartbeat after enumeration. Use --no-batch to skip the interactive
+# btmgmt fallback (which would also hang in D-state during boot).
 ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 1 --btmgmt-timeout 15
 ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
 EOF
@@ -394,21 +393,18 @@ current_hci_address() {
 }
 
 wait_for_hci_ready() {
-  local poll_attempt max_polls btmgmt_timeout_saved
+  local poll_attempt max_polls
   max_polls=24
-  btmgmt_timeout_saved="$BTMGMT_TIMEOUT"
-  BTMGMT_TIMEOUT=5
   for poll_attempt in $(seq 1 $max_polls); do
-    if run_btmgmt false info 2>/dev/null && printf '%s\n' "$BTMGMT_OUTPUT" | grep -q '^hci0:.*Primary'; then
-      echo "hci0 ready at poll attempt $poll_attempt."
-      BTMGMT_TIMEOUT="$btmgmt_timeout_saved"
+    if [ -r "/sys/class/bluetooth/${HCI}/address" ]; then
+      echo "${HCI} enumerated at poll attempt ${poll_attempt}."
+      sleep 1
       return 0
     fi
     sleep 5
   done
-  BTMGMT_TIMEOUT="$btmgmt_timeout_saved"
-  echo "hci0 did not report ready after ${max_polls} polls (${max_polls}x5s), proceeding anyway." >&2
-  return 0
+  echo "${HCI} did not enumerate after ${max_polls} polls (${max_polls}×5s)." >&2
+  return 1
 }
 
 restart_bluetooth_before_apply() {
@@ -425,6 +421,7 @@ restart_bluetooth_before_apply() {
 
 apply_mac() {
   local value="$1" attempt
+  local stopped_bluetoothd=false
 
   require_tool btmgmt
   require_tool timeout
@@ -443,10 +440,18 @@ apply_mac() {
     rfkill unblock bluetooth || true
   fi
 
-  restart_bluetooth_before_apply
-
   if [ "$NO_BATCH" = "true" ] && [ "$HCI" = "hci0" ]; then
-    wait_for_hci_ready
+    if wait_for_hci_ready; then
+      if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop bluetooth.service || true
+        stopped_bluetoothd=true
+      fi
+    else
+      echo "Controller did not initialize in the readiness window. Aborting." >&2
+      exit 1
+    fi
+  else
+    restart_bluetooth_before_apply
   fi
 
   if [ "$SETTLE_SECONDS" -gt 0 ]; then
@@ -472,6 +477,9 @@ apply_mac() {
 
   echo "Failed to configure Bluetooth public address for $HCI." >&2
   echo "Current $HCI address: $(format_mac_for_output "$(current_hci_address || true)")" >&2
+  if [ "$stopped_bluetoothd" = "true" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl restart bluetooth.service || true
+  fi
   exit 1
 }
 

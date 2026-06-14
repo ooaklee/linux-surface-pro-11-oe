@@ -125,33 +125,30 @@ The install step installs a udev trigger for `hci*` add events. The generated
 service pulls in `bluetooth.service` via `After=` and `Wants=`. When the
 controller appears via udev, the unit:
 
-1. Stops `bluetooth.service` so bluetoothd releases the controller.
-2. Polls `btmgmt -i hci0 info` every 5s (up to 120s) until the controller is
-   reachable via the management interface.
+1. Polls the sysfs address file (`/sys/class/bluetooth/hci0/address`) every 5s
+   **while bluetoothd is running** until the kernel enumerates the controller.
+   This is a non-blocking file read — it never hangs in D-state, unlike
+   `btmgmt info` which enters uninterruptible kernel sleep during firmware
+   download.
+2. Stops `bluetooth.service` so bluetoothd releases the controller.
 3. Sets the public address with `btmgmt -i hci0 public-addr <mac>`.
 4. Restarts `bluetooth.service` so BlueZ binds the corrected address.
 
 Reboot once and rerun the validation commands.
 
-Each `btmgmt` operation is bounded by `--btmgmt-timeout` so the automatic hook
-does not hang indefinitely if the Bluetooth management interface stalls during
-boot. The generated systemd unit also has a 30-minute `TimeoutStartSec`, which
-keeps the recommended retry budget bounded without cutting it off too early.
-
 The boot-time unit uses `--no-batch --attempts 3 --settle-seconds 1
---btmgmt-timeout 15` with `ExecStartPre=-/usr/bin/systemctl stop bluetooth.service`.
-`--no-batch` skips the interactive `btmgmt` (without `-i`) batch fallback, which
-hangs in systemd context because it opens a `[mgmt]>` prompt waiting for stdin.
-When `--no-batch` is set, the helper polls `btmgmt -i hci0 info` for controller
-readiness before issuing `public-addr`.
+--btmgmt-timeout 15`. `--no-batch` skips the interactive `btmgmt` (without
+`-i`) batch fallback, which hangs in systemd context, and engages the sysfs
+readiness poll. When `--no-batch` is set, the helper polls
+`/sys/class/bluetooth/hci0/address` for controller enumeration **while
+bluetoothd is running**, then stops `bluetooth.service` before issuing
+`public-addr`.
 
-The boot service stops `bluetooth.service` before applying the address.
-Restarting `bluetooth.service` causes bluetoothd to claim the controller, making
-`btmgmt public-addr` fail with status `0x14` (Permission Denied). Stopping
-bluetoothd frees the controller, and `btmgmt -i hci0 public-addr` works against
-the stopped unconfigured controller. After the address is set, the unit
-restarts `bluetooth.service` so BlueZ binds the corrected public address.
-See [ADR031](../adr/adr-0031-bluetooth-indexed-public-address.md).
+The boot service stops `bluetooth.service` only after the controller reports
+reachable. Restarting `bluetooth.service` instead would cause bluetoothd to
+claim the controller, making `btmgmt public-addr` fail with status `0x14`
+(Permission Denied). After the address is set, `ExecStartPost` restarts
+`bluetooth.service` so BlueZ binds the corrected public address.
 
 ## Expected Output
 

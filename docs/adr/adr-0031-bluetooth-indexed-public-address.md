@@ -32,14 +32,21 @@ reasons emerged from successive tests:
 1. **Restart-bluetooth-before is harmful.** Executing `systemctl restart
    bluetooth.service` before `btmgmt` causes the restarted bluetoothd to claim
    the controller, making `btmgmt public-addr` fail with status `0x14`
-   (Permission Denied). The working pattern is: stop bluetoothd, apply the
-   address to the unclaimed controller, then restart bluetoothd.
+   (Permission Denied). The working pattern is: wait for bluetoothd to
+   initialize the controller, stop bluetoothd, apply the address to the
+   unclaimed controller, then restart bluetoothd.
 
-2. **Blind sleep is unreliable.** A fixed `sleep 20` failed because cold-boot
-   firmware download timing varies (60-90s observed). The controller needs to
-   be reachable via the management interface before `public-addr` is issued.
+2. **Blind `ExecStartPre=stop` is too early.** On cold boot, the unit fires via
+   udev very early. Stopping `bluetooth.service` before the daemon has had time
+   to download firmware and initialize the controller means the controller
+   never becomes reachable at all. The poll must run **while bluetoothd is
+   running** so the controller gets initialized first. Then bluetoothd is
+   stopped to release the controller before `public-addr`.
 
-3. **Interactive batch hangs in systemd.** Piping commands into `btmgmt` without
+3. **Blind sleep is unreliable.** Firmware download plus init takes 60-90s on
+   cold boot, not a uniform 20. The poll replaces any fixed delay.
+
+4. **Interactive batch hangs in systemd.** Piping commands into `btmgmt` without
    `-i` opens an interactive `[mgmt]>` prompt waiting for stdin. In a systemd
    context this hangs forever, consuming the `timeout` budget and preventing
    fallback to the working indexed path.
@@ -61,23 +68,24 @@ reasons emerged from successive tests:
   The generated boot unit uses this flag to avoid the stdin hang in systemd
   context.
 
-- add a `wait_for_hci_ready()` poll that probes `btmgmt -i hci0 info` every 5
-  seconds (up to 24 polls = 120s) until the controller reports as reachable
-  (`hci0:.*Primary`). This replaces the blind `sleep 20` with a readiness gate
-  that adapts to actual cold-boot firmware timing. When `--no-batch` is set and
-  the HCI is hci0, `wait_for_hci_ready` runs before the first `public-addr`
-  attempt.
+- add a `wait_for_hci_ready()` poll that checks `/sys/class/bluetooth/hci0/address`
+  every 5 seconds (up to 24 polls) until the kernel enumerates the controller.
+  A sysfs file read never blocks in D-state, unlike `btmgmt info` which enters
+  uninterruptible kernel sleep during firmware download and cannot be killed by
+  `timeout`. This runs **while bluetoothd is running** so the controller gets
+  fully initialized first. If the poll times out the script exits with a
+  diagnostic (bluetoothd was never stopped). Only after the poll succeeds does
+  the script stop `bluetooth.service` and set the address.
 
-- generate the boot unit with `ExecStartPre=-/usr/bin/systemctl stop
-  bluetooth.service` instead of restarting it. This releases the controller from
-  bluetoothd so `btmgmt public-addr` can configure it. After the address is set,
-  `ExecStartPost=-/usr/bin/systemctl restart bluetooth.service` starts
-  bluetoothd fresh so it binds the corrected address.
+- generate the boot unit **without** `ExecStartPre` or `ExecStopPost`. The
+  script itself stops `bluetooth.service` after the controller is confirmed
+  reachable, and restarts `bluetooth.service` on every failure path where it
+  was stopped.  `ExecStartPost` restarts `bluetooth.service` on success so
+  BlueZ binds the corrected address.
 
 The generated unit profile is:
 
 ```
-ExecStartPre=-/usr/bin/systemctl stop bluetooth.service
 ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 1 --btmgmt-timeout 15
 ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
 ```
@@ -88,14 +96,25 @@ manual use but are no longer enabled by the generated service.
 ## Consequences
 
 The helper now uses the verified working indexed command on the first attempt,
-skips the no-op/hanging batch in systemd context, polls for controller readiness
-instead of sleeping blind, and stops bluetoothd before applying so the
-controller is unclaimed.
+skips the no-op/hanging batch in systemd context. Readiness is determined by
+polling the sysfs address file (`/sys/class/bluetooth/hci0/address`) — a
+non-blocking read that cannot hang in D-state, unlike `btmgmt info` which
+enters uninterruptible kernel sleep during firmware download. Once the
+controller is enumerated, the script stops `bluetooth.service`, sets the
+address, and the unit's `ExecStartPost` restarts bluetoothd so BlueZ binds
+the corrected address.
+
+`wait_for_hci_ready` returns non-zero on timeout so callers can distinguish the
+initialized / not-initialized case. The script aborts cleanly when the
+controller never initializes rather than striking a half-initialized controller
+with `public-addr`. On the failure path, the script restarts bluetoothd itself
+(not via `ExecStopPost`, which fires on success too and would double-restart),
+so a failed address application never leaves Bluetooth dead until the next reboot.
 
 This supersedes the ADR030 assumption that the batch sequence is the working
 mechanism. ADR030 is retained as history; the batch remains in the code only as
 a portability fallback for non-systemd contexts or different BlueZ builds.
 
 Cold-boot persistence remains to be validated on the device. The mechanism is
-proven component-by-component: stop → btmgmt → restart succeeds from terminal;
-the polling function is the new variable for the automatic boot path.
+proven component-by-component: poll → stop → btmgmt → restart succeeds from
+terminal; the polling function is the new variable for the automatic boot path.
