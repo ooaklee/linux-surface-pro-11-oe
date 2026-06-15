@@ -70,7 +70,7 @@ automatically reconnected to the previously saved Wi-Fi network after reboot.
 | Bluetooth | Working on cold boot via raw mgmt socket | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts. No btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
-| Audio | Missing topology/UCM work | GNOME reports `Dummy Output`, and installed dmesg shows missing `qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`. Start with diagnostics; upstream speaker-audio work is still risky. |
+| Audio | Working (left speaker, mono) | Sound card instantiates with generated topology from CRD template. Left speaker works via `speaker-test hw:0,1` and PipeWire manual sink. Right speaker silent — suspected SoundWire port mapping or regmap issue (kernel). Channelmix matrix sums stereo to left-mono. Headphone/mic/HDMI audio not yet wired in DTS. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0034](docs/adr/adr-0034-wsa2-regcache-right-speaker.md). |
 | Suspend | Partial/risky | Prefer testing boot/install first. |
 
 ## Recommended Path
@@ -362,6 +362,8 @@ Do not replace the installed `board-2.bin` as the next response to the verified
 the WCN7850 to probe and create `wlP4p1s0`; the remaining Wi-Fi blocker is the
 rfkill kernel/DTB path.
 
+#### Bluetooth
+
 For Bluetooth diagnostics:
 
 ```bash
@@ -418,6 +420,8 @@ style `AA-BB-CC-DD-EE-FF` input and stores it as `AA:BB:CC:DD:EE:FF`. Do not
 share diagnostic output publicly until you have redacted MAC addresses, UUIDs,
 serials, and local network details.
 
+#### Audio
+
 For audio diagnostics:
 
 ```bash
@@ -427,6 +431,10 @@ sudo ./scripts/troubleshoot-sp11-audio.sh
 
 Do not enable experimental speaker topology or UCM snippets until the topology
 file and routing are confirmed for Surface Pro 11.
+
+
+- Audio topology and UCM configs are in [`payload/audio/`](payload/audio/) and
+  installed automatically by the support installer.
 
 ## Test Notes
 
@@ -452,8 +460,10 @@ is stored under `assets/`:
 
 - [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 - [Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md)
+- [Bring Up Audio](docs/how-to/how-to-bring-up-audio.md)
 - [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
+- [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 
 ## Decision Records
