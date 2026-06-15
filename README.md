@@ -67,7 +67,7 @@ automatically reconnected to the previously saved Wi-Fi network after reboot.
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
 | Wi-Fi | Working on patched kernel | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Continue validating normal reboots, suspend/resume, and package upgrades. |
-| Bluetooth | Controller works after public-address fix | Bluetooth rfkill is not hard-blocked and WCN7850 firmware loads. The tested install initially reported `hci0` as `DOWN RAW` with a placeholder-like `00:00:00:00:*` address and no BlueZ default controller. Applying the Windows Bluetooth MAC with `sp11-bluetooth-mac`, then restarting `bluetooth.service`, made `bluetoothctl show` report a powered public controller. Pairing, suspend/resume, and reboot persistence still need validation. |
+| Bluetooth | Working on cold boot via raw mgmt socket | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts. No btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
 | Audio | Missing topology/UCM work | GNOME reports `Dummy Output`, and installed dmesg shows missing `qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`. Start with diagnostics; upstream speaker-audio work is still risky. |
@@ -376,34 +376,42 @@ Then configure it explicitly:
 
 ```bash
 BT_MAC="<your-bluetooth-mac>"
-sudo ./scripts/sp11-bluetooth-mac.sh \
-  --write-config "$BT_MAC" \
-  --attempts 8 \
-  --settle-seconds 8 \
-  --btmgmt-timeout 8
-
-sudo systemctl restart bluetooth.service
-sudo ./scripts/sp11-bluetooth-mac.sh --apply
-sudo systemctl restart bluetooth.service
+sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
 ```
 
-Only install the automatic udev-triggered service after the manual apply makes
-the controller visible to BlueZ:
+Build the raw mgmt-socket helper from the current checkout root, either a git
+checkout or the live USB `$SP11DATA/support` directory, then install the
+udev-triggered systemd service:
 
 ```bash
+gcc -Wall -Wextra -O2 \
+  -o tools/sp11-bt-set-addr \
+  tools/sp11-bt-set-addr.c
+
 sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
 sudo udevadm trigger --subsystem-match=bluetooth
 ```
 
-> Warning: The automatic systemd service is known to be unreliable on cold boot
-> — `btmgmt` hangs in D-state when invoked from a systemd unit (root cause
-> unknown). On each cold boot, run the manual command instead:
->
-> ```bash
-> sudo /usr/local/sbin/sp11-bluetooth-mac --apply --hci hci0 --no-batch --attempts 3 --settle-seconds 10 --btmgmt-timeout 10
-> ```
->
-> This succeeds every time from a terminal session. See [ADR031](docs/adr/adr-0031-bluetooth-indexed-public-address.md).
+The installed unit runs before `bluetooth.service`, when the controller is
+still in its initial DOWN RAW state. It uses `/usr/local/sbin/sp11-bt-set-addr`
+instead of `btmgmt`, avoiding the cold-boot D-state hang described in
+[ADR031](docs/adr/adr-0031-bluetooth-indexed-public-address.md). See
+[ADR032](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md) for the
+current decision.
+
+Validate after a cold boot:
+
+```bash
+sudo reboot
+# After login:
+systemctl status sp11-bluetooth-mac@hci0.service --no-pager
+journalctl -u sp11-bluetooth-mac@hci0.service --no-pager -n 20
+bluetoothctl show | head -3
+```
+
+The journal should report `set-public-address status 0x00 (success)`, and
+`bluetoothctl show` should show a powered public controller with the configured
+address.
 
 Use the real Bluetooth MAC address for your device. The helper accepts Windows
 style `AA-BB-CC-DD-EE-FF` input and stores it as `AA:BB:CC:DD:EE:FF`. Do not
@@ -444,6 +452,7 @@ is stored under `assets/`:
 
 - [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 - [Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md)
+- [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 
@@ -482,6 +491,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR029: Bluetooth Cold-Boot Service Retry Profile](docs/adr/adr-0029-bluetooth-cold-boot-service-retry-profile.md)
 - [ADR030: Bluetooth btmgmt Batch Sequence](docs/adr/adr-0030-bluetooth-btmgmt-batch-sequence.md)
 - [ADR031: Bluetooth Indexed Public Address and No Pre-Apply Restart](docs/adr/adr-0031-bluetooth-indexed-public-address.md)
+- [ADR032: Raw mgmt-Socket Bluetooth Cold-Boot Solution](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md)
 
 ## Windows Firmware
 
