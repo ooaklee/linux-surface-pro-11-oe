@@ -96,9 +96,12 @@ run_or_note aplay aplay -L
 
 section "PipeWire and PulseAudio"
 run_or_note pactl pactl info
+run_or_note pactl pactl list cards
 run_or_note pactl pactl list short sinks
 run_or_note pactl pactl list short sources
 run_or_note wpctl wpctl status
+run_or_note wpctl wpctl inspect @DEFAULT_AUDIO_SINK@
+run_or_note pw-cli pw-cli ls Card
 
 section "UCM"
 if [ -d /usr/share/alsa/ucm2 ]; then
@@ -108,6 +111,7 @@ if [ -d /usr/share/alsa/ucm2 ]; then
 else
   echo "Missing /usr/share/alsa/ucm2"
 fi
+run_or_note alsaucm alsaucm -c X1E80100Microso dump text
 
 section "Loaded Audio Modules"
 if have lsmod; then

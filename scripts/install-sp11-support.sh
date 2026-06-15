@@ -56,7 +56,10 @@ target() {
 
 install -d "$(target /usr/local/sbin)" "$(target /etc/default/grub.d)" \
   "$(target /etc/kernel/postinst.d)" "$(target /etc/kernel/postrm.d)" \
-  "$(target /etc/apt/apt.conf.d)"
+  "$(target /etc/apt/apt.conf.d)" \
+  "$(target /lib/firmware/qcom/x1e80100)" \
+  "$(target /usr/share/alsa/ucm2/Qualcomm/x1e80100)" \
+  "$(target /usr/share/alsa/ucm2/conf.d/x1e80100)"
 
 install -m 0755 "$repo_dir/scripts/sp11-grab-fw.sh" "$(target /usr/local/sbin/sp11-grab-fw)"
 install -m 0755 "$repo_dir/scripts/sp11-wifi-board-fixup.sh" "$(target /usr/local/sbin/sp11-wifi-board-fixup)"
@@ -64,6 +67,27 @@ install -m 0755 "$repo_dir/scripts/sp11-bluetooth-mac.sh" "$(target /usr/local/s
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-audio.sh" "$(target /usr/local/sbin/troubleshoot-sp11-audio)"
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-bluetooth.sh" "$(target /usr/local/sbin/troubleshoot-sp11-bluetooth)"
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-wifi-rfkill.sh" "$(target /usr/local/sbin/troubleshoot-sp11-wifi-rfkill)"
+install -m 0755 "$repo_dir/scripts/sp11-pipewire-speaker-sink.sh" "$(target /usr/local/sbin/sp11-pipewire-speaker-sink)"
+install -m 0755 "$repo_dir/scripts/sp11-audio-topology.sh" "$(target /usr/local/sbin/sp11-audio-topology)"
+
+# --- Audio topology & UCM ---
+AUDIO_ASSETS_DIR="$repo_dir/payload/audio"
+if [ -f "$AUDIO_ASSETS_DIR/X1E80100-Microsoft-Surface-Pro-11-tplg.bin" ]; then
+  install -m 0644 "$AUDIO_ASSETS_DIR/X1E80100-Microsoft-Surface-Pro-11-tplg.bin" \
+    "$(target /lib/firmware/qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin)"
+fi
+if [ -f "$AUDIO_ASSETS_DIR/MICROSOFT-Surface-Pro-11.conf" ]; then
+  install -m 0644 "$AUDIO_ASSETS_DIR/MICROSOFT-Surface-Pro-11.conf" \
+    "$(target /usr/share/alsa/ucm2/Qualcomm/x1e80100/MICROSOFT-Surface-Pro-11.conf)"
+fi
+if [ -f "$AUDIO_ASSETS_DIR/Surface11-HiFi.conf" ]; then
+  install -m 0644 "$AUDIO_ASSETS_DIR/Surface11-HiFi.conf" \
+    "$(target /usr/share/alsa/ucm2/Qualcomm/x1e80100/Surface11-HiFi.conf)"
+fi
+if [ -f "$AUDIO_ASSETS_DIR/x1e80100.conf" ]; then
+  install -m 0644 "$AUDIO_ASSETS_DIR/x1e80100.conf" \
+    "$(target /usr/share/alsa/ucm2/conf.d/x1e80100/x1e80100.conf)"
+fi
 
 cat > "$(target /usr/local/sbin/sp11-grub-inject-dtb)" <<'EOF'
 #!/usr/bin/env bash

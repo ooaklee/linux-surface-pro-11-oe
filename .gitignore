@@ -3,6 +3,7 @@ build/
 # Local payload and firmware artifacts.
 payload/**/*.bin
 payload/**/*.mbn
+payload/**/*.elmbin
 payload/**/*.elf
 payload/**/*.jsn
 payload/**/*.cab
@@ -51,3 +52,6 @@ sp11-linux-checks/
 report-*/
 *.log
 sp11-bt-set-addr
+
+!payload/audio/
+!payload/audio/*.bin
