@@ -50,3 +50,4 @@ sp11-kernel-source.env
 sp11-linux-checks/
 report-*/
 *.log
+sp11-bt-set-addr

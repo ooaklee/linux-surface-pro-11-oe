@@ -20,14 +20,22 @@ load, but Linux reports a placeholder-like controller address:
 ```
 
 BlueZ then reports no default controller. The next gate is to set the real
-Bluetooth public address from Windows with `sp11-bluetooth-mac`.
+Bluetooth public address from Windows with the raw mgmt-socket C helper
+(`tools/sp11-bt-set-addr.c`).
+
+The helper opens an `AF_BLUETOOTH` / `SOCK_RAW` / `HCI_CHANNEL_CONTROL` socket
+directly and issues `MGMT_OP_SET_PUBLIC_ADDRESS` (0x0039). It runs **before**
+`bluetooth.service` starts, while the controller is still in its DOWN RAW
+state. No power-cycle, no rfkill toggle, no userspace management CLI, no
+D-state hangs (see ADR032).
 
 ## Prerequisites
 
 - Installed Ubuntu booted on the patched qcom-x1e kernel.
-- `bluez` installed, including `btmgmt`.
-- `timeout` from `coreutils`, normally present on Ubuntu.
-- Surface Pro 11 support helpers installed under `/usr/local/sbin`.
+- `bluez` installed.
+- A C compiler (`gcc` is present by default on the concept image).
+- A current checkout root for these support files. This can be either a git
+  checkout or the live USB `$SP11DATA/support` directory.
 - Access to Windows or a Windows diagnostic report from the same device.
 - The real Bluetooth MAC address for the device.
 
@@ -39,12 +47,29 @@ with root-only permissions.
 
 ## Procedure
 
-1. Confirm the Linux-side failure mode.
+1. Enter the checkout root.
+
+Use either a git checkout:
 
 ```bash
-sudo /usr/local/sbin/troubleshoot-sp11-bluetooth --dmesg-lines 220 \
+cd /path/to/linux-surface-pro-11-oe
+```
+
+Or the live USB support root:
+
+```bash
+cd "$SP11DATA/support"
+```
+
+2. Confirm the Linux-side failure mode.
+
+```bash
+sudo ./scripts/troubleshoot-sp11-bluetooth.sh --dmesg-lines 220 \
   | tee ~/sp11-bluetooth-before.txt
 ```
+
+`sp11-bluetooth-mac.sh --install-systemd` does not install this diagnostic
+script; run it from the checkout or live USB support tree.
 
 Look for:
 
@@ -54,7 +79,7 @@ Look for:
 - `No default controller available`,
 - a suspicious address such as `00:00:00:00:*`.
 
-2. Boot Windows and find the Bluetooth address.
+3. Boot Windows and find the Bluetooth address.
 
 Copy `tools/collect-sp11-windows-bluetooth-address.ps1` to the Windows install
 or run it from a checked-out copy of this repository. Then run PowerShell as
@@ -70,115 +95,81 @@ Qualcomm, FastConnect, and WCN adapters. Use the Bluetooth adapter
 keep the output private and compare it with Bluetooth adapter details in Device
 Manager or the diagnostic report. Do not publish the raw MAC address.
 
-3. Reboot Ubuntu and write the Bluetooth MAC config.
+4. Compile the raw mgmt-socket helper on-device.
+
+```bash
+gcc -Wall -Wextra -O2 \
+  -o tools/sp11-bt-set-addr \
+  tools/sp11-bt-set-addr.c
+```
+
+See [Compile the Raw mgmt-Socket Bluetooth Helper](how-to-compile-sp11-bt-set-addr.md)
+for details and troubleshooting.
+
+5. Write the Bluetooth MAC config.
 
 Replace the placeholder with the real Bluetooth MAC:
 
 ```bash
 BT_MAC="<windows-bluetooth-mac>"
 
-sudo /usr/local/sbin/sp11-bluetooth-mac \
-  --write-config "$BT_MAC" \
-  --attempts 8 \
-  --settle-seconds 8 \
-  --btmgmt-timeout 8
+sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
 ```
 
-4. Try a manual apply before enabling the automatic hook.
+6. Install the automatic udev/systemd cold-boot hook.
 
 ```bash
-sudo systemctl restart bluetooth.service
-sudo /usr/local/sbin/sp11-bluetooth-mac --apply
-sudo systemctl restart bluetooth.service
+sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
 ```
 
-On the first successful local test, `btmgmt public-addr` accepted the address
-while the immediate power-on step reported an invalid-index status. Restarting
-`bluetooth.service` was still enough for BlueZ to bind the controller.
+The installer copies `sp11-bt-set-addr` and `sp11-bluetooth-mac` into
+`/usr/local/sbin/`, writes the systemd template unit, and deploys the udev
+trigger. The generated unit uses `Wants=bluetooth.service` (pulls bluetoothd
+into the boot transaction) and `Before=bluetooth.service` (sets the public
+address while the controller is in its DOWN RAW state). The service is
+`Type=oneshot` with no `RemainAfterExit` and no `ExecStartPost`; bluetoothd
+proceeds immediately after `sp11-bt-set-addr` exits and downloads firmware
+against the already-corrected address.
 
-5. Validate the controller.
+7. Cold-boot and validate.
 
 ```bash
-sudo /usr/local/sbin/sp11-bluetooth-mac --status
-bluetoothctl list
-bluetoothctl show
-sudo /usr/local/sbin/troubleshoot-sp11-bluetooth --dmesg-lines 220 \
-  | tee ~/sp11-bluetooth-after.txt
+sudo reboot
 ```
 
-Passing validation means BlueZ lists a controller and `bluetoothctl show`
-returns controller details. It does not prove pairing, audio profiles,
-reboot persistence, or suspend/resume behavior yet.
-
-`sp11-bluetooth-mac --status` redacts hardware addresses by default. Use
-`--show-addresses` only for local debugging when you will not paste the output
-into a public issue or document.
-
-6. Install the automatic udev/systemd hook after manual validation succeeds.
+After login:
 
 ```bash
-sudo /usr/local/sbin/sp11-bluetooth-mac --install-systemd
-sudo udevadm trigger --subsystem-match=bluetooth
+bluetoothctl show | head -5
+journalctl -u sp11-bluetooth-mac@hci0.service --no-pager -n 10
 ```
 
-The install step installs a udev trigger for `hci*` add events. The generated
-service pulls in `bluetooth.service` via `After=` and `Wants=`. When the
-controller appears via udev, the unit:
-
-1. Polls for the `/sys/class/bluetooth/hci0` directory entry every 5s
-   **while bluetoothd is running** until the kernel enumerates the controller.
-   The wcn7850 driver creates the hci0 symlink after firmware download. A
-   `[ -d ... ]` test is a non-blocking stat call — it never hangs in D-state,
-   unlike `btmgmt info` which enters uninterruptible kernel sleep.
-2. Settles for 10s while bluetoothd runs — controller is responsive by
-   T+1.7 min on cold boot.
-3. Kills bluetoothd directly so the controller is released.
-4. Sets the public address with `btmgmt -i hci0 public-addr <mac>` (10s
-   timeout, up to 3 attempts).
-5. Restarts `bluetooth.service` so BlueZ binds the corrected address.
-
-The command must be run manually from a terminal — the systemd service is
-unreliable on cold boot (root cause unknown, see ADR031).
-
-Reboot once and rerun the validation commands.
-
-The boot-time unit uses `--no-batch --attempts 3 --settle-seconds 1
---btmgmt-timeout 15`. `--no-batch` skips the interactive `btmgmt` (without
-`-i`) batch fallback, which hangs in systemd context, and engages the sysfs
-readiness poll. When `--no-batch` is set, the helper polls
-`/sys/class/bluetooth/hci0/address` for controller enumeration **while
-bluetoothd is running**, then stops `bluetooth.service` before issuing
-`public-addr`.
-
-The boot service stops `bluetooth.service` only after the controller reports
-reachable. Restarting `bluetooth.service` instead would cause bluetoothd to
-claim the controller, making `btmgmt public-addr` fail with status `0x14`
-(Permission Denied). After the address is set, `ExecStartPost` restarts
-`bluetooth.service` so BlueZ binds the corrected public address.
+The journal should show `set-public-address  status 0x00 (success)` followed
+by `Success: public address set` at approximately T+1s from boot.
+`bluetoothctl show` should report a powered controller with the real public
+address.
 
 ## Expected Output
 
-After a successful apply:
+After a successful cold boot:
 
-- `sp11-bluetooth-mac --status` reports the configured address,
 - `bluetoothctl list` shows a controller,
 - `bluetoothctl show` no longer says `No default controller available`,
-- the diagnostic no longer flags the known invalid `00:00:00:00:*` address.
+- The journal confirms `set-public-address  status 0x00 (success)` and
+  `Success: public address set`,
+- The diagnostic no longer flags the known invalid `00:00:00:00:*` address.
 
 ## Validation
 
-Use:
-
 ```bash
-rfkill list
-btmgmt info
 bluetoothctl list
 bluetoothctl show
-journalctl -b -u bluetooth.service -u 'sp11-bluetooth-mac@*.service' --no-pager
+journalctl -b -u 'sp11-bluetooth-mac@hci0.service' --no-pager
 ```
 
-These checks prove the controller is visible to BlueZ and that the address hook
-ran. They do not prove peripherals pair successfully.
+These checks prove the controller is visible to BlueZ and that the address was
+set on this boot. They do not prove peripherals pair successfully, audio
+profiles work, or suspend/resume behavior is correct.
 
 ## Privacy and Safety
 
@@ -191,64 +182,93 @@ also redacted by default.
 
 ## Troubleshooting
 
-If `btmgmt` still reports `Index list with 0 items`, confirm that `hci0` exists
-with:
+### Helper short write on first attempt
+
+The journal may show `short write 0/12` on the first mgmt attempt. This is
+normal — the mgmt channel is not yet ready while firmware initialises. The
+helper retries every second for up to 60 attempts. A single `short write`
+followed by `set-public-address  status 0x00 (success)` on the next attempt is
+expected.
+
+### set-public-address status 0x0d (invalid params)
+
+Confirm the MAC address uses colon-separated hex octets (`84:B1:E2:54:EC:2B`),
+not dash-separated or unseparated.
+
+### hci0 not found after 120s
+
+The Bluetooth UART has not enumerated. Check:
 
 ```bash
-hciconfig -a
-dmesg -T | grep -iE 'bluetooth|hci0|qca|wcn|firmware' | tail -n 120
+ls /sys/class/bluetooth/
+dmesg | grep -iE 'hci0|wcn7850|bluetooth' | tail -20
 ```
 
-If `sp11-bluetooth-mac --apply` fails, retry with more delay:
+### No default controller available (persistent)
+
+Check the service journal:
 
 ```bash
-sudo /usr/local/sbin/sp11-bluetooth-mac \
-  --apply \
-  --attempts 12 \
-  --settle-seconds 12 \
-  --btmgmt-timeout 12
+journalctl -b -u 'sp11-bluetooth-mac@hci0.service' --no-pager
 ```
 
-If the automatic service is stuck from an older helper, stop it before retrying:
+If the log shows repeated `short write` failures without a success line, the
+mgmt channel may not be ready or may be held by stale tooling from an older
+test. The current cold-boot path does not use `btmgmt`, but older manual tests
+may have left one running:
 
 ```bash
-sudo systemctl stop 'sp11-bluetooth-mac@hci0.service'
-sudo pkill -9 -x btmgmt || true
-sudo systemctl restart bluetooth.service
+sudo pkill -9 btmgmt || true
 ```
+
+If the controller shows the correct address in the journal but bluetoothd still
+reports no controller after a cold boot, reinstall the systemd unit and reboot:
+
+```bash
+sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
+sudo systemctl reset-failed 'sp11-bluetooth-mac@hci0.service'
+sudo reboot
+```
+
+### Service timed out (start-post operation)
+
+If the journal shows `start-post operation timed out`, the installed unit may
+have a stale `RemainAfterExit=yes` or `ExecStartPost`. Reinstall:
+
+```bash
+sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
+sudo systemctl daemon-reload
+sudo systemctl reset-failed 'sp11-bluetooth-mac@hci0.service'
+```
+
+The current unit uses `Type=oneshot` without `RemainAfterExit` or
+`ExecStartPost`. It exits cleanly after setting the address, and bluetoothd
+proceeds via the `Before=` ordering.
+
+### Compile failure
+
+```bash
+gcc -Wall -Wextra -O2 \
+  -o tools/sp11-bt-set-addr \
+  tools/sp11-bt-set-addr.c
+```
+
+The helper uses only POSIX and Linux kernel headers. No `-lbluetooth` or BlueZ
+development packages are needed. If `gcc` is missing:
+
+```bash
+sudo apt update && sudo apt install -y gcc
+```
+
+### Stale wants dependency from older install
 
 If a previous install created
 `/etc/systemd/system/bluetooth.service.wants/sp11-bluetooth-mac@hci0.service`,
-rerun `sudo /usr/local/sbin/sp11-bluetooth-mac --install-systemd`. The current
-installer removes that older dependency link and relies on the udev trigger
-instead.
-
-If the address applies but BlueZ still has no default controller, collect the
-before/after diagnostics and do not enable the automatic hook yet.
-
-If `sp11-bluetooth-mac --apply` says the address was accepted but the
-controller still does not appear, restart Bluetooth once:
-
-```bash
-sudo systemctl restart bluetooth.service
-bluetoothctl show
-```
-
-To remove the automatic hook:
-
-```bash
-sudo /usr/local/sbin/sp11-bluetooth-mac --uninstall-systemd
-```
-
-This leaves `/etc/default/sp11-bluetooth-mac` in place so you can reinstall the
-hook without retyping the address. Remove that file manually if you want to
-discard the local address config.
+rerun the installer. The current installer removes that older dependency link
+and relies on the udev trigger instead.
 
 ## Related Documents
 
-- [ADR027: Bluetooth Public Address](../adr/adr-0027-bluetooth-public-address.md)
-- [ADR029: Bluetooth Cold-Boot Service Retry Profile](../adr/adr-0029-bluetooth-cold-boot-service-retry-profile.md)
-- [ADR030: Bluetooth btmgmt Batch Sequence](../adr/adr-0030-bluetooth-btmgmt-batch-sequence.md)
-- [ADR024: Bluetooth, Audio, and Board-Data Bring-Up Gates](../adr/adr-0024-bluetooth-audio-and-board-data-gates.md)
-- [Surface Pro 11 Bluetooth public address test](../installed-bluetooth-public-address-test-20260614.md)
-- [Generate a Service Report](how-to-generate-service-report.md)
+- [ADR032: Raw mgmt-Socket Bluetooth Cold-Boot Solution](../adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md)
+- [ADR031: Bluetooth Indexed Public Address and Cold-Boot Polling](../adr/adr-0031-bluetooth-indexed-public-address.md)
+- [Compile the Raw mgmt-Socket Bluetooth Helper](how-to-compile-sp11-bt-set-addr.md)

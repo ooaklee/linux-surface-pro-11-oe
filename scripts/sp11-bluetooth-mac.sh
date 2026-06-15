@@ -137,7 +137,7 @@ stop_existing_systemd_instances() {
 }
 
 install_systemd() {
-  local script_source
+  local script_source helper_source
 
   script_source="${BASH_SOURCE[0]}"
   if command -v realpath >/dev/null 2>&1; then
@@ -150,31 +150,50 @@ install_systemd() {
     exit 1
   fi
 
+  helper_source="$(dirname "$script_source")/../tools/sp11-bt-set-addr"
+  if command -v realpath >/dev/null 2>&1; then
+    helper_source="$(realpath "$helper_source")"
+  elif [[ "$helper_source" != /* ]]; then
+    helper_source="$(cd "$(dirname "$script_source")/.." && pwd)/tools/sp11-bt-set-addr"
+  fi
+
   install -d -m 0755 /usr/local/sbin /etc/systemd/system /etc/udev/rules.d
   if [ "$script_source" != "/usr/local/sbin/sp11-bluetooth-mac" ]; then
     install -m 0755 "$script_source" /usr/local/sbin/sp11-bluetooth-mac
   fi
+  if [ -f "$helper_source" ]; then
+    install -m 0755 "$helper_source" /usr/local/sbin/sp11-bt-set-addr
+    echo "Installed raw mgmt helper: /usr/local/sbin/sp11-bt-set-addr"
+  elif [ ! -x /usr/local/sbin/sp11-bt-set-addr ]; then
+    echo "Missing raw mgmt helper binary: $helper_source" >&2
+    echo "Build it first from the repository root:" >&2
+    echo "  cd /path/to/linux-surface-pro-11-oe && gcc -Wall -Wextra -O2 -o tools/sp11-bt-set-addr tools/sp11-bt-set-addr.c" >&2
+    echo "Or, from the live USB support root:" >&2
+    echo '  cd "$SP11DATA/support" && gcc -Wall -Wextra -O2 -o tools/sp11-bt-set-addr tools/sp11-bt-set-addr.c' >&2
+    exit 1
+  fi
   remove_bluetooth_wants_links
 
-  cat > /etc/systemd/system/sp11-bluetooth-mac@.service <<'EOF'
+  cat > /etc/systemd/system/sp11-bluetooth-mac@.service <<EOF
 [Unit]
 Description=Set Surface Pro 11 Bluetooth public address on %I
 ConditionPathExists=/etc/default/sp11-bluetooth-mac
+ConditionPathExists=/usr/local/sbin/sp11-bt-set-addr
 Wants=bluetooth.service
-After=bluetooth.service
+Before=bluetooth.service
 StartLimitIntervalSec=5min
 StartLimitBurst=3
 
 [Service]
 Type=oneshot
-TimeoutStartSec=30min
-# WARNING: This systemd service is unreliable on cold boot — btmgmt hangs in
-# D-state when invoked from a systemd unit (root cause unknown). Use the manual
-# command instead on each cold boot:
-#   sudo /usr/local/sbin/sp11-bluetooth-mac --apply --hci hci0 --no-batch --attempts 3 --settle-seconds 10 --btmgmt-timeout 10
-# See ADR031.
-ExecStart=/usr/local/sbin/sp11-bluetooth-mac --apply --hci %I --no-batch --attempts 3 --settle-seconds 60 --btmgmt-timeout 60
-ExecStartPost=-/usr/bin/systemctl restart bluetooth.service
+TimeoutStartSec=5min
+EnvironmentFile=-/etc/default/sp11-bluetooth-mac
+# Runs BEFORE bluetoothd starts. Controller is in DOWN RAW state at this
+# point — firmware not yet downloaded. Directly sets the public address
+# via raw mgmt socket (no btmgmt, no D-state). When this oneshot exits,
+# bluetoothd proceeds immediately via Before= ordering and downloads
+# firmware against the already-corrected address.
+ExecStart=/usr/local/sbin/sp11-bt-set-addr 0 \${SP11_BLUETOOTH_MAC}
 EOF
 
   cat > /etc/udev/rules.d/99-surface-pro-11-bluetooth-mac.rules <<'EOF'
@@ -184,7 +203,7 @@ EOF
   systemctl daemon-reload
   udevadm control --reload || true
   echo "Installed sp11-bluetooth-mac systemd service and udev trigger."
-  echo "The helper now runs from udev after bluetooth.service is available."
+  echo "Service uses raw mgmt socket helper (sp11-bt-set-addr) — no btmgmt D-state risk."
   echo "Write $CONFIG before relying on the service."
 }
 
