@@ -82,6 +82,229 @@ partition, and injects the Surface Pro 11 device tree at boot.
 This avoids remastering the Ubuntu ISO while still giving us the SP11-specific
 `devicetree` line that stock ISO boot paths lack.
 
+### From-Scratch Commands
+
+Run these commands from this repository root on the macOS/Docker build host:
+
+```bash
+cd /Users/leon/Workspace/repo/linux-surface-pro/linux-surface-pro-11-oe
+mkdir -p build
+```
+
+Build the patched qcom-x1e kernel packages and copy them into the USB image
+payload directory:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+Build the direct-boot USB image. This image boots the Ubuntu concept ISO kernel
+for the live environment, injects the Surface Pro 11 DTB from GRUB, and carries
+the patched kernel packages under `SP11DATA/payload/kernel-debs/` for
+installation onto the Surface:
+
+```bash
+./scripts/build-sp11-live-usb-image.sh \
+  --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
+  --grub-mode direct \
+  --work-dir build/work-direct-boot \
+  --out build/sp11-ubuntu-live-direct.img \
+  --validate
+```
+
+Identify the removable USB disk carefully. Replace `/dev/diskX` with the real
+USB disk, not an internal disk:
+
+```bash
+diskutil list
+diskutil info /dev/diskX
+```
+
+Write the image to the USB drive:
+
+```bash
+./scripts/write-image-to-macos-disk.sh \
+  build/sp11-ubuntu-live-direct.img \
+  /dev/diskX
+```
+
+After booting the Surface from this USB and installing Ubuntu, choose
+`continue testing` at the end of the installer and prepare the installed target
+before rebooting:
+
+```bash
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
+
+test -d /target/etc || { echo "Mount the installed Ubuntu root at /target first."; exit 1; }
+
+cd "$SP11DATA/support"
+sudo ./scripts/prepare-sp11-installed-system.sh --target /target
+sudo reboot
+```
+
+After the first installed boot, mount `SP11DATA`, install firmware/support
+helpers, then install the patched kernel payload:
+
+```bash
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
+
+cd "$SP11DATA/support"
+sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
+```
+
+If temporary networking is unavailable, mount the Windows partition and use
+Windows firmware instead of downloading it:
+
+```bash
+WINROOT="/run/media/$USER/Local Disk"
+test -d "$WINROOT/Windows" || { echo "Set WINROOT to the mounted Windows NTFS partition."; exit 1; }
+
+cd "$SP11DATA/support"
+sudo ./scripts/finish-sp11-installed-system.sh \
+  --windows-root "$WINROOT" \
+  --reboot
+```
+
+After rebooting back into installed Ubuntu, install the patched kernel packages
+from the USB payload:
+
+```bash
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
+
+cd "$SP11DATA/support"
+find "$SP11DATA/payload/kernel-debs" -maxdepth 1 -type f -name '*.deb' -print | sort
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --work-dir "$SP11DATA/payload/kernel-debs" \
+  --install-only
+sudo reboot
+```
+
+After the patched kernel has booted, validate audio and install the user-level
+PipeWire speaker sink for the logged-in desktop user. The support installer
+copies the packaged topology/UCM files from `payload/audio/` when present and
+installs the `sp11-wsa-routing.service` boot-race fix; the PipeWire sink is
+per-user and must be installed from the desktop session:
+
+```bash
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
+
+cd "$SP11DATA/support"
+systemctl status sp11-wsa-routing.service --no-pager
+./scripts/sp11-pipewire-speaker-sink.sh --install --enable-route
+wpctl status
+./scripts/troubleshoot-sp11-audio.sh > ~/sp11-audio-after-setup.txt
+```
+
+If `/lib/firmware/qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`
+is missing, build and install the topology manually, then reboot:
+
+```bash
+cd "$SP11DATA/support"
+./scripts/sp11-audio-topology.sh
+sudo ./scripts/sp11-audio-topology.sh --install
+sudo ./scripts/sp11-fix-audio-boot-race.sh install
+sudo reboot
+```
+
+Alternatively, download the prebuilt audio topology release from
+<https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v1>.
+It includes the AudioReach topology binary, ALSA UCM profile, HiFi verb, and
+SP11 DMI matcher. After extracting the release files on the Surface, install
+them with:
+
+```bash
+shasum -a 256 -c SHA256SUMS
+sudo install -m 0644 -D X1E80100-Microsoft-Surface-Pro-11-tplg.bin \
+  /lib/firmware/qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin
+sudo install -m 0644 -D MICROSOFT-Surface-Pro-11.conf \
+  /usr/share/alsa/ucm2/Qualcomm/x1e80100/MICROSOFT-Surface-Pro-11.conf
+sudo install -m 0644 -D Surface11-HiFi.conf \
+  /usr/share/alsa/ucm2/Qualcomm/x1e80100/Surface11-HiFi.conf
+sudo install -m 0644 -D x1e80100.conf \
+  /usr/share/alsa/ucm2/conf.d/x1e80100/x1e80100.conf
+sudo ./scripts/sp11-fix-audio-boot-race.sh install
+sudo reboot
+```
+
+Bluetooth also needs the device's real Bluetooth public address from Windows.
+Do not use a made-up address or publish the raw address in logs. In Windows,
+run PowerShell as Administrator from a checkout of this repository:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\collect-sp11-windows-bluetooth-address.ps1
+```
+
+Then boot Ubuntu, replace the placeholder below with the Windows Bluetooth
+address, compile the raw mgmt-socket helper, and install the cold-boot hook:
+
+```bash
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
+
+cd "$SP11DATA/support"
+gcc -Wall -Wextra -O2 \
+  -o tools/sp11-bt-set-addr \
+  tools/sp11-bt-set-addr.c
+
+BT_MAC="<windows-bluetooth-mac>"
+sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
+sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
+sudo reboot
+```
+
+After the cold boot, validate Bluetooth:
+
+```bash
+bluetoothctl list
+bluetoothctl show
+journalctl -b -u 'sp11-bluetooth-mac@hci0.service' --no-pager -n 20
+```
+
 ### 1. Build the USB Image
 
 On macOS, the builder uses Docker Desktop with an ARM64 Ubuntu container. It
@@ -167,14 +390,14 @@ with the same USB-safe `casper` path used by the first menu entry.
 On macOS, verify the disk first:
 
 ```bash
-diskutil list /dev/disk4
-diskutil info /dev/disk4
+diskutil list /dev/diskX
+diskutil info /dev/diskX
 ```
 
 Then write it:
 
 ```bash
-./scripts/write-image-to-macos-disk.sh build/sp11-ubuntu-live.img /dev/disk4
+./scripts/write-image-to-macos-disk.sh build/sp11-ubuntu-live.img /dev/diskX
 ```
 
 The script refuses to write unless the disk is external, removable, and USB.
