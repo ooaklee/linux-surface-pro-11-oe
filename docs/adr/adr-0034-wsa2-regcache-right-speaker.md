@@ -9,9 +9,25 @@ description: Architecture Decision Record (ADR) for the right speaker silence on
 
 ## Status
 
-Accepted — Track A workaround in place (2026-06-15). Stereo content summed to
-left-mono via PipeWire channelmix matrix. Right speaker remains silent. Root
-cause narrowed but not fully confirmed.
+Superseded by [ADR-0036](adr-0036-right-speaker-audio-position-reorder.md) —
+The right speaker is now working via a PipeWire `audio.position` reorder that
+bypasses the kernel DAPM gate (2026-06-19). The original Track A left-mono
+workaround is no longer needed. The DAPM gate root cause remains unresolved at
+the kernel level but is fully worked around in userspace.
+
+## Update (2026-06-19)
+
+The right speaker now produces audio. The workaround does not fix the kernel
+DAPM gate — the DMA RX_0 bit 1 (right path) still reads `off` and cannot be
+forced on via `amixer`. Instead, the fix reorders PipeWire's `audio.position`
+labels from `[ FL FR RL RR ]` to `[ FL RL FR RR ]`, which causes PipeWire's
+channelmix to route signal to ch2 (the right physical speaker) under the `FR`
+label. This bypasses the DAPM gate entirely. See
+[ADR-0036](adr-0036-right-speaker-audio-position-reorder.md) for details.
+
+The right speaker's PA Volume was also boosted from the default 12/31 to
+31/31 to match the left speaker's volume. See
+`scripts/sp11-enable-wsa-routing.sh`.
 
 ## Results: Track A (2026-06-15)
 

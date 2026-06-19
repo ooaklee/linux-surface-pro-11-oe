@@ -14,7 +14,7 @@ Last updated: 2026-06-19
 | Audio path | Status | Notes |
 |---|---|---|
 | Sound card (ALSA) | Working | `x1e80100` card instantiates with topology |
-| Speaker (WSA884x) | Working (left only) | 4-channel PCM via WSA_CODEC_DMA_RX_0. Left woofer+tweeter (ch0+ch1) work. Right speaker (ch2+ch3) silent — suspected topology/SoundWire port mapping or regmap issue. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md). |
+| Speaker (WSA884x) | Working (both speakers, mono) | 4-channel PCM via WSA_CODEC_DMA_RX_0. Both speakers produce audio via PipeWire sink with reordered `audio.position` labels `[ FL RL FR RR ]` to bypass the kernel DAPM gate. See [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md). |
 | Audio boot race | Fixed | `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service`. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
 | PipeWire integration | Partial | Card detected but manual sink config needed |
 | Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
@@ -188,9 +188,10 @@ wsa_macro 6b00000.codec: using zero-initialized flat cache
 
 This warning is on the active WSA macro (6b00000, prefix `WSA`) that drives
 the SoundWire bus. It indicates the regmap cache started with all-zero values
-on one or more reads. The left speaker (ch0+ch1) works despite this warning.
-The right speaker (ch2+ch3) remains silent — the warning is one of several
-hypotheses for why. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md).
+on one or more reads. Both speakers work despite this warning. The right
+speaker was previously silent due to a DAPM gate, now worked around via
+`audio.position` reorder. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md)
+and [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md).
 
 ### No sound from speakers
 
@@ -202,7 +203,13 @@ hypotheses for why. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.m
 ## References
 
 - ADR: [adr-0033-audio-topology-gap.md](../adr/adr-0033-audio-topology-gap.md)
+- ADR: [adr-0034-wsa2-regcache-right-speaker.md](../adr/adr-0034-wsa2-regcache-right-speaker.md)
+- ADR: [adr-0035-audio-boot-race-alsactl.md](../adr/adr-0035-audio-boot-race-alsactl.md)
+- ADR: [adr-0036-right-speaker-audio-position-reorder.md](../adr/adr-0036-right-speaker-audio-position-reorder.md)
 - Script: [sp11-audio-topology.sh](../../scripts/sp11-audio-topology.sh)
+- Script: [sp11-pipewire-speaker-sink.sh](../../scripts/sp11-pipewire-speaker-sink.sh)
+- Script: [sp11-enable-wsa-routing.sh](../../scripts/sp11-enable-wsa-routing.sh)
+- Script: [sp11-fix-audio-boot-race.sh](../../scripts/sp11-fix-audio-boot-race.sh)
 - Source: [linux-msm/audioreach-topology](https://github.com/linux-msm/audioreach-topology)
 - UCM configs: `/usr/share/alsa/ucm2/Qualcomm/x1e80100/`
 - PipeWire UCM issue: see ADR-0033 for tracking and workarounds

@@ -82,14 +82,18 @@ install_config() {
 #
 # Uses the 4-channel speaker PCM (hw:X1E80100Microso,1).
 # Channel mapping (verified 2026-06-19):
-#   ch0 (Front Left)  = Left physical speaker (working)
-#   ch1 (Front Right) = Left physical speaker (duplicate, working)
-#   ch2 (Rear Left)   = Right physical speaker (DAPM-gated, silent — see ADR-0034)
-#   ch3 (Rear Right)  = unused
+#   ch0 = Left physical speaker
+#   ch1 = unused (DAPM-gated when labeled FR)
+#   ch2 = Right physical speaker
+#   ch3 = unused
 #
-# Mix-matrix sums stereo to left-mono on ch0+ch1, zeroes ch2+ch3.
-# The right speaker is silenced by a kernel DAPM gate in lpass-wsa-macro.c
-# that prevents the right DMA RX bit from powering on. See ADR-0034.
+# The audio.position labels [ FL RL FR RR ] are intentionally reordered so
+# that PipeWire's channelmix routes the summed mono signal to both ch0
+# (left speaker) and ch2 (right speaker). With the default [ FL FR RL RR ]
+# ordering, ch2 (right speaker) is DAPM-gated and stays silent. The reorder
+# works around the kernel DAPM gate in lpass-wsa-macro.c (ADR-0036).
+#
+# Mix-matrix sums stereo L+R to both speakers for mono output on each.
 #
 # IMPORTANT: The WSA DMA route must be enabled after the AudioReach DSP graph
 # loads at boot. If sp11-wsa-routing.service is installed (via
@@ -109,9 +113,9 @@ context.objects = [
             api.alsa.period-size   = 1024
             api.alsa.headroom      = 1024
             audio.channels         = 4
-            audio.position         = [ FL FR RL RR ]
+            audio.position         = [ FL RL FR RR ]
             channelmix.normalize   = false
-            channelmix.mix-matrix  = "[ 0.5 0.5, 0.5 0.5, 0.0 0.0, 0.0 0.0 ]"
+            channelmix.mix-matrix  = "[ 0.5 0.5, 0.0 0.0, 0.5 0.5, 0.0 0.0 ]"
             object.linger          = true
         }
     }
