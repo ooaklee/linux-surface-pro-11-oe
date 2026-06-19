@@ -305,6 +305,41 @@ bluetoothctl show
 journalctl -b -u 'sp11-bluetooth-mac@hci0.service' --no-pager -n 20
 ```
 
+To enable Bluetooth tethering (share a phone's internet connection over
+PAN/NAP), configure BlueZ, pair the phone, then connect. The phone must
+have its Bluetooth tethering toggle enabled:
+
+```bash
+SP11DEV="$(blkid -L SP11DATA)"
+test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
+
+SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
+if [ -z "$SP11DATA" ]; then
+  SP11DATA=/mnt/sp11data
+  sudo mkdir -p "$SP11DATA"
+  sudo mount "$SP11DEV" "$SP11DATA"
+fi
+
+cd "$SP11DATA/support"
+sudo ./scripts/sp11-bluetooth-tethering.sh configure
+
+bluetoothctl
+[bluetooth]# agent on
+[bluetooth]# default-agent
+[bluetooth]# scan on
+[bluetooth]# pair <phone-mac>
+[bluetooth]# trust <phone-mac>
+[bluetooth]# quit
+
+sudo ./scripts/sp11-bluetooth-tethering.sh connect --mac <phone-mac>
+sudo ./scripts/sp11-bluetooth-tethering.sh status
+ping -I bnep0 -c 3 8.8.8.8
+```
+
+See [ADR-0037](docs/adr/adr-0037-bluetooth-tethering-pan-nap.md) and
+[the Bluetooth tethering how-to](docs/how-to/how-to-bring-up-bluetooth.md#bluetooth-tethering-pannap)
+for details and troubleshooting.
+
 ### 1. Build the USB Image
 
 On macOS, the builder uses Docker Desktop with an ARM64 Ubuntu container. It
