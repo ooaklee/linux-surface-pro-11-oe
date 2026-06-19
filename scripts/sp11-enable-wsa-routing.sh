@@ -141,6 +141,12 @@ enable_wsa_routing() {
 		log "Hardware volume at 100% — PipeWire/GNOME slider is the sole volume control."
 	fi
 
+	# Boost the right speaker PA Volume to match the left.
+	# The right amp defaults to a lower PA volume (12/31) than the left
+	# (31/31), causing a significant volume imbalance. Match them.
+	log "Balancing right speaker PA Volume ..."
+	amixer -c "$CARD" sset 'SpkrRight PA' 31 >/dev/null 2>&1 || true
+
 	log "WSA speaker routing enabled."
 }
 
