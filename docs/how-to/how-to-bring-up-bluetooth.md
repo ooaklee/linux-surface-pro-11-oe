@@ -267,8 +267,63 @@ If a previous install created
 rerun the installer. The current installer removes that older dependency link
 and relies on the udev trigger instead.
 
+## Bluetooth Tethering (PAN/NAP)
+
+Bluetooth tethering allows you to share your phone's internet connection
+with the Surface Pro 11 over Bluetooth. This is useful during kernel
+rebuilds or when Wi-Fi is unavailable.
+
+### Prerequisites
+
+- [x] Bluetooth public address set (see [ADR-032](../adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md))
+- [x] Phone paired and trusted via Bluetooth settings or `bluetoothctl`
+- [x] Phone's Bluetooth tethering toggle enabled
+
+### Setup
+
+```bash
+# 1. Configure BlueZ for PAN/NAP profiles
+sudo ./scripts/sp11-bluetooth-tethering.sh configure
+
+# 2. Pair and trust your phone (if not already done)
+bluetoothctl
+[bluetooth]# agent on
+[bluetooth]# default-agent
+[bluetooth]# scan on
+[bluetooth]# pair <phone-mac>
+[bluetooth]# trust <phone-mac>
+[bluetooth]# quit
+
+# 3. Connect for tethering
+sudo ./scripts/sp11-bluetooth-tethering.sh connect --mac <phone-mac>
+
+# 4. Verify connectivity
+sudo ./scripts/sp11-bluetooth-tethering.sh status
+ping -I bnep0 -c 3 8.8.8.8
+```
+
+### Disconnect
+
+```bash
+sudo ./scripts/sp11-bluetooth-tethering.sh disconnect
+```
+
+### Troubleshooting
+
+If the connection fails:
+
+1. Ensure `bnep` module is loaded: `lsmod | grep bnep`
+2. Ensure `bt-pan` is installed: `which bt-pan`
+3. Check `dmesg | grep -i bnep` for errors
+4. Ensure the phone's Bluetooth tethering toggle is ON
+5. Try re-pairing: `bluetoothctl remove <mac>` then `pair <mac>` again
+6. Check `/etc/bluetooth/main.conf` has `JustWorksRepairing = always`
+
+See [ADR-0037](../adr/adr-0037-bluetooth-tethering-pan-nap.md) for details.
+
 ## Related Documents
 
 - [ADR032: Raw mgmt-Socket Bluetooth Cold-Boot Solution](../adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md)
 - [ADR031: Bluetooth Indexed Public Address and Cold-Boot Polling](../adr/adr-0031-bluetooth-indexed-public-address.md)
+- [ADR037: Bluetooth Tethering — PAN/NAP Profile Enablement](../adr/adr-0037-bluetooth-tethering-pan-nap.md)
 - [Compile the Raw mgmt-Socket Bluetooth Helper](how-to-compile-sp11-bt-set-addr.md)

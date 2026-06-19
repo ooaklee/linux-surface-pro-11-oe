@@ -67,7 +67,7 @@ automatically reconnected to the previously saved Wi-Fi network after reboot.
 | Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
 | Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
 | Wi-Fi | Working on patched kernel | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Continue validating normal reboots, suspend/resume, and package upgrades. |
-| Bluetooth | Working on cold boot via raw mgmt socket | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts. No btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. |
+| Bluetooth | Working on cold boot via raw mgmt socket | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts. No btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. Bluetooth tethering (PAN/NAP) supported via `sp11-bluetooth-tethering.sh` — see [ADR-0037](docs/adr/adr-0037-bluetooth-tethering-pan-nap.md). |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
 | Audio | Working (both speakers, mono) | Sound card instantiates with generated topology from CRD template. Both speakers work via PipeWire manual sink with reordered `audio.position` labels to bypass the kernel DAPM gate. Audio boot race fixed: `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service` to enable WSA routing after the DSP graph loads. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0034](docs/adr/adr-0034-wsa2-regcache-right-speaker.md), [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md), [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
@@ -743,6 +743,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cache](docs/adr/adr-0034-wsa2-regcache-right-speaker.md)
 - [ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load](docs/adr/adr-0035-audio-boot-race-alsactl.md)
 - [ADR0036: Right Speaker Audio via PipeWire audio.position Reorder](docs/adr/adr-0036-right-speaker-audio-position-reorder.md)
+- [ADR0037: Bluetooth Tethering — PAN/NAP Profile Enablement](docs/adr/adr-0037-bluetooth-tethering-pan-nap.md)
 
 ## Windows Firmware
 

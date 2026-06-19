@@ -71,6 +71,7 @@ install -m 0755 "$repo_dir/scripts/sp11-pipewire-speaker-sink.sh" "$(target /usr
 install -m 0755 "$repo_dir/scripts/sp11-audio-topology.sh" "$(target /usr/local/sbin/sp11-audio-topology)"
 install -m 0755 "$repo_dir/scripts/sp11-enable-wsa-routing.sh" "$(target /usr/local/sbin/sp11-enable-wsa-routing)"
 install -m 0755 "$repo_dir/scripts/sp11-fix-audio-boot-race.sh" "$(target /usr/local/sbin/sp11-fix-audio-boot-race)"
+install -m 0755 "$repo_dir/scripts/sp11-bluetooth-tethering.sh" "$(target /usr/local/sbin/sp11-bluetooth-tethering)"
 
 # --- Audio boot race fix: mask alsa-restore, install WSA routing service ---
 # alsactl restores WSA mixer state at boot before the AudioReach DSP finishes
