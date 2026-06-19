@@ -1,0 +1,18 @@
+[Unit]
+Description=Restart PipeWire after SP11 WSA routing is enabled
+# This user-level service waits for the system-level sp11-wsa-routing.service
+# to finish, then restarts PipeWire/WirePlumber so they connect to the speaker
+# sink cleanly.
+After=pipewire.service pipewire.socket
+Wants=pipewire.service
+
+[Service]
+Type=oneshot
+# Wait for the flag file written by sp11-enable-wsa-routing.sh
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /run/sp11-wsa-routing-done ] && exit 0; sleep 1; done; exit 1'
+# Restart PipeWire and WirePlumber
+ExecStart=/bin/sh -c 'systemctl --user restart wireplumber pipewire pipewire-pulse 2>/dev/null; sleep 2; rm -f /run/sp11-wsa-routing-done 2>/dev/null; true'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

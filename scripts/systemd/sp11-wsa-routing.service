@@ -1,0 +1,17 @@
+[Unit]
+Description=Enable Surface Pro 11 WSA speaker routing after DSP graph load
+# Run after the sound card appears and after alsa-restore (which we mask).
+# The script internally waits for the WSA mixer controls to become available,
+# which only happens after the AudioReach DSP graph has loaded.
+After=sound.target
+Wants=sound.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sp11-enable-wsa-routing.sh
+RemainAfterExit=yes
+# If the DSP graph fails to load, don't mark the system as failed.
+SuccessExitStatus=1
+
+[Install]
+WantedBy=multi-user.target

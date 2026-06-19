@@ -81,10 +81,22 @@ install_config() {
 # Surface Pro 11 manual speaker sink.
 #
 # Uses the 4-channel speaker PCM (hw:X1E80100Microso,1).
-# Only ch0+ch1 produce audio (left speaker). ch2+ch3 are silent at the
-# kernel level (suspected topology/SoundWire port mapping or regmap issue).
+# Channel mapping (verified 2026-06-19):
+#   ch0 (Front Left)  = Left physical speaker (working)
+#   ch1 (Front Right) = Left physical speaker (duplicate, working)
+#   ch2 (Rear Left)   = Right physical speaker (DAPM-gated, silent — see ADR-0034)
+#   ch3 (Rear Right)  = unused
+#
 # Mix-matrix sums stereo to left-mono on ch0+ch1, zeroes ch2+ch3.
-# See docs/adr/adr-0034-wsa2-regcache-right-speaker.md.
+# The right speaker is silenced by a kernel DAPM gate in lpass-wsa-macro.c
+# that prevents the right DMA RX bit from powering on. See ADR-0034.
+#
+# IMPORTANT: The WSA DMA route must be enabled after the AudioReach DSP graph
+# loads at boot. If sp11-wsa-routing.service is installed (via
+# sp11-fix-audio-boot-race.sh --install), this happens automatically.
+# Otherwise, use --enable-route or run sp11-enable-wsa-routing.sh manually.
+# Do NOT restore WSA mixer state via alsactl at boot — it races the DSP.
+# See docs/adr/adr-0035-audio-boot-race-alsactl.md.
 context.objects = [
     { factory = adapter
         args = {
