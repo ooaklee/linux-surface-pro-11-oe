@@ -91,7 +91,7 @@ install_config() {
 # that PipeWire's channelmix routes the summed mono signal to both ch0
 # (left speaker) and ch2 (right speaker). With the default [ FL FR RL RR ]
 # ordering, ch2 (right speaker) is DAPM-gated and stays silent. The reorder
-# works around the kernel DAPM gate in lpass-wsa-macro.c (ADR-0034).
+# works around the kernel DAPM gate in lpass-wsa-macro.c (ADR-0036).
 #
 # Mix-matrix sums stereo L+R to both speakers for mono output on each.
 #

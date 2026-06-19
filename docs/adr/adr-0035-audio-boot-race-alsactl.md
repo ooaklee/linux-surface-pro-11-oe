@@ -95,28 +95,45 @@ Install `sp11-wsa-routing.service`, a systemd oneshot that:
 1. Waits for the ALSA card to appear (up to 30s)
 2. Waits for the WSA mixer controls to be available (up to 30s) — this only
    happens after the DSP graph has loaded
-3. Enables the WSA DMA route and macro routing
-4. Sets a safe default speaker volume
+3. Polls SoundWire slave status until both WSA884x amps reach `Attached`
+4. Enables the WSA DMA route and macro routing
+5. Sets speaker hardware volume to 100% (PipeWire/GNOME is sole volume control)
+6. Boosts right speaker PA Volume to 31/31 to match the left (see ADR-0036)
+7. Writes a flag file for the user-level PipeWire restart service
 
 This runs `After=sound.target` and internally polls for the WSA controls,
 ensuring it never races the DSP.
+
+### 4. Restart PipeWire after WSA routing is enabled
+
+Install `sp11-pipewire-restart.service`, a user-level systemd oneshot that:
+1. Waits for the flag file from the WSA routing service (up to 60s)
+2. Waits for `aplay -l` to see the ALSA card (up to 30s)
+3. Waits an additional 3s for the card to fully settle
+4. Restarts PipeWire/WirePlumber so they connect to the speaker sink cleanly
+
+This is critical because PipeWire starts during the GDM/login session before
+the ALSA card is fully registered, causing "Cannot get card index" errors if
+restarted too early.
 
 ## Verification (2026-06-19)
 
 | Check | Before fix | After fix |
 |---|---|---|
-| APM CMD timeout at boot | Present | **Gone** |
+| APM CMD timeout at boot | Present | Harmless — DSP recovers within seconds |
 | SoundWire Bus clash | Continuous spam | **Gone** |
 | Left speaker audio | No sound (pops only) | **Working** |
+| Right speaker audio | Silent | **Working** (via ADR-0036 audio.position reorder) |
 | `speaker-test hw:0,1` | No error, no sound | Works (when PCM not busy) |
-| PipeWire | `Broken pipe` spam | Working with manual sink |
+| PipeWire | `Broken pipe` spam | Working with manual sink + restart service |
 
 ## Files
 
 - `scripts/sp11-fix-audio-boot-race.sh` — diagnostic and fix script
 - `scripts/sp11-enable-wsa-routing.sh` — WSA routing enable script (run by systemd)
-- `scripts/systemd/sp11-wsa-routing.service` — systemd oneshot service
-- `scripts/sp11-pipewire-speaker-sink.sh` — updated with boot race notes
+- `scripts/systemd/sp11-wsa-routing.service` — system-level oneshot service
+- `scripts/systemd/sp11-pipewire-restart.service` — user-level oneshot service
+- `scripts/sp11-pipewire-speaker-sink.sh` — PipeWire sink config with boot race notes
 
 ## Consequences
 
@@ -126,6 +143,9 @@ ensuring it never races the DSP.
 - The DSP graph loads cleanly without register-write interference
 - The systemd service is self-healing: if the DSP takes longer to load, the
   script waits up to 30s for the WSA controls to appear
+- The PipeWire restart service ensures the sink connects cleanly after the
+  ALSA card is fully registered, avoiding "Cannot get card index" errors
+- Both speakers work via the `audio.position` reorder (ADR-0036)
 
 ### Negative
 
@@ -139,15 +159,16 @@ ensuring it never races the DSP.
 
 ### Neutral
 
-- The fix does not address the right speaker silence (ADR-0034) — that remains
-  an unresolved kernel-level issue
+- The right speaker DAPM gate (ADR-0034) is not fixed at the kernel level,
+  but is worked around in userspace via `audio.position` reorder (ADR-0036)
 - The PipeWire manual sink (`50-sp11-speakers.conf`) is still needed for
   desktop audio until the UCM auto-profile issue is resolved
 
 ## References
 
 - [ADR-0033](adr-0033-audio-topology-gap.md) — topology gap (resolved)
-- [ADR-0034](adr-0034-wsa2-regcache-right-speaker.md) — right speaker silence
+- [ADR-0034](adr-0034-wsa2-regcache-right-speaker.md) — right speaker DAPM gate (superseded by ADR-0036)
+- [ADR-0036](adr-0036-right-speaker-audio-position-reorder.md) — right speaker workaround via audio.position reorder
 - `scripts/sp11-fix-audio-boot-race.sh` — fix script
 - `scripts/sp11-enable-wsa-routing.sh` — WSA routing enable script
 - `scripts/systemd/sp11-wsa-routing.service` — systemd service
