@@ -70,7 +70,7 @@ automatically reconnected to the previously saved Wi-Fi network after reboot.
 | Bluetooth | Working on cold boot via raw mgmt socket | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts. No btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. |
 | Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
 | Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
-| Audio | Working (left speaker, mono) | Sound card instantiates with generated topology from CRD template. Left speaker works via `speaker-test hw:0,1` and PipeWire manual sink. Right speaker silent — suspected SoundWire port mapping or regmap issue (kernel). Channelmix matrix sums stereo to left-mono. Headphone/mic/HDMI audio not yet wired in DTS. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0034](docs/adr/adr-0034-wsa2-regcache-right-speaker.md). |
+| Audio | Working (left speaker, mono) | Sound card instantiates with generated topology from CRD template. Left speaker works via `speaker-test hw:0,1` and PipeWire manual sink. Right speaker silent — suspected SoundWire port mapping or regmap issue (kernel). Channelmix matrix sums stereo to left-mono. Audio boot race fixed: `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service` to enable WSA routing after the DSP graph loads. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0034](docs/adr/adr-0034-wsa2-regcache-right-speaker.md), [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md). |
 | Suspend | Partial/risky | Prefer testing boot/install first. |
 
 ## Recommended Path
@@ -432,6 +432,20 @@ sudo ./scripts/troubleshoot-sp11-audio.sh
 Do not enable experimental speaker topology or UCM snippets until the topology
 file and routing are confirmed for Surface Pro 11.
 
+Audio boot race fix: `alsa-restore.service` was restoring WSA mixer state at
+boot before the AudioReach DSP finished loading the audio graph, causing an
+APM CMD timeout, SoundWire bus clash, and no audio (only pops). The fix masks
+`alsa-restore.service` and uses `sp11-wsa-routing.service` to enable WSA
+routing after the DSP graph loads. This is installed automatically by the
+support installer. To apply manually:
+
+```bash
+sudo ./scripts/sp11-fix-audio-boot-race.sh install
+sudo reboot
+```
+
+See [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md) for details.
+
 
 - Audio topology and UCM configs are in [`payload/audio/`](payload/audio/) and
   installed automatically by the support installer.
@@ -502,6 +516,9 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR030: Bluetooth btmgmt Batch Sequence](docs/adr/adr-0030-bluetooth-btmgmt-batch-sequence.md)
 - [ADR031: Bluetooth Indexed Public Address and No Pre-Apply Restart](docs/adr/adr-0031-bluetooth-indexed-public-address.md)
 - [ADR032: Raw mgmt-Socket Bluetooth Cold-Boot Solution](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md)
+- [ADR0033: Surface Pro 11 Audio Topology Gap](docs/adr/adr-0033-audio-topology-gap.md)
+- [ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cache](docs/adr/adr-0034-wsa2-regcache-right-speaker.md)
+- [ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load](docs/adr/adr-0035-audio-boot-race-alsactl.md)
 
 ## Windows Firmware
 

@@ -69,6 +69,61 @@ install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-bluetooth.sh" "$(target /us
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-wifi-rfkill.sh" "$(target /usr/local/sbin/troubleshoot-sp11-wifi-rfkill)"
 install -m 0755 "$repo_dir/scripts/sp11-pipewire-speaker-sink.sh" "$(target /usr/local/sbin/sp11-pipewire-speaker-sink)"
 install -m 0755 "$repo_dir/scripts/sp11-audio-topology.sh" "$(target /usr/local/sbin/sp11-audio-topology)"
+install -m 0755 "$repo_dir/scripts/sp11-enable-wsa-routing.sh" "$(target /usr/local/sbin/sp11-enable-wsa-routing)"
+install -m 0755 "$repo_dir/scripts/sp11-fix-audio-boot-race.sh" "$(target /usr/local/sbin/sp11-fix-audio-boot-race)"
+
+# --- Audio boot race fix: mask alsa-restore, install WSA routing service ---
+# alsactl restores WSA mixer state at boot before the AudioReach DSP finishes
+# loading the audio graph, causing an APM CMD timeout, SoundWire bus clash,
+# and no audio. Mask alsa-restore and use a dedicated service instead.
+# See docs/adr/adr-0035-audio-boot-race-alsactl.md.
+if [ -f "$repo_dir/scripts/systemd/sp11-wsa-routing.service" ]; then
+  install -d "$(target /etc/systemd/system)"
+  install -m 0644 "$repo_dir/scripts/systemd/sp11-wsa-routing.service" \
+    "$(target /etc/systemd/system/sp11-wsa-routing.service)"
+
+  # Mask alsa-restore so it doesn't race the DSP at boot
+  if [ "$ROOT" = "/" ]; then
+    systemctl mask alsa-restore.service 2>/dev/null || true
+    systemctl mask alsa-state.service 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl enable sp11-wsa-routing.service 2>/dev/null || true
+  else
+    # For chroot/target installs, create the mask symlinks manually
+    ln -sf /dev/null "$(target /etc/systemd/system/alsa-restore.service)"
+    ln -sf /dev/null "$(target /etc/systemd/system/alsa-state.service)"
+    # Enable via symlink (will be picked up after chroot boot)
+    ln -sf /etc/systemd/system/sp11-wsa-routing.service \
+      "$(target /etc/systemd/system/multi-user.target.wants/sp11-wsa-routing.service)" 2>/dev/null || true
+  fi
+
+  # Clear WSA controls from asound.state if it exists
+  local_state="$(target /var/lib/alsa/asound.state)"
+  if [ -f "$local_state" ]; then
+    cp "$local_state" "${local_state}.bak.$(date +%Y%m%d%H%M%S)"
+    tmp="$(mktemp)"
+    awk '
+      BEGIN { skip=0 }
+      /^[[:space:]]*control\.[0-9]+[[:space:]]*\{/ {
+        block=""; skip=0; collecting=1
+      }
+      collecting==1 {
+        block = block $0 "\n"
+        if ($0 ~ /^[[:space:]]*name[[:space:]]/) {
+          if ($0 ~ /WSA|Spkr/) { skip=1 }
+        }
+        if ($0 ~ /^[[:space:]]*\}[[:space:]]*$/) {
+          collecting=0
+          if (skip==0) { printf "%s", block }
+        }
+        next
+      }
+      { print }
+    ' "$local_state" > "$tmp"
+    [ -s "$tmp" ] && cp "$tmp" "$local_state" || true
+    rm -f "$tmp"
+  fi
+fi
 
 # --- Audio topology & UCM ---
 AUDIO_ASSETS_DIR="$repo_dir/payload/audio"

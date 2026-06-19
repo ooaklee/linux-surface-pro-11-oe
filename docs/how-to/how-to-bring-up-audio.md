@@ -1,19 +1,21 @@
 # How to Bring Up Audio on Surface Pro 11
 
-Last updated: 2026-06-15
+Last updated: 2026-06-19
 
 ## Prerequisites
 
 - [x] SP11 kernel patched with DTB audio DAI links (`wsa-dai-link`, `va-dai-link`)
 - [x] ADSP/CDSP firmware in place (`qcadsp8380.mbn`, `qccdsp8380.mbn`)
 - [x] Audio firmware copied from Windows / linux-firmware
+- [x] Audio boot race fix applied (see [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md))
 
-## Status (2026-06-15)
+## Status (2026-06-19)
 
 | Audio path | Status | Notes |
 |---|---|---|
 | Sound card (ALSA) | Working | `x1e80100` card instantiates with topology |
 | Speaker (WSA884x) | Working (left only) | 4-channel PCM via WSA_CODEC_DMA_RX_0. Left woofer+tweeter (ch0+ch1) work. Right speaker (ch2+ch3) silent — suspected topology/SoundWire port mapping or regmap issue. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md). |
+| Audio boot race | Fixed | `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service`. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
 | PipeWire integration | Partial | Card detected but manual sink config needed |
 | Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
 | Microphone (WCD939x TX) | Untested | TX_CODEC not in current DTS DAI links |
@@ -39,7 +41,33 @@ sudo ./scripts/sp11-audio-topology.sh --install
 The topology is loaded by the AudioReach DSP at card probe time (boot). Reboot
 is required after first install.
 
-### 4. Test with ALSA directly
+### 4. Apply the audio boot race fix
+
+`alsa-restore.service` restores WSA mixer state at boot before the AudioReach
+DSP finishes loading the audio graph, causing an APM CMD timeout, SoundWire
+bus clash, and no audio (only pops). The fix masks `alsa-restore.service` and
+installs `sp11-wsa-routing.service` to enable WSA routing after the DSP graph
+loads. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md).
+
+```bash
+sudo ./scripts/sp11-fix-audio-boot-race.sh install
+sudo reboot
+```
+
+After reboot, verify the DSP graph loaded cleanly:
+
+```bash
+# Should show no APM CMD timeout
+sudo journalctl -b -k | grep 'CMD timeout'
+
+# Should show no Bus clash
+sudo dmesg | grep 'Bus clash'
+
+# The WSA routing service should be active
+systemctl status sp11-wsa-routing.service
+```
+
+### 5. Test with ALSA directly
 
 ```bash
 # Check card appeared
@@ -61,7 +89,7 @@ amixer -c0 cget numid=1   # SpkrLeft PA Volume
 amixer -c0 cget numid=9   # SpkrRight PA Volume
 ```
 
-### 5. PipeWire workaround
+### 6. PipeWire workaround
 
 If PipeWire shows only `Dummy Output` after reboot, install the user-level
 manual speaker sink:
