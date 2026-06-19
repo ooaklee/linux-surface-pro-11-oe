@@ -150,35 +150,19 @@ enable_wsa_routing() {
 	log "WSA speaker routing enabled."
 }
 
-# Restart PipeWire/WirePlubber user services so they connect to the sink
-# cleanly after WSA routing is enabled. PipeWire may have started before the
-# DSP graph was ready, leaving the sink in a broken state.
+# Write a flag file so the user-level sp11-pipewire-restart.service knows
+# that WSA routing is enabled and it can restart PipeWire.
 #
-# Since this service runs at multi-user.target (before user login), we can't
-# restart PipeWire directly. Instead, we write a flag file that a user-level
-# systemd path will pick up. We also try to restart PipeWire for any already
-# logged-in user.
-restart_pipewire() {
-	# Write a flag file for the user-level service to detect
+# We do NOT restart PipeWire from this system service — restarting PipeWire
+# from a system service races the ALSA card registration in the user
+# session, causing "Cannot get card index" errors and crash loops.
+# The user-level service handles the restart after confirming the card is
+# available via aplay -l.
+write_pipewire_flag() {
 	local flag="/run/sp11-wsa-routing-done"
 	touch "$flag" 2>/dev/null || true
 	chmod 0644 "$flag" 2>/dev/null || true
 	log "Wrote flag file $flag for user-level PipeWire restart."
-
-	# Also try to restart PipeWire for any already-logged-in user
-	local uid user
-	uid="$(loginctl list-users --no-legend 2>/dev/null | awk '{print $1; exit}')"
-	if [ -n "$uid" ]; then
-		user="$(getent passwd "$uid" | cut -d: -f1)"
-		if [ -n "$user" ]; then
-			log "Restarting PipeWire/WirePlumber for user ${user} (uid=${uid}) ..."
-			systemctl --user -M "${user}@" restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
-			log "PipeWire restarted."
-			return 0
-		fi
-	fi
-
-	log "No logged-in user yet — flag file written for later PipeWire restart."
 }
 
 main() {
@@ -197,7 +181,7 @@ main() {
 		if wait_for_slaves 15; then
 			log "DSP graph loaded successfully."
 			enable_wsa_routing
-			restart_pipewire
+			write_pipewire_flag
 			log "Done."
 			exit 0
 		fi
