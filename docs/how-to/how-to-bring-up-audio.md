@@ -14,7 +14,7 @@ Last updated: 2026-06-19
 | Audio path | Status | Notes |
 |---|---|---|
 | Sound card (ALSA) | Working | `x1e80100` card instantiates with topology |
-| Speaker (WSA884x) | Working (left only) | 4-channel PCM via WSA_CODEC_DMA_RX_0. Left woofer+tweeter (ch0+ch1) work. Right speaker (ch2+ch3) silent — suspected topology/SoundWire port mapping or regmap issue. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md). |
+| Speaker (WSA884x) | Working (both speakers, mono) | 4-channel PCM via WSA_CODEC_DMA_RX_0. Both speakers produce audio via PipeWire sink with reordered `audio.position` labels `[ FL RL FR RR ]` to bypass the kernel DAPM gate. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md). |
 | Audio boot race | Fixed | `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service`. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
 | PipeWire integration | Partial | Card detected but manual sink config needed |
 | Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
