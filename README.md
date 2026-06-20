@@ -59,19 +59,32 @@ rfkill-capable Denali OLED DTB, `/boot/sp11-denali.dtb` contained
 `disable-rfkill`, the system booted the patched kernel, and NetworkManager
 automatically reconnected to the previously saved Wi-Fi network after reboot.
 
-| Feature | Expected status | Notes |
+The feature table below is aligned with the upstream
+[dwhinham/linux-surface-pro-11 "What's working"](https://github.com/dwhinham/linux-surface-pro-11#whats-working)
+list, so the Arch and Ubuntu bring-up status can be compared row by row. The
+notes reflect the verified Ubuntu live-USB and installed-system results.
+
+> The test model is a Surface Pro 11, OLED version, Wi-Fi only (no 5G), with
+> the X1E SoC. If you have a different model (e.g. LCD screen, 5G, X1P CPU) you
+> are on your own.
+
+| Feature | Status | Notes |
 | --- | --- | --- |
-| Display | Working in live USB | Direct boot reached the Ubuntu desktop. Night Light and screen brightness controls work. |
-| NVMe | Working for installed boot | Installed Ubuntu booted from `/dev/nvme0n1p5` with separate `/boot` and `/boot/efi` partitions after support setup. |
-| USB-C boot | Working with direct mode | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified path. |
-| Touchpad | Working in live USB | The Surface cover touchpad works after the desktop starts. |
-| Keyboard/cover | Partial | Backlight and function-key events are visible, but GRUB menu input remains unresolved. Normal text input still needs confirmation. |
-| Wi-Fi | Working on patched kernel | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Continue validating normal reboots, suspend/resume, and package upgrades. |
-| Bluetooth | Working on cold boot via raw mgmt socket | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts. No btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. |
-| Touchscreen/pen | Not working in live USB | SP11 Arch notes also list touchscreen and pen as not working. |
-| Camera | Not expected yet | Camera support is not part of the first Ubuntu boot path. |
-| Audio | Working (both speakers, mono) | Sound card instantiates with generated topology from CRD template. Both speakers work via PipeWire manual sink with reordered `audio.position` labels to bypass the kernel DAPM gate. Audio boot race fixed: `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service` to enable WSA routing after the DSP graph loads. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0034](docs/adr/adr-0034-wsa2-regcache-right-speaker.md), [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md), [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
-| Suspend | Partial/risky | Prefer testing boot/install first. |
+| NVMe | ✅ Working | Installed Ubuntu boots from `/dev/nvme0n1p5` with separate `/boot` and `/boot/efi` partitions after support setup. |
+| Graphics | ✅ Working | Direct boot reaches the Ubuntu desktop. 3D acceleration for X1E SoCs only; X1P support is on its way from upstream. |
+| Backlight | ✅ Working | Night Light and screen brightness controls work. Adjustable via `/sys/class/backlight/dp_aux_backlight/brightness`. |
+| USB3 | ⚠️ Partially | USB-C ports are working, but the Surface Dock connector is presumably not. |
+| USB4/Thunderbolt | ❌ Not working | No external display output when using the [official USB4 dock](https://learn.microsoft.com/en-us/surface/surface-usb4-dock). |
+| USB-C display output | ✅ Working | Working as of 6.15-rc6 (for DP alt mode). |
+| USB-C boot | ✅ Working with `--grub-mode direct` | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified live-USB path. |
+| Wi-Fi | ✅ Working | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Uses a [kernel hack to disable rfkill](https://github.com/dwhinham/kernel-surface-pro-11/commit/fcc769be9eaa9823d55e98a28402104621fa6784). Continue validating normal reboots, suspend/resume, and package upgrades. |
+| Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
+| Audio | ⚠️ Partially | Sound card instantiates with generated topology from CRD template. Both speakers work via PipeWire manual sink with reordered `audio.position` labels to bypass the kernel DAPM gate. Speakers can sound distorted; care needed with volume controls; microphone too distorted to be usable. Audio boot race fixed: `alsa-restore.service` masked, `sp11-wsa-routing.service` enables WSA routing after the DSP graph loads. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0034](docs/adr/adr-0034-wsa2-regcache-right-speaker.md), [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md), [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
+| Touchscreen | ❌ Not working | Not working in live USB. Upstream Arch notes also list touchscreen as not working. |
+| Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
+| Flex Keyboard | ✅ Working | Surface cover touchpad and keyboard work after the desktop starts. Backlight and function-key events are visible. Only when attached to the Surface Pro; Bluetooth cover mode unconfirmed. GRUB menu input remains unresolved, so use `--grub-mode direct`. |
+| Suspend/resume | ⚠️ Partially/risky | Lid switch seems to work when the Flex Keyboard covers the screen. Resume from sleep can cause the machine to hang or produce a black screen. Prefer testing boot/install first. |
+| Cameras (and status LEDs) | ❌ Not working | Camera support is not part of the first Ubuntu boot path. |
 
 ## Recommended Path
 
@@ -87,7 +100,7 @@ This avoids remastering the Ubuntu ISO while still giving us the SP11-specific
 Run these commands from this repository root on the macOS/Docker build host:
 
 ```bash
-cd /Users/leon/Workspace/repo/linux-surface-pro/linux-surface-pro-11-oe
+cd /path/to/linux-surface-pro-11-oe
 mkdir -p build
 ```
 
