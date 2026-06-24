@@ -716,6 +716,8 @@ is stored under `assets/`:
 - [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 - [Troubleshoot Docker Overlay Mount Failures on Linux Build Hosts](docs/how-to/how-to-troubleshoot-linux-docker-overlay.md)
+- [Troubleshoot Docker `exec format error` on x86_64 Linux Build Hosts](docs/how-to/how-to-troubleshoot-docker-exec-format-error.md)
+- [Troubleshoot Kernel Git Clone `fetch-pack` Failures](docs/how-to/how-to-troubleshoot-kernel-git-clone-failures.md)
 
 ## Decision Records
 
