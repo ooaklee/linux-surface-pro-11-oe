@@ -42,7 +42,8 @@ Options:
   --git-branch BRANCH    Kernel git branch or tag for git mode, default $GIT_BRANCH.
   --patch-dir DIR        Patch directory, default repo patches/ubuntu-qcom-x1e-7.0.
   --work-dir DIR         Build work directory, default $WORK_DIR.
-  --build-target TARGET  Kernel package target, default $BUILD_TARGET.
+  --build-target TARGET  Kernel package target or quoted target list,
+                         default $BUILD_TARGET.
   --jobs N              Parallel build jobs, default detected CPU count.
   --min-free-gb N        Required free space in work dir, default $MIN_FREE_GB.
   --install-deps        Install common build dependencies and apt build-deps.
@@ -601,6 +602,7 @@ collect_kernel_debs() {
       -o -name 'linux-modules-*-qcom-x1e_*.deb' \
       -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
       -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+      -o -name 'linux-qcom-x1e-headers-*_*.deb' \
       -o -name 'linux-qcom-x1e_*.deb' \
       -o -name 'linux-image-qcom-x1e_*.deb' \
       -o -name 'linux-headers-qcom-x1e_*.deb' \)
@@ -610,6 +612,7 @@ collect_kernel_debs() {
       -o -name 'linux-modules-*-qcom-x1e_*.deb' \
       -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
       -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+      -o -name 'linux-qcom-x1e-headers-*_*.deb' \
       -o -name 'linux-qcom-x1e_*.deb' \
       -o -name 'linux-image-qcom-x1e_*.deb' \
       -o -name 'linux-headers-qcom-x1e_*.deb' \)
@@ -709,13 +712,50 @@ ensure_kernel_fallback() {
   echo "Found installed fallback qcom-x1e kernel ABI: $fallback_abi"
 }
 
+ensure_header_dependencies_present() {
+  local deb base abi common_pkg common_found
+
+  for deb in "$@"; do
+    base="$(basename "$deb")"
+    case "$base" in
+      linux-headers-*-qcom-x1e_*.deb)
+        abi="${base#linux-headers-}"
+        abi="${abi%%-qcom-x1e_*}"
+        common_pkg="linux-qcom-x1e-headers-${abi}_"
+        common_found="false"
+        for candidate in "$@"; do
+          case "$(basename "$candidate")" in
+            "${common_pkg}"*_all.deb)
+              common_found="true"
+              break
+              ;;
+          esac
+        done
+        if [ "$common_found" != "true" ]; then
+          echo "Missing common qcom-x1e headers package for $base." >&2
+          echo "Expected a local package matching: ${common_pkg}*_all.deb" >&2
+          echo "Rebuild the payload with:" >&2
+          echo "  --build-target \"binary-indep binary-qcom-x1e\"" >&2
+          echo "For boot-only recovery, install the linux-image and linux-modules packages without linux-headers." >&2
+          exit 1
+        fi
+        ;;
+    esac
+  done
+}
+
 write_deb_manifest() {
   collect_kernel_debs > "$work_dir/sp11-kernel-debs.txt"
 }
 
 build_kernel() {
-  local rules_file
+  local rules_file target build_targets=()
   rules_file="$(find_rules_file)"
+  read -r -a build_targets <<<"$BUILD_TARGET"
+  if [ "${#build_targets[@]}" -eq 0 ]; then
+    echo "No build target specified." >&2
+    exit 2
+  fi
 
   (
     cd "$source_dir"
@@ -723,7 +763,9 @@ build_kernel() {
     if [ "$SKIP_CLEAN" != "true" ]; then
       run_rules "$rules_file" clean
     fi
-    run_rules "$rules_file" "$BUILD_TARGET"
+    for target in "${build_targets[@]}"; do
+      run_rules "$rules_file" "$target"
+    done
   )
 }
 
@@ -749,6 +791,7 @@ install_kernel_debs() {
 
   printf 'Installing generated kernel debs:\n'
   printf '  %s\n' "${debs[@]}"
+  ensure_header_dependencies_present "${debs[@]}"
   ensure_kernel_fallback "${debs[@]}"
   as_root apt install --reinstall "${debs[@]}"
 

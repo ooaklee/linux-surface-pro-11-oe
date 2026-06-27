@@ -57,7 +57,8 @@ Options:
                          Docker volume for --container-work-dir, default
                          $LINUX_WORK_VOLUME. Ignored when --container-work-dir
                          is /work.
-  --build-target TARGET  Kernel package target, default from metadata or script.
+  --build-target TARGET  Kernel package target or quoted target list,
+                         default from metadata or script.
   --patch-dir DIR        Patch directory to pass to the inner build helper.
   --jobs N              Parallel build jobs passed to the inner build helper.
   --min-free-gb N        Free-space guard passed to the inner build helper.
@@ -98,6 +99,7 @@ find_qcom_kernel_debs() {
     -o -name 'linux-modules-*-qcom-x1e_*.deb' \
     -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
     -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+    -o -name 'linux-qcom-x1e-headers-*_*.deb' \
     -o -name 'linux-qcom-x1e_*.deb' \
     -o -name 'linux-image-qcom-x1e_*.deb' \
     -o -name 'linux-headers-qcom-x1e_*.deb' \) \
@@ -488,6 +490,7 @@ find_qcom_kernel_debs() {
     -o -name 'linux-modules-*-qcom-x1e_*.deb' \
     -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
     -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+    -o -name 'linux-qcom-x1e-headers-*_*.deb' \
     -o -name 'linux-qcom-x1e_*.deb' \
     -o -name 'linux-image-qcom-x1e_*.deb' \
     -o -name 'linux-headers-qcom-x1e_*.deb' \) \

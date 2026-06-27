@@ -159,6 +159,7 @@ fi
 kernel_abi=""
 package_version=""
 seen_headers="false"
+seen_common_headers="false"
 seen_image="false"
 seen_modules="false"
 
@@ -166,20 +167,31 @@ for deb in "${debs[@]}"; do
   base="$(basename "$deb")"
   role=""
   case "$base" in
+    linux-qcom-x1e-headers-*_all.deb) role="common_headers" ;;
     linux-headers-*_arm64.deb) role="headers" ;;
     linux-image-*_arm64.deb) role="image" ;;
     linux-modules-*_arm64.deb) role="modules" ;;
     *)
       echo "Unexpected kernel package filename: $base" >&2
-      echo "Expected linux-{headers,image,modules}-<abi>_<version>_arm64.deb." >&2
+      echo "Expected linux-{headers,image,modules}-<abi>_<version>_arm64.deb or linux-qcom-x1e-headers-<version>_<version>_all.deb." >&2
       exit 1
       ;;
   esac
 
-  without_arch="${base%_arm64.deb}"
-  deb_version="${without_arch##*_}"
-  deb_abi="${without_arch#linux-$role-}"
-  deb_abi="${deb_abi%_$deb_version}"
+  case "$role" in
+    common_headers)
+      without_arch="${base%_all.deb}"
+      deb_version="${without_arch##*_}"
+      deb_abi="${without_arch#linux-qcom-x1e-headers-}"
+      deb_abi="${deb_abi%_$deb_version}-qcom-x1e"
+      ;;
+    *)
+      without_arch="${base%_arm64.deb}"
+      deb_version="${without_arch##*_}"
+      deb_abi="${without_arch#linux-$role-}"
+      deb_abi="${deb_abi%_$deb_version}"
+      ;;
+  esac
 
   if [ -z "$deb_abi" ] || [ -z "$deb_version" ]; then
     echo "Could not parse kernel ABI/version from $base." >&2
@@ -201,6 +213,13 @@ for deb in "${debs[@]}"; do
   fi
 
   case "$role" in
+    common_headers)
+      if [ "$seen_common_headers" = "true" ]; then
+        echo "Duplicate linux-qcom-x1e-headers package in $KERNEL_DEBS_DIR." >&2
+        exit 1
+      fi
+      seen_common_headers="true"
+      ;;
     headers)
       if [ "$seen_headers" = "true" ]; then
         echo "Duplicate linux-headers package in $KERNEL_DEBS_DIR." >&2

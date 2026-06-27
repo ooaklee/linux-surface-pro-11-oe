@@ -133,12 +133,16 @@ directory between refs:
   --git-branch jg/ubuntu-qcom-x1e-7.1.1-jg-0 \
   --image ubuntu:26.04 \
   --patch-dir patches/jglathe-qcom-x1e-7.1.1 \
+  --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.1 \
   --copy-to-payload \
   --reset-source \
   --jobs 5 \
   2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.1-build-$(date +%Y%m%d-%H%M%S).log
 ```
+
+The `binary-indep` target is required for this tree because the ABI-specific
+headers package depends on `linux-qcom-x1e-headers-7.1.1-jg-0`.
 
 **Option B: On-device (fallback)**
 
