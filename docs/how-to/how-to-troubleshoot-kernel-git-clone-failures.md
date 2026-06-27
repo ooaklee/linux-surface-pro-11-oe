@@ -2,7 +2,7 @@
 id: how-to-troubleshoot-kernel-git-clone-failures
 title: "Troubleshoot Kernel Git Clone `fetch-pack` Failures"
 # prettier-ignore
-description: How-to guide for resolving `fatal: fetch-pack: invalid index-pack output` when build-sp11-qcom-x1e-kernel.sh or build-sp11-qcom-x1e-kernel-docker.sh clones the qcom-x1e kernel git branch.
+description: "How-to guide for resolving `fatal: fetch-pack: invalid index-pack output` when build-sp11-qcom-x1e-kernel.sh or build-sp11-qcom-x1e-kernel-docker.sh clones the qcom-x1e kernel git branch."
 ---
 
 # How To: Troubleshoot Kernel Git Clone `fetch-pack` Failures
