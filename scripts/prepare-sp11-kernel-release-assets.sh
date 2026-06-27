@@ -32,7 +32,7 @@ Options:
   --out-dir DIR           Output directory. If omitted, defaults to
                           build/release/<release-name>.
   --source-url URL        Upstream kernel source URL recorded in the manifest.
-  --source-branch NAME    Upstream kernel source branch recorded in the
+  --source-branch NAME    Upstream kernel source branch or tag recorded in the
                           manifest.
   --docker-image IMAGE    Docker image family/digest recorded in the manifest.
                           If omitted, derived from source mode.
@@ -419,8 +419,7 @@ done > "$OUT_DIR/sp11-kernel-debs.txt"
 cat > "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 # Surface Pro 11 qcom-x1e Kernel Packages
 
-Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11 Wi-Fi rfkill
-bring-up.
+Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11.
 
 These packages are optional convenience artifacts. They are unsigned, are not
 an apt repository, and should be used only with a known-good fallback qcom-x1e
@@ -450,6 +449,14 @@ sudo ./scripts/build-sp11-qcom-x1e-kernel.sh \\
 
 See \`sp11-kernel-release-manifest.txt\` for package hashes, source metadata,
 support repository commit, and patch checksums.
+
+Recorded source:
+
+- Source URL: \`${SOURCE_URL:-unknown}\`
+- Source ref: \`${SOURCE_BRANCH:-unknown}\`
+- Source HEAD: \`${source_head:-unknown}\`
+- Docker image: \`$DOCKER_IMAGE\`
+- Patch directory: \`$PATCH_DIR\`
 
 These artifacts were built from recorded inputs; they are not claimed to be
 bit-for-bit reproducible.

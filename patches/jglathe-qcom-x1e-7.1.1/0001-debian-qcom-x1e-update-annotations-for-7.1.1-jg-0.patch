@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Sat, 27 Jun 2026 00:00:00 +0000
+Subject: [PATCH] debian.qcom-x1e: update annotations for 7.1.1-jg-0 build
+
+When building the jg/ubuntu-qcom-x1e-7.1.1-jg-0 tag in an Ubuntu 26.04
+container, olddefconfig changes two annotation-visible symbols:
+
+  CONFIG_DRM_MSM_VALIDATE_XML changes from n to absent
+  CONFIG_RUST_IS_AVAILABLE is generated as y
+
+Match the generated config so Ubuntu's annotations check can proceed.
+---
+ debian.qcom-x1e/config/annotations | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/debian.qcom-x1e/config/annotations b/debian.qcom-x1e/config/annotations
+index db6d4d705..910c56132 100644
+--- a/debian.qcom-x1e/config/annotations
++++ b/debian.qcom-x1e/config/annotations
+@@ -3245,7 +3245,7 @@ CONFIG_DRM_MSM_KMS_FBDEV                        policy<{'arm64': 'y'}>
+ CONFIG_DRM_MSM_MDP4                             policy<{'arm64': 'y'}>
+ CONFIG_DRM_MSM_MDP5                             policy<{'arm64': 'y'}>
+ CONFIG_DRM_MSM_MDSS                             policy<{'arm64': 'y'}>
+-CONFIG_DRM_MSM_VALIDATE_XML                     policy<{'arm64': 'n'}>
++CONFIG_DRM_MSM_VALIDATE_XML                     policy<{'arm64': '-'}>
+ CONFIG_DRM_MXS                                  policy<{'arm64': 'y'}>
+ CONFIG_DRM_MXSFB                                policy<{'arm64': 'm'}>
+ CONFIG_DRM_NOUVEAU                              policy<{'arm64': 'm'}>
+@@ -9719,6 +9719,7 @@ CONFIG_RT_MUTEXES                               policy<{'arm64': 'y'}>
+ CONFIG_RUNTIME_TESTING_MENU                     policy<{'arm64': 'y'}>
+ CONFIG_RUSTC_HAS_FILE_AS_C_STR                  policy<{'arm64': 'y'}>
+ CONFIG_RUSTC_HAS_FILE_WITH_NUL                  policy<{'arm64': 'y'}>
+ CONFIG_RUSTC_HAS_SPAN_FILE                      policy<{'arm64': 'y'}>
++CONFIG_RUST_IS_AVAILABLE                        policy<{'arm64': 'y'}>
+ CONFIG_RUSTC_HAS_UNNECESSARY_TRANSMUTES         policy<{'arm64': 'y'}>
+ CONFIG_RUSTC_LLVM_MAJOR_VERSION                 policy<{'arm64': '21'}>
+ CONFIG_RUSTC_LLVM_VERSION                       policy<{'arm64': '210108'}>
+-- 
+2.50.0
+

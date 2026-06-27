@@ -121,6 +121,25 @@ fallback (builds from the public `qcom-x1e-7.0` branch, note ABI may not match):
   --copy-to-payload
 ```
 
+To build from Johan G.'s 7.1.1 qcom-x1e tree, use the published tag from
+`jglathe/linux_ms_dev_kit`. The tag is named like a branch in GitHub URLs, but
+it is a git tag, so keep `--reset-source` when switching an existing work
+directory between refs:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.1-jg-0 \
+  --image ubuntu:26.04 \
+  --patch-dir patches/jglathe-qcom-x1e-7.1.1 \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.1 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 5 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.1-build-$(date +%Y%m%d-%H%M%S).log
+```
+
 **Option B: On-device (fallback)**
 
 On the Surface directly:

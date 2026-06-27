@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Sat, 27 Jun 2026 00:00:00 +0000
+Subject: [PATCH] debian.qcom-x1e: use packaged stubble paths
+
+Ubuntu's stubble package installs the EFI stub and hardware-id database under
+/usr/lib/stubble and /usr/share/stubble. The jg/ubuntu-qcom-x1e-7.1.1-jg-0
+packaging invokes ukify with /usr/local paths, which are absent in the Docker
+build container even when the stubble package is installed.
+
+Use the packaged paths so the qcom-x1e image package can be assembled.
+---
+ debian/rules.d/2-binary-arch.mk | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/debian/rules.d/2-binary-arch.mk b/debian/rules.d/2-binary-arch.mk
+index 5e36c64d..9c2a49e4 100644
+--- a/debian/rules.d/2-binary-arch.mk
++++ b/debian/rules.d/2-binary-arch.mk
+@@ -176,8 +176,8 @@ endif
+ ifeq ($(do_stubble),true)
+ 	# Build kernel+stub image
+ 	/usr/bin/ukify build --linux=$(build_dir)/$(kernfile) \
+-	        --stub=/usr/local/lib/stubble/stubble.efi \
+-	        --hwids=/usr/local/share/stubble/hwids \
++	        --stub=/usr/lib/stubble/stubble.efi \
++	        --hwids=/usr/share/stubble/hwids \
+ 	        --sbat="@/usr/share/stubble/sbat" \
+ 		$(STUBBLEDTBS) \
+ 	        --output=$(build_dir)/$(kernfile).stubble
+-- 
+2.50.0
+
