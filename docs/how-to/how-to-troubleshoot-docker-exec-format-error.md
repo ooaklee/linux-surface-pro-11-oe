@@ -201,7 +201,7 @@ cd /path/to/linux-surface-pro-11-oe
 ```
 
 The helper locates its own patch directory via `repo_dir`
-(`scripts/build-sp11-qcom-x1e-kernel.sh:97`), so it works from any checkout.
+(`scripts/build-sp11-qcom-x1e-kernel.sh:98`), so it works from any checkout.
 
 The default source mode is `apt`, which derives the source package and version
 from the running kernel and needs `deb-src` entries enabled for the qcom-x1e

@@ -21,7 +21,7 @@ If the source tree was partially prepared, rerun with --reset-source after fixin
 ## Purpose
 
 The `--source git` path clones the Ubuntu qcom-x1e kernel git branch
-(`scripts/build-sp11-qcom-x1e-kernel.sh:400`):
+(`scripts/build-sp11-qcom-x1e-kernel.sh:412`):
 `https://git.launchpad.net/~ubuntu-concept/ubuntu/+source/linux/+git/resolute`
 branch `qcom-x1e-7.0`. This is a large multi-gigabyte repository. The clone is
 not shallow, so it pulls the full history.
@@ -46,7 +46,7 @@ fallbacks.
 - `sudo` access on the build host (to inspect logs and free resources).
 - Enough free disk for the kernel source tree (several GB) plus the build
   output (the wrapper requires at least 40 GiB free, enforced by
-  `scripts/build-sp11-qcom-x1e-kernel.sh:311`).
+  `scripts/build-sp11-qcom-x1e-kernel.sh:316`).
 
 ## Procedure
 
@@ -119,7 +119,7 @@ free -h
 ### 3. Retry with `--reset-source`
 
 A failed `git clone` leaves a partial directory behind. On the next run,
-`scripts/build-sp11-qcom-x1e-kernel.sh:363` (`ensure_clean_source`) may reject
+`scripts/build-sp11-qcom-x1e-kernel.sh:364` (`ensure_clean_source`) may reject
 it if it is not a valid git checkout, or if it contains untracked files from
 the incomplete clone; otherwise the helper attempts a `fetch`/`checkout` that
 can fail on the broken tree. In either case, rerun with `--reset-source` to
@@ -130,19 +130,19 @@ wipe the partial checkout and start a clean clone.
 `--reset-source` does **not** mean your repository is dirty or that this
 repo's source is unclean. It means: "delete the existing source checkout
 directory and start the clone from scratch." Concretely, in git mode
-(`scripts/build-sp11-qcom-x1e-kernel.sh:398`):
+(`scripts/build-sp11-qcom-x1e-kernel.sh:394`):
 
 - With `--reset-source`: the existing source directory is `rm -rf`'d and a
   fresh `git clone` runs.
 - Without `--reset-source`: if the directory already exists, the helper
   fetches, checks out the branch, and resets hard to `origin/$GIT_BRANCH`
-  (`scripts/build-sp11-qcom-x1e-kernel.sh:402-410`). It only **errors out** if it
+  (`scripts/build-sp11-qcom-x1e-kernel.sh:414-423`). It only **errors out** if it
   detects local changes, untracked files, or local commits not present on the
   remote — or if the directory is not a valid git checkout (as happens after a
   failed `clone` leaves a partial tree behind).
 
 The wrapper's failure message
-(`scripts/build-sp11-qcom-x1e-kernel-docker.sh:521`) always appends the
+(`scripts/build-sp11-qcom-x1e-kernel-docker.sh:560`) always appends the
 `--reset-source` hint after a failure. It is generic recovery advice for a
 partially-prepared source tree, not a diagnosis that the kernel repo is
 broken.
@@ -203,9 +203,9 @@ Resolving deltas: 100% (...), done.
 
 The build then proceeds to patch application and `debian/rules`. Common build
 dependencies are installed before the clone
-(`scripts/build-sp11-qcom-x1e-kernel.sh:734-745`); git-source-specific build
+(`scripts/build-sp11-qcom-x1e-kernel.sh:812`); git-source-specific build
 dependencies are installed after patching
-(`scripts/build-sp11-qcom-x1e-kernel.sh:749`).
+(`scripts/build-sp11-qcom-x1e-kernel.sh:826`).
 
 ## Validation
 
@@ -281,7 +281,7 @@ cd /path/to/linux-surface-pro-11-oe
 ```
 
 The helper locates its own patch directory via `repo_dir`
-(`scripts/build-sp11-qcom-x1e-kernel.sh:97`), so it works from any checkout.
+(`scripts/build-sp11-qcom-x1e-kernel.sh:98`), so it works from any checkout.
 If a previous clone failed on the Surface, add `--reset-source` to clear the
 partial checkout before retrying.
 

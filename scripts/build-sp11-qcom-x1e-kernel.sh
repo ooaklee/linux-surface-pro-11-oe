@@ -39,10 +39,11 @@ Options:
   --source-version VER   apt source version: installed, candidate, or exact.
                          Default $SOURCE_VERSION.
   --git-url URL          Kernel git URL for git mode, default $GIT_URL.
-  --git-branch BRANCH    Kernel git branch for git mode, default $GIT_BRANCH.
+  --git-branch BRANCH    Kernel git branch or tag for git mode, default $GIT_BRANCH.
   --patch-dir DIR        Patch directory, default repo patches/ubuntu-qcom-x1e-7.0.
   --work-dir DIR         Build work directory, default $WORK_DIR.
-  --build-target TARGET  Kernel package target, default $BUILD_TARGET.
+  --build-target TARGET  Kernel package target or quoted target list,
+                         default $BUILD_TARGET.
   --jobs N              Parallel build jobs, default detected CPU count.
   --min-free-gb N        Required free space in work dir, default $MIN_FREE_GB.
   --install-deps        Install common build dependencies and apt build-deps.
@@ -391,23 +392,40 @@ ensure_clean_source() {
 }
 
 prepare_git_source() {
-  local safe_branch dir local_commits
+  local safe_branch dir local_commits ref_kind
   safe_branch="${GIT_BRANCH//\//-}"
   dir="$source_parent/git-$safe_branch"
+  ref_kind=""
+
+  if git ls-remote --exit-code --heads "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
+    ref_kind="head"
+  elif git ls-remote --exit-code --tags "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
+    ref_kind="tag"
+  else
+    echo "Git ref not found as a branch or tag: $GIT_BRANCH" >&2
+    echo "Remote: $GIT_URL" >&2
+    exit 1
+  fi
 
   ensure_clean_source "$dir"
   if [ ! -d "$dir" ]; then
     git clone --branch "$GIT_BRANCH" "$GIT_URL" "$dir"
   else
-    git -C "$dir" fetch origin "$GIT_BRANCH"
-    git -C "$dir" checkout "$GIT_BRANCH"
-    local_commits="$(git -C "$dir" rev-list --count "origin/$GIT_BRANCH..HEAD" 2>/dev/null || echo 0)"
-    if [ "$local_commits" != "0" ]; then
-      echo "Existing source tree has local commits not present in origin/$GIT_BRANCH: $dir" >&2
-      echo "Move them away or rerun with --reset-source." >&2
-      exit 1
+    if [ "$ref_kind" = "head" ]; then
+      git -C "$dir" fetch origin "$GIT_BRANCH"
+      git -C "$dir" checkout "$GIT_BRANCH"
+      local_commits="$(git -C "$dir" rev-list --count "origin/$GIT_BRANCH..HEAD" 2>/dev/null || echo 0)"
+      if [ "$local_commits" != "0" ]; then
+        echo "Existing source tree has local commits not present in origin/$GIT_BRANCH: $dir" >&2
+        echo "Move them away or rerun with --reset-source." >&2
+        exit 1
+      fi
+      git -C "$dir" reset --hard "origin/$GIT_BRANCH"
+    else
+      git -C "$dir" fetch --force origin "refs/tags/$GIT_BRANCH:refs/tags/$GIT_BRANCH"
+      git -C "$dir" checkout --detach "refs/tags/$GIT_BRANCH"
+      git -C "$dir" reset --hard "refs/tags/$GIT_BRANCH"
     fi
-    git -C "$dir" reset --hard "origin/$GIT_BRANCH"
   fi
 
   source_dir="$dir"
@@ -498,6 +516,23 @@ apply_patches() {
   for patch in "$PATCH_DIR"/*.patch; do
     [ -f "$patch" ] || continue
 
+    case "$(basename "$patch")" in
+      0001-wifi-ath12k-add-disable-rfkill-devicetree.patch)
+        if grep -q 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
+          "$source_dir/drivers/net/wireless/ath/ath12k/core.c"; then
+          echo "Already satisfied: $(basename "$patch")"
+          continue
+        fi
+        ;;
+      0002-arm64-dts-qcom-x1-denali-disable-rfkill-for-wifi.patch)
+        if grep -q 'disable-rfkill;' \
+          "$source_dir/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi"; then
+          echo "Already satisfied: $(basename "$patch")"
+          continue
+        fi
+        ;;
+    esac
+
     if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
       echo "Already applied: $(basename "$patch")"
       continue
@@ -567,6 +602,7 @@ collect_kernel_debs() {
       -o -name 'linux-modules-*-qcom-x1e_*.deb' \
       -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
       -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+      -o -name 'linux-qcom-x1e-headers-*_*.deb' \
       -o -name 'linux-qcom-x1e_*.deb' \
       -o -name 'linux-image-qcom-x1e_*.deb' \
       -o -name 'linux-headers-qcom-x1e_*.deb' \)
@@ -576,6 +612,7 @@ collect_kernel_debs() {
       -o -name 'linux-modules-*-qcom-x1e_*.deb' \
       -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
       -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+      -o -name 'linux-qcom-x1e-headers-*_*.deb' \
       -o -name 'linux-qcom-x1e_*.deb' \
       -o -name 'linux-image-qcom-x1e_*.deb' \
       -o -name 'linux-headers-qcom-x1e_*.deb' \)
@@ -675,13 +712,50 @@ ensure_kernel_fallback() {
   echo "Found installed fallback qcom-x1e kernel ABI: $fallback_abi"
 }
 
+ensure_header_dependencies_present() {
+  local deb base abi common_pkg common_found
+
+  for deb in "$@"; do
+    base="$(basename "$deb")"
+    case "$base" in
+      linux-headers-*-qcom-x1e_*.deb)
+        abi="${base#linux-headers-}"
+        abi="${abi%%-qcom-x1e_*}"
+        common_pkg="linux-qcom-x1e-headers-${abi}_"
+        common_found="false"
+        for candidate in "$@"; do
+          case "$(basename "$candidate")" in
+            "${common_pkg}"*_all.deb)
+              common_found="true"
+              break
+              ;;
+          esac
+        done
+        if [ "$common_found" != "true" ]; then
+          echo "Missing common qcom-x1e headers package for $base." >&2
+          echo "Expected a local package matching: ${common_pkg}*_all.deb" >&2
+          echo "Rebuild the payload with:" >&2
+          echo "  --build-target \"binary-indep binary-qcom-x1e\"" >&2
+          echo "For boot-only recovery, install the linux-image and linux-modules packages without linux-headers." >&2
+          exit 1
+        fi
+        ;;
+    esac
+  done
+}
+
 write_deb_manifest() {
   collect_kernel_debs > "$work_dir/sp11-kernel-debs.txt"
 }
 
 build_kernel() {
-  local rules_file
+  local rules_file target build_targets=()
   rules_file="$(find_rules_file)"
+  read -r -a build_targets <<<"$BUILD_TARGET"
+  if [ "${#build_targets[@]}" -eq 0 ]; then
+    echo "No build target specified." >&2
+    exit 2
+  fi
 
   (
     cd "$source_dir"
@@ -689,7 +763,9 @@ build_kernel() {
     if [ "$SKIP_CLEAN" != "true" ]; then
       run_rules "$rules_file" clean
     fi
-    run_rules "$rules_file" "$BUILD_TARGET"
+    for target in "${build_targets[@]}"; do
+      run_rules "$rules_file" "$target"
+    done
   )
 }
 
@@ -715,6 +791,7 @@ install_kernel_debs() {
 
   printf 'Installing generated kernel debs:\n'
   printf '  %s\n' "${debs[@]}"
+  ensure_header_dependencies_present "${debs[@]}"
   ensure_kernel_fallback "${debs[@]}"
   as_root apt install --reinstall "${debs[@]}"
 

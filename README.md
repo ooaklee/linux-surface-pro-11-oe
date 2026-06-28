@@ -117,6 +117,27 @@ payload directory:
   2>&1 | tee build/sp11-qcom-x1e-kernel-build-$(date +%Y%m%d-%H%M%S).log
 ```
 
+To build from Johan G.'s 7.1.1 qcom-x1e tree instead of the Ubuntu concept
+default, use the published git tag explicitly:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.1-jg-0 \
+  --image ubuntu:26.04 \
+  --patch-dir patches/jglathe-qcom-x1e-7.1.1 \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.1 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.1-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+The `binary-indep` target is required for this tree because the ABI-specific
+headers package depends on `linux-qcom-x1e-headers-7.1.1-jg-0`.
+
 Build the direct-boot USB image. This image boots the Ubuntu concept ISO kernel
 for the live environment, injects the Surface Pro 11 DTB from GRUB, and carries
 the patched kernel packages under `SP11DATA/payload/kernel-debs/` for
@@ -759,6 +780,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cache](docs/adr/adr-0034-wsa2-regcache-right-speaker.md)
 - [ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load](docs/adr/adr-0035-audio-boot-race-alsactl.md)
 - [ADR0036: Right Speaker Audio via PipeWire audio.position Reorder](docs/adr/adr-0036-right-speaker-audio-position-reorder.md)
+- [ADR0037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1](docs/adr/adr-0037-jglathe-qcom-7-1-1-stubble-paths.md)
 
 ## Windows Firmware
 

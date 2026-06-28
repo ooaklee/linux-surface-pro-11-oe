@@ -32,7 +32,7 @@ Options:
   --out-dir DIR           Output directory. If omitted, defaults to
                           build/release/<release-name>.
   --source-url URL        Upstream kernel source URL recorded in the manifest.
-  --source-branch NAME    Upstream kernel source branch recorded in the
+  --source-branch NAME    Upstream kernel source branch or tag recorded in the
                           manifest.
   --docker-image IMAGE    Docker image family/digest recorded in the manifest.
                           If omitted, derived from source mode.
@@ -159,6 +159,7 @@ fi
 kernel_abi=""
 package_version=""
 seen_headers="false"
+seen_common_headers="false"
 seen_image="false"
 seen_modules="false"
 
@@ -166,20 +167,31 @@ for deb in "${debs[@]}"; do
   base="$(basename "$deb")"
   role=""
   case "$base" in
+    linux-qcom-x1e-headers-*_all.deb) role="common_headers" ;;
     linux-headers-*_arm64.deb) role="headers" ;;
     linux-image-*_arm64.deb) role="image" ;;
     linux-modules-*_arm64.deb) role="modules" ;;
     *)
       echo "Unexpected kernel package filename: $base" >&2
-      echo "Expected linux-{headers,image,modules}-<abi>_<version>_arm64.deb." >&2
+      echo "Expected linux-{headers,image,modules}-<abi>_<version>_arm64.deb or linux-qcom-x1e-headers-<version>_<version>_all.deb." >&2
       exit 1
       ;;
   esac
 
-  without_arch="${base%_arm64.deb}"
-  deb_version="${without_arch##*_}"
-  deb_abi="${without_arch#linux-$role-}"
-  deb_abi="${deb_abi%_$deb_version}"
+  case "$role" in
+    common_headers)
+      without_arch="${base%_all.deb}"
+      deb_version="${without_arch##*_}"
+      deb_abi="${without_arch#linux-qcom-x1e-headers-}"
+      deb_abi="${deb_abi%_$deb_version}-qcom-x1e"
+      ;;
+    *)
+      without_arch="${base%_arm64.deb}"
+      deb_version="${without_arch##*_}"
+      deb_abi="${without_arch#linux-$role-}"
+      deb_abi="${deb_abi%_$deb_version}"
+      ;;
+  esac
 
   if [ -z "$deb_abi" ] || [ -z "$deb_version" ]; then
     echo "Could not parse kernel ABI/version from $base." >&2
@@ -201,6 +213,13 @@ for deb in "${debs[@]}"; do
   fi
 
   case "$role" in
+    common_headers)
+      if [ "$seen_common_headers" = "true" ]; then
+        echo "Duplicate linux-qcom-x1e-headers package in $KERNEL_DEBS_DIR." >&2
+        exit 1
+      fi
+      seen_common_headers="true"
+      ;;
     headers)
       if [ "$seen_headers" = "true" ]; then
         echo "Duplicate linux-headers package in $KERNEL_DEBS_DIR." >&2
@@ -419,8 +438,7 @@ done > "$OUT_DIR/sp11-kernel-debs.txt"
 cat > "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 # Surface Pro 11 qcom-x1e Kernel Packages
 
-Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11 Wi-Fi rfkill
-bring-up.
+Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11.
 
 These packages are optional convenience artifacts. They are unsigned, are not
 an apt repository, and should be used only with a known-good fallback qcom-x1e
@@ -450,6 +468,14 @@ sudo ./scripts/build-sp11-qcom-x1e-kernel.sh \\
 
 See \`sp11-kernel-release-manifest.txt\` for package hashes, source metadata,
 support repository commit, and patch checksums.
+
+Recorded source:
+
+- Source URL: \`${SOURCE_URL:-unknown}\`
+- Source ref: \`${SOURCE_BRANCH:-unknown}\`
+- Source HEAD: \`${source_head:-unknown}\`
+- Docker image: \`$DOCKER_IMAGE\`
+- Patch directory: \`$PATCH_DIR\`
 
 These artifacts were built from recorded inputs; they are not claimed to be
 bit-for-bit reproducible.

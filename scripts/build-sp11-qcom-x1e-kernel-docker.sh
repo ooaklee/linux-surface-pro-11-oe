@@ -13,6 +13,7 @@ SOURCE_VERSION=""
 GIT_URL=""
 GIT_BRANCH=""
 BUILD_TARGET=""
+PATCH_DIR=""
 JOBS=""
 MIN_FREE_GB=""
 APT_SOURCES_FILE=""
@@ -42,7 +43,7 @@ Options:
   --source-package NAME  apt source package. Usually comes from --metadata.
   --source-version VER   apt source version. Usually comes from --metadata.
   --git-url URL          Kernel git URL for git mode.
-  --git-branch BRANCH    Kernel git branch for git mode.
+  --git-branch BRANCH    Kernel git branch or tag for git mode.
   --image IMAGE          Docker image. Defaults to ubuntu:26.04 for apt mode
                          and ubuntu:25.10 for git mode.
   --platform PLATFORM    Docker platform, default $PLATFORM.
@@ -56,7 +57,9 @@ Options:
                          Docker volume for --container-work-dir, default
                          $LINUX_WORK_VOLUME. Ignored when --container-work-dir
                          is /work.
-  --build-target TARGET  Kernel package target, default from metadata or script.
+  --build-target TARGET  Kernel package target or quoted target list,
+                         default from metadata or script.
+  --patch-dir DIR        Patch directory to pass to the inner build helper.
   --jobs N              Parallel build jobs passed to the inner build helper.
   --min-free-gb N        Free-space guard passed to the inner build helper.
   --apt-sources FILE     Optional .sources or .list file to add inside container.
@@ -96,6 +99,7 @@ find_qcom_kernel_debs() {
     -o -name 'linux-modules-*-qcom-x1e_*.deb' \
     -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
     -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+    -o -name 'linux-qcom-x1e-headers-*_*.deb' \
     -o -name 'linux-qcom-x1e_*.deb' \
     -o -name 'linux-image-qcom-x1e_*.deb' \
     -o -name 'linux-headers-qcom-x1e_*.deb' \) \
@@ -115,6 +119,21 @@ repo_abs_path() {
   case "$1" in
     /*) printf '%s\n' "$1" ;;
     *) printf '%s/%s\n' "$repo_dir" "$1" ;;
+  esac
+}
+
+repo_container_path() {
+  local abs rel
+  abs="$(repo_abs_path "$1")"
+  case "$abs" in
+    "$repo_dir"/*)
+      rel="${abs#"$repo_dir"/}"
+      printf '/repo/%s\n' "$rel"
+      ;;
+    *)
+      echo "Path must be inside this repository so Docker can access it: $1" >&2
+      exit 1
+      ;;
   esac
 }
 
@@ -194,6 +213,11 @@ while [ "$#" -gt 0 ]; do
       BUILD_TARGET="$2"
       shift 2
       ;;
+    --patch-dir)
+      require_arg "$1" "${2:-}"
+      PATCH_DIR="$2"
+      shift 2
+      ;;
     --jobs)
       require_arg "$1" "${2:-}"
       JOBS="$2"
@@ -258,7 +282,12 @@ esac
 
 if [ -z "$IMAGE" ]; then
   case "$SOURCE_MODE" in
-    git) IMAGE="ubuntu:25.10" ;;
+    git)
+      case "$GIT_BRANCH" in
+        jg/ubuntu-qcom-x1e-7.1.1-*) IMAGE="ubuntu:26.04" ;;
+        *) IMAGE="ubuntu:25.10" ;;
+      esac
+      ;;
     *) IMAGE="ubuntu:26.04" ;;
   esac
 fi
@@ -339,6 +368,14 @@ if [ -n "$APT_SOURCES_FILE" ]; then
   fi
 fi
 
+if [ -n "$PATCH_DIR" ]; then
+  patch_dir_abs="$(repo_abs_path "$PATCH_DIR")"
+  if [ ! -d "$patch_dir_abs" ]; then
+    echo "Patch directory not found: $patch_dir_abs" >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "$WORK_DIR"
 work_abs="$(abs_path "$WORK_DIR")"
 
@@ -374,6 +411,7 @@ case "$SOURCE_MODE" in
 esac
 
 [ -n "$BUILD_TARGET" ] && inner_args+=(--build-target "$BUILD_TARGET")
+[ -n "$PATCH_DIR" ] && inner_args+=(--patch-dir "$(repo_container_path "$PATCH_DIR")")
 [ -n "$JOBS" ] && inner_args+=(--jobs "$JOBS")
 [ -n "$MIN_FREE_GB" ] && inner_args+=(--min-free-gb "$MIN_FREE_GB")
 [ "$RESET_SOURCE" = "true" ] && inner_args+=(--reset-source)
@@ -452,6 +490,7 @@ find_qcom_kernel_debs() {
     -o -name 'linux-modules-*-qcom-x1e_*.deb' \
     -o -name 'linux-modules-extra-*-qcom-x1e_*.deb' \
     -o -name 'linux-headers-*-qcom-x1e_*.deb' \
+    -o -name 'linux-qcom-x1e-headers-*_*.deb' \
     -o -name 'linux-qcom-x1e_*.deb' \
     -o -name 'linux-image-qcom-x1e_*.deb' \
     -o -name 'linux-headers-qcom-x1e_*.deb' \) \
