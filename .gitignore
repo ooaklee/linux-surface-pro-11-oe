@@ -1,5 +1,8 @@
 build/
 
+# Temporary scripts (local fixes, one-off helpers).
+scripts/tmp/
+
 # Local payload and firmware artifacts.
 payload/**/*.bin
 payload/**/*.mbn
