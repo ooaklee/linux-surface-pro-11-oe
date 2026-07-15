@@ -10,6 +10,7 @@ IMAGE_EXTRA_MB=1536
 VALIDATE="false"
 VALIDATE_IMAGE=""
 GRUB_MODE="menu"
+DESKTOP="gnome"
 
 usage() {
   cat <<EOF
@@ -24,6 +25,12 @@ Options:
   --work-dir DIR         Temporary build directory, default $WORK_DIR.
   --extra-mb MB          Free space on data partition, default $IMAGE_EXTRA_MB.
   --grub-mode MODE       GRUB config mode: menu or direct, default $GRUB_MODE.
+  --desktop DESKTOP      Desktop flavor to ship in the live ISO:
+                           gnome  Use the concept ISO as-is (default).
+                           kde    Remaster the concept ISO's casper squashfs
+                                  to install kubuntu-desktop. Experimental;
+                                  needs network in the build container and
+                                  roughly doubles build time and image size.
   --validate             Validate the finished image after building.
   --validate-image PATH  Validate an existing image and exit.
 
@@ -199,31 +206,75 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --iso)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       ISO="$2"
       shift 2
       ;;
     --dtb)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       DTB="$2"
       shift 2
       ;;
     --out)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       OUT="$2"
       shift 2
       ;;
     --payload)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       PAYLOAD_DIR="$2"
       shift 2
       ;;
     --work-dir)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       WORK_DIR="$2"
       shift 2
       ;;
     --extra-mb)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       IMAGE_EXTRA_MB="$2"
       shift 2
       ;;
     --grub-mode)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       GRUB_MODE="$2"
+      shift 2
+      ;;
+    --desktop)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
+      DESKTOP="$2"
       shift 2
       ;;
     --validate)
@@ -231,6 +282,11 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --validate-image)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
       VALIDATE_IMAGE="$2"
       shift 2
       ;;
@@ -266,6 +322,15 @@ case "$GRUB_MODE" in
     ;;
   *)
     echo "Invalid --grub-mode: $GRUB_MODE (expected menu or direct)" >&2
+    exit 2
+    ;;
+esac
+
+case "$DESKTOP" in
+  gnome|kde)
+    ;;
+  *)
+    echo "Invalid --desktop: $DESKTOP (expected gnome or kde)" >&2
     exit 2
     ;;
 esac
@@ -417,6 +482,127 @@ dtb_name="sp11-denali.dtb"
 rm -rf esp data out
 mkdir -p esp/EFI/BOOT data/iso data/dtb data/payload data/support out
 
+# Optionally remaster the concept ISO to ship KDE Plasma instead of GNOME.
+# There is no official Kubuntu ARM64 ISO, so we unsquashfs the casper
+# filesystem layer, install kubuntu-desktop in a chroot, repack it, and
+# rebuild the ISO with xorriso. This is experimental and roughly doubles
+# build time and image size because the Plasma stack is large.
+if [ "${SP11_DESKTOP:-gnome}" = "kde" ]; then
+  echo "== Remastering concept ISO for KDE Plasma =="
+  apt-get install -y --no-install-recommends \
+    xorriso \
+    >/dev/null
+
+  remaster_dir=""
+  chroot_dir=""
+  iso_mount=""
+  new_iso="/work/ubuntu-x1e-kde.iso"
+
+  cleanup_kde_remaster() {
+    set +e
+    if [ -n "$chroot_dir" ] && [ -d "$chroot_dir/rootfs" ]; then
+      umount "$chroot_dir/rootfs/run" 2>/dev/null || true
+      umount "$chroot_dir/rootfs/dev" 2>/dev/null || true
+      umount "$chroot_dir/rootfs/sys" 2>/dev/null || true
+      umount "$chroot_dir/rootfs/proc" 2>/dev/null || true
+    fi
+    if [ -n "$iso_mount" ] && [ -d "$iso_mount" ]; then
+      umount "$iso_mount" 2>/dev/null || true
+      rmdir "$iso_mount" 2>/dev/null || true
+    fi
+    [ -n "$chroot_dir" ] && rm -rf "$chroot_dir"
+    [ -n "$remaster_dir" ] && rm -rf "$remaster_dir"
+    rm -f "$new_iso"
+  }
+  trap cleanup_kde_remaster EXIT
+
+  remaster_dir="$(mktemp -d)"
+  chroot_dir="$(mktemp -d)"
+  iso_mount="$(mktemp -d)"
+
+  # Mount the original ISO read-only to copy its full structure.
+  mount -o loop,ro ubuntu-x1e.iso "$iso_mount"
+  cp -a "$iso_mount/." "$remaster_dir/iso-tree"
+  umount "$iso_mount"
+  rmdir "$iso_mount"
+
+  # Find the writable casper squashfs layer. The concept ISO ships a
+  # layered set; the largest writable layer is the one we patch.
+  layer=""
+  layer_size=0
+  for candidate in "$remaster_dir"/iso-tree/casper/*.squashfs; do
+    [ -f "$candidate" ] || continue
+    candidate_size="$(stat -c '%s' "$candidate")"
+    if [ "$candidate_size" -gt "$layer_size" ]; then
+      layer="$candidate"
+      layer_size="$candidate_size"
+    fi
+  done
+  if [ -z "$layer" ]; then
+    echo "No casper squashfs layer found in ISO; cannot remaster for KDE." >&2
+    exit 1
+  fi
+  echo "Remastering writable layer: $(basename "$layer")"
+
+  unsquashfs -q -d "$chroot_dir/rootfs" "$layer"
+
+  # Bind-mount the host kernel virtual filesystems for chroot.
+  mount --bind /proc "$chroot_dir/rootfs/proc"
+  mount --bind /sys "$chroot_dir/rootfs/sys"
+  mount --bind /dev "$chroot_dir/rootfs/dev"
+  mount --bind /run "$chroot_dir/rootfs/run" 2>/dev/null || true
+  rm -f "$chroot_dir/rootfs/etc/resolv.conf"
+  cp /etc/resolv.conf "$chroot_dir/rootfs/etc/resolv.conf"
+
+  # Pre-seed SDDM so the kubuntu-desktop postinst does not block on a
+  # debconf prompt and does not default to gdm3.
+  echo "sddm shared/default-x-display-manager select sddm" | \
+    chroot "$chroot_dir/rootfs" debconf-set-selections
+  echo "sddm sddm/daemon_name string sddm" | \
+    chroot "$chroot_dir/rootfs" debconf-set-selections
+
+  chroot "$chroot_dir/rootfs" apt-get update
+  DEBIAN_FRONTEND=noninteractive chroot "$chroot_dir/rootfs" \
+    env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends kubuntu-desktop sddm
+
+  # Switch the default display manager to SDDM inside the squashfs.
+  if [ -x "$chroot_dir/rootfs/usr/bin/sddm" ]; then
+    echo /usr/bin/sddm > "$chroot_dir/rootfs/etc/X11/default-display-manager"
+    ln -sf /lib/systemd/system/sddm.service \
+      "$chroot_dir/rootfs/etc/systemd/system/display-manager.service" 2>/dev/null || true
+  fi
+
+  chroot "$chroot_dir/rootfs" apt-get clean
+  umount "$chroot_dir/rootfs/run" 2>/dev/null || true
+  umount "$chroot_dir/rootfs/dev" 2>/dev/null || true
+  umount "$chroot_dir/rootfs/sys" 2>/dev/null || true
+  umount "$chroot_dir/rootfs/proc" 2>/dev/null || true
+
+  # Repack the squashfs, preserving the original filename.
+  rm -f "$layer"
+  mksquashfs "$chroot_dir/rootfs" "$layer" -comp xz -noappend
+
+  rm -rf "$chroot_dir"
+  chroot_dir=""
+
+  # Rebuild the ISO. The concept ISO is a standard isohybrid-ish layout;
+  # xorriso -as mkisofs preserves the casper/efi/boot structure.
+  xorriso -as mkisofs \
+    -r -V "SP11 Ubuntu KDE" \
+    -J -joliet-long \
+    -e boot/grub/efi.img \
+    -no-emul-boot \
+    -o "$new_iso" \
+    "$remaster_dir/iso-tree"
+
+  rm -rf "$remaster_dir"
+  remaster_dir=""
+  mv -f "$new_iso" ubuntu-x1e.iso
+  trap - EXIT
+  echo "== KDE remaster complete; using remastered ISO =="
+fi
+
 cp ubuntu-x1e.iso data/iso/ubuntu-x1e.iso
 
 iso_members="$(mktemp)"
@@ -549,6 +735,7 @@ chmod +x "$work_abs/build-inside.sh"
 
 docker run --rm --platform linux/arm64 \
   -e IMAGE_EXTRA_MB="$IMAGE_EXTRA_MB" \
+  -e SP11_DESKTOP="$DESKTOP" \
   -v "$work_abs:/work" \
   ubuntu:24.04 \
   /work/build-inside.sh

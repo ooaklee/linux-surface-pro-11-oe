@@ -59,6 +59,15 @@ rfkill-capable Denali OLED DTB, `/boot/sp11-denali.dtb` contained
 `disable-rfkill`, the system booted the patched kernel, and NetworkManager
 automatically reconnected to the previously saved Wi-Fi network after reboot.
 
+Latest KDE Plasma result, 2026-06-30: KDE Plasma (via `kubuntu-desktop`) is
+verified on the installed system. The `sp11-install-kde-desktop.sh` helper
+installs Plasma and switches the display manager to SDDM while keeping GNOME
+installed as a fallback. SDDM comes up reliably across reboots. All SP11
+bring-up helpers (Wi-Fi, Bluetooth, audio, DTB injection) are
+desktop-agnostic and continue to work under Plasma. Kubuntu has no official
+ARM64 ISO, so this is the supported path to a Kubuntu-like experience on the
+Surface Pro 11. See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
+
 The feature table below is aligned with the upstream
 [dwhinham/linux-surface-pro-11 "What's working"](https://github.com/dwhinham/linux-surface-pro-11#whats-working)
 list, so the Arch and Ubuntu bring-up status can be compared row by row. The
@@ -366,6 +375,12 @@ provide a DTB explicitly:
 An explicit DTB can come from a kernel package that includes SP11 support, or
 from a local build of `dwhinham/kernel-surface-pro-11`. Do not substitute the
 Surface Laptop 7/Romulus DTB.
+
+To build a live USB with KDE Plasma available by default, add `--desktop kde`.
+This remasters the concept ISO's casper squashfs layer to install
+`kubuntu-desktop` and select SDDM; see
+[KDE Plasma (Kubuntu-like Experience)](#kde-plasma-kubuntu-like-experience)
+below.
 
 The first build can take a while. Expect a multi-gigabyte ISO download, Docker
 image/package setup, DTB extraction from Ubuntu's layered `casper/*.squashfs`
@@ -707,6 +722,61 @@ See [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md) for details.
 - Audio topology and UCM configs are in [`payload/audio/`](payload/audio/) and
   installed automatically by the support installer.
 
+## KDE Plasma (Kubuntu-like Experience)
+
+Kubuntu does not publish an official ARM64 ISO, so there is no prebuilt
+installation path for KDE Plasma on Snapdragon X Elite hardware. This repo
+provides two ways to get a Kubuntu-like experience on the Surface Pro 11.
+
+Both paths are desktop-layer changes only. They do not touch the SP11 kernel,
+DTB, firmware, audio, or Bluetooth bring-up handled by the `sp11-*` support
+helpers; those continue to work under Plasma exactly as they do under GNOME.
+See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md) for the full
+decision record.
+
+### Option 1: Post-install swap (recommended, fastest to test)
+
+After installing Ubuntu and completing the SP11 bring-up, install
+`kubuntu-desktop` on the running system:
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/sp11-install-kde-desktop.sh
+```
+
+This installs the KDE Plasma desktop and switches the display manager to
+SDDM. GNOME is kept alongside Plasma as a fallback. Reboot and select the
+Plasma session from the SDDM login screen.
+
+Once Plasma is confirmed working, optionally remove GNOME to reclaim disk
+space:
+
+```bash
+sudo ./scripts/sp11-install-kde-desktop.sh --purge-gnome -y
+```
+
+### Option 2: Live USB with KDE Plasma (experimental)
+
+The live USB builder can remaster the concept ISO with KDE Plasma selected by
+default. This runs `unsquashfs` on the casper layer, installs
+`kubuntu-desktop` and SDDM in a chroot, repacks the squashfs, and rebuilds the
+ISO with `xorriso`:
+
+```bash
+./scripts/build-sp11-live-usb-image.sh \
+  --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
+  --desktop kde \
+  --grub-mode direct \
+  --work-dir build/work-direct-boot-kde \
+  --out build/sp11-ubuntu-live-direct-kde.img \
+  --validate
+```
+
+This is experimental. It requires network access inside the Docker build
+container, roughly doubles build time, and increases the final USB image
+size because the Plasma stack is added to the casper squashfs. The
+post-install swap is the recommended first path.
+
 ## Test Notes
 
 - [2026-06-13 direct live USB test](docs/live-usb-test-20260613.md)
@@ -726,6 +796,10 @@ is stored under `assets/`:
 - [Wi-Fi networks visible in GNOME](assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
 - [Browser speed test after Wi-Fi connection](assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
 - [Bluetooth settings with a paired speaker](assets/bluetooth/2026-06-14-sp11-bluetooth-search-connect-redacted.png)
+
+KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel:
+
+![KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
 
 ## How-To Guides
 
@@ -781,6 +855,8 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load](docs/adr/adr-0035-audio-boot-race-alsactl.md)
 - [ADR0036: Right Speaker Audio via PipeWire audio.position Reorder](docs/adr/adr-0036-right-speaker-audio-position-reorder.md)
 - [ADR0037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1](docs/adr/adr-0037-jglathe-qcom-7-1-1-stubble-paths.md)
+- [ADR0038: Split Compressed Live Image Release Assets](docs/adr/adr-0038-split-compressed-live-image-release-assets.md)
+- [ADR0039: KDE Plasma Desktop Option](docs/adr/adr-0039-kde-plasma-desktop-option.md)
 
 ## Windows Firmware
 
