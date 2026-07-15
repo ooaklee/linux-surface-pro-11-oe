@@ -1,5 +1,7 @@
 # Ubuntu on Surface Pro 11 (Snapdragon X Elite)
 
+![KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
+
 This repository is an experimental Ubuntu bring-up kit for the Microsoft
 Surface Pro 11 with Snapdragon X Elite (`X1E80100`). It uses the Surface Laptop
 7 Ubuntu work as a reference, and ports the Surface Pro 11-specific pieces from
@@ -796,10 +798,6 @@ is stored under `assets/`:
 - [Wi-Fi networks visible in GNOME](assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
 - [Browser speed test after Wi-Fi connection](assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
 - [Bluetooth settings with a paired speaker](assets/bluetooth/2026-06-14-sp11-bluetooth-search-connect-redacted.png)
-
-KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel:
-
-![KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
 
 ## How-To Guides
 
