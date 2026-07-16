@@ -379,8 +379,9 @@ fi
 
 if [ -n "$PATCH_DIRS" ]; then
   for pd in $PATCH_DIRS; do
-    if [ ! -d "$pd" ]; then
-      echo "Patch directory not found: $pd" >&2
+    patch_dir_abs="$(repo_abs_path "$pd")"
+    if [ ! -d "$patch_dir_abs" ]; then
+      echo "Patch directory not found: $patch_dir_abs" >&2
       exit 1
     fi
   done
@@ -427,7 +428,14 @@ case "$SOURCE_MODE" in
 esac
 
 [ -n "$BUILD_TARGET" ] && inner_args+=(--build-target "$BUILD_TARGET")
-[ -n "$PATCH_DIRS" ] && inner_args+=(--patch-dirs "$PATCH_DIRS")
+if [ -n "$PATCH_DIRS" ]; then
+  container_dirs=""
+  for pd in $PATCH_DIRS; do
+    container_dirs="$container_dirs $(repo_container_path "$pd")"
+  done
+  container_dirs="${container_dirs# }"
+  inner_args+=(--patch-dirs "$container_dirs")
+fi
 [ -n "$PATCH_DIR" ] && inner_args+=(--patch-dir "$(repo_container_path "$PATCH_DIR")")
 [ -n "$JOBS" ] && inner_args+=(--jobs "$JOBS")
 [ -n "$MIN_FREE_GB" ] && inner_args+=(--min-free-gb "$MIN_FREE_GB")
