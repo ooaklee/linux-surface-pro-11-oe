@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Thu, 16 Jul 2026 00:00:00 +0000
+Subject: [PATCH] debian.qcom-x1e: add SPI_HID annotations for touchscreen
+
+The sp11-touchscreen QSPI HID-over-SPI patches introduce three new
+Kconfig symbols. Add matching annotations so check-config passes.
+
+--- a/debian.qcom-x1e/config/annotations
++++ b/debian.qcom-x1e/config/annotations
+@@ -11459,6 +11459,9 @@ CONFIG_SPI_FSL_LPSPI                            policy<{'arm64': 'm'}>
+ CONFIG_SPI_FSL_QUADSPI                          policy<{'arm64': 'm'}>
+ CONFIG_SPI_FSL_SPI                              policy<{'arm64': 'y'}>
+ CONFIG_SPI_GPIO                                 policy<{'arm64': 'm'}>
++CONFIG_SPI_HID                                  policy<{'arm64': 'm'}>
++CONFIG_SPI_HID_ACPI                             policy<{'arm64': 'n'}>
++CONFIG_SPI_HID_OF                               policy<{'arm64': 'n'}>
+ CONFIG_SPI_HISI_KUNPENG                         policy<{'arm64': 'm'}>
+ CONFIG_SPI_HISI_SFC                             policy<{'arm64': 'm'}>
+ CONFIG_SPI_HISI_SFC_V3XX                        policy<{'arm64': 'm'}>

@@ -37,6 +37,7 @@ dependency chain. Patches must be applied in strict numeric order:
 | 0002 | `drivers/spi/spi-geni-qcom.c` | QSPI 1-4-4 mode: SE_PROTO 9, io mux, lane flags, GPI DMA register reprogramming, mode bits, DT properties |
 | 0003-01..11 | `drivers/hid/spi-hid/` | HID-over-SPI transport driver: core, protocol framing, trace events, ACPI/OF/DT probe, power management, panel follower |
 | 0004 | `arch/arm64/boot/dts/qcom/` | DTS: SPI10 QSPI node, pinctrl, touchscreen sub-node, GPIO reserved ranges |
+| 0005 | `debian.qcom-x1e/config/annotations` | Annotations for new `CONFIG_SPI_HID*` symbols introduced by patches 0001-0003 |
 
 ### QSPI Sync-Byte Issue
 
@@ -84,9 +85,13 @@ the Ubuntu qcom-x1e kernel tree included:
 
 ### Build Integration
 
+The touchscreen patches introduce new `CONFIG_SPI_HID*` Kconfig symbols
+that need matching Debian config annotations for the `check-config` step
+(patch 0005).
+
 The touchscreen patches require Johan G.'s build-compatibility patches
-(`patches/jglathe-qcom-x1e-7.1.3/`) for the Debian config annotations and
-stubble paths. Both sets are applied together via `--patch-dirs` (see
+(`patches/jglathe-qcom-x1e-7.1.3/`) for the Debian config annotations
+and stubble paths. Both sets are applied together via `--patch-dirs` (see
 [ADR-0040](adr-0040-multi-patch-dirs.md)):
 
 ```bash
@@ -111,7 +116,7 @@ driver lands upstream in a future kernel, the patches can be retired.
 - The touchscreen driver probes and the `spi-hid` driver binds to the
   device. The sync byte is correctly validated at `0x5a`.
 
-- The 14 patches are validated against the exact kernel source they target
+- The 15 patches are validated against the exact kernel source they target
   (`jg/ubuntu-qcom-x1e-7.1.3-jg-0`). Changes to the kernel tree's
   `spi-geni-qcom.c`, `gpi.c`, or Denali DTSI may require patch regeneration.
 
