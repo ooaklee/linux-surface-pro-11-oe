@@ -14,6 +14,7 @@ GIT_URL=""
 GIT_BRANCH=""
 BUILD_TARGET=""
 PATCH_DIR=""
+PATCH_DIRS=""
 JOBS=""
 MIN_FREE_GB=""
 APT_SOURCES_FILE=""
@@ -60,6 +61,9 @@ Options:
   --build-target TARGET  Kernel package target or quoted target list,
                          default from metadata or script.
   --patch-dir DIR        Patch directory to pass to the inner build helper.
+  --patch-dirs "DIR1 DIR2 ..."
+                        Space-separated list of patch directories,
+                        passed through to the inner build helper.
   --jobs N              Parallel build jobs passed to the inner build helper.
   --min-free-gb N        Free-space guard passed to the inner build helper.
   --apt-sources FILE     Optional .sources or .list file to add inside container.
@@ -218,6 +222,11 @@ while [ "$#" -gt 0 ]; do
       PATCH_DIR="$2"
       shift 2
       ;;
+    --patch-dirs)
+      require_arg "$1" "${2:-}"
+      PATCH_DIRS="$2"
+      shift 2
+      ;;
     --jobs)
       require_arg "$1" "${2:-}"
       JOBS="$2"
@@ -368,7 +377,14 @@ if [ -n "$APT_SOURCES_FILE" ]; then
   fi
 fi
 
-if [ -n "$PATCH_DIR" ]; then
+if [ -n "$PATCH_DIRS" ]; then
+  for pd in $PATCH_DIRS; do
+    if [ ! -d "$pd" ]; then
+      echo "Patch directory not found: $pd" >&2
+      exit 1
+    fi
+  done
+elif [ -n "$PATCH_DIR" ]; then
   patch_dir_abs="$(repo_abs_path "$PATCH_DIR")"
   if [ ! -d "$patch_dir_abs" ]; then
     echo "Patch directory not found: $patch_dir_abs" >&2
@@ -411,6 +427,7 @@ case "$SOURCE_MODE" in
 esac
 
 [ -n "$BUILD_TARGET" ] && inner_args+=(--build-target "$BUILD_TARGET")
+[ -n "$PATCH_DIRS" ] && inner_args+=(--patch-dirs "$PATCH_DIRS")
 [ -n "$PATCH_DIR" ] && inner_args+=(--patch-dir "$(repo_container_path "$PATCH_DIR")")
 [ -n "$JOBS" ] && inner_args+=(--jobs "$JOBS")
 [ -n "$MIN_FREE_GB" ] && inner_args+=(--min-free-gb "$MIN_FREE_GB")
