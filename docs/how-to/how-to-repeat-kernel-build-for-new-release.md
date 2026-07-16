@@ -263,6 +263,12 @@ linux-image-<abi>_<version>_arm64.deb
 linux-modules-<abi>_<version>_arm64.deb
 ```
 
+The jglathe tree (7.1.1+) also produces:
+
+```text
+linux-qcom-x1e-headers-<abi>_<version>_all.deb
+```
+
 ## What Changes Between Releases
 
 | Item | Changes? | Notes |

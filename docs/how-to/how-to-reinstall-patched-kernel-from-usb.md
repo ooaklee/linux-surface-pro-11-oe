@@ -39,7 +39,10 @@ same way.
 ## 1. Get the kernel packages
 
 Pick whichever source is available and point `DEBS` at the directory that holds
-the three `.deb` files. The install step in section 2 is identical either way.
+the kernel `.deb` files — three for a standard qcom-x1e build, four for the
+jglathe tree (7.1.1+), which adds a `linux-qcom-x1e-headers-*_all.deb` common
+headers package. The install step in section 2 is identical either way; the
+guarded installer accepts either payload.
 
 **Option A — from the live USB (SP11DATA partition):**
 
@@ -68,8 +71,8 @@ https://github.com/ooaklee/linux-surface-pro-11-oe/releases
 ```
 
 At the time of writing the current tag is
-`sp11-qcom-x1e-7.0.0-22.22-rfkill1`. Download the three `.deb` packages plus the
-`SHA256SUMS` file into a working directory. With the GitHub CLI:
+`sp11-qcom-x1e-7.0.0-22.22-rfkill1`. Download the kernel `.deb` packages plus
+the `SHA256SUMS` file into a working directory. With the GitHub CLI:
 
 ```bash
 DEBS=~/sp11-kernel-debs
@@ -123,11 +126,14 @@ cd "$SP11DATA/support"
 - refuses to install unless another qcom-x1e kernel ABI is present as a GRUB
   fallback (pass `--allow-no-fallback` only if you accept live-USB recovery as
   your fallback),
-- installs the three `.deb` packages with `dpkg`, then
+- installs the kernel `.deb` packages with `apt`, then
 - runs `install-sp11-support.sh --installed-system`, which re-selects the
   rfkill-capable Denali OLED DTB and re-injects it into GRUB and initramfs.
 
-It elevates with `sudo` as needed. The DTB `postrm`/`postinst` hooks also run
+It elevates with `sudo` as needed. If `--work-dir` points to a directory under
+your home (e.g. `~/Downloads`), you may see a harmless `_apt` sandbox warning:
+`pkgAcquire::Run (13: Permission denied)`. apt falls back to running as root
+and the install completes normally. The DTB `postrm`/`postinst` hooks also run
 automatically during the `dpkg` step:
 
 ```

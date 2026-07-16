@@ -125,7 +125,7 @@ sed -n '1,220p' build/release/sp11-qcom-x1e-7.0.0-22.22-rfkill1/RELEASE-NOTES.md
 
 Check that the directory contains:
 
-- the three qcom-x1e `.deb` packages,
+- the qcom-x1e `.deb` packages (three for standard builds, four for jglathe),
 - `SHA256SUMS`,
 - `sp11-kernel-release-manifest.txt`,
 - `sp11-kernel-debs.txt`,
