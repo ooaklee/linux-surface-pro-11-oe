@@ -1,0 +1,36 @@
+From 000000020000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jingyuan Liang <jingyliang@chromium.org>
+Date: Tue, 09 Jun 2026 04:40:53 +0000
+Subject: [PATCH v4 02/11] HID: Add BUS_SPI support and define  HID_SPI_DEVICE macro
+
+diff --git a/drivers/hid/hid-core.c b/drivers/hid/hid-core.c
+index a5b3a8ca2fcb..813c9c743ccd 100644
+--- a/drivers/hid/hid-core.c
++++ b/drivers/hid/hid-core.c
+@@ -2316,6 +2316,9 @@ int hid_connect(struct hid_device *hdev, unsigned int connect_mask)
+ 	case BUS_I2C:
+ 		bus = "I2C";
+ 		break;
++	case BUS_SPI:
++		bus = "SPI";
++		break;
+ 	case BUS_SDW:
+ 		bus = "SOUNDWIRE";
+ 		break;
+diff --git a/include/linux/hid.h b/include/linux/hid.h
+index dce862cafbbd..957f322a0ebd 100644
+--- a/include/linux/hid.h
++++ b/include/linux/hid.h
+@@ -786,6 +786,8 @@ struct hid_descriptor {
+ 	.bus = BUS_BLUETOOTH, .vendor = (ven), .product = (prod)
+ #define HID_I2C_DEVICE(ven, prod)				\
+ 	.bus = BUS_I2C, .vendor = (ven), .product = (prod)
++#define HID_SPI_DEVICE(ven, prod)				\
++	.bus = BUS_SPI, .vendor = (ven), .product = (prod)
+ 
+ #define HID_REPORT_ID(rep) \
+ 	.report_type = (rep)
+
+-- 
+2.54.0.1064.gd145956f57-goog
+
