@@ -128,23 +128,45 @@ payload directory:
   2>&1 | tee build/sp11-qcom-x1e-kernel-build-$(date +%Y%m%d-%H%M%S).log
 ```
 
-To build from Johan G.'s 7.1.1 qcom-x1e tree instead of the Ubuntu concept
+To build from Johan G.'s 7.1.3 qcom-x1e tree instead of the Ubuntu concept
 default, use the published git tag explicitly:
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.1.1-jg-0 \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-0 \
   --image ubuntu:26.04 \
-  --patch-dir patches/jglathe-qcom-x1e-7.1.1 \
+  --patch-dir patches/jglathe-qcom-x1e-7.1.3 \
   --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.1 \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
   --copy-to-payload \
   --reset-source \
   --jobs 4 \
-  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.1-build-$(date +%Y%m%d-%H%M%S).log
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-build-$(date +%Y%m%d-%H%M%S).log
 ```
+
+To include the Surface Pro 11 touchscreen (QSPI HID-over-SPI) support, use
+`--patch-dirs` with the touchscreen patches and the build-compatibility
+patches in a single invocation:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-0 \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-ts-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+`--patch-dirs` accepts a space-separated list; patches from each directory are
+applied in order.
 
 The `binary-indep` target is required for this tree because the ABI-specific
 headers package depends on `linux-qcom-x1e-headers-7.1.1-jg-0`.

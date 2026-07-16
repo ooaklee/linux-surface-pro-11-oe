@@ -141,6 +141,29 @@ directory between refs:
   2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.1-build-$(date +%Y%m%d-%H%M%S).log
 ```
 
+If the build needs patches from more than one directory (e.g. touchscreen QSPI
+driver patches alongside the build-compatibility patches), use `--patch-dirs`
+with a space-separated list:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-0 \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-ts-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+`-patch-dirs` applies patches from each directory in the listed order.
+The `-patch-dir` and `--patch-dirs` options are mutually exclusive; if both
+are passed, `--patch-dirs` takes precedence.
+
 The `binary-indep` target is required for this tree because the ABI-specific
 headers package depends on `linux-qcom-x1e-headers-7.1.1-jg-0`.
 
