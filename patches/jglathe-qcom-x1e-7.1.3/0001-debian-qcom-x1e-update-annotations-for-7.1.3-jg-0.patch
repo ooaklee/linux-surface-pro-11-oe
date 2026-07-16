@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Thu, 16 Jul 2026 00:00:00 +0000
+Subject: [PATCH] debian.qcom-x1e: update annotations for 7.1.3-jg-0 build
+
+When building the jg/ubuntu-qcom-x1e-7.1.3-jg-0 tag in an Ubuntu 26.04
+container, olddefconfig changes several annotation-visible symbols due to
+the newer toolchain (GCC 15, rustc 1.93). Update annotations to match the
+generated config.
+
+--- a/debian.qcom-x1e/config/annotations
++++ b/debian.qcom-x1e/config/annotations
+@@ -777,9 +777,7 @@ CONFIG_AMPERE_CORESIGHT_PMU_ARCH_SYSTEM_PMU     policy<{'arm64': 'm'}>
+ CONFIG_AMPERE_ERRATUM_AC03_CPU_38               policy<{'arm64': 'y'}>
+ CONFIG_AMPERE_ERRATUM_AC04_CPU_23               policy<{'arm64': 'y'}>
+ CONFIG_AMT                                      policy<{'arm64': 'm'}>
+-CONFIG_ANDROID_BINDERFS                         policy<{'arm64': 'm'}>
+-CONFIG_ANDROID_BINDER_DEVICES                   policy<{'arm64': '"binder,hwbinder,vndbinder"'}>
+-CONFIG_ANDROID_BINDER_IPC                       policy<{'arm64': 'm'}>
++CONFIG_ANDROID_BINDER_IPC                       policy<{'arm64': 'n'}>
+ CONFIG_ANON_VMA_NAME                            policy<{'arm64': 'y'}>
+ CONFIG_AOSONG_AGS02MA                           policy<{'arm64': 'm'}>
+ CONFIG_APDS9160                                 policy<{'arm64': 'm'}>
+@@ -823,7 +821,7 @@ CONFIG_ARCH_ENABLE_MEMORY_HOTPLUG               policy<{'arm64': 'y'}>
+ CONFIG_ARCH_ENABLE_SPLIT_PMD_PTLOCK             policy<{'arm64': 'y'}>
+ CONFIG_ARCH_ENABLE_THP_MIGRATION                policy<{'arm64': 'y'}>
+ CONFIG_ARCH_EXYNOS                              policy<{'arm64': 'n'}>
+-CONFIG_ARCH_FORCE_MAX_ORDER                     policy<{'arm64': '13'}>
++CONFIG_ARCH_FORCE_MAX_ORDER                     policy<{'arm64': '10'}>
+ CONFIG_ARCH_HAS_ACPI_TABLE_UPGRADE              policy<{'arm64': 'y'}>
+ CONFIG_ARCH_HAS_BATCHED_DMA_SYNC                policy<{'arm64': 'y'}>
+ CONFIG_ARCH_HAS_CACHE_LINE_SIZE                 policy<{'arm64': 'y'}>
+@@ -3245,7 +3243,6 @@ CONFIG_DRM_MSM_KMS_FBDEV                        policy<{'arm64': 'y'}>
+ CONFIG_DRM_MSM_MDP4                             policy<{'arm64': 'y'}>
+ CONFIG_DRM_MSM_MDP5                             policy<{'arm64': 'y'}>
+ CONFIG_DRM_MSM_MDSS                             policy<{'arm64': 'y'}>
+-CONFIG_DRM_MSM_VALIDATE_XML                     policy<{'arm64': 'n'}>
+ CONFIG_DRM_MXS                                  policy<{'arm64': 'y'}>
+ CONFIG_DRM_MXSFB                                policy<{'arm64': 'm'}>
+ CONFIG_DRM_NOUVEAU                              policy<{'arm64': 'm'}>
+@@ -5075,9 +5072,6 @@ CONFIG_IGBVF                                    policy<{'arm64': 'm'}>
+ CONFIG_IGB_HWMON                                policy<{'arm64': 'y'}>
+ CONFIG_IGC                                      policy<{'arm64': 'm'}>
+ CONFIG_IGC_LEDS                                 policy<{'arm64': 'y'}>
+-CONFIG_IGH_ECAT                                 policy<{'arm64': 'm'}>
+-CONFIG_IGH_ECAT_ENABLE_EOE                      policy<{'arm64': 'y'}>
+-CONFIG_IGH_ECAT_GENERIC_DEVICE                  policy<{'arm64': 'n'}>
+ CONFIG_IIO                                      policy<{'arm64': 'm'}>
+ CONFIG_IIO_ADC_HELPER                           policy<{'arm64': 'm'}>
+ CONFIG_IIO_ADIS_LIB                             policy<{'arm64': 'm'}>
+@@ -6124,7 +6118,6 @@ CONFIG_LOCKDEP_SUPPORT                          policy<{'arm64': 'y'}>
+ CONFIG_LOCKD_V4                                 policy<{'arm64': 'y'}>
+ CONFIG_LOCKUP_DETECTOR                          policy<{'arm64': 'y'}>
+ CONFIG_LOCK_DEBUGGING_SUPPORT                   policy<{'arm64': 'y'}>
+-CONFIG_LOCK_DOWN_IN_SECURE_BOOT                 policy<{'arm64': 'n'}>
+ CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY   policy<{'arm64': 'n'}>
+ CONFIG_LOCK_DOWN_KERNEL_FORCE_INTEGRITY         policy<{'arm64': 'n'}>
+ CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE              policy<{'arm64': 'y'}>
+@@ -9717,12 +9710,15 @@ CONFIG_RTW89_USB                                policy<{'arm64': 'm'}>
+ CONFIG_RT_GROUP_SCHED                           policy<{'arm64': 'n'}>
+ CONFIG_RT_MUTEXES                               policy<{'arm64': 'y'}>
+ CONFIG_RUNTIME_TESTING_MENU                     policy<{'arm64': 'y'}>
++CONFIG_RUSTC_HAS_FILE_AS_C_STR                  policy<{'arm64': 'y'}>
++CONFIG_RUSTC_HAS_FILE_WITH_NUL                  policy<{'arm64': 'y'}>
+ CONFIG_RUSTC_HAS_SPAN_FILE                      policy<{'arm64': 'y'}>
+ CONFIG_RUSTC_HAS_UNNECESSARY_TRANSMUTES         policy<{'arm64': 'y'}>
+-CONFIG_RUSTC_LLVM_MAJOR_VERSION                 policy<{'arm64': '20'}>
+-CONFIG_RUSTC_LLVM_VERSION                       policy<{'arm64': '200105'}>
++CONFIG_RUSTC_LLVM_MAJOR_VERSION                 policy<{'arm64': '21'}>
++CONFIG_RUSTC_LLVM_VERSION                       policy<{'arm64': '210108'}>
+ CONFIG_RUSTC_SUPPORTS_ARM64                     policy<{'arm64': 'y'}>
+-CONFIG_RUSTC_VERSION                            policy<{'arm64': '108800'}>
++CONFIG_RUSTC_VERSION                            policy<{'arm64': '109301'}>
++CONFIG_RUST_IS_AVAILABLE                        policy<{'arm64': 'y'}>
+ CONFIG_RV                                       policy<{'arm64': 'y'}>
+ CONFIG_RVU_ESWITCH                              policy<{'arm64': 'm'}>
+ CONFIG_RV_MON_DEADLINE                          policy<{'arm64': 'n'}>
+@@ -9990,7 +9986,6 @@ CONFIG_SECURITY_APPARMOR_HASH                   policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_APPARMOR_HASH_DEFAULT           policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_APPARMOR_INTROSPECT_POLICY      policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_APPARMOR_PARANOID_LOAD          policy<{'arm64': 'y'}>
+-CONFIG_SECURITY_APPARMOR_RESTRICT_USERNS        policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_DMESG_RESTRICT                  policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_INFINIBAND                      policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_IPE                             policy<{'arm64': 'n'}>
+@@ -10001,7 +9996,6 @@ CONFIG_SECURITY_LOCKDOWN_LSM_EARLY              policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_NETWORK                         policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_NETWORK_XFRM                    policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_PATH                            policy<{'arm64': 'y'}>
+-CONFIG_SECURITY_PERF_EVENTS_RESTRICT            policy<{'arm64': 'n'}>
+ CONFIG_SECURITY_SELINUX                         policy<{'arm64': 'y'}>
+ CONFIG_SECURITY_SELINUX_AVC_HASH_BITS           policy<{'arm64': '9'}>
+ CONFIG_SECURITY_SELINUX_AVC_STATS               policy<{'arm64': 'y'}>
+@@ -12283,8 +12277,6 @@ CONFIG_UBSAN_KVM_EL2                            policy<{'arm64': 'n'}>
+ CONFIG_UBSAN_SHIFT                              policy<{'arm64': 'y'}>
+ CONFIG_UBSAN_TRAP                               policy<{'arm64': 'n'}>
+ CONFIG_UBSAN_UNREACHABLE                        policy<{'arm64': 'n'}>
+-CONFIG_UBUNTU_HOST                              policy<{'arm64': 'n'}>
+-CONFIG_UBUNTU_ODM_DRIVERS                       policy<{'arm64': 'n'}>
+ CONFIG_UCC                                      policy<{'arm64': 'y'}>
+ CONFIG_UCC_FAST                                 policy<{'arm64': 'y'}>
+ CONFIG_UCC_SLOW                                 policy<{'arm64': 'y'}>
+@@ -12841,7 +12833,6 @@ CONFIG_VEML6040                                 policy<{'arm64': 'm'}>
+ CONFIG_VEML6046X00                              policy<{'arm64': 'm'}>
+ CONFIG_VEML6070                                 policy<{'arm64': 'm'}>
+ CONFIG_VEML6075                                 policy<{'arm64': 'm'}>
+-CONFIG_VERSION_SIGNATURE                        policy<{'arm64': '""'}>
+ CONFIG_VETH                                     policy<{'arm64': 'm'}>
+ CONFIG_VEXPRESS_CONFIG                          policy<{'arm64': 'y'}>
+ CONFIG_VF610_ADC                                policy<{'arm64': 'm'}>
+@@ -12907,7 +12898,6 @@ CONFIG_VIDEO_AK7375                             policy<{'arm64': 'm'}>
+ CONFIG_VIDEO_AK881X                             policy<{'arm64': 'm'}>
+ CONFIG_VIDEO_ALLEGRO_DVT                        policy<{'arm64': 'm'}>
+ CONFIG_VIDEO_ALVIUM_CSI2                        policy<{'arm64': 'm'}>
+-CONFIG_VIDEO_AMD_ISP4_CAPTURE                   policy<{'arm64': 'n'}>
+ CONFIG_VIDEO_AMPHION_VPU                        policy<{'arm64': 'm'}>
+ CONFIG_VIDEO_APTINA_PLL                         policy<{'arm64': 'm'}>
+ CONFIG_VIDEO_AR0521                             policy<{'arm64': 'm'}>
