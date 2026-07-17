@@ -72,7 +72,15 @@ the Ubuntu qcom-x1e kernel tree included:
 - **0002**: the 7.1.3 kernel carries TPM SPI fragmentation patches that
   changed context around the QSPI lane flag insertion point. The patch was
   regenerated against `spi-geni-qcom.c` from `jg/ubuntu-qcom-x1e-7.1.3-jg-0`
-  with the lane flag fix integrated directly.
+  with the lane flag fix integrated directly. Additionally, the original
+  x1e-nixos patch assumed QSPI register constants (`SE_DMA_TX_IRQ_EN_SET`,
+  `SE_IRQ_EN`, `QSPI_SE_PROTO`, etc.) were defined in `geni-se.h`, but in
+  the 7.1.3 kernel they exist only as local defines in `qcom-geni-se.c`.
+  The patch adds 22 local `#define`s for these offsets and masks. The
+  `spi_geni_data` and `spi_geni_qspi_params` struct definitions were moved
+  before `spi_geni_master` to resolve "undefined type" errors, and
+  `spi->mode` was changed to `spi_slv->mode` since `struct spi_controller`
+  has no `.mode` member in this kernel version.
 
 - **0004**: the original patch contained bogus `wcd->spi10` DTS labels and
   an incorrect `gpio-reserved-ranges` hunk. These were removed. The patch
