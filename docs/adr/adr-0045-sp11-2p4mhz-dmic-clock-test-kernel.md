@@ -11,9 +11,9 @@ description: Architecture Decision Record (ADR) for rebuilding the Surface Pro 1
 
 Accepted (2026-07-18).
 
-The package build is validated. Acoustic comparison on the Surface Pro 11 is
-still required before deciding whether 2.4 MHz should replace the existing
-4.8 MHz setting.
+The package build and target comparison are validated. ADR-0046 adopts 2.4 MHz
+as the Surface Pro 11 default; this ADR remains the record of the isolated test
+kernel and its build procedure.
 
 ## Context
 
@@ -137,15 +137,16 @@ the live property path with `fdtget` returned `2400000`. The build log also
 records `ukify build` with that Denali DTB supplied through
 `--devicetree-auto`.
 
-Target validation must compare quiet-room raw ALSA recordings made under the
-normal 4.8 MHz kernel and the 2.4 MHz test kernel with the same UCM profile,
-capture format, gain, microphone position, and duration. Voice clarity and
-idle noise both matter; desktop volume-meter activity alone is not sufficient
-evidence.
+Target validation confirmed the running test release and a live value of
+`2400000`. Compared with the 4.8 MHz kernel, the continuous feedback/static
+was no longer audible and recorded speech was dramatically clearer, although
+it retained a slightly tinny character. Music playback showed no audible
+degradation. ADR-0046 records the decision and full device-side evidence.
 
 ## Related
 
 - [ADR-0042: Touchscreen — Kernel Integration Troubleshooting and Remaining Blockers](adr-0042-sp11-touchscreen-troubleshooting.md)
 - [ADR-0043: Reproducible JG 7.1.3-jg-1 Kernel Builds](adr-0043-jglathe-qcom-7-1-3-jg-1-build-reproducibility.md)
 - [ADR-0044: Surface Pro 11 UCM Uses One WSA Macro and Two Microphone Channels](adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
+- [ADR-0046: Default the Surface Pro 11 DMIC Clock to 2.4 MHz](adr-0046-sp11-default-2p4mhz-dmic-clock.md)
 - [`patches/sp11-dmic-2p4mhz/README.md`](../../patches/sp11-dmic-2p4mhz/README.md)
