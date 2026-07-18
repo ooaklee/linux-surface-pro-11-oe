@@ -5,6 +5,16 @@ title: "ADR003: Denali DTB and GRUB Injection"
 description: Architecture Decision Record (ADR) for requiring the Surface Pro 11 Denali device tree and injecting it through GRUB.
 ---
 
+## Status
+
+Partially superseded (2026-07-18).
+
+The live-USB decision remains historical context. For current installed
+Stubble-packaged kernels, the installed-system GRUB injection decision is
+superseded by [ADR-0042](adr-0042-sp11-touchscreen-troubleshooting.md): Stubble
+registers its embedded DTB in the EFI Configuration Table, and the tested GRUB
+`devicetree` command does not replace the live tree.
+
 ## Context
 
 [ADR002](adr-0002-boot-shim-image-strategy.md) chooses a GRUB boot shim for

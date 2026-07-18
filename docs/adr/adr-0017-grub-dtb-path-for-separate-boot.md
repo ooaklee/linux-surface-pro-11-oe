@@ -5,6 +5,16 @@ title: "ADR017: GRUB DTB Path for Separate Boot"
 description: Architecture Decision Record (ADR) for deriving the installed-system GRUB devicetree path from the generated kernel path so separate /boot layouts work.
 ---
 
+## Status
+
+Superseded for current installed Stubble-packaged kernels (2026-07-18).
+
+The path correction remains useful historical context and may still apply to
+boot chains that honor GRUB's `devicetree` command. On the tested installed
+Surface Pro 11 system, [ADR-0042](adr-0042-sp11-touchscreen-troubleshooting.md)
+shows that Stubble's embedded EFI Configuration Table FDT remains active
+regardless of whether GRUB resolves the loose DTB path correctly.
+
 ## Context
 
 [ADR003](adr-0003-denali-dtb-and-grub-injection.md) requires installed Ubuntu

@@ -1,6 +1,6 @@
 # How to Bring Up Audio on Surface Pro 11
 
-Last updated: 2026-06-19
+Last updated: 2026-07-18
 
 ## Prerequisites
 
@@ -9,7 +9,7 @@ Last updated: 2026-06-19
 - [x] Audio firmware copied from Windows / linux-firmware
 - [x] Audio boot race fix applied (see [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md))
 
-## Status (2026-06-19)
+## Status (2026-07-18)
 
 | Audio path | Status | Notes |
 |---|---|---|
@@ -18,7 +18,7 @@ Last updated: 2026-06-19
 | Audio boot race | Fixed | `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service`. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
 | PipeWire integration | Partial | Card detected but manual sink config needed |
 | Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
-| Microphone (WCD939x TX) | Untested | TX_CODEC not in current DTS DAI links |
+| Internal microphones (VA DMIC) | Capture works, persistent static remains | Corrected UCM opens the `Mic` device and records two-channel 48 kHz `S16_LE` audio from `hw:0,3`. Surface-specific 0 dB decoder gain avoids the clipping seen with the shared +16 dB default, but recordings still contain constant broadband static/scratching noise in a quiet room. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md). |
 | HDMI/DisplayPort audio | Untested | DP DAI links not in current DTS |
 | Bluetooth audio | Working | Independent of card topology |
 
@@ -155,11 +155,14 @@ matching in `conf.d/x1e80100/x1e80100.conf`. The Surface Pro 11 DMI string
 (`Microsoft Corporation-Surface-Microsoft Surface Pro, 11th Edition`) is matched
 and loads the Surface-specific UCM config.
 
-Currently the UCM profile is loaded but PipeWire's ACP module does not
-auto-select it. This is a known issue with PipeWire 1.6.2 / WirePlumber 0.5.13
-on AudioReach cards. The manual speaker sink bypasses ACP/UCM profile selection
-and opens the verified ALSA PCM directly while the UCM auto-profile issue is
-investigated.
+The Surface-specific profile must reference only the single WSA macro exposed
+by the card. Older copies also enabled `Wsa2Speaker*` sequences; UCM aborted on
+the missing `WSA2` controls before it could expose either `Speaker` or `Mic`.
+The corrected profile removes those invalid sequences and declares two capture
+channels. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md).
+
+The manual speaker sink remains necessary for the verified channel-position
+workaround. It bypasses ACP/UCM for playback and opens the speaker PCM directly.
 
 ## Troubleshooting
 
@@ -200,12 +203,69 @@ and [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md).
 3. The 4-channel PCM requires a 4-channel test signal; 2-channel playback
    will fail on `hw:0,1`
 
+### UCM exposes no microphone source
+
+Check whether the `HiFi` verb opens and lists both devices:
+
+```bash
+alsaucm -c hw:0 set _verb HiFi list _devices
+```
+
+If this fails on a control beginning with `WSA2`, reinstall the repository's
+Surface UCM profile. The Surface card exposes one WSA macro with two WSA8845
+amplifiers; a second WSA macro sequence prevents the whole verb from loading.
+
+After installation, verify direct capture before debugging PipeWire:
+
+```bash
+arecord -D hw:0,3 -f S16_LE -r 48000 -c 2 -d 5 sp11-mic-test.wav
+```
+
+If the card retained its old `off` profile from an earlier failed UCM load,
+activate `HiFi` once and select the internal microphone source:
+
+```bash
+pactl set-card-profile alsa_card.platform-sound HiFi
+wpctl status
+wpctl set-default <internal-microphone-source-id>
+```
+
+### Microphone works but has constant static
+
+This is the current known limitation. The standard PipeWire source and direct
+ALSA capture both carry a persistent broadband static or scratching sound, and
+volume controls show input activity in a quiet room.
+
+Tests completed on the target device found:
+
+- reducing `VA_DEC0 Volume` and `VA_DEC1 Volume` from +16 dB to 0 dB removed
+  full-scale clipping and made speech clearer, but did not remove the static;
+- DMIC0 was cleaner than DMIC1, while DMIC2 produced anomalous full-scale data
+  and DMIC3 was silent;
+- an 80 Hz high-pass plus 8 kHz low-pass filter improved measured noise and
+  voice clarity, but the static remained clearly audible; and
+- WebRTC noise suppression reduced the idle level but degraded speech quality
+  substantially, so it is not enabled by default.
+
+Do not interpret activity in a quiet room as proof that Firefox, PipeWire, or
+the desktop portal is creating the noise. The same behavior is present in raw
+ALSA capture.
+
+The next hardware-level experiment is a 2.4 MHz DMIC clock test. The installed
+kernel uses a Stubble-provided device tree embedded in the packaged kernel
+image, so changing a loose DTB under `/boot` or the EFI System Partition does
+not change the live tree. The Denali DTS must be patched and the complete
+Stubble-wrapped `linux-image` package rebuilt before comparing microphone
+recordings. See [ADR-0042](../adr/adr-0042-sp11-touchscreen-troubleshooting.md)
+for the verified device-tree handoff behavior.
+
 ## References
 
 - ADR: [adr-0033-audio-topology-gap.md](../adr/adr-0033-audio-topology-gap.md)
 - ADR: [adr-0034-wsa2-regcache-right-speaker.md](../adr/adr-0034-wsa2-regcache-right-speaker.md)
 - ADR: [adr-0035-audio-boot-race-alsactl.md](../adr/adr-0035-audio-boot-race-alsactl.md)
 - ADR: [adr-0036-right-speaker-audio-position-reorder.md](../adr/adr-0036-right-speaker-audio-position-reorder.md)
+- ADR: [adr-0044-sp11-ucm-single-wsa-macro-microphone.md](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
 - Script: [sp11-audio-topology.sh](../../scripts/sp11-audio-topology.sh)
 - Script: [sp11-pipewire-speaker-sink.sh](../../scripts/sp11-pipewire-speaker-sink.sh)
 - Script: [sp11-enable-wsa-routing.sh](../../scripts/sp11-enable-wsa-routing.sh)
