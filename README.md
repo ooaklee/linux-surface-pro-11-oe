@@ -50,7 +50,8 @@ list for the upstream Arch status.
 | USB-C boot | ✅ Working with `--grub-mode direct` | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified live-USB path. |
 | Wi-Fi | ✅ Working | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Uses a [kernel hack to disable rfkill](https://github.com/dwhinham/kernel-surface-pro-11/commit/fcc769be9eaa9823d55e98a28402104621fa6784). Continue validating normal reboots, suspend/resume, and package upgrades. |
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
-| Audio | ⚠️ Partially | Sound card instantiates with generated topology from CRD template. Both stereo speaker endpoints work via a PipeWire manual sink with reordered `audio.position` labels; the 4-channel PCM is a transport layout, not four independently routable speakers. The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. A persistent broadband static/scratching noise remains in microphone recordings even when the room is quiet, so capture is not yet production-ready. Speakers can still sound distorted. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md), [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md), [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md), and [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md). |
+| Audio — speakers | ⚠️ Partially | Sound card instantiates with generated topology from the CRD template. Both stereo speaker endpoints produce audio through a PipeWire manual sink with reordered `audio.position` labels. The 4-channel PCM is a transport layout, not four independently routable speakers. Music playback showed no audible regression with the 2.4 MHz DMIC kernel, but the manual sink is still required and speakers can sound distorted. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
+| Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
 | Touchscreen | ❌ Not working | Kernel patches and DTB build and compile, but the kernel uses the EFI firmware DTB (Stubble) which has `spi@a88000` as `disabled`, ignoring GRUB's `devicetree` directive. Requires a kernel rebuild with `CONFIG_EFI_ARMSTUB_DTB_LOADER=y` and `dtb=` cmdline — rebuild hangs at boot. See [ADR-0041](docs/adr/adr-0041-sp11-touchscreen-patches.md) for patch set structure, [ADR-0042](docs/adr/adr-0042-sp11-touchscreen-troubleshooting.md) for the full troubleshooting history, diagnostics, and remaining options. |
 | Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
@@ -73,16 +74,19 @@ mkdir -p build
   --source git --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload --reset-source --jobs 4
 
-# OR: Johan G.'s 7.1.3 tree with touchscreen patches
+# OR: Johan G.'s 7.1.3 tree with the validated 2.4 MHz SP11 DMIC clock
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
   --image ubuntu:26.04 \
-  --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.1.3 patches/sp11-dmic-2p4mhz" \
   --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
-  --copy-to-payload --reset-source --jobs 4
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-dmic-2p4mhz \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-dmic-2p4mhz \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4
 ```
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
@@ -181,6 +185,32 @@ sudo reboot
 
 Keep the previous qcom-x1e kernel as a GRUB fallback until the patched kernel
 has booted and Wi-Fi rfkill state has been validated.
+
+For a direct local installation instead of the USB payload flow, place all
+four matching `.deb` packages in one directory and run the same helper against
+that directory. For example, with the 2.4 MHz DMIC packages downloaded to
+`$HOME/Downloads`:
+
+```bash
+cd /path/to/linux-surface-pro-11-oe
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --work-dir "$HOME/Downloads" \
+  --install-only
+sudo reboot
+```
+
+For the validated build, the directory must contain the matching image,
+modules, flavour-header, and common-header packages for
+`7.1.3-jg-1dmic2p4`. After reboot, verify the running kernel and authoritative
+Stubble-provided DMIC clock:
+
+```bash
+uname -r
+od -An -tu4 -N4 --endian=big \
+  /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
+```
+
+Expected values are `7.1.3-jg-1dmic2p4-qcom-x1e` and `2400000`.
 
 ## Post-Install Bring-Up
 
@@ -342,6 +372,8 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0042: Touchscreen — Kernel Integration Troubleshooting and Remaining Blockers](docs/adr/adr-0042-sp11-touchscreen-troubleshooting.md)
 - [ADR0043: Reproducible JG 7.1.3-jg-1 Kernel Builds](docs/adr/adr-0043-jglathe-qcom-7-1-3-jg-1-build-reproducibility.md)
 - [ADR0044: Surface Pro 11 UCM Uses One WSA Macro and Two Microphone Channels](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
+- [ADR0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel](docs/adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
+- [ADR0046: Default the Surface Pro 11 DMIC Clock to 2.4 MHz](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md)
 
 ## Windows Firmware
 

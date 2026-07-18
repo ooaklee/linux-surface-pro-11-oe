@@ -18,7 +18,7 @@ Last updated: 2026-07-18
 | Audio boot race | Fixed | `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service`. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
 | PipeWire integration | Partial | Card detected but manual sink config needed |
 | Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
-| Internal microphones (VA DMIC) | Capture works, persistent static remains | Corrected UCM opens the `Mic` device and records two-channel 48 kHz `S16_LE` audio from `hw:0,3`. Surface-specific 0 dB decoder gain avoids the clipping seen with the shared +16 dB default, but recordings still contain constant broadband static/scratching noise in a quiet room. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md). |
+| Internal microphones (VA DMIC) | Working, slightly tinny | Corrected UCM opens the `Mic` device and records two-channel 48 kHz `S16_LE` audio from `hw:0,3`. Surface-specific 0 dB decoder gain avoids the clipping seen with the shared +16 dB default. The validated 2.4 MHz DMIC clock eliminates the continuous static heard at 4.8 MHz; capture remains slightly tinny or thin. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
 | HDMI/DisplayPort audio | Untested | DP DAI links not in current DTS |
 | Bluetooth audio | Working | Independent of card topology |
 
@@ -251,13 +251,16 @@ Do not interpret activity in a quiet room as proof that Firefox, PipeWire, or
 the desktop portal is creating the noise. The same behavior is present in raw
 ALSA capture.
 
-The next hardware-level experiment is a 2.4 MHz DMIC clock test. The installed
-kernel uses a Stubble-provided device tree embedded in the packaged kernel
-image, so changing a loose DTB under `/boot` or the EFI System Partition does
-not change the live tree. The Denali DTS must be patched and the complete
-Stubble-wrapped `linux-image` package rebuilt before comparing microphone
-recordings. See [ADR-0042](../adr/adr-0042-sp11-touchscreen-troubleshooting.md)
-for the verified device-tree handoff behavior.
+The 2.4 MHz DMIC clock is now the validated Surface Pro 11 default. The
+co-installable `7.1.3-jg-1dmic2p4-qcom-x1e` kernel eliminated the continuous
+feedback/static heard with 4.8 MHz, made recorded speech dramatically clearer,
+and caused no audible degradation during music playback. Capture remains
+slightly tinny or thin. The kernel uses a Stubble-provided device tree embedded
+in the packaged image, so changing a loose DTB under `/boot` or the EFI System
+Partition does not change the live tree. See
+[ADR-0045](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md) for the test
+build and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md) for the
+default-setting decision and device-side evidence.
 
 ## References
 
@@ -266,6 +269,8 @@ for the verified device-tree handoff behavior.
 - ADR: [adr-0035-audio-boot-race-alsactl.md](../adr/adr-0035-audio-boot-race-alsactl.md)
 - ADR: [adr-0036-right-speaker-audio-position-reorder.md](../adr/adr-0036-right-speaker-audio-position-reorder.md)
 - ADR: [adr-0044-sp11-ucm-single-wsa-macro-microphone.md](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
+- ADR: [adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
+- ADR: [adr-0046-sp11-default-2p4mhz-dmic-clock.md](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md)
 - Script: [sp11-audio-topology.sh](../../scripts/sp11-audio-topology.sh)
 - Script: [sp11-pipewire-speaker-sink.sh](../../scripts/sp11-pipewire-speaker-sink.sh)
 - Script: [sp11-enable-wsa-routing.sh](../../scripts/sp11-enable-wsa-routing.sh)
