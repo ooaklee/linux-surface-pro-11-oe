@@ -340,6 +340,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0040: Multi-Directory Patch Sources (--patch-dirs)](docs/adr/adr-0040-multi-patch-dirs.md)
 - [ADR0041: Surface Pro 11 Touchscreen Kernel Patch Set](docs/adr/adr-0041-sp11-touchscreen-patches.md)
 - [ADR0042: Touchscreen — Kernel Integration Troubleshooting and Remaining Blockers](docs/adr/adr-0042-sp11-touchscreen-troubleshooting.md)
+- [ADR0043: Reproducible JG 7.1.3-jg-1 Kernel Builds](docs/adr/adr-0043-jglathe-qcom-7-1-3-jg-1-build-reproducibility.md)
 
 ## Windows Firmware
 
