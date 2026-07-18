@@ -82,8 +82,8 @@ mkdir -p build
   --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.1.3 patches/sp11-dmic-2p4mhz" \
   --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-dmic-2p4mhz \
-  --linux-work-volume sp11-qcom-x1e-kernel-build-dmic-2p4mhz \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-sp11 \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.1.3-sp11 \
   --copy-to-payload \
   --reset-source \
   --jobs 4
