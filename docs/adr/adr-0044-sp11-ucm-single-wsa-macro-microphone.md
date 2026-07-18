@@ -139,13 +139,14 @@ An 80 Hz high-pass plus 8 kHz low-pass filter improved clarity but left audible
 static. WebRTC noise suppression lowered the idle level at the cost of much
 worse voice quality, so neither workaround is part of the default profile.
 
-A proposed 2.4 MHz DMIC clock comparison was not completed. Replacing
+A 2.4 MHz DMIC clock comparison requires a rebuilt test kernel. Replacing
 `/boot/sp11-denali.dtb`, using GRUB's `devicetree` command, and copying a test
 DTB to the EFI System Partition all left the live value at 4.8 MHz. This is the
 Stubble handoff already recorded by ADR-0042: the active Denali DTB is embedded
 in the Stubble-wrapped kernel image. A valid clock comparison therefore
 requires patching the Denali DTS and rebuilding the complete `linux-image`
-package so `ukify` embeds the modified DTB.
+package so `ukify` embeds the modified DTB. ADR-0045 defines the independently
+installable `7.1.3-jg-1dmic2p4-qcom-x1e` build used for that comparison.
 
 ## References
 
@@ -154,3 +155,4 @@ package so `ukify` embeds the modified DTB.
 - [ADR-0033: Surface Pro 11 Audio Topology Gap](adr-0033-audio-topology-gap.md)
 - [ADR-0036: Right Speaker Audio via PipeWire audio.position Reorder](adr-0036-right-speaker-audio-position-reorder.md)
 - [ADR-0042: Surface Pro 11 Touchscreen Kernel Integration Troubleshooting](adr-0042-sp11-touchscreen-troubleshooting.md)
+- [ADR-0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel](adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)

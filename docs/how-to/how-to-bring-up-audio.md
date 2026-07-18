@@ -254,10 +254,11 @@ ALSA capture.
 The next hardware-level experiment is a 2.4 MHz DMIC clock test. The installed
 kernel uses a Stubble-provided device tree embedded in the packaged kernel
 image, so changing a loose DTB under `/boot` or the EFI System Partition does
-not change the live tree. The Denali DTS must be patched and the complete
-Stubble-wrapped `linux-image` package rebuilt before comparing microphone
-recordings. See [ADR-0042](../adr/adr-0042-sp11-touchscreen-troubleshooting.md)
-for the verified device-tree handoff behavior.
+not change the live tree. The co-installable
+`7.1.3-jg-1dmic2p4-qcom-x1e` test kernel rebuilds the complete image with the
+modified Denali DTB. See
+[ADR-0045](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md) for the build,
+rollback, and recording-comparison requirements.
 
 ## References
 
@@ -266,6 +267,7 @@ for the verified device-tree handoff behavior.
 - ADR: [adr-0035-audio-boot-race-alsactl.md](../adr/adr-0035-audio-boot-race-alsactl.md)
 - ADR: [adr-0036-right-speaker-audio-position-reorder.md](../adr/adr-0036-right-speaker-audio-position-reorder.md)
 - ADR: [adr-0044-sp11-ucm-single-wsa-macro-microphone.md](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
+- ADR: [adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
 - Script: [sp11-audio-topology.sh](../../scripts/sp11-audio-topology.sh)
 - Script: [sp11-pipewire-speaker-sink.sh](../../scripts/sp11-pipewire-speaker-sink.sh)
 - Script: [sp11-enable-wsa-routing.sh](../../scripts/sp11-enable-wsa-routing.sh)
