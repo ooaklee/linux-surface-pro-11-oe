@@ -74,16 +74,19 @@ mkdir -p build
   --source git --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload --reset-source --jobs 4
 
-# OR: Johan G.'s 7.1.3 tree with touchscreen patches
+# OR: Johan G.'s 7.1.3 tree with the validated 2.4 MHz SP11 DMIC clock
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
   --image ubuntu:26.04 \
-  --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.1.3 patches/sp11-dmic-2p4mhz" \
   --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
-  --copy-to-payload --reset-source --jobs 4
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-dmic-2p4mhz \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-dmic-2p4mhz \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4
 ```
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
@@ -182,6 +185,32 @@ sudo reboot
 
 Keep the previous qcom-x1e kernel as a GRUB fallback until the patched kernel
 has booted and Wi-Fi rfkill state has been validated.
+
+For a direct local installation instead of the USB payload flow, place all
+four matching `.deb` packages in one directory and run the same helper against
+that directory. For example, with the 2.4 MHz DMIC packages downloaded to
+`$HOME/Downloads`:
+
+```bash
+cd /path/to/linux-surface-pro-11-oe
+./scripts/build-sp11-qcom-x1e-kernel.sh \
+  --work-dir "$HOME/Downloads" \
+  --install-only
+sudo reboot
+```
+
+For the validated build, the directory must contain the matching image,
+modules, flavour-header, and common-header packages for
+`7.1.3-jg-1dmic2p4`. After reboot, verify the running kernel and authoritative
+Stubble-provided DMIC clock:
+
+```bash
+uname -r
+od -An -tu4 -N4 --endian=big \
+  /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
+```
+
+Expected values are `7.1.3-jg-1dmic2p4-qcom-x1e` and `2400000`.
 
 ## Post-Install Bring-Up
 

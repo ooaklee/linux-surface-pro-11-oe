@@ -1,12 +1,17 @@
-# Surface Pro 11 2.4 MHz DMIC clock test patches
+# Surface Pro 11 2.4 MHz DMIC clock patches
 
-These patches build an experimental Johan G. qcom-x1e 7.1.3-jg-1 kernel for
-testing whether a 2.4 MHz DMIC clock reduces the persistent broadband static
-heard from the Surface Pro 11 internal microphones.
+These patches build a Johan G. qcom-x1e 7.1.3-jg-1 kernel with the validated
+2.4 MHz Surface Pro 11 DMIC clock. Device testing found that this setting
+eliminated the continuous microphone static heard at 4.8 MHz without an
+audible music-playback regression. ADR-0046 adopts 2.4 MHz as the default;
+capture remains slightly tinny or thin.
 
-The test build uses the distinct ABI `7.1.3-jg-1dmic2p4`, producing packages
-such as `linux-image-7.1.3-jg-1dmic2p4-qcom-x1e`. It can therefore be installed
-alongside the known-good `7.1.3-jg-1-qcom-x1e` kernel.
+The initial validated build uses the distinct ABI `7.1.3-jg-1dmic2p4`,
+producing packages such as
+`linux-image-7.1.3-jg-1dmic2p4-qcom-x1e`. It can therefore be installed
+alongside the known-good `7.1.3-jg-1-qcom-x1e` kernel. Future general-purpose
+builds can integrate the accepted property without retaining the experiment
+suffix.
 
 The patches must be applied after the JG 7.1.3 build-compatibility patches so
 the test-build annotations signature replaces the regenerated jg-1 signature:
@@ -26,9 +31,9 @@ the test-build annotations signature replaces the regenerated jg-1 signature:
 ```
 
 The isolated Docker volume prevents older qcom-x1e packages from being copied
-into the test build's artifact directory. Do not use `--copy-to-payload` for
-this experiment because the normal payload should continue to carry the
-known-good release kernel.
+into the build's artifact directory. Add `--copy-to-payload` when preparing a
+new USB payload from this validated package set; omit it when only local
+artifacts are required.
 
 After installation, verify the running tree before recording audio:
 
@@ -50,5 +55,10 @@ sudo apt install ./linux-qcom-x1e-headers-7.1.3-jg-1dmic2p4_*.deb \
   ./linux-image-7.1.3-jg-1dmic2p4-qcom-x1e_*.deb
 ```
 
-Select the `7.1.3-jg-1dmic2p4-qcom-x1e` entry for the comparison boot. Keep
+Select the `7.1.3-jg-1dmic2p4-qcom-x1e` entry for the first boot. Keep
 `7.1.3-jg-1-qcom-x1e` available in GRUB as the known-good fallback.
+
+See [ADR-0045](../../docs/adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
+for the isolated build decision and
+[ADR-0046](../../docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md) for the
+device-side evidence and default-setting decision.
