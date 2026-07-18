@@ -9,6 +9,7 @@ GIT_BRANCH="qcom-x1e-7.0"
 BUILD_TARGET="binary-qcom-x1e"
 WORK_DIR="${HOME}/sp11-qcom-x1e-kernel-build"
 PATCH_DIR=""
+PATCH_DIRS=""
 MIN_FREE_GB=40
 INSTALL_DEPS="false"
 INSTALL_DEBS="false"
@@ -41,6 +42,9 @@ Options:
   --git-url URL          Kernel git URL for git mode, default $GIT_URL.
   --git-branch BRANCH    Kernel git branch or tag for git mode, default $GIT_BRANCH.
   --patch-dir DIR        Patch directory, default repo patches/ubuntu-qcom-x1e-7.0.
+  --patch-dirs "DIR1 DIR2 ..."
+                        Space-separated list of patch directories. Patches from
+                        each directory are applied in order.
   --work-dir DIR         Build work directory, default $WORK_DIR.
   --build-target TARGET  Kernel package target or quoted target list,
                          default $BUILD_TARGET.
@@ -121,6 +125,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --patch-dir)
       PATCH_DIR="$2"
+      shift 2
+      ;;
+    --patch-dirs)
+      PATCH_DIRS="$2"
       shift 2
       ;;
     --work-dir)
@@ -207,7 +215,14 @@ if ! [[ "$MIN_FREE_GB" =~ ^[0-9]+$ ]] || [ "$MIN_FREE_GB" -lt 1 ]; then
 fi
 
 PATCH_DIR="${PATCH_DIR:-$repo_dir/patches/ubuntu-qcom-x1e-7.0}"
-if [ "$INSTALL_ONLY" != "true" ] && [ ! -d "$PATCH_DIR" ]; then
+if [ -n "$PATCH_DIRS" ]; then
+  for pd in $PATCH_DIRS; do
+    if [ ! -d "$pd" ]; then
+      echo "Patch directory not found: $pd" >&2
+      exit 1
+    fi
+  done
+elif [ "$INSTALL_ONLY" != "true" ] && [ ! -d "$PATCH_DIR" ]; then
   echo "Patch directory not found: $PATCH_DIR" >&2
   exit 1
 fi
@@ -369,7 +384,12 @@ ensure_clean_source() {
   fi
 
   if [ "$RESET_SOURCE" = "true" ]; then
-    rm -rf "$dir"
+    if [ -d "$dir/.git" ]; then
+      git -C "$dir" reset --hard
+      git -C "$dir" clean -ffdx
+    else
+      rm -rf "$dir"
+    fi
     return 0
   fi
 
@@ -397,20 +417,23 @@ prepare_git_source() {
   dir="$source_parent/git-$safe_branch"
   ref_kind=""
 
-  if git ls-remote --exit-code --heads "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
-    ref_kind="head"
-  elif git ls-remote --exit-code --tags "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
-    ref_kind="tag"
-  else
-    echo "Git ref not found as a branch or tag: $GIT_BRANCH" >&2
-    echo "Remote: $GIT_URL" >&2
-    exit 1
-  fi
-
   ensure_clean_source "$dir"
   if [ ! -d "$dir" ]; then
-    git clone --branch "$GIT_BRANCH" "$GIT_URL" "$dir"
+    git clone --depth 1 --branch "$GIT_BRANCH" "$GIT_URL" "$dir"
   else
+    if git -C "$dir" show-ref --verify --quiet "refs/remotes/origin/$GIT_BRANCH"; then
+      ref_kind="head"
+    elif git -C "$dir" show-ref --verify --quiet "refs/tags/$GIT_BRANCH"; then
+      ref_kind="tag"
+    elif git ls-remote --exit-code --heads "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
+      ref_kind="head"
+    elif git ls-remote --exit-code --tags "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
+      ref_kind="tag"
+    else
+      echo "Git ref not found as a branch or tag: $GIT_BRANCH" >&2
+      echo "Remote: $GIT_URL" >&2
+      exit 1
+    fi
     if [ "$ref_kind" = "head" ]; then
       git -C "$dir" fetch origin "$GIT_BRANCH"
       git -C "$dir" checkout "$GIT_BRANCH"
@@ -422,7 +445,9 @@ prepare_git_source() {
       fi
       git -C "$dir" reset --hard "origin/$GIT_BRANCH"
     else
-      git -C "$dir" fetch --force origin "refs/tags/$GIT_BRANCH:refs/tags/$GIT_BRANCH"
+      if ! git -C "$dir" show-ref --verify --quiet "refs/tags/$GIT_BRANCH"; then
+        git -C "$dir" fetch --force origin "refs/tags/$GIT_BRANCH:refs/tags/$GIT_BRANCH"
+      fi
       git -C "$dir" checkout --detach "refs/tags/$GIT_BRANCH"
       git -C "$dir" reset --hard "refs/tags/$GIT_BRANCH"
     fi
@@ -510,37 +535,46 @@ prepare_apt_source() {
 }
 
 apply_patches() {
-  local patch
+  local patch_dir_list
 
-  echo "Applying patches from $PATCH_DIR"
-  for patch in "$PATCH_DIR"/*.patch; do
-    [ -f "$patch" ] || continue
+  if [ -n "$PATCH_DIRS" ]; then
+    patch_dir_list="$PATCH_DIRS"
+  else
+    patch_dir_list="$PATCH_DIR"
+  fi
 
-    case "$(basename "$patch")" in
-      0001-wifi-ath12k-add-disable-rfkill-devicetree.patch)
-        if grep -q 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
-          "$source_dir/drivers/net/wireless/ath/ath12k/core.c"; then
-          echo "Already satisfied: $(basename "$patch")"
-          continue
-        fi
-        ;;
-      0002-arm64-dts-qcom-x1-denali-disable-rfkill-for-wifi.patch)
-        if grep -q 'disable-rfkill;' \
-          "$source_dir/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi"; then
-          echo "Already satisfied: $(basename "$patch")"
-          continue
-        fi
-        ;;
-    esac
+  for pd in $patch_dir_list; do
+    echo "Applying patches from $pd"
 
-    if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
-      echo "Already applied: $(basename "$patch")"
-      continue
-    fi
+    for patch in "$pd"/*.patch; do
+      [ -f "$patch" ] || continue
 
-    echo "Applying: $(basename "$patch")"
-    git -C "$source_dir" apply --check "$patch"
-    git -C "$source_dir" apply "$patch"
+      case "$(basename "$patch")" in
+        0001-wifi-ath12k-add-disable-rfkill-devicetree.patch)
+          if grep -q 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
+            "$source_dir/drivers/net/wireless/ath/ath12k/core.c"; then
+            echo "Already satisfied: $(basename "$patch")"
+            continue
+          fi
+          ;;
+        0002-arm64-dts-qcom-x1-denali-disable-rfkill-for-wifi.patch)
+          if grep -q 'disable-rfkill;' \
+            "$source_dir/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi"; then
+            echo "Already satisfied: $(basename "$patch")"
+            continue
+          fi
+          ;;
+      esac
+
+      if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
+        echo "Already applied: $(basename "$patch")"
+        continue
+      fi
+
+      echo "Applying: $(basename "$patch")"
+      git -C "$source_dir" apply --check "$patch"
+      git -C "$source_dir" apply "$patch"
+    done
   done
 
   grep -q 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
@@ -575,11 +609,21 @@ write_manifest() {
     if [ -d "$source_dir/.git" ]; then
       echo "Source HEAD: $(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)"
     fi
-    echo "Patch directory: $PATCH_DIR"
-    echo "Patches:"
-    for patch in "$PATCH_DIR"/*.patch; do
-      [ -f "$patch" ] && echo "  - $(basename "$patch")"
-    done
+    if [ -n "$PATCH_DIRS" ]; then
+      echo "Patch directories: $PATCH_DIRS"
+      for pd in $PATCH_DIRS; do
+        echo "Patches in $pd:"
+        for patch in "$pd"/*.patch; do
+          [ -f "$patch" ] && echo "  - $(basename "$patch")"
+        done
+      done
+    else
+      echo "Patch directory: $PATCH_DIR"
+      echo "Patches:"
+      for patch in "$PATCH_DIR"/*.patch; do
+        [ -f "$patch" ] && echo "  - $(basename "$patch")"
+      done
+    fi
     echo "Build target: $BUILD_TARGET"
     echo "Jobs: $JOBS"
     if [ "$(id -u)" -eq 0 ]; then

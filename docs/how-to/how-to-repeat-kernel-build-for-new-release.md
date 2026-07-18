@@ -141,8 +141,31 @@ directory between refs:
   2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.1-build-$(date +%Y%m%d-%H%M%S).log
 ```
 
+If the build needs patches from more than one directory (e.g. touchscreen QSPI
+driver patches alongside the build-compatibility patches), use `--patch-dirs`
+with a space-separated list:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-ts-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+`--patch-dirs` applies patches from each directory in the listed order. If both
+`--patch-dir` and `--patch-dirs` are passed, `--patch-dirs` takes precedence.
+
 The `binary-indep` target is required for this tree because the ABI-specific
-headers package depends on `linux-qcom-x1e-headers-7.1.1-jg-0`.
+headers package depends on `linux-qcom-x1e-headers-<abi>` (e.g.
+`linux-qcom-x1e-headers-7.1.3-jg-1`).
 
 **Option B: On-device (fallback)**
 
@@ -279,6 +302,7 @@ linux-qcom-x1e-headers-<abi>_<version>_all.deb
 | Build target | No | Always `binary-qcom-x1e` |
 | Patches | No change | `patches/ubuntu-qcom-x1e-7.0/*.patch` — unless Ubuntu tree diverges |
 | rfkill fix | No change | Same `disable-rfkill` property on Denali WCN7850 node |
+| jglathe annotations patch | Possibly | New `jg/ubuntu-qcom-x1e-<base>-jg-<n>` tags can shift `CONFIG_*` symbols vs. the prior tag; regenerate with `scripts/regenerate-qcom-x1e-annotations.sh` |
 
 The `collect-sp11-kernel-source-metadata.sh` script captures everything that
 changes automatically.
@@ -306,6 +330,31 @@ git diff HEAD -- arch/arm64/boot/dts/qcom/ \
 ```
 
 Then rerun the build.
+
+**`check-config` fails with `N config options have been changed` (jglathe tree).**
+A new `jg/ubuntu-qcom-x1e-<base>-jg-<n>` tag shifted `CONFIG_*` symbols relative
+to the annotations patch carried in `patches/jglathe-qcom-x1e-<base>/`. The
+failure lists each symbol with the form `changed from <annotation> to <.config>`
+(or `undefined` if the patch deleted an annotation line that `olddefconfig`
+still emits). Regenerate the patch with the helper, then rerun the build
+unchanged:
+
+```bash
+./scripts/regenerate-qcom-x1e-annotations.sh \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch "jg/ubuntu-qcom-x1e-<base>-jg-<n>" \
+  --reset-source
+```
+
+The helper writes a fresh
+`0001-debian-qcom-x1e-update-annotations-for-<base>-jg-<n>.patch` into the
+patch directory, removes the stale annotations patch for an older tag, and
+leaves the other patches alone. It installs the complete source build
+dependency set and runs Kconfig with the same compiler and Rust probes as the
+real package build. Confirm the replacement patch exists before rerunning the
+original build command. See
+`patches/jglathe-qcom-x1e-<base>/README.md` for the underlying recipe and the
+manual fallback.
 
 **Docker build fails with libfakeroot errors.** The container already runs as
 root. The wrapper passes `--no-fakeroot`. Make sure you're using the default

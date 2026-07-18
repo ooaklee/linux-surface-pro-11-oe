@@ -130,6 +130,40 @@ package version currently installed on the Surface. Git mode defaults to an
 `ubuntu:25.10` container because the current `qcom-x1e-7.0` git branch expects
 Rust 1.85 and LLVM 19 during Ubuntu config validation.
 
+### Johan G. 7.1.3 source
+
+The `jg/ubuntu-qcom-x1e-7.1.3-jg-1` tag requires Ubuntu 26.04 and the matching
+build-compatibility patches:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
+  --image ubuntu:26.04 \
+  --patch-dir patches/jglathe-qcom-x1e-7.1.3 \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 4 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+If `check-config` reports changed options after moving to a newer `jg-*` tag,
+regenerate the tag-specific annotations patch first:
+
+```bash
+./scripts/regenerate-qcom-x1e-annotations.sh \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch "jg/ubuntu-qcom-x1e-7.1.3-jg-<n>" \
+  --reset-source
+```
+
+The helper removes only the stale tag-specific annotations patch. It preserves
+the other compatibility patches in the directory. Rerun the original build
+command unchanged after confirming the new patch filename.
+
 5. Rebuild and write the live USB image so `payload/kernel-debs/` is copied to
    `SP11DATA`.
 

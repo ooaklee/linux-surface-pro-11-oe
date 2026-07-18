@@ -1,0 +1,24 @@
+From 000000010000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jingyuan Liang <jingyliang@chromium.org>
+Date: Tue, 09 Jun 2026 04:40:52 +0000
+Subject: [PATCH v4 01/11] Documentation: Correction in HID output_report  callback description.
+
+diff --git a/Documentation/hid/hid-transport.rst b/Documentation/hid/hid-transport.rst
+index 6f1692da296c..2008cf432af1 100644
+--- a/Documentation/hid/hid-transport.rst
++++ b/Documentation/hid/hid-transport.rst
+@@ -327,8 +327,8 @@ The available HID callbacks are:
+ 
+    Send raw output report via intr channel. Used by some HID device drivers
+    which require high throughput for outgoing requests on the intr channel. This
+-   must not cause SET_REPORT calls! This must be implemented as asynchronous
+-   output report on the intr channel!
++   must not cause SET_REPORT calls! This call might be asynchronous, so the
++   caller should not expect an immediate response!
+ 
+    ::
+ 
+
+-- 
+2.54.0.1064.gd145956f57-goog
+
