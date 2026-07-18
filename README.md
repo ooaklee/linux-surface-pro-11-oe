@@ -23,61 +23,21 @@ The current verified target is:
 
 ## Prerequisites
 
-Prepare these before building or booting the installer:
-
-- A Microsoft Surface Pro 11 with Snapdragon X Elite (`X1E80100`). This guide
-  is not for Surface Laptop 7/Romulus devices or Intel Surface devices.
-- A complete Windows backup and a saved BitLocker or Device Encryption recovery
-  key. Suspend or decrypt Windows device encryption before resizing partitions
-  or repeatedly booting experimental media.
-- Secure Boot disabled in Surface UEFI.
-- A Windows recovery USB or another confirmed way to restore the device if the
-  Ubuntu install or bootloader setup fails.
-- A USB-C flash drive, 16 GB or larger. The write script erases the entire
-  selected disk.
-- A macOS build host with Docker Desktop running, `git`, `diskutil`, and sudo
-  access for writing the raw USB image. Keep at least 20 GB free for the ISO,
-  Docker image/package setup, work directories, and generated raw images.
-- Temporary networking for post-install firmware work. Wi-Fi is not working in
-  the current live session, so prepare USB-C Ethernet, USB phone tethering, or
-  a mounted Windows partition for `sp11-grab-fw --windows-root`.
-- An external USB keyboard is recommended for installer recovery and text
-  entry. The direct GRUB mode avoids the broken interactive GRUB menu, but
-  normal keyboard text input in the desktop still needs confirmation.
+- Surface Pro 11 with Snapdragon X Elite (`X1E80100`) — not Surface Laptop 7/Romulus or Intel Surface devices
+- Windows backup + BitLocker/Device Encryption recovery key (suspend or decrypt before partition work)
+- Secure Boot disabled in Surface UEFI
+- Windows recovery USB or another restore path
+- USB-C flash drive, 16 GB+ (write script erases the entire disk)
+- macOS build host with Docker Desktop, `git`, `diskutil`, sudo (20 GB free)
+- Temporary networking for post-install firmware (Wi-Fi doesn't work in the live session — use USB-C Ethernet, phone tethering, or a mounted Windows partition)
+- External USB keyboard recommended for installer recovery
 
 ## Current Status
 
-The Surface Pro 11 still needs a custom device tree and firmware handling. A
-standard ARM64 Ubuntu ISO is not enough.
-
-Latest live-USB result, 2026-06-13: the `--grub-mode direct` image boots to the
-Ubuntu desktop. The interactive GRUB menu still does not accept input or
-auto-boot reliably, so direct mode is the verified live-USB path for now.
-
-Latest installed-system result, 2026-06-14: a rebuilt direct USB image carrying
-the patched `7.0.0-22-qcom-x1e` kernel packages and current support scripts
-completed the clean installed-system flow. The support helper selected the
-rfkill-capable Denali OLED DTB, `/boot/sp11-denali.dtb` contained
-`disable-rfkill`, the system booted the patched kernel, and NetworkManager
-automatically reconnected to the previously saved Wi-Fi network after reboot.
-
-Latest KDE Plasma result, 2026-06-30: KDE Plasma (via `kubuntu-desktop`) is
-verified on the installed system. The `sp11-install-kde-desktop.sh` helper
-installs Plasma and switches the display manager to SDDM while keeping GNOME
-installed as a fallback. SDDM comes up reliably across reboots. All SP11
-bring-up helpers (Wi-Fi, Bluetooth, audio, DTB injection) are
-desktop-agnostic and continue to work under Plasma. Kubuntu has no official
-ARM64 ISO, so this is the supported path to a Kubuntu-like experience on the
-Surface Pro 11. See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
-
-The feature table below is aligned with the upstream
+The Surface Pro 11 needs a custom device tree and firmware handling — a stock
+ARM64 Ubuntu ISO is not enough. See the
 [dwhinham/linux-surface-pro-11 "What's working"](https://github.com/dwhinham/linux-surface-pro-11#whats-working)
-list, so the Arch and Ubuntu bring-up status can be compared row by row. The
-notes reflect the verified Ubuntu live-USB and installed-system results.
-
-> The test model is a Surface Pro 11, OLED version, Wi-Fi only (no 5G), with
-> the X1E SoC. If you have a different model (e.g. LCD screen, 5G, X1P CPU) you
-> are on your own.
+list for the upstream Arch status.
 
 | Feature | Status | Notes |
 | --- | --- | --- |
@@ -93,64 +53,27 @@ notes reflect the verified Ubuntu live-USB and installed-system results.
 | Audio | ⚠️ Partially | Sound card instantiates with generated topology from CRD template. Both speakers work via PipeWire manual sink with reordered `audio.position` labels to bypass the kernel DAPM gate. Speakers can sound distorted; care needed with volume controls; microphone too distorted to be usable. Audio boot race fixed: `alsa-restore.service` masked, `sp11-wsa-routing.service` enables WSA routing after the DSP graph loads. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0033](docs/adr/adr-0033-audio-topology-gap.md), [ADR-0034](docs/adr/adr-0034-wsa2-regcache-right-speaker.md), [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md), [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
 | Touchscreen | ❌ Not working | Kernel patches and DTB build and compile, but the kernel uses the EFI firmware DTB (Stubble) which has `spi@a88000` as `disabled`, ignoring GRUB's `devicetree` directive. Requires a kernel rebuild with `CONFIG_EFI_ARMSTUB_DTB_LOADER=y` and `dtb=` cmdline — rebuild hangs at boot. See [ADR-0041](docs/adr/adr-0041-sp11-touchscreen-patches.md) for patch set structure, [ADR-0042](docs/adr/adr-0042-sp11-touchscreen-troubleshooting.md) for the full troubleshooting history, diagnostics, and remaining options. |
 | Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
-| Flex Keyboard | ✅ Working | Surface cover touchpad and keyboard work after the desktop starts. Backlight and function-key events are visible. Only when attached to the Surface Pro; Bluetooth cover mode unconfirmed. GRUB menu input remains unresolved, so use `--grub-mode direct`. |
-| Suspend/resume | ⚠️ Partially/risky | Lid switch seems to work when the Flex Keyboard covers the screen. Resume from sleep can cause the machine to hang or produce a black screen. Prefer testing boot/install first. |
-| Cameras (and status LEDs) | ❌ Not working | Camera support is not part of the first Ubuntu boot path. |
+| Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
+| Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
 
-## Recommended Path
+## Quick Start
 
-Use the custom live-USB image builder in this repo. It creates a small ARM64
-GRUB boot shim, stores the Ubuntu Snapdragon X concept ISO on a Linux data
-partition, and injects the Surface Pro 11 device tree at boot.
+The custom live-USB builder creates a small ARM64 GRUB boot shim, stores the
+Ubuntu Snapdragon X concept ISO on a Linux data partition, and injects the
+Surface Pro 11 device tree at boot. This avoids remastering the Ubuntu ISO.
 
-This avoids remastering the Ubuntu ISO while still giving us the SP11-specific
-`devicetree` line that stock ISO boot paths lack.
-
-### From-Scratch Commands
-
-Run these commands from this repository root on the macOS/Docker build host:
+### 1. Build the patched kernel (Docker, on macOS)
 
 ```bash
 cd /path/to/linux-surface-pro-11-oe
 mkdir -p build
-```
 
-Build the patched qcom-x1e kernel packages and copy them into the USB image
-payload directory:
-
-```bash
+# Default: Ubuntu concept kernel
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --work-dir build/docker-sp11-qcom-x1e-kernel \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 4 \
-  2>&1 | tee build/sp11-qcom-x1e-kernel-build-$(date +%Y%m%d-%H%M%S).log
-```
+  --source git --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --copy-to-payload --reset-source --jobs 4
 
-To build from Johan G.'s 7.1.3 qcom-x1e tree instead of the Ubuntu concept
-default, use the published git tag explicitly:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-0 \
-  --image ubuntu:26.04 \
-  --patch-dir patches/jglathe-qcom-x1e-7.1.3 \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 4 \
-  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-build-$(date +%Y%m%d-%H%M%S).log
-```
-
-To include the Surface Pro 11 touchscreen (QSPI HID-over-SPI) support, use
-`--patch-dirs` with the touchscreen patches and the build-compatibility
-patches in a single invocation:
-
-```bash
+# OR: Johan G.'s 7.1.3 tree with touchscreen patches
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
@@ -159,22 +82,17 @@ patches in a single invocation:
   --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 4 \
-  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-ts-build-$(date +%Y%m%d-%H%M%S).log
+  --copy-to-payload --reset-source --jobs 4
 ```
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
-applied in order.
-
-The `binary-indep` target is required for this tree because the ABI-specific
+applied in order. The `binary-indep` target is required because the ABI-specific
 headers package depends on `linux-qcom-x1e-headers-7.1.1-jg-0`.
 
-Build the direct-boot USB image. This image boots the Ubuntu concept ISO kernel
-for the live environment, injects the Surface Pro 11 DTB from GRUB, and carries
-the patched kernel packages under `SP11DATA/payload/kernel-debs/` for
-installation onto the Surface:
+See the [patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+for the full on-device build path and fallback-kernel safety model.
+
+### 2. Build the USB image
 
 ```bash
 ./scripts/build-sp11-live-usb-image.sh \
@@ -185,123 +103,108 @@ installation onto the Surface:
   --validate
 ```
 
-Identify the removable USB disk carefully. Replace `/dev/diskX` with the real
-USB disk, not an internal disk:
+If auto DTB extraction fails, provide one explicitly via `--dtb`. An explicit
+DTB can come from a kernel package with SP11 support or from a local build of
+`dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus DTB.
+
+To build a live USB with KDE Plasma available by default, add `--desktop kde`.
+See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
+
+### 3. Write the USB
 
 ```bash
 diskutil list
-diskutil info /dev/diskX
+diskutil info /dev/diskX  # verify it's the removable USB disk
+./scripts/write-image-to-macos-disk.sh build/sp11-ubuntu-live-direct.img /dev/diskX
 ```
 
-Write the image to the USB drive:
+The script refuses to write unless the disk is external, removable, and USB.
 
-```bash
-./scripts/write-image-to-macos-disk.sh \
-  build/sp11-ubuntu-live-direct.img \
-  /dev/diskX
-```
+### 4. Boot and install
 
-After booting the Surface from this USB and installing Ubuntu, choose
-`continue testing` at the end of the installer and prepare the installed target
-before rebooting:
+1. Disable Secure Boot in Surface UEFI.
+2. Boot from the USB.
+3. Install Ubuntu carefully (shrink Windows, create `/`, `/boot`, `/boot/efi`).
+4. At the end of the installer, choose **continue testing** and run the
+   installed-system preparer before rebooting:
 
 ```bash
 SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-
 SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
-test -d /target/etc || { echo "Mount the installed Ubuntu root at /target first."; exit 1; }
-
+[ -z "$SP11DATA" ] && { sudo mkdir -p /mnt/sp11data; sudo mount "$SP11DEV" /mnt/sp11data; SP11DATA=/mnt/sp11data; }
 cd "$SP11DATA/support"
 sudo ./scripts/prepare-sp11-installed-system.sh --target /target
 sudo reboot
 ```
 
-After the first installed boot, mount `SP11DATA`, install firmware/support
-helpers, then install the patched kernel payload:
+### 5. Post-install: firmware + kernel + bring-up
+
+After the first installed boot, mount `SP11DATA` and run the finish script
+(downloads firmware, installs support helpers, reboots):
 
 ```bash
 SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-
 SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
+[ -z "$SP11DATA" ] && { sudo mkdir -p /mnt/sp11data; sudo mount "$SP11DEV" /mnt/sp11data; SP11DATA=/mnt/sp11data; }
 cd "$SP11DATA/support"
 sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
 ```
 
-If temporary networking is unavailable, mount the Windows partition and use
-Windows firmware instead of downloading it:
+If networking is unavailable, mount the Windows partition and use Windows
+firmware instead: `--windows-root "$WINROOT"` (see the script `--help`).
+
+Then install the patched kernel payload from the USB:
 
 ```bash
-WINROOT="/run/media/$USER/Local Disk"
-test -d "$WINROOT/Windows" || { echo "Set WINROOT to the mounted Windows NTFS partition."; exit 1; }
-
 cd "$SP11DATA/support"
-sudo ./scripts/finish-sp11-installed-system.sh \
-  --windows-root "$WINROOT" \
-  --reboot
-```
-
-After rebooting back into installed Ubuntu, install the patched kernel packages
-from the USB payload:
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
-cd "$SP11DATA/support"
-find "$SP11DATA/payload/kernel-debs" -maxdepth 1 -type f -name '*.deb' -print | sort
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir "$SP11DATA/payload/kernel-debs" \
-  --install-only
+./scripts/build-sp11-qcom-x1e-kernel.sh --work-dir "$SP11DATA/payload/kernel-debs" --install-only
 sudo reboot
 ```
 
-After the patched kernel has booted, validate audio and install the user-level
-PipeWire speaker sink for the logged-in desktop user. The support installer
-copies the packaged topology/UCM files from `payload/audio/` when present and
-installs the `sp11-wsa-routing.service` boot-race fix; the PipeWire sink is
-per-user and must be installed from the desktop session:
+Keep the previous qcom-x1e kernel as a GRUB fallback until the patched kernel
+has booted and Wi-Fi rfkill state has been validated.
+
+## Post-Install Bring-Up
+
+### Wi-Fi
+
+The WCN7850 needs a patched kernel with rfkill disabled. The `board.bin`
+fallback is enough for the adapter to probe; the remaining blocker is the
+rfkill kernel/DTB path. See the
+[patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+for the full diagnostic and build path.
+
+### Bluetooth
 
 ```bash
-SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
 cd "$SP11DATA/support"
-systemctl status sp11-wsa-routing.service --no-pager
-./scripts/sp11-pipewire-speaker-sink.sh --install --enable-route
-wpctl status
-./scripts/troubleshoot-sp11-audio.sh > ~/sp11-audio-after-setup.txt
+sudo ./scripts/troubleshoot-sp11-bluetooth.sh
 ```
 
-If `/lib/firmware/qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`
-is missing, build and install the topology manually, then reboot:
+If the diagnostic reports a `00:00:00:00:*` address, get the real Bluetooth MAC
+from Windows (see [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md))
+and configure it:
+
+```bash
+BT_MAC="<your-bluetooth-mac>"
+sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
+gcc -Wall -Wextra -O2 -o tools/sp11-bt-set-addr tools/sp11-bt-set-addr.c
+sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
+sudo udevadm trigger --subsystem-match=bluetooth
+sudo reboot
+```
+
+The installed unit runs before `bluetooth.service`, avoiding the cold-boot
+D-state hang. See [ADR-0032](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md).
+
+### Audio
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/troubleshoot-sp11-audio.sh
+```
+
+If the topology file is missing, build and install it:
 
 ```bash
 cd "$SP11DATA/support"
@@ -311,495 +214,37 @@ sudo ./scripts/sp11-fix-audio-boot-race.sh install
 sudo reboot
 ```
 
-Alternatively, download the prebuilt audio topology release from
-<https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v1>.
-It includes the AudioReach topology binary, ALSA UCM profile, HiFi verb, and
-SP11 DMI matcher. After extracting the release files on the Surface, install
-them with:
-
-```bash
-shasum -a 256 -c SHA256SUMS
-sudo install -m 0644 -D X1E80100-Microsoft-Surface-Pro-11-tplg.bin \
-  /lib/firmware/qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin
-sudo install -m 0644 -D MICROSOFT-Surface-Pro-11.conf \
-  /usr/share/alsa/ucm2/Qualcomm/x1e80100/MICROSOFT-Surface-Pro-11.conf
-sudo install -m 0644 -D Surface11-HiFi.conf \
-  /usr/share/alsa/ucm2/Qualcomm/x1e80100/Surface11-HiFi.conf
-sudo install -m 0644 -D x1e80100.conf \
-  /usr/share/alsa/ucm2/conf.d/x1e80100/x1e80100.conf
-sudo ./scripts/sp11-fix-audio-boot-race.sh install
-sudo reboot
-```
-
-Bluetooth also needs the device's real Bluetooth public address from Windows.
-Do not use a made-up address or publish the raw address in logs. In Windows,
-run PowerShell as Administrator from a checkout of this repository:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\collect-sp11-windows-bluetooth-address.ps1
-```
-
-Then boot Ubuntu, replace the placeholder below with the Windows Bluetooth
-address, compile the raw mgmt-socket helper, and install the cold-boot hook:
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
-cd "$SP11DATA/support"
-gcc -Wall -Wextra -O2 \
-  -o tools/sp11-bt-set-addr \
-  tools/sp11-bt-set-addr.c
-
-BT_MAC="<windows-bluetooth-mac>"
-sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
-sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
-sudo reboot
-```
-
-After the cold boot, validate Bluetooth:
-
-```bash
-bluetoothctl list
-bluetoothctl show
-journalctl -b -u 'sp11-bluetooth-mac@hci0.service' --no-pager -n 20
-```
-
-### 1. Build the USB Image
-
-On macOS, the builder uses Docker Desktop with an ARM64 Ubuntu container. It
-can download the current Ubuntu Snapdragon X concept ISO. If that ISO includes
-a Surface Pro 11 X1E Denali DTB in its casper layers, the builder extracts it
-automatically:
-
-```bash
-./scripts/build-sp11-live-usb-image.sh \
-  --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
-  --out build/sp11-ubuntu-live.img \
-  --validate
-```
-
-If auto extraction fails, or if you need a different Surface Pro 11 variant,
-provide a DTB explicitly:
-
-```bash
-./scripts/build-sp11-live-usb-image.sh \
-  --iso build/input/ubuntu-x1e.iso \
-  --dtb build/input/x1e80100-microsoft-denali.dtb \
-  --out build/sp11-ubuntu-live.img
-```
-
-An explicit DTB can come from a kernel package that includes SP11 support, or
-from a local build of `dwhinham/kernel-surface-pro-11`. Do not substitute the
-Surface Laptop 7/Romulus DTB.
-
-To build a live USB with KDE Plasma available by default, add `--desktop kde`.
-This remasters the concept ISO's casper squashfs layer to install
-`kubuntu-desktop` and select SDDM; see
-[KDE Plasma (Kubuntu-like Experience)](#kde-plasma-kubuntu-like-experience)
-below.
-
-The first build can take a while. Expect a multi-gigabyte ISO download, Docker
-image/package setup, DTB extraction from Ubuntu's layered `casper/*.squashfs`
-files, ext4 filesystem creation, raw-image assembly, and optional validation.
-On Docker Desktop for macOS, the raw image copy/write phases can look quiet for
-several minutes.
-
-If GRUB displays the menu but the countdown never auto-boots and keyboard input
-does not select an entry, build a diagnostic image that bypasses the GRUB menu
-and immediately boots the default USB-safe `casper` path:
-
-```bash
-./scripts/build-sp11-live-usb-image.sh \
-  --iso path/to/ubuntu-x1e.iso \
-  --grub-mode direct \
-  --work-dir build/work-direct-boot \
-  --out build/sp11-ubuntu-live-direct.img \
-  --validate
-```
-
-The direct mode is intentionally diagnostic. It removes the interactive GRUB
-fallback entries for that image, so keep a normal menu image available while
-testing. If direct mode stops before the Ubuntu kernel starts, note the last
-message on screen; a stop around `Searching for SP11DATA...` points to an
-earlier GRUB storage or partition-discovery problem.
-
-To validate an already-built image without rebuilding:
-
-```bash
-./scripts/build-sp11-live-usb-image.sh \
-  --validate-image build/sp11-ubuntu-live.img
-```
-
-Validation reports the image size and SHA-256 hash, GPT layout, ESP contents,
-embedded GRUB menu or direct-boot hints, and the `/dtb/sp11-denali.dtb` file
-from the `SP11DATA` partition.
-
-The normal menu image contains:
-
-- an ARM64 removable-media EFI bootloader,
-- a USB-safe GRUB entry with `modprobe.blacklist=qcom_q6v5_pas`,
-- a USB-safe text/debug GRUB entry for black-screen or installer debugging,
-- an ISO-native fallback GRUB entry for loopback debugging,
-- a normal GRUB entry for later NVMe-installed boot testing,
-- the Ubuntu concept ISO,
-- the extracted or provided DTB as `/dtb/sp11-denali.dtb`,
-- optional local payload files from `payload/`,
-- this repo's README, ADRs, tools, and support scripts under `/support` on the
-  USB data partition.
-
-The direct-boot diagnostic image replaces the interactive GRUB menu entries
-with the same USB-safe `casper` path used by the first menu entry.
-
-### 2. Write the USB
-
-On macOS, verify the disk first:
-
-```bash
-diskutil list /dev/diskX
-diskutil info /dev/diskX
-```
-
-Then write it:
-
-```bash
-./scripts/write-image-to-macos-disk.sh build/sp11-ubuntu-live.img /dev/diskX
-```
-
-The script refuses to write unless the disk is external, removable, and USB.
-Writing the image also takes several minutes because it streams the full raw
-image to the USB device.
-
-### 3. Boot the Surface
-
-1. Disable Secure Boot in the Surface UEFI.
-2. Boot from the USB.
-3. For the normal menu image, choose
-   `Ubuntu for Surface Pro 11 (USB-safe, casper iso-scan)`.
-4. If the GRUB menu accepts no input or never auto-boots, rebuild and write the
-   direct image with `--grub-mode direct`.
-5. If the screen goes black or the graphical installer does not appear, reboot
-   and choose `Ubuntu for Surface Pro 11 (USB-safe text/debug, casper iso-scan)`.
-6. If the casper `iso-scan` entries fail early, try
-   `Ubuntu for Surface Pro 11 (USB-safe, ISO-native fallback)`.
-7. If the live session boots, install Ubuntu to a new partition. Do not delete
-   Windows.
-
-### 4. Install Ubuntu Carefully
-
-Proceed with installation only if Windows is backed up, BitLocker recovery
-information is saved, Secure Boot is disabled, and you have a recovery path
-through the live USB. Use manual partitioning or an installer option that keeps
-Windows intact.
-
-Because the live USB relies on explicit GRUB DTB injection, do not assume the
-installed system can boot without support setup. After the installer finishes,
-choose the option to continue testing instead of rebooting, keep the USB
-plugged in, and configure the installed target before the first USB-free boot.
-The USB image includes a helper for this under `/support/scripts`. If the
-installer leaves the installed root mounted at `/target`, run:
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-test -d /target/etc || { echo "Mount the installed Ubuntu root at /target first."; exit 1; }
-cd "$SP11DATA/support"
-sudo ./scripts/prepare-sp11-installed-system.sh --target /target
-sudo reboot
-```
-
-If `/target` is not mounted, mount the installed Ubuntu root partition there
-first. If the installed system fails to boot, boot the direct live USB again
-and use it as the recovery environment.
-
-If GRUB reports `file '/boot/sp11-denali.dtb' not found` on an installed
-system with a separate `/boot` partition, rerun the current support helper.
-Older helper versions always injected `/boot/sp11-denali.dtb`; the current
-helper derives `/sp11-denali.dtb` vs `/boot/sp11-denali.dtb` from the generated
-GRUB kernel path.
-
-After first successful boot into installed Ubuntu, mount the USB data partition
-and rerun the support helpers on the installed system:
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-cd "$SP11DATA/support"
-sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
-```
-
-Firmware download requires temporary networking, such as USB-C Ethernet or USB
-phone tethering. Without networking, mount the Windows partition and use
-`--windows-root` instead of `--download`:
-
-```bash
-# The WINROOT will differ
-WINROOT="/run/media/$USER/Local Disk"
-test -d "$WINROOT/Windows" || { echo "Set WINROOT to the mounted Windows NTFS partition."; exit 1; }
-
-sudo ./scripts/finish-sp11-installed-system.sh \
-  --windows-root "$WINROOT" \
-  --reboot
-```
-
-Quote the Windows root path if it contains spaces. This must be the Windows
-NTFS partition containing `Windows/`, not the Linux `/boot/efi` mount or a path
-inside the EFI system partition.
-
-If you run firmware setup while booted from USB, the script leaves
-`adsp_dtb.mbn` disabled to avoid the known aDSP USB reset failure. Enable aDSP
-only after the root filesystem is on NVMe.
-
-If Wi-Fi still toggles back off after installed boot, collect the rfkill
-diagnostic bundle:
-
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock
-```
-
-The current verified installed-system failure is `phy0` hard-blocked by
-`rfkill` even after firmware loads and the WCN7850 interface is created. That
-points to missing ath12k `disable-rfkill` kernel/DTB handling rather than a
-missing board file.
-
-If the diagnostic helper reports both `DT is missing disable-rfkill` and
-`disable-rfkill support not found in installed ath12k modules`, build the
-patched qcom-x1e kernel described in
-[How To: Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md).
-The preferred path is to collect source metadata on the Surface, build the
-packages in a Docker ARM64 container on a stronger machine, rebuild the USB
-image with the generated packages in `payload/kernel-debs/`, then install those
-packages back on the Surface.
-
-On the Surface:
-
-```bash
-cd "$SP11DATA/support"
-./scripts/collect-sp11-kernel-source-metadata.sh \
-  --out "$SP11DATA/sp11-kernel-source.env"
-```
-
-The contents of your `sp11-kernel-source.env` will look something like this.
-
-```sh
-# Surface Pro 11 qcom-x1e kernel source metadata.
-# Generated on 2026-06-13T12:23:02Z.
-SP11_KERNEL_RELEASE='7.0.0-32-qcom-x1e'
-SP11_SOURCE_PACKAGE='linux-qcom-x1e'
-SP11_SOURCE_VERSION='7.0.0-32.32'
-SP11_BUILD_TARGET='binary-qcom-x1e'
-```
-
-On the Docker build host, from this repository root:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --metadata /path/to/sp11-kernel-source.env \
-  --work-dir build/docker-sp11-qcom-x1e-kernel \
-  --copy-to-payload
-```
-
-The host `--work-dir` stores Docker control files and copied artifacts. The
-actual kernel source and build tree live in the Docker Linux volume
-`sp11-qcom-x1e-kernel-build` at `/linux-work` so macOS case-insensitive
-filesystems do not collapse Linux kernel files whose names differ only by
-case. Successful builds copy generated packages back under
-`build/docker-sp11-qcom-x1e-kernel/artifacts/` and, when `--copy-to-payload`
-is set, into `payload/kernel-debs/`.
-
-After rebuilding and writing the USB image, install the payload packages on the
-Surface:
-
-```bash
-cd "$SP11DATA/support"
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir "$SP11DATA/payload/kernel-debs" \
-  --install-only
-sudo reboot
-```
-
-If Docker is not available, the same how-to includes an on-device build path.
-Keep the previous qcom-x1e kernel installed as a GRUB fallback until the
-patched kernel has booted and Wi-Fi rfkill state has been validated. The helper
-refuses to install over the generated qcom-x1e ABI unless another installed
-qcom-x1e ABI is available as a fallback, unless explicitly overridden with
-`--allow-no-fallback`. In the first verified Docker git-fallback build, the
-Surface was already running unpatched `7.0.0-32-qcom-x1e`, but the git branch
-produced patched `7.0.0-22-qcom-x1e` packages. In that case, boot
-`7.0.0-22-qcom-x1e` for the Wi-Fi rfkill test and keep `7.0.0-32-qcom-x1e` as
-the fallback.
-
-After reboot, rerun the Wi-Fi rfkill diagnostic from the
-[patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
-before treating the patched kernel as successful.
-
-Do not replace the installed `board-2.bin` as the next response to the verified
-`phy0 Hard blocked: yes` state. The current `board.bin` fallback is enough for
-the WCN7850 to probe and create `wlP4p1s0`; the remaining Wi-Fi blocker is the
-rfkill kernel/DTB path.
-
-#### Bluetooth
-
-For Bluetooth diagnostics:
-
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/troubleshoot-sp11-bluetooth.sh
-```
-
-If the diagnostic reports a suspicious `00:00:00:00:*` Bluetooth address or no
-default BlueZ controller, get the real Bluetooth MAC address from Windows as
-described in [How To: Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md).
-Then configure it explicitly:
-
-```bash
-BT_MAC="<your-bluetooth-mac>"
-sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
-```
-
-Build the raw mgmt-socket helper from the current checkout root, either a git
-checkout or the live USB `$SP11DATA/support` directory, then install the
-udev-triggered systemd service:
-
-```bash
-gcc -Wall -Wextra -O2 \
-  -o tools/sp11-bt-set-addr \
-  tools/sp11-bt-set-addr.c
-
-sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
-sudo udevadm trigger --subsystem-match=bluetooth
-```
-
-The installed unit runs before `bluetooth.service`, when the controller is
-still in its initial DOWN RAW state. It uses `/usr/local/sbin/sp11-bt-set-addr`
-instead of `btmgmt`, avoiding the cold-boot D-state hang described in
-[ADR031](docs/adr/adr-0031-bluetooth-indexed-public-address.md). See
-[ADR032](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md) for the
-current decision.
-
-Validate after a cold boot:
-
-```bash
-sudo reboot
-# After login:
-systemctl status sp11-bluetooth-mac@hci0.service --no-pager
-journalctl -u sp11-bluetooth-mac@hci0.service --no-pager -n 20
-bluetoothctl show | head -3
-```
-
-The journal should report `set-public-address status 0x00 (success)`, and
-`bluetoothctl show` should show a powered public controller with the configured
-address.
-
-Use the real Bluetooth MAC address for your device. The helper accepts Windows
-style `AA-BB-CC-DD-EE-FF` input and stores it as `AA:BB:CC:DD:EE:FF`. Do not
-share diagnostic output publicly until you have redacted MAC addresses, UUIDs,
-serials, and local network details.
-
-#### Audio
-
-For audio diagnostics:
-
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/troubleshoot-sp11-audio.sh
-```
-
-Do not enable experimental speaker topology or UCM snippets until the topology
-file and routing are confirmed for Surface Pro 11.
-
-Audio boot race fix: `alsa-restore.service` was restoring WSA mixer state at
-boot before the AudioReach DSP finished loading the audio graph, causing an
-APM CMD timeout, SoundWire bus clash, and no audio (only pops). The fix masks
-`alsa-restore.service` and uses `sp11-wsa-routing.service` to enable WSA
-routing after the DSP graph loads. This is installed automatically by the
-support installer. To apply manually:
-
-```bash
-sudo ./scripts/sp11-fix-audio-boot-race.sh install
-sudo reboot
-```
-
-See [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md) for details.
-
-
-- Audio topology and UCM configs are in [`payload/audio/`](payload/audio/) and
-  installed automatically by the support installer.
+Alternatively, download the
+[prebuilt audio topology release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v1).
+
+See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and
+[ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md) for details.
 
 ## KDE Plasma (Kubuntu-like Experience)
 
-Kubuntu does not publish an official ARM64 ISO, so there is no prebuilt
-installation path for KDE Plasma on Snapdragon X Elite hardware. This repo
-provides two ways to get a Kubuntu-like experience on the Surface Pro 11.
+Kubuntu has no official ARM64 ISO. Two paths to a KDE Plasma desktop:
 
-Both paths are desktop-layer changes only. They do not touch the SP11 kernel,
-DTB, firmware, audio, or Bluetooth bring-up handled by the `sp11-*` support
-helpers; those continue to work under Plasma exactly as they do under GNOME.
-See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md) for the full
-decision record.
-
-### Option 1: Post-install swap (recommended, fastest to test)
-
-After installing Ubuntu and completing the SP11 bring-up, install
-`kubuntu-desktop` on the running system:
+**Option 1 (recommended): Post-install swap**
 
 ```bash
 cd "$SP11DATA/support"
 sudo ./scripts/sp11-install-kde-desktop.sh
-```
-
-This installs the KDE Plasma desktop and switches the display manager to
-SDDM. GNOME is kept alongside Plasma as a fallback. Reboot and select the
-Plasma session from the SDDM login screen.
-
-Once Plasma is confirmed working, optionally remove GNOME to reclaim disk
-space:
-
-```bash
+# Once confirmed, optionally remove GNOME:
 sudo ./scripts/sp11-install-kde-desktop.sh --purge-gnome -y
 ```
 
-### Option 2: Live USB with KDE Plasma (experimental)
-
-The live USB builder can remaster the concept ISO with KDE Plasma selected by
-default. This runs `unsquashfs` on the casper layer, installs
-`kubuntu-desktop` and SDDM in a chroot, repacks the squashfs, and rebuilds the
-ISO with `xorriso`:
+**Option 2 (experimental): Live USB with KDE**
 
 ```bash
 ./scripts/build-sp11-live-usb-image.sh \
   --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
-  --desktop kde \
-  --grub-mode direct \
-  --work-dir build/work-direct-boot-kde \
-  --out build/sp11-ubuntu-live-direct-kde.img \
-  --validate
+  --desktop kde --grub-mode direct \
+  --out build/sp11-ubuntu-live-direct-kde.img --validate
 ```
 
-This is experimental. It requires network access inside the Docker build
-container, roughly doubles build time, and increases the final USB image
-size because the Plasma stack is added to the casper squashfs. The
-post-install swap is the recommended first path.
+Both paths are desktop-layer changes only — they do not touch the SP11 kernel,
+DTB, firmware, audio, or Bluetooth bring-up. See
+[ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
 
 ## Test Notes
 
@@ -809,13 +254,10 @@ post-install swap is the recommended first path.
 - [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
 - [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
 - [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
-- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-flow-test-20260614.md)
+- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-usb-flow-test-20260614.md)
 - [2026-06-14 Bluetooth public address test](docs/installed-bluetooth-public-address-test-20260614.md)
 
 ### Visual Evidence
-
-Redacted visual evidence for the first successful Wi-Fi and Bluetooth bring-up
-is stored under `assets/`:
 
 - [Wi-Fi networks visible in GNOME](assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
 - [Browser speed test after Wi-Fi connection](assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
@@ -890,32 +332,15 @@ The verified Windows install contains the expected firmware inputs:
 - `qcadsp8380.mbn`
 - `cdsp_dtbs.elf`
 - `qccdsp8380.mbn`
-- `adspr.jsn`, `adsps.jsn`, `adspua.jsn`, `battmgr.jsn`, `cdspr.jsn`
 
-They are installed from Windows driver-store paths such as:
-
-- `surfacepro_ext_adsp8380.inf_arm64_3cc952aaca3564ae`
-- `qcnspmcdm_ext_cdsp8380.inf_arm64_4a8c3ebe3aad408a`
-- `qcdx8380.inf_arm64_*`
-
-Do not commit proprietary firmware blobs to this repository.
+These are extracted by `scripts/finish-sp11-installed-system.sh` either from
+the Windows partition (`--windows-root`) or downloaded from the Canonical
+firmware mirror (`--download`).
 
 ## Useful Commands on Windows
 
-Run this only when we need to refresh the hardware report:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\collect-sp11-windows-diagnostics.ps1
-```
-
-The collector writes:
-
-```text
-%USERPROFILE%\Desktop\sp11-linux-checks\sp11-linux-checks-<timestamp>.zip
-```
-
-To collect only the Bluetooth address candidates needed by the Bluetooth
-bring-up helper:
+Collect the Bluetooth MAC address from Windows (run PowerShell as Admin from
+a checkout of this repository):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\collect-sp11-windows-bluetooth-address.ps1
