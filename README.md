@@ -3,9 +3,9 @@
 ![KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
 
 This repository is an experimental Ubuntu bring-up kit for the Microsoft
-Surface Pro 11 with Snapdragon X Elite (`X1E80100`). It uses the Surface Laptop
+Surface Pro 11 with Snapdragon X Elite (X1E80100). It uses the Surface Laptop
 7 Ubuntu work as a reference, and ports the Surface Pro 11-specific pieces from
-Dale Whinham's Arch Linux work.
+Dale Whinham’s Arch Linux work and, most importantly, [Jens Glathe](https://github.com/jglathe)'s continual kernel work: [join the community](https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/2027).
 
 The current verified target is:
 
