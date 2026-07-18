@@ -77,7 +77,7 @@ mkdir -p build
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-0 \
+  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
   --image ubuntu:26.04 \
   --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
   --build-target "binary-indep binary-qcom-x1e" \
@@ -87,7 +87,25 @@ mkdir -p build
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
 applied in order. The `binary-indep` target is required because the ABI-specific
-headers package depends on `linux-qcom-x1e-headers-7.1.1-jg-0`.
+headers package depends on `linux-qcom-x1e-headers-<abi>` (e.g.
+`linux-qcom-x1e-headers-7.1.3-jg-1`).
+
+If a new `jg/ubuntu-qcom-x1e-7.1.3-jg-<n>` tag fails `check-config` with
+`N config options have been changed`, regenerate the annotations patch before
+rerunning the build:
+
+```bash
+./scripts/regenerate-qcom-x1e-annotations.sh \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch "jg/ubuntu-qcom-x1e-7.1.3-jg-<n>" \
+  --reset-source
+```
+
+The helper installs the source package's complete build dependencies, uses the
+same compiler and Rust probes as the package build, removes the stale
+annotations patch for the previous tag, and writes the replacement into
+`patches/jglathe-qcom-x1e-7.1.3/`. Verify the new filename, then rerun the
+original build command unchanged.
 
 See the [patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 for the full on-device build path and fallback-kernel safety model.

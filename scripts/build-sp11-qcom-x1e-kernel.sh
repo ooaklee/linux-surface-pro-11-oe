@@ -384,7 +384,12 @@ ensure_clean_source() {
   fi
 
   if [ "$RESET_SOURCE" = "true" ]; then
-    rm -rf "$dir"
+    if [ -d "$dir/.git" ]; then
+      git -C "$dir" reset --hard
+      git -C "$dir" clean -ffdx
+    else
+      rm -rf "$dir"
+    fi
     return 0
   fi
 
@@ -412,20 +417,23 @@ prepare_git_source() {
   dir="$source_parent/git-$safe_branch"
   ref_kind=""
 
-  if git ls-remote --exit-code --heads "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
-    ref_kind="head"
-  elif git ls-remote --exit-code --tags "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
-    ref_kind="tag"
-  else
-    echo "Git ref not found as a branch or tag: $GIT_BRANCH" >&2
-    echo "Remote: $GIT_URL" >&2
-    exit 1
-  fi
-
   ensure_clean_source "$dir"
   if [ ! -d "$dir" ]; then
-    git clone --branch "$GIT_BRANCH" "$GIT_URL" "$dir"
+    git clone --depth 1 --branch "$GIT_BRANCH" "$GIT_URL" "$dir"
   else
+    if git -C "$dir" show-ref --verify --quiet "refs/remotes/origin/$GIT_BRANCH"; then
+      ref_kind="head"
+    elif git -C "$dir" show-ref --verify --quiet "refs/tags/$GIT_BRANCH"; then
+      ref_kind="tag"
+    elif git ls-remote --exit-code --heads "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
+      ref_kind="head"
+    elif git ls-remote --exit-code --tags "$GIT_URL" "$GIT_BRANCH" >/dev/null 2>&1; then
+      ref_kind="tag"
+    else
+      echo "Git ref not found as a branch or tag: $GIT_BRANCH" >&2
+      echo "Remote: $GIT_URL" >&2
+      exit 1
+    fi
     if [ "$ref_kind" = "head" ]; then
       git -C "$dir" fetch origin "$GIT_BRANCH"
       git -C "$dir" checkout "$GIT_BRANCH"
@@ -437,7 +445,9 @@ prepare_git_source() {
       fi
       git -C "$dir" reset --hard "origin/$GIT_BRANCH"
     else
-      git -C "$dir" fetch --force origin "refs/tags/$GIT_BRANCH:refs/tags/$GIT_BRANCH"
+      if ! git -C "$dir" show-ref --verify --quiet "refs/tags/$GIT_BRANCH"; then
+        git -C "$dir" fetch --force origin "refs/tags/$GIT_BRANCH:refs/tags/$GIT_BRANCH"
+      fi
       git -C "$dir" checkout --detach "refs/tags/$GIT_BRANCH"
       git -C "$dir" reset --hard "refs/tags/$GIT_BRANCH"
     fi
