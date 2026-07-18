@@ -195,6 +195,14 @@ this. The kernel must use either:
 | configfs overlay | `CONFIG_OF_OVERLAY_CONFIGFS=y` | Not yet enabled |
 | fdtoverlay + initramfs | N/A (userspace) | Possible fallback |
 
+The same handoff was reconfirmed on `7.1.3-jg-1-qcom-x1e` while preparing a
+2.4 MHz DMIC clock experiment. A diagnostic GRUB entry was proven active by a
+unique kernel-command-line marker, but the live device tree retained the
+embedded 4.8 MHz value. Replacing `/boot/sp11-denali.dtb` and placing a test
+DTB on the EFI System Partition also had no effect. The successful package
+build log shows `ukify` receiving the Denali OLED DTB through
+`--devicetree-auto` and writing the Stubble-wrapped kernel image.
+
 ## Diagnostics Reference
 
 ### Check if kernel loaded our DTB
@@ -228,14 +236,17 @@ sudo dmesg | grep -iE "fdt|device.tree|dtb|EFI stub"
 
 ## Remaining Steps (for future work)
 
-1. **Rebuild kernel initrd** (`update-initramfs -u -k ...`) and try `dtb=sp11-denali.dtb`
-   (without leading slash) as the sole override mechanism (remove `devicetree`
-   from GRUB)
-2. OR: build kernel with `CONFIG_OF_OVERLAY_CONFIGFS=y` and apply overlay at
+1. Patch the Denali DTS and rebuild the complete qcom-x1e `linux-image`
+   package, allowing the normal `ukify --devicetree-auto` step to embed the
+   modified DTB in a Stubble-wrapped test kernel. Keep a known-good packaged
+   kernel as the fallback.
+2. OR: rebuild a complete test kernel with `CONFIG_EFI_ARMSTUB_DTB_LOADER=y`
+   and use `dtb=` as the sole override mechanism. Do not combine it with the
+   GRUB `devicetree` command.
+3. OR: build kernel with `CONFIG_OF_OVERLAY_CONFIGFS=y` and apply overlay at
    runtime after boot
-3. OR: use an initramfs hook with `fdtoverlay` to patch the FDT before driver
+4. OR: use an initramfs hook with `fdtoverlay` to patch the FDT before driver
    probing
-4. OR: rebuild a full kernel .deb via `make bindeb-pkg` with all config changes
 5. OR: fork the Stubble firmware to fix the DTB at source
 
 ## Consequences
