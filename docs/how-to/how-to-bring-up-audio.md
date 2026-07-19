@@ -252,7 +252,7 @@ the desktop portal is creating the noise. The same behavior is present in raw
 ALSA capture.
 
 The 2.4 MHz DMIC clock is now the validated Surface Pro 11 default. The
-co-installable `7.1.3-jg-1dmic2p4-qcom-x1e` kernel eliminated the continuous
+co-installable `7.1.3-jg-1dmic2p4-qcom-x1e` diagnostic kernel eliminated the continuous
 feedback/static heard with 4.8 MHz, made recorded speech dramatically clearer,
 and caused no audible degradation during music playback. Capture remains
 slightly tinny or thin. The kernel uses a Stubble-provided device tree embedded
@@ -261,6 +261,15 @@ Partition does not change the live tree. See
 [ADR-0045](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md) for the test
 build and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md) for the
 default-setting decision and device-side evidence.
+
+For normal installation, use the
+[`7.1.3-jg-1sp11v2` kernel release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2)
+with the
+[`sp11-audio-topology-v2` assets](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
+The v2 topology binary is unchanged from v1; v2 updates the UCM capture path to
+match the single WSA macro, use two microphone channels, and apply unity
+decoder gain. The kernel remains necessary because UCM changes alone do not
+alter the Denali DMIC clock.
 
 ## References
 

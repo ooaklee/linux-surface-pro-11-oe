@@ -51,6 +51,13 @@ validation artifact. Future general-purpose builds do not need to retain the
 `dmic2p4` experiment suffix once the accepted property is integrated into
 their normal versioned patch set.
 
+The first standard package set carrying this decision is
+`7.1.3-jg-1sp11v2`, published as
+[`sp11-qcom-x1e-7.1.3-jg-1-v2`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2).
+It uses `patches/sp11-qcom-x1e-7.1.3-v2`; the diagnostic patch set remains
+unchanged for provenance. The matching corrected UCM is published in
+[`sp11-audio-topology-v2`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
+
 Keep a known-good kernel installed during the first boot of any newly packaged
 kernel. This is a general rollback precaution and is no longer evidence that
 the 2.4 MHz clock itself is considered experimental.
@@ -137,6 +144,9 @@ and objective recording comparisons.
 - Validation currently covers one Surface Pro 11 and a subjective listening
   comparison. Additional units and repeatable captured samples would improve
   confidence but are not required to retain 2.4 MHz as the default.
+- Kernel and UCM releases are versioned separately but cross-linked because
+  the UCM corrects routing, gain, and channel count while the kernel clock
+  removes the dominant static.
 
 ## Related
 
@@ -144,3 +154,4 @@ and objective recording comparisons.
 - [ADR-0042: Touchscreen — Kernel Integration Troubleshooting and Remaining Blockers](adr-0042-sp11-touchscreen-troubleshooting.md)
 - [ADR-0044: Surface Pro 11 UCM Uses One WSA Macro and Two Microphone Channels](adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
 - [ADR-0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel](adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
+- [`patches/sp11-qcom-x1e-7.1.3-v2/README.md`](../../patches/sp11-qcom-x1e-7.1.3-v2/README.md)

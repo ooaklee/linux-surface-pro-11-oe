@@ -132,8 +132,8 @@ Rust 1.85 and LLVM 19 during Ubuntu config validation.
 
 ### Johan G. 7.1.3 source
 
-The `jg/ubuntu-qcom-x1e-7.1.3-jg-1` tag requires Ubuntu 26.04 and the matching
-build-compatibility patches:
+The `jg/ubuntu-qcom-x1e-7.1.3-jg-1` tag requires Ubuntu 26.04, the matching
+build-compatibility patches, and the standard Surface Pro 11 v2 patch set:
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
@@ -141,13 +141,14 @@ build-compatibility patches:
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
   --image ubuntu:26.04 \
-  --patch-dir patches/jglathe-qcom-x1e-7.1.3 \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.1.3 patches/sp11-qcom-x1e-7.1.3-v2" \
   --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-sp11-v2 \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.1.3-sp11-v2 \
   --copy-to-payload \
   --reset-source \
   --jobs 4 \
-  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-build-$(date +%Y%m%d-%H%M%S).log
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-sp11-v2-build-$(date +%Y%m%d-%H%M%S).log
 ```
 
 If `check-config` reports changed options after moving to a newer `jg-*` tag,
