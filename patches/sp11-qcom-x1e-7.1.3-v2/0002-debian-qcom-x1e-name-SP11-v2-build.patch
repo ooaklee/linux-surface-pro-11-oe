@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Sun, 19 Jul 2026 00:00:00 +0100
+Subject: [PATCH 2/2] debian.qcom-x1e: name SP11 v2 build
+
+Give the accepted Surface Pro 11 DMIC configuration a distinct package
+version and ABI. This keeps the original 7.1.3-jg-1 packages immutable and
+allows the v2 build to be installed alongside them for rollback.
+---
+ debian.qcom-x1e/changelog          | 6 ++++++
+ debian.qcom-x1e/config/annotations | 2 +-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/debian.qcom-x1e/changelog b/debian.qcom-x1e/changelog
+--- a/debian.qcom-x1e/changelog
++++ b/debian.qcom-x1e/changelog
+@@ -1,3 +1,9 @@
++linux-qcom-x1e (7.1.3-jg-1sp11v2) resolute; urgency=medium
++
++  * Surface Pro 11 v2: use the validated 2.4 MHz DMIC clock.
++
++ -- Surface Pro 11 bring-up <noreply@example.invalid>  Sun, 19 Jul 2026 00:00:00 +0100
++
+ linux-qcom-x1e (7.1.3-jg-1) resolute; urgency=medium
+ 
+   * re-added camera-related patches from Bryan O'Donoghue
+diff --git a/debian.qcom-x1e/config/annotations b/debian.qcom-x1e/config/annotations
+--- a/debian.qcom-x1e/config/annotations
++++ b/debian.qcom-x1e/config/annotations
+@@ -12843,7 +12843,7 @@ CONFIG_VEML6040                                 policy<{'arm64': 'm'}>
+ CONFIG_VEML6046X00                              policy<{'arm64': 'm'}>
+ CONFIG_VEML6070                                 policy<{'arm64': 'm'}>
+ CONFIG_VEML6075                                 policy<{'arm64': 'm'}>
+-CONFIG_VERSION_SIGNATURE                        policy<{'arm64': '"Ubuntu 7.1.3-jg-1-qcom-x1e 7.1.3"'}>
++CONFIG_VERSION_SIGNATURE                        policy<{'arm64': '"Ubuntu 7.1.3-jg-1sp11v2-qcom-x1e 7.1.3"'}>
+ CONFIG_VETH                                     policy<{'arm64': 'm'}>
+ CONFIG_VEXPRESS_CONFIG                          policy<{'arm64': 'y'}>
+ CONFIG_VF610_ADC                                policy<{'arm64': 'm'}>
+-- 
+2.50.1
+

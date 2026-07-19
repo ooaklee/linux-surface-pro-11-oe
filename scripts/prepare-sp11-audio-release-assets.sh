@@ -22,7 +22,7 @@ It does not publish anything.
 Options:
   --assets-dir DIR      Assets directory containing audio files,
                         default $AUDIO_ASSETS_DIR.
-  --release-name NAME   Release/tag name (required).
+  --release-name NAME   Release/tag name, default sp11-audio-topology-v2.
   --out-dir DIR         Output directory. If omitted, defaults to
                         build/release/<release-name>.
   -h, --help            Show this help.
@@ -51,6 +51,10 @@ require_arg() {
     usage >&2
     exit 2
   fi
+}
+
+file_size() {
+  stat -f '%z' "$1" 2>/dev/null || stat -c '%s' "$1"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -94,7 +98,7 @@ if [ ! -d "$AUDIO_ASSETS_DIR" ]; then
 fi
 
 if [ -z "$RELEASE_NAME" ]; then
-  RELEASE_NAME="sp11-audio-topology-v1"
+  RELEASE_NAME="sp11-audio-topology-v2"
 fi
 
 release_root="build/release"
@@ -165,7 +169,7 @@ mkdir -p "$OUT_DIR"
 total_bytes=0
 for asset in "${assets[@]}"; do
   cp "${AUDIO_ASSETS_DIR}/${asset}" "$OUT_DIR/${asset}"
-  sz=$(stat -c%s "${AUDIO_ASSETS_DIR}/${asset}" 2>/dev/null)
+  sz=$(file_size "${AUDIO_ASSETS_DIR}/${asset}")
   total_bytes=$((total_bytes + (sz > 0 ? sz : 0)))
 done
 
@@ -191,7 +195,7 @@ manifest="$OUT_DIR/$MANIFEST_NAME"
   echo
   for asset in "${assets[@]}"; do
     hash=$(shasum -a 256 "${AUDIO_ASSETS_DIR}/${asset}" | awk '{print $1}')
-    sz=$(stat -c%s "${AUDIO_ASSETS_DIR}/${asset}" 2>/dev/null)
+    sz=$(file_size "${AUDIO_ASSETS_DIR}/${asset}")
     echo "- $asset"
     echo "  - Size: $sz bytes"
     echo "  - SHA256: $hash"
@@ -210,10 +214,26 @@ manifest="$OUT_DIR/$MANIFEST_NAME"
 )
 
 cat > "$OUT_DIR/RELEASE-NOTES.md" <<'EOF'
-# Surface Pro 11 Audio Topology and UCM
+# Surface Pro 11 Audio Topology and UCM v2
 
-Experimental prebuilt AudioReach topology binary and ALSA UCM configuration for
+Prebuilt AudioReach topology binary and corrected ALSA UCM configuration for
 the Microsoft Surface Pro 11 (Snapdragon X Elite, X1E80100).
+
+Pair these files with the
+[`7.1.3-jg-1sp11v2` kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2).
+That kernel makes the device-validated 2.4 MHz Denali DMIC clock the default;
+UCM changes alone do not remove the static associated with the earlier 4.8 MHz
+clock.
+
+## Changes since v1
+
+- Keep the same AudioReach topology binary built from upstream commit
+  `d7a5e9d`.
+- Match the Surface Pro 11's single WSA macro instead of including nonexistent
+  WSA2 mixer paths.
+- Expose two-channel internal-microphone capture.
+- Set Surface-specific VA decoder gain to unity (0 dB) instead of the shared
+  +16 dB default that clipped capture.
 
 ## What's included
 
@@ -241,17 +261,19 @@ sudo install -m 0644 -D Surface11-HiFi.conf \
 sudo install -m 0644 -D x1e80100.conf \
   /usr/share/alsa/ucm2/conf.d/x1e80100/x1e80100.conf
 
-# Reboot for topology to load, then restart PipeWire
+# Reboot for the topology and UCM configuration to load
 sudo reboot
 # After reboot:
-systemctl --user restart pipewire wireplumber
+systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service
 ```
 
 ## Test
 
 ```bash
-# Enable DSP route
-amixer -c0 cset numid=68 'on'
+# Confirm UCM exposes both logical devices
+alsaucm -c hw:0 set _verb HiFi
+alsaucm -c hw:0 list _devices
+wpctl status
 
 # Low-volume 440Hz sine test (4 channels)
 speaker-test -D hw:0,1 -c 4 -t sine -f 440 -l 3
@@ -265,7 +287,11 @@ at commit `d7a5e9d`. See `sp11-audio-topology-manifest.txt` for full metadata.
 
 ## Limitations
 
-- PipeWire ACP auto-profile is `false` — manual sink config may be needed.
+- A manual PipeWire speaker sink is still needed on the tested installation.
+- Microphone capture is dramatically clearer with the linked 2.4 MHz kernel,
+  but speech remains slightly tinny or thin.
+- Speaker playback showed no audible regression with the 2.4 MHz kernel, but
+  the current manual route can still sound distorted.
 - Headphone, HDMI/DP, and external mic DAI links not wired in current DTS.
 - Keep volume at 10-15% for first test; no speaker protection in UCM.
 EOF

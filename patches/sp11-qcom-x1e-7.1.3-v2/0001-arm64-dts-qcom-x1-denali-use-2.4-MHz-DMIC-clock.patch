@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Sun, 19 Jul 2026 00:00:00 +0100
+Subject: [PATCH 1/2] arm64: dts: qcom: x1-denali: use 2.4 MHz DMIC clock
+
+Device testing on the Surface Pro 11 found that the previous 4.8 MHz clock
+produced continuous broadband microphone static. The 2.4 MHz clock eliminated
+that static, substantially improved recorded speech, and caused no audible
+speaker-playback regression.
+
+Make the validated 2.4 MHz clock the Denali default.
+---
+ arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+--- a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
++++ b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+@@ -863,7 +863,7 @@ &lpass_vamacro {
+ 	pinctrl-names = "default";
+ 
+ 	vdd-micb-supply = <&vreg_l1b_1p8>;
+-	qcom,dmic-sample-rate = <4800000>;
++	qcom,dmic-sample-rate = <2400000>;
+ };
+ 
+ &mdss {
+-- 
+2.50.1
+
