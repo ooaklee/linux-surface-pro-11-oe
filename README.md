@@ -87,6 +87,20 @@ mkdir -p build
   --copy-to-payload \
   --reset-source \
   --jobs 4
+
+# OR: SP11 7.2-rc5 v2 — JG 7.2-rc5 baseline with the 2.4 MHz DMIC default
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v2" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v2 \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v2 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 8
 ```
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
@@ -201,8 +215,9 @@ sudo reboot
 
 For the standard v2 build, the directory must contain the matching image,
 modules, flavour-header, and common-header packages for
-`7.1.3-jg-1sp11v2`. After reboot, verify the running kernel and authoritative
-Stubble-provided DMIC clock:
+`7.1.3-jg-1sp11v2` (or `7.2-rc5-jg-0sp11v2` for the current 7.2-rc5 v2
+kernel). After reboot, verify the running kernel and authoritative DMIC
+clock:
 
 ```bash
 uname -r
@@ -210,7 +225,8 @@ od -An -tu4 -N4 --endian=big \
   /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
 ```
 
-Expected values are `7.1.3-jg-1sp11v2-qcom-x1e` and `2400000`.
+Expected values are `7.2-rc5-jg-0sp11v2-qcom-x1e` (or
+`7.1.3-jg-1sp11v2-qcom-x1e`) and `2400000`.
 
 ## Post-Install Bring-Up
 
@@ -265,9 +281,11 @@ sudo reboot
 Alternatively, download the
 [audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
 The corrected v2 UCM should be paired with the
-[7.1.3-jg-1 v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2),
+[7.2-rc5-jg-0sp11v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v2),
 which carries the 2.4 MHz DMIC clock required to eliminate the static observed
-with the earlier 4.8 MHz kernel.
+with the earlier 4.8 MHz kernel. The previous
+[7.1.3-jg-1 v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2)
+remains available as a rollback option.
 
 See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and
 [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md) for details.

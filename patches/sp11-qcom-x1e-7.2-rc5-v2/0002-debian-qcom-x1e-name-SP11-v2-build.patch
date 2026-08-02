@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Sun, 02 Aug 2026 00:00:00 +0100
+Subject: [PATCH 2/2] debian.qcom-x1e: name SP11 v2 build
+
+Give the accepted Surface Pro 11 DMIC configuration a distinct package
+version and ABI. This keeps the upstream 7.2-rc5-jg-0 packages immutable and
+allows the v2 build to be installed alongside them for rollback.
+---
+ debian.qcom-x1e/changelog          | 6 ++++++
+ debian.qcom-x1e/config/annotations | 2 +-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/debian.qcom-x1e/changelog b/debian.qcom-x1e/changelog
+--- a/debian.qcom-x1e/changelog
++++ b/debian.qcom-x1e/changelog
+@@ -1,3 +1,9 @@
++linux-qcom-x1e (7.2-rc5-jg-0sp11v2) resolute; urgency=medium
++
++  * Surface Pro 11 v2: use the validated 2.4 MHz DMIC clock.
++
++ -- Surface Pro 11 bring-up <noreply@example.invalid>  Sun, 02 Aug 2026 00:00:00 +0100
++
+ linux-qcom-x1e (7.2-rc5-jg-0) resolute; urgency=medium
+ 
+   * rebased the whole stack to v7.2-rc5
+diff --git a/debian.qcom-x1e/config/annotations b/debian.qcom-x1e/config/annotations
+--- a/debian.qcom-x1e/config/annotations
++++ b/debian.qcom-x1e/config/annotations
+@@ -12882,2 +12882,2 @@
+-CONFIG_VERSION_SIGNATURE                        policy<{'arm64': '"Ubuntu 7.2-rc5-jg-0-qcom-x1e 7.2-rc5"'}>
++CONFIG_VERSION_SIGNATURE                        policy<{'arm64': '"Ubuntu 7.2-rc5-jg-0sp11v2-qcom-x1e 7.2-rc5"'}>
+ CONFIG_VETH                                     policy<{'arm64': 'm'}>
+-- 
+2.50.1

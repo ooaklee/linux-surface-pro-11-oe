@@ -263,13 +263,28 @@ build and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md) for the
 default-setting decision and device-side evidence.
 
 For normal installation, use the
-[`7.1.3-jg-1sp11v2` kernel release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2)
+[`7.2-rc5-jg-0sp11v2` kernel release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v2)
 with the
 [`sp11-audio-topology-v2` assets](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
 The v2 topology binary is unchanged from v1; v2 updates the UCM capture path to
 match the single WSA macro, use two microphone channels, and apply unity
 decoder gain. The kernel remains necessary because UCM changes alone do not
-alter the Denali DMIC clock.
+alter the Denali DMIC clock. See
+[ADR-0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md).
+
+The 7.2-rc5 v2 kernel boots with the 2.4 MHz clock through the GRUB-injected
+`/boot/sp11-denali.dtb` (unlike the 7.1.3 v2 kernel, which carried the device
+tree embedded in the packaged Stubble image). The installer selects the v2
+build's DTB and injects it into every GRUB kernel entry, so the live
+device-tree value reflects the injected file:
+
+```bash
+uname -r
+od -An -tu4 -N4 --endian=big \
+  /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
+```
+
+Expected output is `7.2-rc5-jg-0sp11v2-qcom-x1e` and `2400000`.
 
 ## References
 

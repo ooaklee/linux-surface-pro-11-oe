@@ -158,6 +158,20 @@ DTB_NAMES=(
   "sp11-denali.dtb"
 )
 
+# Pick the newest candidate DTB, preferring Surface Pro 11 specific builds.
+# The plain jglathe qcom-x1e builds use the upstream 4.8 MHz DMIC clock; the
+# SP11 builds (suffixed sp11v2) carry the validated 2.4 MHz clock. Plain sort -V
+# ranks the sp11v2 suffix below the plain name, so prefer it explicitly.
+pick_dtb() {
+  local sp11
+  sp11="$(printf '%s\n' "$@" | grep -E 'sp11v2' || true)"
+  if [ -n "$sp11" ]; then
+    printf '%s\n' "$sp11" | sort -V | tail -n 1
+  else
+    printf '%s\n' "$@" | sort -V | tail -n 1
+  fi
+}
+
 find_dtb() {
   local name pattern path candidates rfkill_candidates
   for name in "${DTB_NAMES[@]}"; do
@@ -180,9 +194,9 @@ find_dtb() {
         fi
       done
       if [ "${#rfkill_candidates[@]}" -gt 0 ]; then
-        printf '%s\n' "${rfkill_candidates[@]}" | sort -V | tail -n 1
+        pick_dtb "${rfkill_candidates[@]}"
       else
-        printf '%s\n' "${candidates[@]}" | sort -V | tail -n 1
+        pick_dtb "${candidates[@]}"
       fi
       return 0
     fi

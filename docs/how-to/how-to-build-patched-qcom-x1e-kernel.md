@@ -165,6 +165,38 @@ The helper removes only the stale tag-specific annotations patch. It preserves
 the other compatibility patches in the directory. Rerun the original build
 command unchanged after confirming the new patch filename.
 
+### Johan G. 7.2-rc5 v2 source
+
+The `jg/ubuntu-qcom-x1e-7.2rc` branch carries the Surface Pro 11 Wi-Fi
+`disable-rfkill` change and the Denali DTB `disable-rfkill;` node upstream, so
+no local rfkill or DTS patches are required (see
+[ADR0047](../adr/adr-0047-jglathe-qcom-7-2-rc5-jg-0-build.md)). The upstream
+branch configures the DMIC clock at 4.8 MHz, which reintroduces microphone
+static, so the Surface Pro 11 v2 patch set restores the validated 2.4 MHz
+clock and gives the result the distinct `7.2-rc5-jg-0sp11v2` ABI:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v2" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v2 \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v2 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 8 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v2-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+The output is a matching four-package set
+(`linux-image`, `linux-modules`, `linux-headers`,
+`linux-qcom-x1e-headers`). See
+[ADR0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md) for the
+DMIC decision and the installer DTB-selection fix.
+
 5. Rebuild and write the live USB image so `payload/kernel-debs/` is copied to
    `SP11DATA`.
 
@@ -399,5 +431,7 @@ returned to the expected `phy0` hard-blocked state.
 - [ADR021: Git Fallback Kernel Build Toolchain](../adr/adr-0021-git-fallback-kernel-build-toolchain.md)
 - [ADR022: Docker Kernel Build Without fakeroot](../adr/adr-0022-docker-kernel-build-without-fakeroot.md)
 - [ADR023: Docker Kernel Build Case-Sensitive Work Volume](../adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
+- [ADR047: JG 7.2-rc5-jg-0 Kernel Build](../adr/adr-0047-jglathe-qcom-7-2-rc5-jg-0-build.md)
+- [ADR048: JG 7.2-rc5-jg-0sp11v2 Kernel Build](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
 - [Surface Pro 11 Wi-Fi rfkill test after qcom-x1e upgrade](../installed-wifi-rfkill-upgrade-test-20260613.md)
 - [Surface Pro 11 Wi-Fi test after Windows firmware and cold boot](../installed-wifi-windows-firmware-cold-boot-test-20260613.md)
