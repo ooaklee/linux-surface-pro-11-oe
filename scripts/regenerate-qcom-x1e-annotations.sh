@@ -17,6 +17,8 @@ CONTAINER_WORK_DIR="/linux-work"
 LINUX_WORK_VOLUME="sp11-qcom-x1e-kernel-build"
 GIT_URL=""
 GIT_BRANCH=""
+VERSION_TOKEN=""
+BASE_VERSION=""
 PATCH_DIR=""
 RESET_SOURCE="false"
 KEEP_SOURCE="false"
@@ -37,8 +39,17 @@ existing 0001-*.patch there. Other patches in the directory are left alone.
 Options:
   --git-url URL          Kernel git URL. Required unless --keep-source.
   --git-branch BRANCH    Kernel git branch or tag. Required unless --keep-source.
+  --version-token TOKEN  Full version token (e.g. "7.2-rc5-jg-0"). Defaults to
+                         --git-branch minus the jg/ubuntu-qcom-x1e- prefix.
+                         Set this when the branch name does not encode the full
+                         version (e.g. branch jg/ubuntu-qcom-x1e-7.2rc for
+                         kernel version 7.2-rc5-jg-0).
+  --base-version BASE    Base version without the -jg-<n> suffix (e.g.
+                         "7.2-rc5"). Defaults to --version-token minus the
+                         -jg-<n> suffix. Used for the patch directory name and
+                         the CONFIG_VERSION_SIGNATURE value.
   --patch-dir DIR        Host patch directory to write the regenerated patch
-                         into. Defaults to patches/jglathe-qcom-x1e-<version>
+                         into. Defaults to patches/jglathe-qcom-x1e-<base-version>
                          derived from --git-branch.
   --work-dir DIR         Host control/artifact directory, default
                          build/docker-sp11-qcom-x1e-annotations.
@@ -107,6 +118,16 @@ while [ "$#" -gt 0 ]; do
     --git-branch)
       require_arg "$1" "${2:-}"
       GIT_BRANCH="$2"
+      shift 2
+      ;;
+    --version-token)
+      require_arg "$1" "${2:-}"
+      VERSION_TOKEN="$2"
+      shift 2
+      ;;
+    --base-version)
+      require_arg "$1" "${2:-}"
+      BASE_VERSION="$2"
       shift 2
       ;;
     --patch-dir)
@@ -200,7 +221,11 @@ fi
 # Derive the short version token (e.g. "7.1.3-jg-1") from the branch name.
 # Branches look like jg/ubuntu-qcom-x1e-<version>, e.g.
 #   jg/ubuntu-qcom-x1e-7.1.3-jg-1  ->  7.1.3-jg-1
-if [ -n "$GIT_BRANCH" ]; then
+# Some branches do not encode the full version (e.g. jg/ubuntu-qcom-x1e-7.2rc
+# for kernel 7.2-rc5-jg-0); pass --version-token for those.
+if [ -n "$VERSION_TOKEN" ]; then
+  version_token="$VERSION_TOKEN"
+elif [ -n "$GIT_BRANCH" ]; then
   version_token="${GIT_BRANCH#jg/ubuntu-qcom-x1e-}"
   if [ "$version_token" = "$GIT_BRANCH" ]; then
     echo "Could not derive version token from --git-branch: $GIT_BRANCH" >&2
@@ -222,11 +247,17 @@ fi
 #   jg/ubuntu-qcom-x1e-7.1.3-jg-1  ->  base "7.1.3",  full "7.1.3-jg-1"
 # The patch directory is keyed off <base> (patches/jglathe-qcom-x1e-<base>),
 # matching the existing jglathe-qcom-x1e-7.1.1 and ...-7.1.3 directories.
-base_version="${version_token%-jg-*}"
-if [ "$base_version" = "$version_token" ]; then
-  echo "Could not split base version from --git-branch: $GIT_BRANCH" >&2
-  echo "Expected a branch named jg/ubuntu-qcom-x1e-<base>-jg-<n>." >&2
-  exit 2
+# Pass --base-version when the branch name does not encode it (e.g. 7.2rc ->
+# base "7.2-rc5").
+if [ -n "$BASE_VERSION" ]; then
+  base_version="$BASE_VERSION"
+else
+  base_version="${version_token%-jg-*}"
+  if [ "$base_version" = "$version_token" ]; then
+    echo "Could not split base version from --git-branch: $GIT_BRANCH" >&2
+    echo "Expected a branch named jg/ubuntu-qcom-x1e-<base>-jg-<n> or pass --base-version." >&2
+    exit 2
+  fi
 fi
 
 if [ -z "$PATCH_DIR" ]; then

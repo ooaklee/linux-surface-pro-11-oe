@@ -293,7 +293,7 @@ if [ -z "$IMAGE" ]; then
   case "$SOURCE_MODE" in
     git)
       case "$GIT_BRANCH" in
-        jg/ubuntu-qcom-x1e-7.1.1-*) IMAGE="ubuntu:26.04" ;;
+        jg/ubuntu-qcom-x1e-*) IMAGE="ubuntu:26.04" ;;
         *) IMAGE="ubuntu:25.10" ;;
       esac
       ;;
