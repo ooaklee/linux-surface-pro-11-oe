@@ -50,6 +50,10 @@ sp11-kernel-source.env
 *.orig.tar.*
 *.udeb
 
+# Out-of-tree touchscreen modules (built against the current kernel ABI).
+.sp11-kmod-v*/
+*.ko
+
 # Local diagnostics and captured reports.
 sp11-linux-checks/
 report-*/
