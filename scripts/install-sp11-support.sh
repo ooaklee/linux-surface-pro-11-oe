@@ -160,13 +160,14 @@ DTB_NAMES=(
 
 # Pick the newest candidate DTB, preferring Surface Pro 11 specific builds.
 # The plain jglathe qcom-x1e builds use the upstream 4.8 MHz DMIC clock; the
-# SP11 builds (suffixed sp11v2) carry the validated 2.4 MHz clock. Plain sort -V
-# ranks the sp11v2 suffix below the plain name, so prefer it explicitly.
+# SP11 builds (suffixed sp11vN) carry the validated 2.4 MHz clock. Plain sort -V
+# ranks the sp11vN suffix below the plain name, so prefer it explicitly.
 pick_dtb() {
-  local sp11
-  sp11="$(printf '%s\n' "$@" | grep -E 'sp11v2' || true)"
+  local sp11 newest_suffix
+  sp11="$(printf '%s\n' "$@" | grep -E 'sp11v[0-9]+' || true)"
   if [ -n "$sp11" ]; then
-    printf '%s\n' "$sp11" | sort -V | tail -n 1
+    newest_suffix="$(printf '%s\n' "$sp11" | sed -nE 's/.*sp11v([0-9]+).*/\1/p' | sort -n | tail -n 1)"
+    printf '%s\n' "$sp11" | grep -E "sp11v${newest_suffix}" | sort -V | tail -n 1
   else
     printf '%s\n' "$@" | sort -V | tail -n 1
   fi

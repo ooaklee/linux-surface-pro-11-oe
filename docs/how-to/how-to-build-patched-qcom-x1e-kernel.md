@@ -197,6 +197,43 @@ The output is a matching four-package set
 [ADR0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md) for the
 DMIC decision and the installer DTB-selection fix.
 
+### Johan G. 7.2-rc5 v3 source (touchscreen)
+
+The Surface Pro 11 v3 build layers the MSHW0485 OLED touchscreen enablement on
+top of the v2 build. It restores the validated 2.4 MHz DMIC clock, enables the
+`spi@a88000` QSPI controller in the Denali device tree, and gives the result
+the distinct `7.2-rc5-jg-0sp11v3` ABI:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v3 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 8 \
+  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3-build-$(date +%Y%m%d-%H%M%S).log
+```
+
+The kernel ABI carries the touchscreen device tree, but the runtime QSPI
+support ships as out-of-tree modules from the geocausa Phase 91 baseline
+(`gpi`, `spi-geni-qcom`, `mshw0485_touch`). Build them against the installed
+v3 headers on the device and install as `updates/` overrides, then regenerate
+the initramfs so early boot loads them instead of the stock modules:
+
+```bash
+./scripts/build-sp11-touchscreen-modules.sh --install
+sudo dracut -f /boot/initrd.img-$(uname -r) $(uname -r)
+```
+
+See [ADR0049](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md) for
+the touchscreen decision and module/initramfs deployment notes.
+
 5. Rebuild and write the live USB image so `payload/kernel-debs/` is copied to
    `SP11DATA`.
 
@@ -433,5 +470,6 @@ returned to the expected `phy0` hard-blocked state.
 - [ADR023: Docker Kernel Build Case-Sensitive Work Volume](../adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
 - [ADR047: JG 7.2-rc5-jg-0 Kernel Build](../adr/adr-0047-jglathe-qcom-7-2-rc5-jg-0-build.md)
 - [ADR048: JG 7.2-rc5-jg-0sp11v2 Kernel Build](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
+- [ADR049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Kernel Build](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
 - [Surface Pro 11 Wi-Fi rfkill test after qcom-x1e upgrade](../installed-wifi-rfkill-upgrade-test-20260613.md)
 - [Surface Pro 11 Wi-Fi test after Windows firmware and cold boot](../installed-wifi-windows-firmware-cold-boot-test-20260613.md)

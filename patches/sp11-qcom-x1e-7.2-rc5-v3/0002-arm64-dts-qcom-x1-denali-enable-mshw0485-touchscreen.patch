@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Sun, 03 Aug 2026 00:00:00 +0100
+Subject: [PATCH 1/2] arm64: dts: qcom: x1-denali: enable MSHW0485 touchscreen
+
+Enable the Surface Pro 11 OLED touchscreen (Microsoft MSHW0485) as the
+SPI10 QSPI peripheral. Upstream hamoa.dtsi already describes the SE2
+hardware at 0xa88000 as both i2c10 and spi10 (both disabled) and defines
+the qup_spi10_data_clk / qup_spi10_cs pinctrl states. This patch enables
+GPI DMA instance 1, keeps the i2c10 sibling disabled, configures the
+QSPI data GPIOs 49/50, and attaches the touchscreen child.
+
+The QCOM GPI protocol value 4 is the QSPI protocol implemented by this
+repository's paired gpi and spi-geni-qcom modules (see patch series
+"SP11 QSPI GPI DMA" in the geocausa phase 91 baseline).
+---
+ arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi | 47 ++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+--- a/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
++++ b/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi
+@@ -1303,3 +1303,50 @@
+ &usb_1_ss1_qmpphy_out {
+ 	remote-endpoint = <&retimer_ss1_ss_in>;
+ };
++
++&gpi_dma1 {
++	status = "okay";
++};
++
++&i2c10 {
++	status = "disabled";
++};
++
++&tlmm {
++	g6ts_qspi_data23: g6ts-qspi-data23-state {
++		pins = "gpio49", "gpio50";
++		function = "qup1_se2";
++
++		drive-strength = <6>;
++		bias-disable;
++	};
++};
++
++&spi10 {
++	status = "okay";
++
++	qcom,biosref-qspi;
++	qcom,enable-gsi-dma;
++
++	dmas = <&gpi_dma1 0 2 4>,
++	       <&gpi_dma1 1 2 4>;
++	dma-names = "tx", "rx";
++
++	pinctrl-names = "default";
++	pinctrl-0 = <&qup_spi10_data_clk>,
++		    <&qup_spi10_cs>,
++		    <&g6ts_qspi_data23>;
++
++	touchscreen@0 {
++		compatible = "microsoft,mshw0485";
++		reg = <0>;
++		spi-max-frequency = <40000000>;
++
++		interrupt-parent = <&tlmm>;
++		interrupts = <51 IRQ_TYPE_LEVEL_LOW>;
++		interrupt-gpios = <&tlmm 51 GPIO_ACTIVE_LOW>;
++
++		power-gpios = <&tlmm 64 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&tlmm 48 GPIO_ACTIVE_HIGH>;
++	};
++};
+-- 
+2.50.1

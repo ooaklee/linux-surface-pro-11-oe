@@ -52,7 +52,7 @@ list for the upstream Arch status.
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
 | Audio — speakers | ⚠️ Partially | Sound card instantiates with generated topology from the CRD template. Both stereo speaker endpoints produce audio through a PipeWire manual sink with reordered `audio.position` labels. The 4-channel PCM is a transport layout, not four independently routable speakers. Music playback showed no audible regression with the 2.4 MHz DMIC kernel, but the manual sink is still required and speakers can sound distorted. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
 | Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
-| Touchscreen | ❌ Not working | Kernel patches and DTB build and compile, but the kernel uses the EFI firmware DTB (Stubble) which has `spi@a88000` as `disabled`, ignoring GRUB's `devicetree` directive. Requires a kernel rebuild with `CONFIG_EFI_ARMSTUB_DTB_LOADER=y` and `dtb=` cmdline — rebuild hangs at boot. See [ADR-0041](docs/adr/adr-0041-sp11-touchscreen-patches.md) for patch set structure, [ADR-0042](docs/adr/adr-0042-sp11-touchscreen-troubleshooting.md) for the full troubleshooting history, diagnostics, and remaining options. |
+| Touchscreen | ✅ Working | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, on the 7.2-rc5 v3 build (`7.2-rc5-jg-0sp11v3`) with the v3 touchscreen DTS patch and the out-of-tree geocausa `gpi`, `spi-geni-qcom`, and `mshw0485_touch` modules installed as `updates/` overrides. Multi-touch, pinch/zoom, and three-finger gestures work. See [ADR-0049](docs/adr/adr-0049-sp11-7.2-rc5-jg-0sp11v3-touchscreen-build.md) and [ADR-0041](docs/adr/adr-0041-sp11-touchscreen-patches.md). |
 | Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
@@ -101,7 +101,36 @@ mkdir -p build
   --copy-to-payload \
   --reset-source \
   --jobs 8
+
+# OR: SP11 7.2-rc5 v3 — JG 7.2-rc5 baseline with touchscreen + 2.4 MHz DMIC
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v3 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 8
 ```
+
+The v3 build enables the MSHW0485 OLED touchscreen in the device tree, but the
+runtime QSPI support ships as out-of-tree modules. After installing the v3
+kernel packages, build the geocausa `gpi`, `spi-geni-qcom`, and
+`mshw0485_touch` modules against the v3 headers, install them as `updates/`
+overrides, and regenerate the initramfs:
+
+```bash
+./scripts/build-sp11-touchscreen-modules.sh --install
+sudo dracut -f /boot/initrd.img-$(uname -r) $(uname -r)
+```
+
+See [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
+for the touchscreen decision and [ADR-0041](docs/adr/adr-0041-sp11-touchscreen-patches.md)
+for the patch-set structure.
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
 applied in order. The `binary-indep` target is required because the ABI-specific
