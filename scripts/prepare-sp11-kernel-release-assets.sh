@@ -13,6 +13,16 @@ ALLOW_DIRTY="false"
 ALLOW_MISSING_SOURCE="false"
 SOURCE_ASSETS=()
 SOURCE_ASSET_COUNT=0
+TOUCHSCREEN_MODULES_DIR=""
+TOUCHSCREEN_SOURCE_URL=""
+TOUCHSCREEN_SOURCE_REF=""
+TOUCHSCREEN_ENABLED="false"
+TOUCHSCREEN_MODULE_FILES=(
+  "gpi.ko"
+  "spi-geni-qcom.ko"
+  "mshw0485_touch.ko"
+)
+TOUCHSCREEN_MODULE_MANIFEST="sp11-touchscreen-modules-manifest.txt"
 
 usage() {
   cat <<EOF
@@ -38,6 +48,16 @@ Options:
                           If omitted, derived from source mode.
   --source-asset PATH     Corresponding source artifact to copy into the
                           release directory. Can be repeated.
+  --touchscreen-modules-dir DIR
+                          Optional directory containing gpi.ko,
+                          spi-geni-qcom.ko, and mshw0485_touch.ko, plus the
+                          build manifest when produced by the build helper.
+  --touchscreen-source-url URL
+                          Source repository URL for the touchscreen modules.
+                          Required with --touchscreen-modules-dir.
+  --touchscreen-source-ref COMMIT
+                          Immutable 40- or 64-character source commit for the
+                          touchscreen modules. Required with their directory.
   --allow-dirty           Allow preparing assets when the support repository has
                           uncommitted changes. Intended for local test runs.
   --allow-missing-source  Allow a local draft without source artifacts. The
@@ -58,6 +78,20 @@ require_arg() {
     echo "Missing value for $1." >&2
     usage >&2
     exit 2
+  fi
+}
+
+file_size() {
+  local path="$1"
+  local size=""
+
+  if size="$(stat -c '%s' -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$size"
+  elif size="$(stat -f '%z' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$size"
+  else
+    echo "Could not determine file size: $path" >&2
+    return 1
   fi
 }
 
@@ -109,6 +143,21 @@ while [ "$#" -gt 0 ]; do
       SOURCE_ASSET_COUNT=$((SOURCE_ASSET_COUNT + 1))
       shift 2
       ;;
+    --touchscreen-modules-dir)
+      require_arg "$1" "${2:-}"
+      TOUCHSCREEN_MODULES_DIR="$2"
+      shift 2
+      ;;
+    --touchscreen-source-url)
+      require_arg "$1" "${2:-}"
+      TOUCHSCREEN_SOURCE_URL="$2"
+      shift 2
+      ;;
+    --touchscreen-source-ref)
+      require_arg "$1" "${2:-}"
+      TOUCHSCREEN_SOURCE_REF="$2"
+      shift 2
+      ;;
     --allow-dirty)
       ALLOW_DIRTY="true"
       shift
@@ -133,6 +182,26 @@ require_tool awk
 require_tool git
 require_tool shasum
 require_tool stat
+
+if [ -n "$TOUCHSCREEN_MODULES_DIR" ]; then
+  TOUCHSCREEN_ENABLED="true"
+  require_tool grep
+  require_tool modinfo
+
+  if [ -z "$TOUCHSCREEN_SOURCE_URL" ] || [ -z "$TOUCHSCREEN_SOURCE_REF" ]; then
+    echo "--touchscreen-modules-dir requires --touchscreen-source-url and --touchscreen-source-ref." >&2
+    exit 2
+  fi
+
+  if [[ ! "$TOUCHSCREEN_SOURCE_REF" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]]; then
+    echo "Touchscreen source ref must be an immutable 40- or 64-character hexadecimal commit." >&2
+    exit 2
+  fi
+  TOUCHSCREEN_SOURCE_REF="${TOUCHSCREEN_SOURCE_REF,,}"
+elif [ -n "$TOUCHSCREEN_SOURCE_URL" ] || [ -n "$TOUCHSCREEN_SOURCE_REF" ]; then
+  echo "--touchscreen-source-url and --touchscreen-source-ref require --touchscreen-modules-dir." >&2
+  exit 2
+fi
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_dir"
@@ -249,6 +318,135 @@ if [ "$seen_headers" != "true" ] || [ "$seen_image" != "true" ] || [ "$seen_modu
   exit 1
 fi
 
+case "$kernel_abi" in
+  *sp11v3*-qcom-x1e)
+    if [ "$TOUCHSCREEN_ENABLED" != "true" ]; then
+      echo "Refusing an incomplete $kernel_abi release without its three touchscreen modules." >&2
+      echo "Pass --touchscreen-modules-dir and immutable touchscreen source provenance." >&2
+      exit 1
+    fi
+    ;;
+esac
+
+declare -A touchscreen_module_names=()
+declare -A touchscreen_module_vermagic=()
+declare -A touchscreen_module_srcversions=()
+declare -A touchscreen_module_sizes=()
+declare -A touchscreen_module_shas=()
+
+if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  if [ ! -d "$TOUCHSCREEN_MODULES_DIR" ] || [ -L "$TOUCHSCREEN_MODULES_DIR" ]; then
+    echo "Touchscreen modules directory not found or is a symlink: $TOUCHSCREEN_MODULES_DIR" >&2
+    exit 1
+  fi
+
+  touchscreen_entries=()
+  while IFS= read -r entry; do
+    [ "$entry" = "$TOUCHSCREEN_MODULE_MANIFEST" ] && continue
+    touchscreen_entries+=("$entry")
+  done < <(find "$TOUCHSCREEN_MODULES_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+
+  expected_touchscreen_entries="$(printf '%s\n' "${TOUCHSCREEN_MODULE_FILES[@]}" | sort)"
+  actual_touchscreen_entries="$(printf '%s\n' "${touchscreen_entries[@]}" | sort)"
+  if [ "${#touchscreen_entries[@]}" -ne "${#TOUCHSCREEN_MODULE_FILES[@]}" ] || \
+     [ "$actual_touchscreen_entries" != "$expected_touchscreen_entries" ]; then
+    echo "Touchscreen modules directory must contain exactly: ${TOUCHSCREEN_MODULE_FILES[*]}" >&2
+    exit 1
+  fi
+
+  input_touchscreen_manifest="$TOUCHSCREEN_MODULES_DIR/$TOUCHSCREEN_MODULE_MANIFEST"
+  if [ -f "$input_touchscreen_manifest" ]; then
+    input_source_url="$(awk -F': ' '$1 == "Source URL" { print $2; exit }' "$input_touchscreen_manifest")"
+    input_source_commit="$(awk -F': ' '$1 == "Source commit" { print $2; exit }' "$input_touchscreen_manifest")"
+    input_target_release="$(awk -F': ' '$1 == "Target release" { print $2; exit }' "$input_touchscreen_manifest")"
+    [ "$input_source_url" = "$TOUCHSCREEN_SOURCE_URL" ] || {
+      echo "Touchscreen build manifest source URL does not match --touchscreen-source-url." >&2
+      exit 1
+    }
+    [ "$input_source_commit" = "$TOUCHSCREEN_SOURCE_REF" ] || {
+      echo "Touchscreen build manifest source commit does not match --touchscreen-source-ref." >&2
+      exit 1
+    }
+    [ "$input_target_release" = "$kernel_abi" ] || {
+      echo "Touchscreen build manifest targets $input_target_release, expected $kernel_abi." >&2
+      exit 1
+    }
+  elif [ -e "$input_touchscreen_manifest" ]; then
+    echo "Touchscreen build manifest is not a regular file: $input_touchscreen_manifest" >&2
+    exit 1
+  fi
+
+  common_touchscreen_vermagic_abi=""
+  for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
+    module_path="$TOUCHSCREEN_MODULES_DIR/$module_file"
+    if [ ! -f "$module_path" ] || [ -L "$module_path" ]; then
+      echo "Touchscreen module must be a regular, non-symlinked file: $module_path" >&2
+      exit 1
+    fi
+
+    case "$module_file" in
+      gpi.ko) expected_module_name="gpi" ;;
+      spi-geni-qcom.ko) expected_module_name="spi_geni_qcom" ;;
+      mshw0485_touch.ko) expected_module_name="mshw0485_touch" ;;
+    esac
+
+    if ! module_name="$(modinfo -F name "$module_path")"; then
+      echo "Could not read module name from $module_path." >&2
+      exit 1
+    fi
+    if [ "$module_name" != "$expected_module_name" ]; then
+      echo "Unexpected module name in $module_file: $module_name (expected $expected_module_name)." >&2
+      exit 1
+    fi
+
+    if ! module_vermagic="$(modinfo -F vermagic "$module_path")"; then
+      echo "Could not read vermagic from $module_path." >&2
+      exit 1
+    fi
+    module_vermagic_abi="${module_vermagic%% *}"
+    if [ -z "$module_vermagic" ] || [ "$module_vermagic_abi" != "$kernel_abi" ]; then
+      echo "Module $module_file targets ${module_vermagic_abi:-unknown}, expected kernel ABI $kernel_abi." >&2
+      exit 1
+    fi
+    if [ -z "$common_touchscreen_vermagic_abi" ]; then
+      common_touchscreen_vermagic_abi="$module_vermagic_abi"
+    elif [ "$module_vermagic_abi" != "$common_touchscreen_vermagic_abi" ]; then
+      echo "Touchscreen modules do not share a common vermagic ABI." >&2
+      exit 1
+    fi
+
+    if ! module_srcversion="$(modinfo -F srcversion "$module_path")"; then
+      echo "Could not read srcversion from $module_path." >&2
+      exit 1
+    fi
+    if [[ ! "$module_srcversion" =~ ^[0-9A-Fa-f]+$ ]]; then
+      echo "Module $module_file has a missing or invalid srcversion." >&2
+      exit 1
+    fi
+
+    touchscreen_module_names["$module_file"]="$module_name"
+    touchscreen_module_vermagic["$module_file"]="$module_vermagic"
+    touchscreen_module_srcversions["$module_file"]="$module_srcversion"
+    touchscreen_module_sizes["$module_file"]="$(file_size "$module_path")"
+    touchscreen_module_shas["$module_file"]="$(shasum -a 256 "$module_path" | awk '{print $1}')"
+  done
+
+  if ! spi_parameters="$(modinfo -p "$TOUCHSCREEN_MODULES_DIR/spi-geni-qcom.ko")"; then
+    echo "Could not read parameters from spi-geni-qcom.ko." >&2
+    exit 1
+  fi
+  if ! grep -q '^sp11_windows_se_init:' <<<"$spi_parameters"; then
+    echo "spi-geni-qcom.ko is missing the required sp11_windows_se_init parameter." >&2
+    exit 1
+  fi
+
+  if ! modinfo -F alias "$TOUCHSCREEN_MODULES_DIR/mshw0485_touch.ko" |
+       grep -q 'microsoft,mshw0485'; then
+    echo "mshw0485_touch.ko is missing the microsoft,mshw0485 device-tree alias." >&2
+    exit 1
+  fi
+fi
+
 version_deb="${debs[0]}"
 for deb in "${debs[@]}"; do
   case "$(basename "$deb")" in
@@ -336,6 +534,11 @@ if [ "$dirty" = "true" ] && [ "$ALLOW_DIRTY" != "true" ]; then
   exit 1
 fi
 
+if ! git check-ref-format "refs/tags/$RELEASE_NAME" >/dev/null 2>&1; then
+  echo "Release name is not a valid Git tag: $RELEASE_NAME" >&2
+  exit 1
+fi
+
 if [ -z "$DOCKER_IMAGE" ]; then
   case "$source_mode" in
     git) DOCKER_IMAGE="ubuntu:25.10" ;;
@@ -359,6 +562,83 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   done
 fi
 
+if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
+  if git show-ref --verify --quiet "refs/tags/$RELEASE_NAME"; then
+    local_tag_commit="$(git rev-parse "refs/tags/$RELEASE_NAME^{commit}")"
+    if [ "$local_tag_commit" != "$repo_commit" ]; then
+      echo "Refusing release: local tag $RELEASE_NAME points to $local_tag_commit, not support repo HEAD $repo_commit." >&2
+      exit 1
+    fi
+  fi
+
+  if git remote get-url origin >/dev/null 2>&1; then
+    remote_tag_output=""
+    remote_tag_status=0
+    remote_tag_output="$(
+      git ls-remote --exit-code --tags origin \
+        "refs/tags/$RELEASE_NAME" "refs/tags/$RELEASE_NAME^{}" 2>/dev/null
+    )" || remote_tag_status=$?
+
+    if [ "$remote_tag_status" -eq 0 ]; then
+      remote_tag_commit="$(printf '%s\n' "$remote_tag_output" | awk '$2 ~ /\^\{\}$/ { print $1; exit }')"
+      if [ -z "$remote_tag_commit" ]; then
+        remote_tag_commit="$(printf '%s\n' "$remote_tag_output" | awk 'NF >= 2 { print $1; exit }')"
+      fi
+      if [ -n "$remote_tag_commit" ] && [ "$remote_tag_commit" != "$repo_commit" ]; then
+        echo "Refusing release: remote tag $RELEASE_NAME points to $remote_tag_commit, not support repo HEAD $repo_commit." >&2
+        exit 1
+      fi
+    elif [ "$remote_tag_status" -ne 2 ]; then
+      echo "Refusing a publishable release because remote tag $RELEASE_NAME could not be checked on origin." >&2
+      echo "Restore remote access and rerun so an existing tag cannot be reused accidentally." >&2
+      exit 1
+    fi
+  fi
+fi
+
+upload_assets=()
+declare -A claimed_output_names=()
+
+claim_output_name() {
+  local name="$1"
+  local origin="$2"
+
+  if [ -n "${claimed_output_names[$name]+x}" ]; then
+    echo "Refusing colliding release asset name $name from $origin; already used by ${claimed_output_names[$name]}." >&2
+    exit 1
+  fi
+  claimed_output_names["$name"]="$origin"
+}
+
+append_upload_asset() {
+  local name="$1"
+  local origin="$2"
+
+  claim_output_name "$name" "$origin"
+  upload_assets+=("$name")
+}
+
+claim_output_name "SHA256SUMS" "generated checksum file"
+claim_output_name "RELEASE-NOTES.md" "generated release notes"
+
+for deb in "${debs[@]}"; do
+  append_upload_asset "$(basename "$deb")" "$deb"
+done
+
+for source_asset in "${SOURCE_ASSETS[@]}"; do
+  append_upload_asset "$(basename "$source_asset")" "$source_asset"
+done
+
+if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
+    append_upload_asset "$module_file" "$TOUCHSCREEN_MODULES_DIR/$module_file"
+  done
+  append_upload_asset "$TOUCHSCREEN_MODULE_MANIFEST" "generated touchscreen module manifest"
+fi
+
+append_upload_asset "sp11-kernel-release-manifest.txt" "generated kernel release manifest"
+append_upload_asset "sp11-kernel-debs.txt" "generated kernel package list"
+
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
@@ -372,7 +652,39 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   done
 fi
 
+if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
+    cp "$TOUCHSCREEN_MODULES_DIR/$module_file" "$OUT_DIR/"
+  done
+fi
+
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  {
+    echo "# Surface Pro 11 Touchscreen Module Provenance"
+    echo
+    echo "Generated: $generated_at"
+    echo "Release: $RELEASE_NAME"
+    echo "Kernel ABI: $kernel_abi"
+    echo "Touchscreen source URL: $TOUCHSCREEN_SOURCE_URL"
+    echo "Touchscreen source commit: $TOUCHSCREEN_SOURCE_REF"
+    echo "Support repo commit: $repo_commit"
+    echo "Support repo dirty: $dirty"
+    echo "Required SPI parameter: sp11_windows_se_init"
+    echo
+    echo "## Modules"
+    echo
+    for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
+      echo "- $module_file"
+      echo "  - Module name: ${touchscreen_module_names[$module_file]}"
+      echo "  - Size: ${touchscreen_module_sizes[$module_file]} bytes"
+      echo "  - SHA256: ${touchscreen_module_shas[$module_file]}"
+      echo "  - Vermagic: ${touchscreen_module_vermagic[$module_file]}"
+      echo "  - Srcversion: ${touchscreen_module_srcversions[$module_file]}"
+    done
+  } > "$OUT_DIR/$TOUCHSCREEN_MODULE_MANIFEST"
+fi
 
 {
   echo "# Surface Pro 11 qcom-x1e Kernel Release Manifest"
@@ -394,7 +706,7 @@ generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo
   for deb in "${debs[@]}"; do
     base="$(basename "$deb")"
-    size="$(stat -f '%z' "$deb" 2>/dev/null || stat -c '%s' "$deb")"
+    size="$(file_size "$deb")"
     sha="$(shasum -a 256 "$deb" | awk '{print $1}')"
     echo "- $base"
     echo "  - Size: $size bytes"
@@ -408,11 +720,32 @@ generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   else
     for source_asset in "${SOURCE_ASSETS[@]}"; do
       base="$(basename "$source_asset")"
-      size="$(stat -f '%z' "$source_asset" 2>/dev/null || stat -c '%s' "$source_asset")"
+      size="$(file_size "$source_asset")"
       sha="$(shasum -a 256 "$source_asset" | awk '{print $1}')"
       echo "- $base"
       echo "  - Size: $size bytes"
       echo "  - SHA256: $sha"
+    done
+  fi
+  echo
+  echo "## Touchscreen Modules"
+  echo
+  if [ "$TOUCHSCREEN_ENABLED" != "true" ]; then
+    echo "No touchscreen module bundle included."
+  else
+    echo "- Provenance manifest: $TOUCHSCREEN_MODULE_MANIFEST"
+    echo "- Kernel ABI: $kernel_abi"
+    echo "- Source URL: $TOUCHSCREEN_SOURCE_URL"
+    echo "- Source commit: $TOUCHSCREEN_SOURCE_REF"
+    echo "- Required SPI parameter: sp11_windows_se_init"
+    echo
+    for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
+      echo "- $module_file"
+      echo "  - Module name: ${touchscreen_module_names[$module_file]}"
+      echo "  - Size: ${touchscreen_module_sizes[$module_file]} bytes"
+      echo "  - SHA256: ${touchscreen_module_shas[$module_file]}"
+      echo "  - Vermagic: ${touchscreen_module_vermagic[$module_file]}"
+      echo "  - Srcversion: ${touchscreen_module_srcversions[$module_file]}"
     done
   fi
   echo
@@ -430,33 +763,55 @@ for deb in "${debs[@]}"; do
   basename "$deb"
 done > "$OUT_DIR/sp11-kernel-debs.txt"
 
-(
-  cd "$OUT_DIR"
-  shasum -a 256 ./* > SHA256SUMS
-)
-
 cat > "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 # Surface Pro 11 qcom-x1e Kernel Packages
 
 Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11.
 
-These packages are optional convenience artifacts. They are unsigned, are not
-an apt repository, and should be used only with a known-good fallback qcom-x1e
-kernel still installed.
+These artifacts are optional conveniences. They are unsigned, are not an apt
+repository, and should be used only with a known-good fallback qcom-x1e kernel
+still installed.
 
 ## Verify
 
+Download \`SHA256SUMS\` and every asset named in it, then run:
+
 \`\`\`bash
-shasum -a 256 -c SHA256SUMS
+(cd /path/to/downloaded-release-assets && shasum -a 256 -c SHA256SUMS)
 \`\`\`
 
+EOF
+
+if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 ## Install Flow
 
-1. Download the \`.deb\` files and \`SHA256SUMS\`.
-2. Verify checksums.
-3. Copy the \`.deb\` files into local \`payload/kernel-debs/\`.
-4. Rebuild and write the Surface Pro 11 USB image.
-5. On the Surface, install using:
+The kernel packages and touchscreen modules are one ABI-matched set. Install
+both from the same downloaded asset directory, and keep the fallback kernel
+until the new kernel and touchscreen have both been tested.
+
+\`\`\`bash
+ASSET_DIR=/absolute/path/to/downloaded-release-assets
+cd /path/to/linux-surface-pro-11-oe
+
+sudo ./scripts/build-sp11-qcom-x1e-kernel.sh \\
+  --work-dir "\$ASSET_DIR" \\
+  --install-only
+\`\`\`
+
+The unified installer finds the three modules beside the packages and installs
+them for \`$kernel_abi\`. It refuses an incomplete sp11v3 transaction rather
+than silently installing a kernel whose touchscreen cannot initialize. Reboot
+after it completes, then test both the new kernel and touchscreen.
+
+EOF
+else
+  cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+## Install Flow
+
+1. Copy the verified \`.deb\` files into local \`payload/kernel-debs/\`.
+2. Rebuild and write the Surface Pro 11 USB image.
+3. On the Surface, install using:
 
 \`\`\`bash
 sudo ./scripts/build-sp11-qcom-x1e-kernel.sh \\
@@ -464,6 +819,10 @@ sudo ./scripts/build-sp11-qcom-x1e-kernel.sh \\
   --install-only
 \`\`\`
 
+EOF
+fi
+
+cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 ## Provenance
 
 See \`sp11-kernel-release-manifest.txt\` for package hashes, source metadata,
@@ -476,10 +835,35 @@ Recorded source:
 - Source HEAD: \`${source_head:-unknown}\`
 - Docker image: \`$DOCKER_IMAGE\`
 - Patch directory: \`$PATCH_DIR\`
+EOF
+
+if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+- Touchscreen source URL: \`$TOUCHSCREEN_SOURCE_URL\`
+- Touchscreen source commit: \`$TOUCHSCREEN_SOURCE_REF\`
+- Touchscreen manifest: \`$TOUCHSCREEN_MODULE_MANIFEST\`
+EOF
+fi
+
+cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 
 These artifacts were built from recorded inputs; they are not claimed to be
 bit-for-bit reproducible.
 EOF
+
+for asset in "${upload_assets[@]}"; do
+  if [ ! -f "$OUT_DIR/$asset" ]; then
+    echo "Expected upload asset was not generated: $asset" >&2
+    exit 1
+  fi
+done
+
+(
+  cd "$OUT_DIR"
+  shasum -a 256 "${upload_assets[@]}" > SHA256SUMS
+  shasum -a 256 -c SHA256SUMS
+)
+upload_assets+=("SHA256SUMS")
 
 echo "Prepared release assets in $OUT_DIR_DISPLAY"
 echo
@@ -487,23 +871,10 @@ if [ "$SOURCE_ASSET_COUNT" -eq 0 ]; then
   echo "No source assets were included, so this is a local draft only."
   echo "Rerun with --source-asset before publishing binaries."
 else
-  release_assets=()
-  for deb in "${debs[@]}"; do
-    release_assets+=("$(basename "$deb")")
-  done
-  release_assets+=(
-    "SHA256SUMS"
-    "sp11-kernel-release-manifest.txt"
-    "sp11-kernel-debs.txt"
-  )
-  for source_asset in "${SOURCE_ASSETS[@]}"; do
-    release_assets+=("$(basename "$source_asset")")
-  done
-
   echo "Review $OUT_DIR_DISPLAY/RELEASE-NOTES.md, then publish with a command like:"
-  printf '  (cd %q && gh release create %q --prerelease --title %q --notes-file RELEASE-NOTES.md' \
-    "$OUT_DIR_DISPLAY" "$RELEASE_NAME" "$RELEASE_NAME"
-  for asset in "${release_assets[@]}"; do
+  printf '  (cd %q && gh release create %q --target %q --prerelease --title %q --notes-file RELEASE-NOTES.md' \
+    "$OUT_DIR_DISPLAY" "$RELEASE_NAME" "$repo_commit" "$RELEASE_NAME"
+  for asset in "${upload_assets[@]}"; do
     printf ' %q' "$asset"
   done
   printf ')\n'

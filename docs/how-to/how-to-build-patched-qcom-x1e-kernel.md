@@ -223,16 +223,24 @@ the distinct `7.2-rc5-jg-0sp11v3` ABI:
 The kernel ABI carries the touchscreen device tree, but the runtime QSPI
 support ships as out-of-tree modules from the geocausa Phase 91 baseline
 (`gpi`, `spi-geni-qcom`, `mshw0485_touch`). Build them against the installed
-v3 headers on the device and install as `updates/` overrides, then regenerate
-the initramfs so early boot loads them instead of the stock modules:
+v3 headers on the device. The pinned helper installs them as `updates/`
+overrides, regenerates the exact target initramfs with the available Ubuntu
+backend, and verifies that it contains the custom source versions:
 
 ```bash
 ./scripts/build-sp11-touchscreen-modules.sh --install
-sudo dracut -f /boot/initrd.img-$(uname -r) $(uname -r)
 ```
 
+If multiple v3 header trees are installed, pass `--release VER`. The script
+refuses plain and v2 ABIs by default because compiling successfully against
+their headers does not add the required MSHW0485 device-tree node. The default
+uses the validated Linux-integrated controller path; reserve
+`--windows-se-init` for a diagnosed cold-boot A/B test.
+
 See [ADR0049](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md) for
-the touchscreen decision and module/initramfs deployment notes.
+the touchscreen kernel decision and
+[ADR0050](../adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md) for
+the clean-install deployment and release-integrity decision.
 
 5. Rebuild and write the live USB image so `payload/kernel-debs/` is copied to
    `SP11DATA`.

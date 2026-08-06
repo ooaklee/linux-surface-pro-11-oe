@@ -33,6 +33,9 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
 - Corresponding source assets for the binary packages. Use Debian source
   package artifacts for apt-source builds, or a patched source archive for
   git-fallback builds.
+- For an `sp11v3` release, the exact-ABI `gpi.ko`, `spi-geni-qcom.ko`, and
+  `mshw0485_touch.ko` bundle produced by
+  `scripts/build-sp11-touchscreen-modules.sh`, including its build manifest.
 - GitHub CLI (`gh`) authenticated for the target repository.
 - A human review that the selected source assets are sufficient for the binary
   packages being released.
@@ -98,12 +101,36 @@ Before publishing, review that archive for the intended source state. The
 helper can enforce that a source file exists, but it cannot prove the source
 asset is legally or technically sufficient.
 
+For an `sp11v3` release, build the touchscreen bundle against the release ABI
+and preserve the generated provenance manifest:
+
+```bash
+./scripts/build-sp11-touchscreen-modules.sh \
+  --release 7.2-rc5-jg-0sp11v3-qcom-x1e \
+  --out-dir build/sp11v3-touchscreen-modules
+```
+
 4. Prepare release assets.
 
 ```bash
 ./scripts/prepare-sp11-kernel-release-assets.sh \
   --release-name sp11-qcom-x1e-7.0.0-22.22-rfkill1 \
   --source-asset build/release-source/sp11-qcom-x1e-7.0.0-22.22-rfkill1-patched-source.tar.xz
+```
+
+An `sp11v3` release must also supply the ABI-matched module directory and its
+immutable source provenance. Publish it under a new corrective tag; do not
+move the existing public v3 tag:
+
+```bash
+./scripts/prepare-sp11-kernel-release-assets.sh \
+  --kernel-debs-dir payload/kernel-debs \
+  --patch-dir patches/sp11-qcom-x1e-7.2-rc5-v3 \
+  --release-name sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1 \
+  --source-asset build/release-source/sp11-v3-patched-source.tar.xz \
+  --touchscreen-modules-dir build/sp11v3-touchscreen-modules \
+  --touchscreen-source-url https://github.com/geocausa/SP11X1e-touchscreen.git \
+  --touchscreen-source-ref 6bbcf7a4759a73014047a57e819219dd7f34951a
 ```
 
 The helper writes an ignored directory under:
@@ -130,6 +157,8 @@ Check that the directory contains:
 - `sp11-kernel-release-manifest.txt`,
 - `sp11-kernel-debs.txt`,
 - the corresponding source asset,
+- for `sp11v3`, all three touchscreen modules and
+  `sp11-touchscreen-modules-manifest.txt`,
 - `RELEASE-NOTES.md`.
 
 6. Verify checksums from inside the generated release directory.
@@ -139,6 +168,21 @@ cd build/release/sp11-qcom-x1e-7.0.0-22.22-rfkill1
 shasum -a 256 -c SHA256SUMS
 cd -
 ```
+
+Then run the semantic validator. It checks package identities, exact asset and
+checksum coverage, tag provenance, module metadata, and the packaged Denali
+OLED touchscreen device tree:
+
+```bash
+./scripts/validate-sp11-touchscreen-release.sh \
+  --dir build/release/<release-name> \
+  --tag <release-name> \
+  --remote origin
+```
+
+For a pre-tag local rehearsal, omit `--tag` and `--remote`. Run the full command
+after creating the tag and again against a fresh directory containing exactly
+the downloaded release assets.
 
 7. Review the generated publish command.
 
@@ -163,7 +207,9 @@ gh release view sp11-qcom-x1e-7.0.0-22.22-rfkill1 --json tagName,isPrerelease,as
 ```
 
 Confirm the release is marked as a prerelease and that every uploaded binary or
-source asset is listed in `SHA256SUMS`.
+source asset is listed in `SHA256SUMS`. Download the assets into a new empty
+directory and rerun `validate-sp11-touchscreen-release.sh` with `--tag` and
+`--remote origin`.
 
 ## Expected Output
 
@@ -176,6 +222,8 @@ The local release directory should contain a flat asset set:
 - `sp11-kernel-release-manifest.txt`,
 - `sp11-kernel-debs.txt`,
 - one or more corresponding source assets,
+- for `sp11v3`, `gpi.ko`, `spi-geni-qcom.ko`, `mshw0485_touch.ko`, and their
+  provenance manifest,
 - `RELEASE-NOTES.md`.
 
 The published GitHub release should include the `.deb` packages, checksums,
@@ -189,6 +237,7 @@ Run these checks before publishing:
 ```bash
 git status --short
 shasum -a 256 -c build/release/<release-name>/SHA256SUMS
+./scripts/validate-sp11-touchscreen-release.sh --dir build/release/<release-name>
 rg -n "/Users/|/home/|Workspace|GH_TOKEN|GITHUB_TOKEN|API_TOKEN|password|secret|BSSID|SSID|([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}" \
   build/release/<release-name> README.md docs scripts
 ```

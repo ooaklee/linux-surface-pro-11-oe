@@ -18,6 +18,8 @@ PREPARE_ONLY="false"
 RESET_SOURCE="false"
 ALLOW_NON_ARM64="false"
 ALLOW_NO_FALLBACK="false"
+TOUCHSCREEN_MODULES_DIR=""
+SKIP_TOUCHSCREEN_MODULES="false"
 SKIP_CLEAN="false"
 NO_FAKEROOT="false"
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
@@ -59,6 +61,14 @@ Options:
   --no-fakeroot         Run debian/rules directly when running as root.
   --allow-non-arm64     Allow prepare/build on a non-aarch64 host.
   --allow-no-fallback   Allow install with no older qcom-x1e kernel fallback.
+  --touchscreen-modules-dir DIR
+                        Directory containing the matching gpi.ko,
+                        spi-geni-qcom.ko, and mshw0485_touch.ko. For an
+                        sp11v3 install, defaults to the kernel work directory
+                        or its touchscreen-modules/ child.
+  --skip-touchscreen-modules
+                        Allow an sp11v3 kernel-only install. Touch will not
+                        work until the matching module bundle is installed.
   -h, --help            Show this help.
 
 The build can take hours and needs substantial free disk space. Keep an older
@@ -183,6 +193,19 @@ while [ "$#" -gt 0 ]; do
       ALLOW_NO_FALLBACK="true"
       shift
       ;;
+    --touchscreen-modules-dir)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for $1." >&2
+        usage >&2
+        exit 2
+      fi
+      TOUCHSCREEN_MODULES_DIR="$2"
+      shift 2
+      ;;
+    --skip-touchscreen-modules)
+      SKIP_TOUCHSCREEN_MODULES="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -194,6 +217,11 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$SKIP_TOUCHSCREEN_MODULES" = "true" ] && [ -n "$TOUCHSCREEN_MODULES_DIR" ]; then
+  echo "--skip-touchscreen-modules cannot be combined with --touchscreen-modules-dir." >&2
+  exit 2
+fi
 
 case "$SOURCE_MODE" in
   apt|git)
@@ -687,6 +715,99 @@ deb_kernel_abi() {
   esac
 }
 
+touchscreen_target_release() {
+  local deb abi found=""
+
+  for deb in "$@"; do
+    abi="$(deb_kernel_abi "$deb")"
+    case "$abi" in
+      *sp11v3*-qcom-x1e)
+        if [ -n "$found" ] && [ "$found" != "$abi" ]; then
+          echo "Mixed touchscreen kernel ABIs in one install: $found and $abi." >&2
+          return 1
+        fi
+        found="$abi"
+        ;;
+    esac
+  done
+
+  printf '%s\n' "$found"
+}
+
+resolve_touchscreen_modules_dir() {
+  local candidate
+  local -a candidates=()
+
+  if [ -n "$TOUCHSCREEN_MODULES_DIR" ]; then
+    candidates+=("$TOUCHSCREEN_MODULES_DIR")
+  else
+    candidates+=("$work_dir/touchscreen-modules" "$work_dir")
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [ -d "$candidate" ] || continue
+    if [ -s "$candidate/gpi.ko" ] && \
+      [ -s "$candidate/spi-geni-qcom.ko" ] && \
+      [ -s "$candidate/mshw0485_touch.ko" ]; then
+      (cd "$candidate" && pwd -P)
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+validate_touchscreen_modules_dir() {
+  local directory="$1"
+  local release="$2"
+  local index module_path actual_name vermagic module_release srcversion
+  local -a module_files=(gpi.ko spi-geni-qcom.ko mshw0485_touch.ko)
+  local -a module_names=(gpi spi_geni_qcom mshw0485_touch)
+
+  require_tool modinfo
+  require_tool grep
+
+  for index in "${!module_files[@]}"; do
+    module_path="$directory/${module_files[index]}"
+    if [ ! -f "$module_path" ] || [ -L "$module_path" ]; then
+      echo "Touchscreen module must be a regular, non-symlinked file: $module_path" >&2
+      return 1
+    fi
+
+    actual_name="$(modinfo -F name "$module_path" 2>/dev/null || true)"
+    if [ "$actual_name" != "${module_names[index]}" ]; then
+      echo "Unexpected module name in ${module_files[index]}: ${actual_name:-unknown}; expected ${module_names[index]}." >&2
+      return 1
+    fi
+
+    vermagic="$(modinfo -F vermagic "$module_path" 2>/dev/null || true)"
+    module_release="${vermagic%%[[:space:]]*}"
+    if [ "$module_release" != "$release" ]; then
+      echo "${module_files[index]} targets ${module_release:-unknown}, expected $release." >&2
+      return 1
+    fi
+
+    srcversion="$(modinfo -F srcversion "$module_path" 2>/dev/null || true)"
+    if [[ ! "$srcversion" =~ ^[0-9A-Fa-f]+$ ]]; then
+      echo "${module_files[index]} has no valid source-version identity." >&2
+      return 1
+    fi
+  done
+
+  if ! modinfo -p "$directory/spi-geni-qcom.ko" 2>/dev/null |
+       grep -q '^sp11_windows_se_init:'; then
+    echo "spi-geni-qcom.ko is not the required SP11 controller override." >&2
+    return 1
+  fi
+  if ! modinfo -F alias "$directory/mshw0485_touch.ko" 2>/dev/null |
+       grep -q 'microsoft,mshw0485'; then
+    echo "mshw0485_touch.ko lacks the Surface Pro 11 device-tree alias." >&2
+    return 1
+  fi
+
+  echo "Verified the exact-ABI touchscreen module bundle before package installation."
+}
+
 installed_kernel_abis() {
   local status pkg abi
 
@@ -816,7 +937,7 @@ build_kernel() {
 install_kernel_debs() {
   require_tool dpkg-query
 
-  local debs=()
+  local debs=() touchscreen_release="" touchscreen_dir=""
   if [ -f "$work_dir/sp11-kernel-debs.txt" ]; then
     while IFS= read -r deb; do
       [ -f "$deb" ] && debs+=("$deb")
@@ -837,6 +958,35 @@ install_kernel_debs() {
   printf '  %s\n' "${debs[@]}"
   ensure_header_dependencies_present "${debs[@]}"
   ensure_kernel_fallback "${debs[@]}"
+
+  touchscreen_release="$(touchscreen_target_release "${debs[@]}")"
+  if [ -n "$touchscreen_release" ]; then
+    if [ "$SKIP_TOUCHSCREEN_MODULES" = "true" ]; then
+      echo "Warning: installing $touchscreen_release without its required touchscreen module bundle." >&2
+      echo "Touch will remain unavailable until install-sp11-touchscreen.sh completes." >&2
+    else
+      touchscreen_dir="$(resolve_touchscreen_modules_dir || true)"
+      if [ -z "$touchscreen_dir" ]; then
+        echo "Refusing an incomplete $touchscreen_release installation." >&2
+        echo "The v3 kernel device tree requires a matching module bundle containing:" >&2
+        echo "  - gpi.ko" >&2
+        echo "  - spi-geni-qcom.ko" >&2
+        echo "  - mshw0485_touch.ko" >&2
+        echo "Place them in $work_dir, use --touchscreen-modules-dir DIR, or explicitly pass --skip-touchscreen-modules." >&2
+        exit 1
+      fi
+      if [ ! -x "$repo_dir/scripts/install-sp11-touchscreen.sh" ]; then
+        echo "Missing guarded touchscreen installer: $repo_dir/scripts/install-sp11-touchscreen.sh" >&2
+        exit 1
+      fi
+      validate_touchscreen_modules_dir "$touchscreen_dir" "$touchscreen_release" || exit 1
+      echo "Found matching touchscreen module bundle: $touchscreen_dir"
+    fi
+  elif [ -n "$TOUCHSCREEN_MODULES_DIR" ]; then
+    echo "--touchscreen-modules-dir was supplied, but this transaction has no sp11v3 kernel image." >&2
+    exit 1
+  fi
+
   as_root apt install --reinstall "${debs[@]}"
 
   if [ -x "$repo_dir/scripts/install-sp11-support.sh" ]; then
@@ -844,6 +994,12 @@ install_kernel_debs() {
   elif command -v /usr/local/sbin/sp11-grub-inject-dtb >/dev/null 2>&1; then
     as_root update-grub
     as_root /usr/local/sbin/sp11-grub-inject-dtb
+  fi
+
+  if [ -n "$touchscreen_release" ] && [ "$SKIP_TOUCHSCREEN_MODULES" != "true" ]; then
+    as_root "$repo_dir/scripts/install-sp11-touchscreen.sh" \
+      --modules-dir "$touchscreen_dir" \
+      --release "$touchscreen_release"
   fi
 }
 

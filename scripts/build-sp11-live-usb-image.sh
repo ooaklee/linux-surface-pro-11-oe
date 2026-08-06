@@ -78,6 +78,7 @@ expect_kernel_debs="${SP11_EXPECT_KERNEL_DEBS:-false}"
 layout="$(mktemp)"
 dtb_copy="$(mktemp)"
 boot_copy="$(mktemp)"
+touchscreen_bundle="false"
 
 echo "== Image =="
 ls -lh "$image"
@@ -164,6 +165,16 @@ elif [ -n "$payload_inode" ]; then
       echo "Missing .deb files under /payload/kernel-debs on SP11DATA." >&2
       exit 1
     fi
+    if awk '$3 ~ /sp11v3.*\.deb$/ { found = 1 } END { exit found ? 0 : 1 }' "$kernel_debs_listing"; then
+      touchscreen_bundle="true"
+      for module in gpi.ko spi-geni-qcom.ko mshw0485_touch.ko; do
+        if ! awk -v module="$module" '$3 == module { found = 1 } END { exit found ? 0 : 1 }' \
+          "$kernel_debs_listing"; then
+          echo "Incomplete sp11v3 payload: missing /payload/kernel-debs/$module." >&2
+          exit 1
+        fi
+      done
+    fi
   fi
 fi
 
@@ -177,6 +188,16 @@ install_helper_inode="$(
 if [ -z "$install_helper_inode" ]; then
   echo "Missing /support/scripts/install-sp11-support.sh on SP11DATA." >&2
   exit 1
+fi
+
+if [ "$touchscreen_bundle" = "true" ]; then
+  touchscreen_helper_inode="$(
+    awk '$0 ~ /support\/scripts\/install-sp11-touchscreen\.sh$/ { sub(/:/, "", $2); print $2; exit }' "$support_listing"
+  )"
+  if [ -z "$touchscreen_helper_inode" ]; then
+    echo "The sp11v3 payload is missing /support/scripts/install-sp11-touchscreen.sh." >&2
+    exit 1
+  fi
 fi
 
 install_helper_copy="$(mktemp)"
