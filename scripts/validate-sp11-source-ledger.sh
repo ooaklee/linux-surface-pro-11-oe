@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ledger="${1:-${repo_dir}/config/source-ledger.tsv}"
-expected_header=$'source_id\turl\tref\tcommit\tlicense\tpurpose\tstatus'
+expected_header=$'source_id\turl\tref\tidentity\tlicense\tpurpose\tstatus'
 
 usage() {
 	cat <<EOF
@@ -49,8 +49,8 @@ line_number=1
 row_count=0
 seen_ids=$'\n'
 
-while IFS=$'\t' read -r source_id url ref commit license purpose status ||
-	[ -n "${source_id}${url}${ref}${commit}${license}${purpose}${status}" ]; do
+while IFS=$'\t' read -r source_id url ref identity license purpose status ||
+	[ -n "${source_id}${url}${ref}${identity}${license}${purpose}${status}" ]; do
 	line_number=$((line_number + 1))
 	row_count=$((row_count + 1))
 
@@ -62,14 +62,14 @@ while IFS=$'\t' read -r source_id url ref commit license purpose status ||
 	fi
 	seen_ids+="${source_id}"$'\n'
 
-	if [[ ! "$url" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9._~/-]+$ ]]; then
+	if [[ ! "$url" =~ ^https://[A-Za-z0-9.-]+/[A-Za-z0-9._~/%-]+$ ]]; then
 		die "line $line_number: invalid HTTPS source URL: $url"
 	fi
 	if [[ ! "$ref" =~ ^[A-Za-z0-9._/-]+$ ]]; then
 		die "line $line_number: invalid source ref: $ref"
 	fi
-	if [[ ! "$commit" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
-		die "line $line_number: commit must be a full lowercase 40- or 64-hex object ID"
+	if [[ ! "$identity" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+		die "line $line_number: identity must be a full lowercase 40-hex commit or 64-hex SHA-256"
 	fi
 	if [[ ! "$license" =~ ^(NOASSERTION|[A-Za-z0-9.+-]+([[:space:]]+(AND|OR|WITH)[[:space:]]+[A-Za-z0-9.+-]+)*)$ ]]; then
 		die "line $line_number: invalid SPDX licence expression or NOASSERTION value: $license"

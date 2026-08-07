@@ -21,6 +21,11 @@ support repository remains the owner of build recipes, packages, userspace,
 evidence, images, and releases. The thin fork is a temporary integration and
 upstream-preparation workspace.
 
+[ADR-0055](adr/adr-0055-retire-installed-loose-dtb-injection.md) also fixes the
+installed boot boundary: each tested qcom-x1e Stubble image carries its exact
+DTB, and the support installer retires shared loose-DTB selection and
+generated-GRUB rewriting.
+
 ## Outcome and non-claims
 
 The desired end state is an experimental Linux stack that can be tested for
@@ -54,10 +59,11 @@ The starting state is intentionally conservative:
 
 | Area | Recorded starting point | Programme state |
 |---|---|---|
-| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Pin exists; P0 must still prove the build and recovery gates |
-| Thin fork | Protected base and integration branches are defined in ADR-0052 at the pinned commit | Integration workspace exists; no parity feature is accepted by branch presence |
-| Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is configured and running, but the 2026-08-07 inventory found that GRUB's persistent saved entry still selects v2 | One-shot apply is blocked until the chosen known-good persistent fallback is aligned and rechecked; P0 must then capture the no-op canary and physical-recovery evidence |
-| Evidence tooling | The Phase 0 change set adds a source ledger, baseline config, sanitized inventory collector, public-content checks, and recovery helper | Tool presence is not evidence that a hardware gate passed |
+| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Two clean builds have a reviewed semantic comparison; byte reproducibility and immutable APT replay remain open, as do the recovery gates |
+| Thin fork | The immutable base remains at `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; CI foundation commit `971b5af85ed0c7283ffb33430badeac9b5575057` is merged to the protected integration branch | Base and integration rules are active and thin-fork CI is green; no parity feature is accepted by branch presence |
+| Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is running and named by the effective static `GRUB_DEFAULT`, while `grubenv`'s stale `saved_entry` still names v2 | ADR0053 deliberately rejects mixed static/saved semantics; one-shot apply is blocked until `GRUB_DEFAULT=saved` and `saved_entry` both resolve to known-good v3, then P0 must capture the no-op canary and physical-recovery evidence |
+| Installed DTB path | Repository support retires its loose-DTB helper and kernel hooks under ADR0055; the exact Stubble image is authoritative | Target migration, successful normal GRUB regeneration, absence of project-managed loose-DTB lines, and packaged/embedded/active-FDT pairing remain pending P0 evidence |
+| Evidence tooling | The schema-3 collector ran read-only on the target; its sanitized inventory and a separately filtered bounded kernel-log extract passed manual privacy review | P0.6 is complete for this target observation; raw output and access details are not published, and later hardware evidence remains gated |
 | Input | Repository evidence records current touchscreen results but no raw-pen service and no qualified native volume-rocker mapping | Touch is a regression gate; P1-P3 remain open |
 | Cameras | The recorded target inventory exposes no qualified media graph or video node | P4 remains open |
 | Audio | Repository evidence records a 2.4 MHz microphone baseline and stereo output that still needs routing/distortion closure | P5 remains open |
@@ -127,7 +133,7 @@ flowchart TD
     PEN["P3: pen and IPTSD"]
     CAM0["P4A: CAMSS and wiring inventory"]
     REAR["P4B: rear OV13858 candidate"]
-    FRONT["P4C: front IMX681 candidate"]
+    FRONT["P4C: front sensor identification gate"]
     IR["P4D: IR VD55G0 candidate"]
     VCSEL["P4E: fail-safe IR illumination"]
     SPK["P5A: stereo speaker closure"]
@@ -208,10 +214,30 @@ state.
 | P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source and OCI index in `config/kernel-baselines/7.2-rc5-jg-0.env`; compare installed-package inventories, manifests, source/config/DTB hashes, package lists, and checksums | Reproducibility report; every unexplained difference is a blocker |
 | P0.5 | P0.1-P0.3 | Require shell syntax checks, public-content scan, source-ledger validation, exact remote-ref validation, patch-apply smoke test, and build dry-run in CI | Required green CI for this repository and the thin-fork branch |
 | P0.6 | None | Run `scripts/collect-sp11-feature-parity-inventory.sh` read-only; separately capture an optional sanitized kernel-log section; manually review both | Baseline inventory with no serial, UUID, MAC/IP, account, credential, or access-endpoint data |
-| P0.7 | P0.4, P0.6 | Verify the exact recovery ABI from `config/kernel-baselines/7.2-rc5-jg-0.env` is installed, running, boot-tested, and has matching image/initramfs/modules/embedded DTB | Recovery checklist and checksums |
-| P0.8 | P0.7 | Build a distinct no-op canary ABI from the same source, config, DTB, and feature patches; dry-run then apply the ADR-0053 helper; verify the canary boots once and the following boot returns to the unchanged persistent fallback | Two-boot transcript, GRUB environment before/after, and post-return `uname -r` |
+| P0.7 | P0.4, P0.6 | Migrate the target with the current support installer; require successful live-root GRUB regeneration and no project-managed loose-DTB lines; verify the exact recovery ABI from `config/kernel-baselines/7.2-rc5-jg-0.env` is installed, running, boot-tested, and has matching image/initramfs/modules plus packaged, embedded, and active-FDT evidence | Migration transcript, recovery checklist, and checksums; any old loose DTB remains byte-for-byte unchanged and inert |
+| P0.8 | P0.7 | Build a distinct no-op canary ABI from the same source, config, DTB, and feature patches; verify its packaged and Stubble-embedded DTB pairing; dry-run then apply the ADR-0053 helper; verify the canary boots once with the intended active FDT and the following boot returns to the unchanged persistent fallback | Two-boot transcript, DTB pairing evidence, GRUB environment before/after, and post-return `uname -r` |
 | P0.9 | P0.7 | Boot-test recovery media and document the physical GRUB/power-cycle path; require a hardware operator for the first boot of every boot-critical track | Recovery-media checksum and observed boot result |
 | P0.10 | P0.1-P0.9 | Create one public issue per task group with branch, owner, dependency, upstream destination, evidence link, and rollback status | Issue index; no issue may say “works” without evidence |
+
+P0.4's first adjacent-build audit is complete and recorded in the
+[2026-08-07 reproducibility report](sp11-kernel-reproducibility-report-20260807.md).
+All functional payload differences were classified and normalized comparison
+passed with zero unknown bytes, but every raw `.deb` differed. Immutable future
+replay is also unproven because APT was not snapshot-pinned. P0.4 therefore
+remains in evidence review: semantic equivalence passed, byte reproducibility
+failed, and the immutable-input gate remains open.
+
+P0.6 is complete for the current target observation. The schema-3 inventory
+collector ran read-only, and both its sanitized result and a separately
+filtered bounded kernel-log extract passed manual review without private
+identifiers. Raw output and access details remain unpublished.
+
+P0.8's off-target artifact sub-gate passed as recorded in the
+[2026-08-07 no-op canary report](sp11-p0-canary-build-report-20260807.md), but
+P0.8 remains blocked on P0.7 and hardware evidence. The legacy kernel manifest
+and incomplete touchscreen-module provenance block publication; target
+installation, the one-shot and return boots, active-FDT verification, and the
+physical recovery-media test have not been performed.
 
 ### P0 exit gate
 
@@ -294,23 +320,30 @@ required.
 
 ## P2 — G6 raw HID transport
 
-**Dependencies:** P0. **Parallel lane:** input transport. **First feature
-branch:** `lsp11-x-g6-hid-raw-7.2-rc5`.
+**Dependencies:** P0. **Parallel lane:** input transport. **Research branch:**
+`lsp11-x-g6-contract-research`; **first implementation branch:**
+`lsp11-x-g6-hidraw-bridge-7.2-rc5`.
 
 P2 must preserve the exact-ABI GPI/QSPI touchscreen path while exposing enough
-documented raw HID data for pen research. The public `045e:0c83` report is an
-identity question. The implementation must report the controller's observed
-identity and must not spoof USB or HID IDs to match the video.
+documented raw HID data for pen research. The current module validates a
+device descriptor that declares a 1,484-byte report-descriptor length and
+`045e:0c83` identity, but it does not validate or retain the report descriptor,
+register a HID device, or expose HIDRAW. Its existing
+finger-only input device remains authoritative. The first bridge registers a
+`BUS_SPI` HID child with `HID_CONNECT_HIDRAW` only, rejects every
+transport-backed raw control request, and does not connect generic HID input.
+Identity is observed, not spoofed. See
+[G6 HIDRAW and IPTSD research](sp11-g6-hidraw-iptsd-research.md).
 
 ### Backlog
 
 | ID | Bounded task | Required output |
 |---|---|---|
-| P2.1 | Inventory the bound MSHW0485/QSPI/GPI devices, modaliases, descriptors, report IDs, IRQ rate, DMA channels, firmware-reported identifiers, and current event nodes without changing the driver | Sanitized descriptor and topology report with binary-data hashes |
-| P2.2 | Compare the observed protocol with public HID-over-SPI, Linux HID, G6 touchscreen, and IPTSD interfaces; record every reused source at an immutable licensed commit | Interface decision record: upstream HID path, transport-specific bridge, or explicit blocker |
-| P2.3 | Refactor only the minimum transport boundary needed to register the observed HID/report interface while keeping touch operational; keep raw-node permissions restrictive | Reviewable commits split into Qualcomm transport, HID core/quirk, and Denali data as applicable |
-| P2.4 | Add bounded diagnostics for descriptor hashes, report sizes/counts, framing/CRC failures, IRQs, DMA timeouts, and reset recovery without logging user content by default | Debug interface and privacy review |
-| P2.5 | Exercise touch-only raw capture before any pen userspace is installed | P2 evidence pack and regression comparison against v3 |
+| P2.1 | Inventory the bound MSHW0485/QSPI/GPI devices, modaliases, device-descriptor identity, runtime profile, IRQ rate, DMA channels, and current event nodes without changing the driver | Sanitized topology and scalar-counter report; Phase 91 source and Phase 75 runtime profile are recorded separately |
+| P2.2 | Compare public HID-over-SPI v4, Linux HID, the pinned G6 source, and IPTSD at immutable identities; record v4's missing multi-lane support and hash a reviewed mbox before reuse | Interface decision record: custom HIDRAW bridge first, generic QSPI HID port later, or explicit blocker |
+| P2.3 | Retain the live report descriptor and add a G6-specific `BUS_SPI` HID child connected to HIDRAW only; reject every transport-backed GET/SET/OUTPUT/unknown raw request and preserve the existing finger input device | Reviewable transport commit with synthetic/KUnit lifecycle, malformed-length, no-QSPI-control, and synchronous-reply isolation tests; no duplicate hid-input node |
+| P2.4 | Add bounded diagnostics for descriptor length/hash, per-report-ID count and min/max/last size, unknown IDs, framing/length/protocol failures, IRQs, DMA timeouts, and reset recovery without logging user content | Versioned debug schema and privacy review; no payload bytes or provider arrays |
+| P2.5 | In a one-shot boot, hash the live descriptor and collect ID/size histograms across idle, finger, pen hover, and pen contact before installing pen userspace | P2 evidence pack and regression comparison against v3 |
 
 ### P2 acceptance
 
@@ -320,7 +353,8 @@ identity and must not spoof USB or HID IDs to match the video.
 - Report lengths and IDs remain stable across five cold boots and five warm
   reboots.
 - A 30-minute capture containing one-, two-, five-, and ten-contact tests has
-  no framing/CRC error, unexpected reset, IRQ storm, GPI DMA timeout, or report
+  no framing, length, or implemented protocol error, unexpected reset, IRQ
+  storm, GPI DMA timeout, or report
   overrun.
 - Existing single-touch, multi-touch, pinch/zoom, and three-finger regression
   cases pass in five sessions each.
@@ -347,20 +381,24 @@ its upstream interface is agreed.
 
 **Dependencies:** P2 complete. **Parallel lane:** userspace may proceed after a
 stable, versioned P2 report contract. **Kernel branch:** separate from
-`lsp11-x-g6-hid-raw-7.2-rc5`; **userspace source:** a reviewed immutable IPTSD
+`lsp11-x-g6-hidraw-bridge-7.2-rc5`; **userspace source:** a reviewed immutable IPTSD
 pin or a new independently licensed component.
 
 Public IPTSD targets Intel Precise Touch. P3 must first prove whether the G6
 reports are semantically compatible. It must not assume that making the daemon
-open a device produces correct coordinates, pressure, or tool state.
+open a device produces correct coordinates, pressure, or tool state. Stock
+IPTSD must not open the G6 HIDRAW node: the reviewed version opens read/write,
+may request metadata, and changes touch mode during start and stop. If P2 shows
+that standard HID pen report `0x01` is complete, prefer the standard kernel
+path and do not add IPTSD.
 
 ### Backlog
 
 | ID | Bounded task | Required output |
 |---|---|---|
-| P3.1 | Review the candidate IPTSD commit, licence, report parser, calibration model, device access, and service sandbox before code reuse | Ledger promotion from `candidate` to an approved immutable build input, or a documented decision not to reuse it |
-| P3.2 | Capture a minimal sanitized corpus for pen-out-of-range, hover, contact, pressure sweep, each button, eraser, palm, and simultaneous touch; publish hashes and derived fields, not personal strokes | Versioned report-schema map with unknown fields marked unknown |
-| P3.3 | Implement the smallest parser/backend adaptation behind an explicit G6 device match; reject unknown descriptor hashes and malformed reports | Reviewable userspace commits and unit tests from synthetic/non-personal fixtures |
+| P3.1 | Review the pinned IPTSD v3.1.0 parser, geometry requirements, device access, mode writes, packaging dependencies, and service sandbox; keep stock discovery disabled | Decision to use standard HID, build a G6-specific IPTSD backend, or not reuse IPTSD; no live stock-daemon trial |
+| P3.2 | Capture a minimal bounded local corpus for pen-out-of-range, hover, contact, pressure sweep, each observed control, eraser, palm, and simultaneous touch; securely delete it after deriving the schema | Publish only hashes, a versioned derived schema with unknown fields marked unknown, and synthetic fixtures; never commit raw pen data |
+| P3.3 | If needed, implement the smallest pen-only parser/backend behind an exact descriptor match, use read-only transport-owned mode, reject unknown hashes/malformed reports, and leave kernel touch authoritative | Reviewable userspace commits and unit/fuzz tests from synthetic, non-personal fixtures |
 | P3.4 | Package a restricted service with explicit device permissions, restart bounds, log redaction, and clean uninstall/disable behaviour | Co-installable experimental package and service-hardening report |
 | P3.5 | Add libinput/libwacom metadata only after event semantics are verified | Userspace integration commit and desktop test matrix |
 
@@ -371,20 +409,26 @@ open a device produces correct coordinates, pressure, or tool state.
   contact, coordinate jump outside the calibrated display, or daemon restart.
 - Ten slow pressure sweeps cover the observed pressure range monotonically;
   the raw and normalized ranges are recorded rather than assumed.
-- Primary button, secondary button, and eraser each pass 50 isolated
-  press/release cycles with the correct tool state.
+- Every physically present control that is independently observed in the live
+  reports, plus eraser if present, passes 50 isolated press/release cycles with
+  the correct tool state. A second barrel button is not assumed.
+- If standard kernel HID is selected, a reviewed pen-only collection mapping
+  produces no second touchscreen node or duplicate touch event. Daemon/service
+  tests below are not applicable; the evidence record states that explicitly.
 - Twenty palm-plus-pen and twenty pen-plus-touch sessions have no stuck tool,
   uncontrolled cursor jump, or loss of ordinary touch after pen exit.
-- Ten service restarts, five cold boots, and twenty s2idle cycles restore pen
-  automatically while P2 touch acceptance remains green.
+- If a daemon is selected, ten service restarts restore pen automatically.
+  Five cold boots and twenty s2idle cycles apply to either ownership path and
+  keep P2 touch acceptance green.
 - CPU and memory use are recorded during a 30-minute drawing session, with no
   unbounded growth or log flood.
 
 ### P3 rollback
 
-Disable and stop the experimental pen service, remove its device-access rule,
-verify raw HID is no longer open, and confirm P2 touch still works. If a kernel
-change is implicated, boot the fallback ABI. Userspace rollback must be
+For a userspace parser, disable and stop the experimental pen service, remove
+its device-access rule, verify raw HID is no longer open, and confirm P2 touch
+still works. For standard kernel HID, boot the fallback ABI and remove only the
+experimental ABI after evidence capture. Userspace rollback must remain
 possible without removing the known-good touchscreen modules.
 
 ### P3 upstream destination
@@ -400,15 +444,20 @@ service policy in this repository.
 research and driver work can run independently; target mutation and integration
 are serial. **Branches:** `lsp11-x-camera-foundation-7.2-rc5`, followed by one
 of `lsp11-x-camera-ov13858-7.2-rc5`,
-`lsp11-x-camera-imx681-7.2-rc5`, or
+`lsp11-x-camera-front-id-7.2-rc5`, or
 `lsp11-x-camera-vd55g0-7.2-rc5` per sensor. **Illumination:** hard-disabled
 through P4D.
 
 The ACPI names `OVTID858`, `OVTI02C1`, and `SMO55F1` are hypotheses recorded in
 the source ledger. They do not, by themselves, prove sensor models or wiring.
-The demonstration's proposed modes are acceptance candidates:
+Pinned public Linux evidence maps `OVTI02C1` to OV02C10, not IMX681, while the
+published VD55G0 PNP ID is `SMO55F0`, not the target ACPI node's `SMO55F1`.
+Those contradictions make identity reads explicit gates. The demonstration's
+proposed modes remain observations to test, not implementation inputs:
 
-- front: IMX681, 3840x2640 RAW10, one C-PHY trio;
+- front: the demonstration reports IMX681 at 3840x2640 RAW10 over one C-PHY
+  trio, while the public OV02C10 driver exposes 1928x1092 RAW10 over one or two
+  D-PHY lanes;
 - rear: OV13858, 13 MP RAW10, four-lane D-PHY; and
 - IR: VD55G0, 644x604 RAW10.
 
@@ -417,12 +466,15 @@ ledger and plan before writing a driver.
 
 ### P4A — Wiring and CAMSS foundation
 
+The pinned resource analysis and front-sensor correction are recorded in
+[Surface Pro 11 Camera Foundation Research](sp11-camera-foundation-research.md).
+
 | ID | Bounded task | Required output |
 |---|---|---|
 | P4A.1 | At the pinned ACPI commit, catalogue camera-related device paths, `_HID`/`_CID`, `_DEP`, `_CRS`, GPIO, interrupt, I2C/CCI, clock, regulator/power-resource, and method references with exact file/line citations | Resource worksheet with `observed`, `inferred`, and `unknown` columns |
 | P4A.2 | Correlate the worksheet with read-only live firmware/DT, regulator, clock, GPIO-owner, IOMMU, CAMSS, and media-controller inventory | Per-resource mapping; no guessed phandle is allowed |
 | P4A.3 | Inspect the exact baseline's X1E80100 CAMSS driver, binding, Johan G. camera patches, clocks, interconnects, IOMMUs, CCI blocks, CSIPHYs, and VFE capacity | Gap analysis tied to exact kernel files/commits |
-| P4A.4 | Enable only verified CAMSS/CCI resources and an otherwise sensor-free media foundation; keep all sensor and illuminator nodes disabled | `dtbs_check`, binding checks, boot log, and media graph with no power-sequence error |
+| P4A.4 | First enable only the CAMSS core and TPG foundation; keep both CCI controllers, every CSIPHY, all sensor nodes, and the illuminator disabled until their board resources are verified | `dtbs_check`, binding checks, boot log, and sensor-free media graph with no power-sequence error |
 | P4A.5 | Define a reusable raw-frame evidence procedure using `media-ctl` and V4L2: graph, negotiated bus format, frame dimensions, timestamps, timeout/drop counts, hashes, and sanitized sample policy | Reviewed camera test procedure |
 
 P4A passes when every enabled CAMSS resource has a public/target evidence
@@ -445,24 +497,29 @@ unexplained CSI error, or driver reset. The negotiated dimensions, lane count,
 pixel rate, and frame interval must be recorded. “13 MP” is accepted only if
 the captured dimensions and sensor mode prove it.
 
-### P4C — Front IMX681 candidate
+### P4C — Front sensor identification gate
+
+**Branch:** `lsp11-x-camera-front-id-7.2-rc5`. Public firmware and Linux
+evidence currently favours OV02C10; the demonstration reports IMX681. Neither
+claim is accepted until a controlled, reviewed driver reads the target chip ID.
 
 | ID | Bounded task | Required output |
 |---|---|---|
-| P4C.1 | Locate a redistributable public datasheet or licensed driver basis and record it; if none exists, stop before implementing register tables | Approved ledger entry or explicit provenance blocker |
-| P4C.2 | Confirm sensor identity, CCI address, and power resources through safe documented reads | Ten repeatable identity reads |
-| P4C.3 | Implement or extend bindings/driver support with generic mode data separate from the Denali endpoint | Driver/binding series plus isolated DTS commit |
-| P4C.4 | Validate the claimed single-trio C-PHY topology and 3840x2640 RAW10 candidate mode from negotiated hardware state | Front-camera evidence pack |
+| P4C.1 | Record the exact baseline's `OVTI02C1` to OV02C10 mapping, OV02C10 chip-ID contract, and the absence of a public licensed IMX681 implementation basis; keep both candidates as hypotheses | Reviewed identity worksheet and provenance boundary |
+| P4C.2 | Verify rails, reset, clock, CCI master, and a single documented address before using the reviewed OV02C10 driver to read register `0x300a`; do not scan the bus | Ten repeatable identity reads, or an explicit mismatch that stops implementation |
+| P4C.3 | If and only if the result is `0x5602`, create `lsp11-x-camera-ov02c10-7.2-rc5` and add generic binding/driver fixes separately from the Denali graph | Driver/binding series plus isolated DTS commit; otherwise a recorded blocker |
+| P4C.4 | Validate the observed bus type, lane count, negotiated mode, and captured frame dimensions without forcing either the demonstration's IMX681/C-PHY claim or the OV02C10 hypothesis | Front-camera evidence pack |
 
 P4C uses the same ten-cold-boot, 100-start/stop, and 30-minute zero-timeout/
-fault criteria as P4B. If the observed sensor, trio count, dimensions, or format
-differ, record the actual result and do not force the demonstration's values.
+fault criteria as P4B after identity is established. If the observed sensor,
+lane count, dimensions, or format differ, record the actual result and stop;
+do not invent an IMX681 register table or force either candidate's values.
 
 ### P4D — IR VD55G0 candidate, illumination off
 
 | ID | Bounded task | Required output |
 |---|---|---|
-| P4D.1 | Establish a licensed implementation basis and determine whether an existing VD55 family driver matches the observed chip ID and register contract | Reviewed compatibility report; family resemblance alone is insufficient |
+| P4D.1 | Resolve the target `SMO55F1` identity against VD55G0's published `SMO55F0` PNP ID, establish a licensed implementation basis, and determine whether an existing VD55 family driver matches the observed chip ID and register contract | Reviewed identity/licence report; family resemblance alone is insufficient |
 | P4D.2 | Confirm sensor identity, CCI address, regulators, clocks, reset, endpoint, and global-shutter mode with the VCSEL node absent or disabled | Ten safe probes and power-state trace |
 | P4D.3 | Add driver/binding/Denali graph changes as separate commits | Passing bindings and complete media graph |
 | P4D.4 | Capture ambient-light RAW10 at the highest verified mode without enabling the illuminator | IR-sensor evidence pack |
@@ -550,9 +607,14 @@ or distortion problem.
 
 ### P5B — Controlled 2.4 MHz versus 3.2 MHz DMIC A/B
 
-**Branch:** `lsp11-x-dmic-3p2mhz-7.2-rc5`. The current 2.4 MHz configuration is
-the fallback and A case. The 3.2 MHz candidate is not combined with any UCM,
-gain, topology, speaker, suspend, or rebase change.
+**Status:** desk research is complete; 3.2 MHz remains unproven and target work
+is blocked by P0 plus privileged verification of loaded-FDT provenance.
+See [DMIC 3.2 MHz research](sp11-dmic-32mhz-research.md).
+
+**Branch:** `lsp11-x-dmic-3p2mhz-7.2-rc5`. The current 2.4 MHz configuration
+remains the unchanged fallback. Fresh distinct 2.4 MHz and 3.2 MHz ABIs form
+the measurement pair. The candidate is not combined with any UCM, gain,
+topology, speaker, suspend, or rebase change.
 
 ### Backlog
 
@@ -560,14 +622,14 @@ gain, topology, speaker, suspend, or rebase change.
 |---|---|---|
 | P5B.1 | Build A and B exact ABIs from the same source/config/patch ancestry; their source diff may contain only ABI metadata and the Denali DMIC clock value | Reviewed range-diff and matching manifests |
 | P5B.2 | Define a repeatable capture fixture: fixed room/device/source geometry, 48 kHz two-channel `S16_LE`, fixed mixer/UCM state, 60-second silence, calibrated speech/noise sample, and channel-isolation sample | Test protocol and fixture hash |
-| P5B.3 | Randomize and repeat five A/B rounds after cold boot; record the authoritative live clock, WAV hashes, RMS/noise spectrum, clipped samples, channel imbalance, and speech-band SNR | Analysis table and scripts with no personal speech published by default |
+| P5B.3 | Randomize and repeat five A/B rounds after cold boot; record loaded-DTB provenance, the active-DT requested rate, WAV hashes, RMS/noise spectrum, clipped samples, channel imbalance, and speech-band SNR | Analysis table and scripts with no personal speech published by default |
 | P5B.4 | For both ABIs, run low-volume speaker regression, simultaneous playback/capture, five cold boots, five warm reboots, and twenty s2idle cycles | Combined audio/power evidence |
 | P5B.5 | Record an explicit keep-2.4 or promote-3.2 decision; equal results retain 2.4 because it is already the validated default | ADR update backed by the A/B report |
 
 ### P5B acceptance
 
-- The B kernel reports exactly `3200000` Hz at the authoritative live clock;
-  A reports exactly `2400000` Hz.
+- The B kernel's active DT requests exactly `3200000`; A's requests exactly
+  `2400000`. This is not a physical pin-clock measurement.
 - Neither case has a continuous broadband/static fault, kernel audio error,
   XRUN, missing channel, or more than 0.01% full-scale clipped capture samples.
 - B's median silence-band noise and speech-band SNR are no worse than A by more
@@ -581,10 +643,10 @@ gain, topology, speaker, suspend, or rebase change.
 
 ### P5B rollback
 
-Queue or select the 2.4 MHz fallback ABI, verify the live clock returns to
-`2400000`, restore the known UCM/mixer state, and retain the 3.2 MHz package only
-for forensics. Do not “fix” a failed clock comparison by changing gain or UCM in
-the same branch.
+Queue or select the 2.4 MHz fallback ABI, verify its active-DT requested rate
+returns to `2400000`, restore the known UCM/mixer state, and retain the 3.2 MHz
+package only for forensics. Do not “fix” a failed clock comparison by changing
+gain or UCM in the same branch.
 
 ### P5 upstream destinations
 
@@ -747,7 +809,7 @@ top before reproducing the single-feature branch.
 | Suspend | P6 matrix: 30 short, ten 30-minute, and one eight-hour s2idle cycle |
 | Touch | One-, two-, five-, and ten-contact sessions; pinch/zoom and three-finger gestures; no DMA/reset errors for 30 minutes |
 | Pen | P3 hover/stroke/pressure/buttons/eraser/palm matrix, if P3 is included |
-| Audio | Low-volume stereo playback, two-channel capture, simultaneous playback/capture, post-resume capture, and authoritative selected DMIC clock |
+| Audio | Low-volume stereo playback, two-channel capture, simultaneous playback/capture, post-resume capture, and selected active-DT requested DMIC rate |
 | Cameras | Each enabled camera passes ten probes, 100 start/stops, 30-minute RAW stream, and post-resume stream; IR illumination remains a separate gate |
 | Platform | Twenty profile-transition cycles, three-policy cap verification, thermal workload, and profile preservation through s2idle |
 | Input | P1 press/hold/repeat matrix plus keyboard, touchpad, power button, and lid/switch regression |

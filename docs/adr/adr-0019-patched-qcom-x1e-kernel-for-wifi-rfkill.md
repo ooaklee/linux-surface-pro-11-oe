@@ -5,6 +5,16 @@ title: "ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill"
 description: Architecture Decision Record (ADR) for building a patched Ubuntu qcom-x1e kernel when installed ath12k lacks Surface Pro 11 disable-rfkill support.
 ---
 
+## Status
+
+Partially superseded (2026-08-07).
+
+The patched-kernel build, co-installed fallback, and rfkill conclusions remain
+historical evidence. The installed loose-DTB selector described below is
+retired by [ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md).
+Current tested qcom-x1e Stubble packages carry their exact DTB in each kernel
+EFI image.
+
 ## Context
 
 [ADR018](adr-0018-wifi-rfkill-bring-up-gate.md) identified Wi-Fi bring-up as

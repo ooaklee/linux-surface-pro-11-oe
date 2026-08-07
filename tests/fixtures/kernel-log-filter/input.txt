@@ -1,0 +1,6 @@
+mshw0485_touch: controller initialized profile=phase75
+mshw0485_touch: report payload=01 02 03 04 05 06 07 08
+mshw0485_touch: IRQ fault x=123 y=456 pressure=789
+mshw0485_touch: parity_feature73_early=0011223344556677
+camss: peer=192.0.2.10 source=@LINUX_HOME@/private.log
+unrelated: Serial Number: DEVICE-SECRET-123

@@ -1,5 +1,10 @@
 # Surface Pro 11 Installed Wi-Fi rfkill Test - 2026-06-13
 
+> Historical note: this report preserves the configuration and conclusions
+> recorded at the time. Later evidence showed that the installed loose DTB was
+> not authoritative on the tested Stubble path. ADR-0055 retires that
+> mechanism; these commands are not current installation guidance.
+
 ## Context
 
 After [the installed NVMe boot test](installed-nvme-boot-test-20260613.md),

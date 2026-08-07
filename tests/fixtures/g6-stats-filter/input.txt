@@ -1,0 +1,19 @@
+profile=phase75
+initialization_stage=set-feature56
+mode_enabled=1
+awaiting_ready_heat=0
+heat_frames=123
+irq_transport_errors=4
+ready_verification_failures=99999999999999999999
+ready_heat_frames=999999999999999999999
+profile=../../private/path
+initialization_stage=stage with spaces
+heat_errors=12/home/example-user
+panel_resets=12
+parity_feature73_early=0011223344556677
+parity_cfu_offer_response=8899aabb
+last_header=01020304
+unknown_counter=42
+profile=phase75=extra
+multiline-start
+Serial Number: DEVICE-SECRET-123

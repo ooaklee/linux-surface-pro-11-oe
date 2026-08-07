@@ -15,7 +15,8 @@ change.
 ## Rules
 
 - A demonstration proves feasibility only; it is not an implementation source.
-- Record immutable commits for source used in a build or release.
+- Record immutable commits for git inputs and SHA-256 identities for archived
+  non-git inputs used in a build or release.
 - Keep Windows binaries, firmware, private traces, credentials, machine
   identifiers, and remote-access details out of git and release assets.
 - Do not copy code or constants from a source whose redistribution terms are
@@ -30,30 +31,36 @@ change.
 
 | Source | Immutable identity | Permitted use | Boundary |
 |---|---|---|---|
-| [Johan G. kernel integration tree](https://github.com/jglathe/linux_ms_dev_kit) | Tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0`, commit `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Kernel baseline and attribution-preserving patch development | The moving `jg/ubuntu-qcom-x1e-7.2rc` branch is not release provenance |
-| [SP11 thin kernel fork](https://github.com/ooaklee/linux_ms_dev_kit-sp11) | `sp11/base-jg-7.2-rc5-jg-0` and `sp11/integration-7.2-rc5` initially resolve to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Temporary integration, CI, hardware-test branches, and upstream patch preparation | Do not make the fork a permanent source of generic subsystem code |
+| [Johan G. kernel integration tree](https://github.com/jglathe/linux_ms_dev_kit) | Tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0`, commit `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Kernel baseline and attribution-preserving patch development | The tree is mixed-license; preserve and review each changed file's SPDX expression. The moving `jg/ubuntu-qcom-x1e-7.2rc` branch is not release provenance |
+| [SP11 thin kernel fork](https://github.com/ooaklee/linux_ms_dev_kit-sp11) | Immutable base `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; current integration `971b5af85ed0c7283ffb33430badeac9b5575057` | Temporary integration, CI, hardware-test branches, and upstream patch preparation | The tree is mixed-license and per-file SPDX controls. Do not make the fork a permanent source of generic subsystem code |
 | [linux-surface ACPI dumps](https://github.com/linux-surface/acpidumps/tree/master/surface_pro_11_qcom) | Commit `1d0a2ce742b450fe3f65287adbe174ddccabe228` | Public ACPI namespace and resource evidence; no repository licence is declared | ACPI names do not prove Linux device-tree wiring, sensor modes, register sequences, or firmware commands |
 | [Linux X1E80100 CAMSS binding](https://www.kernel.org/doc/Documentation/devicetree/bindings/media/qcom%2Cx1e80100-camss.yaml) | Use the copy in the kernel baseline or feature branch and record that full kernel commit | CAMSS resource and media-graph contract | Does not identify the SP11 sensor wiring |
-| [Linux OV13858 driver](https://github.com/torvalds/linux/blob/master/drivers/media/i2c/ov13858.c) | Use the copy in the recorded kernel feature-branch commit | Upstream sensor-driver starting point | Existing modes and power assumptions must be validated on SP11 |
-| [linux-surface IPTSD](https://github.com/linux-surface/iptsd) | Candidate research pin `a83bc1232f7096f8b33b50fdbda249cd640de670`; choose and record a reviewed release or commit before packaging | Userspace touch/pen processing research and integration | Public IPTSD targets Intel Precise Touch; G6 compatibility is not assumed |
+| [Linux OV13858 driver](https://github.com/jglathe/linux_ms_dev_kit/blob/8f953dd060bc6e8fb86ca2ea8a92f258141c0169/drivers/media/i2c/ov13858.c) | Exact JG baseline commit `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Public rear-sensor identity and driver contract | Existing modes and ACPI-only power assumptions must be validated before a Denali DT node |
+| [Linux OV02C10 driver](https://github.com/jglathe/linux_ms_dev_kit/blob/8f953dd060bc6e8fb86ca2ea8a92f258141c0169/drivers/media/i2c/ov02c10.c) | Exact JG baseline commit `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Public front-sensor identity hypothesis for ACPI ID `OVTI02C1` | The HID-to-driver match does not prove the target chip, address, CCI path, endpoint, or board wiring |
+| [linux-surface IPTSD](https://github.com/linux-surface/iptsd/tree/a83bc1232f7096f8b33b50fdbda249cd640de670) | Candidate research pin `a83bc1232f7096f8b33b50fdbda249cd640de670` (`v3.1.0`, `GPL-2.0-or-later`) | Descriptor and parser research; an evidence-gated G6 pen backend only if the live reports require it | Stock IPTSD opens HIDRAW read/write and changes device mode, has no `045e:0c83` preset, and must not be pointed at the G6 device |
 | [Surface Aggregator Module](https://github.com/linux-surface/surface-aggregator-module) | Candidate research pin `de6d403852f33f5445c25971a3f25e6ebafbf824`; choose and record the exact code reused by a platform-profile branch | Existing SSAM protocol and driver architecture | No SP11 firmware command is assumed from another Surface model |
-| [SP11 G6 touchscreen source](https://github.com/geocausa/SP11X1e-touchscreen) | Commit `6bbcf7a4759a73014047a57e819219dd7f34951a` for the released Phase 91 modules | Existing validated touchscreen transport only, subject to its recorded provenance and licence | Pen is explicitly outside the released module scope; no private or locally supplied analysis input is redistributed |
+| [SP11 G6 touchscreen source](https://github.com/geocausa/SP11X1e-touchscreen/tree/6bbcf7a4759a73014047a57e819219dd7f34951a) | Commit `6bbcf7a4759a73014047a57e819219dd7f34951a` for the released Phase 91 source | Existing validated touchscreen transport only, subject to its recorded provenance and licence | The installer sets no client-profile parameters, so the source defaults to the Phase 75 runtime profile; pen is outside its scope |
+| [SP11 audio UCM revision](https://github.com/ooaklee/linux-surface-pro-11-oe/commit/695592192691348d39445198a90ebcc9383eaa94) | Tracked microphone-route commit `695592192691348d39445198a90ebcc9383eaa94` | Existing device-specific UCM evidence only | This commit is not proof of original derivation or redistribution terms. The UCM files have no SPDX header; reuse and future releases remain blocked until provenance and licence are reviewed |
+| [HID-over-SPI v4 series](https://lore.kernel.org/all/20260609-send-upstream-v4-0-b843d5e6ced3@chromium.org/) | Message-ID `20260609-send-upstream-v4-0-b843d5e6ced3@chromium.org`; base commit `05f7e89ab9731565d8a62e3b5d1ec206485eeb0b`; decompressed thread mbox SHA-256 `3b26ce90730b9bb4d1ff8394db65fcf5f999c94329973fa673dca582ff13f0ca` | Long-term Linux HID transport design reference | The public v4 ACPI/OF paths do not support multi-lane SPI; per-file SPDX inventory and applicability review remain required before reuse |
 | [Public feature demonstration](https://www.youtube.com/watch?v=WJqRIeTjUbI) | Video and description as observed during planning | Feasibility evidence and acceptance-test targets | The implementation is unavailable and must not be reconstructed by copying private work |
 | Target SP11 OLED observations | Report produced by `scripts/collect-sp11-feature-parity-inventory.sh` | Reproducible, sanitized hardware facts | Reports exclude identifiers and are not automatically committed; manually review before publication |
 
 ## Established target facts
 
-The read-only schema-2 inventory run on 2026-08-07 established the following
+The read-only schema-3 inventory run on 2026-08-07 established the following
 on the target OLED X1E80100 machine. Its output was reviewed in-session rather
 than added to git:
 
 - Ubuntu 26.04 runs `7.2-rc5-jg-0sp11v3-qcom-x1e`.
 - the device tree identifies `microsoft,denali-oled` and `qcom,x1e80100`;
-- G6 touch works through the QSPI/GPI exact-ABI module set;
+- G6 touch works through the QSPI/GPI exact-ABI module set built from the
+  Phase 91 source pin; `behavior_stats` reports `profile=phase75`, matching the
+  installer's lack of client-profile parameters and the compiled defaults;
 - WSA8845, SoundWire, LPASS playback, and LPASS capture components bind;
 - no media or video device node is present;
-- the kernel enables CAMSS and OV13858 as modules but does not expose IMX681 or
-  VD55G0 configuration symbols in the running configuration;
+- the kernel enables Qualcomm CCI, CAMSS, OV02C10, and OV13858 as modules but
+  does not expose IMX681, VD55G0, or VD55G1 configuration symbols in the
+  running configuration;
 - no IPTSD service or pen input device is present;
 - no platform-profile interface is exposed;
 - the current `gpio-keys` input exposes a switch, not volume keys; and
@@ -67,11 +74,14 @@ These observations establish work boundaries, not feature completion.
 
 ## Open evidence questions
 
-1. Does the G6 HID descriptor expose `045e:0c83` as a HID identity over SPI?
-2. Which CAMSS CCI buses, CSIPHY instances, clocks, regulators, and reset GPIOs
-   connect the three camera sensors on this exact firmware revision?
-3. Are the public ACPI identities `OVTID858`, `OVTI02C1`, and `SMO55F1`
-   sufficient to confirm the claimed OV13858, IMX681, and VD55G0 sensors?
+1. Does a Linux-captured 1,484-byte G6 report descriptor hash to the public
+   candidate value, which report IDs and sizes appear during pen hover and
+   contact, and do its usages satisfy IPTSD's descriptor predicates?
+2. Which CAMSS CCI masters, CSIPHY instances, clocks, regulators, and reset
+   GPIOs connect the three camera sensors on this exact firmware revision?
+3. Does a controlled target chip-ID read confirm the public mappings
+   `OVTID858` to OV13858 and `OVTI02C1` to OV02C10, and what sensor is behind
+   `SMO55F1` given the mismatch with VD55G0's published `SMO55F0` PNP ID?
 4. Does a controlled 3.2 MHz DMIC build outperform the currently validated
    2.4 MHz build without speaker or suspend regression?
 5. Which Denali PSCI idle state causes the resume failure, if cpuidle rather

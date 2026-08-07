@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+sanitize_git_environment() {
+  local variable_name
+
+  unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_COMMON_DIR
+  unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
+  unset GIT_CONFIG_GLOBAL GIT_DIR GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_EXEC_PATH
+  unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX
+  unset GIT_SHALLOW_FILE GIT_WORK_TREE
+  for variable_name in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
+    unset "$variable_name"
+  done
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_SYSTEM=/dev/null
+  export GIT_CONFIG_GLOBAL=/dev/null
+  export GIT_ATTR_NOSYSTEM=1
+  export GIT_NO_REPLACE_OBJECTS=1
+}
+
+sanitize_git_environment
+
 SOURCE_MODE="apt"
 SOURCE_PACKAGE="installed"
 SOURCE_VERSION="installed"
@@ -16,6 +36,7 @@ INSTALL_DEPS="false"
 INSTALL_DEBS="false"
 INSTALL_ONLY="false"
 PREPARE_ONLY="false"
+RELEASE_BUILD="false"
 RESET_SOURCE="false"
 ALLOW_NON_ARM64="false"
 ALLOW_NO_FALLBACK="false"
@@ -26,6 +47,39 @@ NO_FAKEROOT="false"
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
 SOURCE_SPEC=""
 RESOLVED_SOURCE_PACKAGE=""
+SUPPORT_HEAD_START=""
+PATCHED_DIFF_FORMAT="git-diff-full-index-binary-v1"
+PATCHED_DIFF_GIT_VERSION=""
+PATCHED_DIFF_SHA256=""
+PATCHED_TREE_ID=""
+PATCHED_UNTRACKED_PATHS_FILE=""
+RELEASE_PATCH_PATHS=()
+RELEASE_PATCH_ABS_PATHS=()
+RELEASE_PATCH_SHA256S=()
+RELEASE_PATCH_DISPOSITIONS=()
+RELEASE_OUTPUT_ROLES=()
+RELEASE_OUTPUT_PATHS=()
+RELEASE_OUTPUT_SIZES=()
+RELEASE_OUTPUT_SHA256S=()
+RELEASE_DEB_ROLES=()
+RELEASE_DEB_PATHS=()
+RELEASE_DEB_PACKAGES=()
+RELEASE_DEB_VERSIONS=()
+RELEASE_DEB_ARCHITECTURES=()
+RELEASE_DEB_SIZES=()
+RELEASE_DEB_SHA256S=()
+SIGNING_CERT_FINGERPRINT=""
+SIGNING_CERT_SERIAL=""
+SIGNING_CERT_SHA256=""
+
+cleanup_release_source_snapshot() {
+  [ -n "$PATCHED_UNTRACKED_PATHS_FILE" ] || return 0
+  case "$PATCHED_UNTRACKED_PATHS_FILE" in
+    */.sp11-release-untracked-paths.*) rm -f -- "$PATCHED_UNTRACKED_PATHS_FILE" ;;
+    *) echo "Warning: refusing to remove unexpected release source snapshot." >&2 ;;
+  esac
+}
+trap cleanup_release_source_snapshot EXIT
 
 usage() {
   cat <<EOF
@@ -60,6 +114,10 @@ Options:
   --install             Install generated qcom-x1e kernel debs after build.
   --install-only        Install existing generated qcom-x1e debs and exit.
   --prepare-only        Clone/download and apply patches, then stop.
+  --release-build       Opt in to fail-closed schema-v2 release provenance.
+                        Requires exact Git source, a clean stable support HEAD,
+                        a digest-pinned container image and explicit platform,
+                        and a complete successful package build.
   --reset-source        Remove existing source directory before preparing.
   --skip-clean          Skip debian/rules clean before building.
   --no-fakeroot         Run debian/rules directly when running as root.
@@ -84,6 +142,180 @@ require_tool() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing required tool: $1" >&2
     exit 1
+  fi
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1" | awk '{ print $1 }'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -- "$1" | awk '{ print $1 }'
+  else
+    echo "Missing required SHA-256 tool: sha256sum or shasum" >&2
+    return 1
+  fi
+}
+
+file_size() {
+  local path="$1" size=""
+
+  if size="$(stat -c '%s' -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$size"
+  elif size="$(stat -f '%z' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$size"
+  else
+    echo "Could not determine file size: $path" >&2
+    return 1
+  fi
+}
+
+support_git() {
+  git -c "safe.directory=$repo_dir" -C "$repo_dir" "$@"
+}
+
+support_dirty_value() {
+  local status_output
+
+  if ! status_output="$(support_git status --porcelain --untracked-files=all)"; then
+    echo "Could not inspect the support repository worktree state." >&2
+    return 1
+  fi
+  if [ -n "$status_output" ]; then
+    printf '%s\n' true
+  else
+    printf '%s\n' false
+  fi
+}
+
+public_https_url() {
+  local url="$1" authority path
+
+  case "$url" in
+    https://*) ;;
+    *) return 1 ;;
+  esac
+  [ "${#url}" -le 2048 ] || return 1
+  case "$url" in
+    *[[:space:]]*|*\?*|*\#*|*@*|*\'*|*\"*|*\`*|*\$*|*\\*) return 1 ;;
+    *[!A-Za-z0-9._~:/%+-]*) return 1 ;;
+  esac
+  authority="${url#https://}"
+  authority="${authority%%/*}"
+  case "$authority" in
+    ""|.*|*.|*..*|*[!A-Za-z0-9.-]*) return 1 ;;
+    localhost|localhost.*|*.localhost|*.local|*.internal|*.invalid|*.test|*.example|*.onion) return 1 ;;
+  esac
+  case "$authority" in
+    *[!0-9.]*) ;;
+    *) return 1 ;;
+  esac
+  case "$authority" in
+    *.*) ;;
+    *) return 1 ;;
+  esac
+  path="${url#https://$authority}"
+  case "$path" in
+    /?*) ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+require_release_build_contract() {
+  local container_image container_platform support_dirty
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  if [ "$SOURCE_MODE" != "git" ]; then
+    echo "--release-build requires --source git." >&2
+    exit 2
+  fi
+  if [ -z "$EXPECTED_SOURCE_COMMIT" ]; then
+    echo "--release-build requires --expected-source-commit with an exact commit." >&2
+    exit 2
+  fi
+  if ! public_https_url "$GIT_URL"; then
+    echo "--release-build requires a public HTTPS kernel source URL without credentials, query, or fragment." >&2
+    exit 2
+  fi
+  if ! [[ "$GIT_BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] ||
+     ! git check-ref-format "refs/heads/$GIT_BRANCH" >/dev/null 2>&1; then
+    echo "--release-build requires a safe full kernel source ref name." >&2
+    exit 2
+  fi
+  if [ "$PREPARE_ONLY" = "true" ] || [ "$INSTALL_ONLY" = "true" ]; then
+    echo "--release-build requires a complete package build, not prepare/install-only mode." >&2
+    exit 2
+  fi
+  if [ "$INSTALL_DEBS" = "true" ]; then
+    echo "--release-build creates packages only and cannot be combined with --install." >&2
+    exit 2
+  fi
+  if [ "$SKIP_CLEAN" = "true" ]; then
+    echo "--release-build cannot be combined with --skip-clean." >&2
+    exit 2
+  fi
+  if [ "$BUILD_TARGET" != "binary-indep binary-qcom-x1e" ]; then
+    echo "--release-build requires --build-target \"binary-indep binary-qcom-x1e\"." >&2
+    exit 2
+  fi
+
+  container_image="${SP11_BUILD_CONTAINER_IMAGE:-}"
+  container_platform="${SP11_BUILD_CONTAINER_PLATFORM:-}"
+  if ! [[ "$container_image" =~ ^[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}$ ]]; then
+    echo "--release-build requires SP11_BUILD_CONTAINER_IMAGE to use an exact @sha256 digest." >&2
+    exit 2
+  fi
+  case "$container_platform" in
+    linux/arm64|linux/arm64/v8) ;;
+    *)
+      echo "--release-build requires SP11_BUILD_CONTAINER_PLATFORM to be linux/arm64 or linux/arm64/v8." >&2
+      exit 2
+      ;;
+  esac
+
+  if ! support_git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "--release-build requires the support scripts to come from a Git worktree." >&2
+    exit 1
+  fi
+  SUPPORT_HEAD_START="$(support_git rev-parse --verify 'HEAD^{commit}')"
+  if ! [[ "$SUPPORT_HEAD_START" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]]; then
+    echo "Could not resolve an exact support repository commit for --release-build." >&2
+    exit 1
+  fi
+  SUPPORT_HEAD_START="$(printf '%s' "$SUPPORT_HEAD_START" | tr '[:upper:]' '[:lower:]')"
+  if [ -n "${SP11_EXPECTED_SUPPORT_COMMIT:-}" ] &&
+     [ "$SUPPORT_HEAD_START" != "${SP11_EXPECTED_SUPPORT_COMMIT}" ]; then
+    echo "Mounted support repository HEAD does not match the Docker release preflight." >&2
+    echo "Expected: ${SP11_EXPECTED_SUPPORT_COMMIT}" >&2
+    echo "Mounted:  $SUPPORT_HEAD_START" >&2
+    exit 1
+  fi
+  if ! support_dirty="$(support_dirty_value)"; then
+    exit 1
+  fi
+  if [ "$support_dirty" != "false" ]; then
+    echo "--release-build requires a clean support repository at start." >&2
+    exit 1
+  fi
+}
+
+verify_release_support_stable() {
+  local support_head_end support_dirty_end
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  support_head_end="$(support_git rev-parse --verify 'HEAD^{commit}')"
+  support_head_end="$(printf '%s' "$support_head_end" | tr '[:upper:]' '[:lower:]')"
+  if ! support_dirty_end="$(support_dirty_value)"; then
+    return 1
+  fi
+  if [ "$support_head_end" != "$SUPPORT_HEAD_START" ] || [ "$support_dirty_end" != "false" ]; then
+    echo "Support repository changed during the release build; refusing provenance completion." >&2
+    echo "Start HEAD: $SUPPORT_HEAD_START" >&2
+    echo "End HEAD:   $support_head_end" >&2
+    echo "End dirty:  $support_dirty_end" >&2
+    return 1
   fi
 }
 
@@ -186,6 +418,10 @@ while [ "$#" -gt 0 ]; do
       PREPARE_ONLY="true"
       shift
       ;;
+    --release-build)
+      RELEASE_BUILD="true"
+      shift
+      ;;
     --reset-source)
       RESET_SOURCE="true"
       shift
@@ -267,6 +503,8 @@ if ! [[ "$MIN_FREE_GB" =~ ^[0-9]+$ ]] || [ "$MIN_FREE_GB" -lt 1 ]; then
   exit 2
 fi
 
+require_release_build_contract
+
 PATCH_DIR="${PATCH_DIR:-$repo_dir/patches/ubuntu-qcom-x1e-7.0}"
 if [ -n "$PATCH_DIRS" ]; then
   for pd in $PATCH_DIRS; do
@@ -279,6 +517,77 @@ elif [ "$INSTALL_ONLY" != "true" ] && [ ! -d "$PATCH_DIR" ]; then
   echo "Patch directory not found: $PATCH_DIR" >&2
   exit 1
 fi
+
+collect_release_patch_inputs() {
+  local patch_dir_list pd canonical_dir patch canonical_patch relative_path
+  local directory_patch_count repo_real
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  repo_real="$(cd "$repo_dir" && pwd -P)"
+  if [ -n "$PATCH_DIRS" ]; then
+    patch_dir_list="$PATCH_DIRS"
+  else
+    patch_dir_list="$PATCH_DIR"
+  fi
+
+  for pd in $patch_dir_list; do
+    if [ -L "$pd" ]; then
+      echo "Release patch directory must not be a symlink: $pd" >&2
+      exit 1
+    fi
+    canonical_dir="$(cd "$pd" && pwd -P)"
+    case "$canonical_dir" in
+      "$repo_real"/*) ;;
+      *)
+        echo "Release patches must be tracked inside the support repository: $pd" >&2
+        exit 1
+        ;;
+    esac
+
+    if find "$canonical_dir" -maxdepth 1 -type l -name '*.patch' -print | grep -q .; then
+      echo "Release patch directories must not contain symlinked .patch entries: $pd" >&2
+      exit 1
+    fi
+
+    directory_patch_count=0
+    while IFS= read -r patch; do
+      [ -n "$patch" ] || continue
+      directory_patch_count=$((directory_patch_count + 1))
+      if [ ! -s "$patch" ] || [ -L "$patch" ]; then
+        echo "Release patch must be a nonempty regular, non-symlinked file: $patch" >&2
+        exit 1
+      fi
+      canonical_patch="$(cd "$(dirname "$patch")" && pwd -P)/$(basename "$patch")"
+      case "$canonical_patch" in
+        "$repo_real"/*) relative_path="${canonical_patch#"$repo_real"/}" ;;
+        *)
+          echo "Release patch resolves outside the support repository: $patch" >&2
+          exit 1
+          ;;
+      esac
+      if ! support_git ls-files --error-unmatch -- "$relative_path" >/dev/null 2>&1; then
+        echo "Release patch is not tracked by the support commit: $relative_path" >&2
+        exit 1
+      fi
+      RELEASE_PATCH_PATHS+=("$relative_path")
+      RELEASE_PATCH_ABS_PATHS+=("$canonical_patch")
+      RELEASE_PATCH_SHA256S+=("$(sha256_file "$canonical_patch")")
+    done < <(find "$canonical_dir" -maxdepth 1 -type f -name '*.patch' -print | LC_ALL=C sort)
+
+    if [ "$directory_patch_count" -eq 0 ]; then
+      echo "Release patch directory contains no regular .patch files: $pd" >&2
+      exit 1
+    fi
+  done
+
+  if [ "${#RELEASE_PATCH_PATHS[@]}" -eq 0 ]; then
+    echo "--release-build requires at least one tracked patch." >&2
+    exit 1
+  fi
+}
+
+collect_release_patch_inputs
 
 host_os="$(uname -s)"
 host_arch="$(uname -m)"
@@ -300,11 +609,60 @@ if [ "$INSTALL_ONLY" != "true" ]; then
   require_tool git
 fi
 
-mkdir -p "$WORK_DIR"
-work_dir="$(cd "$WORK_DIR" && pwd)"
+case "$WORK_DIR" in
+  ""|/|.|..|../*|*/../*|*/..|./*|*/./*|*//*|-*|*/-*|*[[:cntrl:]]*)
+    echo "Kernel work directory must use a dedicated canonical path: $WORK_DIR" >&2
+    exit 1
+    ;;
+esac
+work_parent="$(dirname "$WORK_DIR")"
+work_leaf="$(basename "$WORK_DIR")"
+if [ ! -d "$work_parent" ] || [ -L "$work_parent" ]; then
+  echo "Create a real, non-symlinked parent before using --work-dir: $work_parent" >&2
+  exit 1
+fi
+work_parent_logical="$(cd "$work_parent" && pwd -L)"
+work_parent_physical="$(cd "$work_parent" && pwd -P)"
+if [ "$work_parent_logical" != "$work_parent_physical" ]; then
+  echo "Kernel work directory parent must not contain symlink components: $work_parent" >&2
+  exit 1
+fi
+if [ -L "$WORK_DIR" ] ||
+   { [ -e "$WORK_DIR" ] && [ ! -d "$WORK_DIR" ]; }; then
+  echo "Kernel work directory must be a real, non-symlinked directory: $WORK_DIR" >&2
+  exit 1
+fi
+if [ ! -e "$WORK_DIR" ]; then
+  mkdir "$work_parent_physical/$work_leaf"
+fi
+work_dir="$(cd "$WORK_DIR" && pwd -P)"
+if [ "$work_dir" != "$work_parent_physical/$work_leaf" ]; then
+  echo "Kernel work directory resolves outside its requested managed path: $WORK_DIR" >&2
+  exit 1
+fi
 source_parent="$work_dir/source"
 source_dir=""
-mkdir -p "$source_parent"
+if [ -L "$source_parent" ] ||
+   { [ -e "$source_parent" ] && [ ! -d "$source_parent" ]; }; then
+  echo "Kernel source parent must be a real, non-symlinked directory: $source_parent" >&2
+  exit 1
+fi
+if [ ! -e "$source_parent" ]; then
+  mkdir "$source_parent"
+fi
+if [ "$(cd "$source_parent" && pwd -P)" != "$source_parent" ]; then
+  echo "Kernel source parent resolves outside its managed work path: $source_parent" >&2
+  exit 1
+fi
+
+if [ "$RELEASE_BUILD" = "true" ]; then
+  release_manifest="$work_dir/sp11-kernel-build-manifest.txt"
+  if [ -L "$release_manifest" ] || { [ -e "$release_manifest" ] && [ ! -f "$release_manifest" ]; }; then
+    echo "Refusing unsafe existing release build manifest path: $release_manifest" >&2
+    exit 1
+  fi
+  rm -f -- "$release_manifest"
+fi
 
 install_dependencies() {
   require_tool dpkg-query
@@ -325,6 +683,7 @@ install_dependencies() {
     kmod
     libelf-dev
     libssl-dev
+    openssl
     python3
     python3-dev
     rsync
@@ -429,18 +788,59 @@ resolve_installed_source_version() {
   installed_kernel_package_field 'source:Version'
 }
 
+assert_managed_source_path() {
+  local dir="$1" resolved
+
+  if [ -L "$source_parent" ] || [ ! -d "$source_parent" ] ||
+     [ "$(cd "$source_parent" && pwd -P)" != "$source_parent" ]; then
+    echo "Kernel source parent is no longer the managed work directory: $source_parent" >&2
+    return 1
+  fi
+  case "$dir" in
+    "$source_parent"/git-*) ;;
+    *)
+      echo "Kernel Git checkout escaped the managed source parent: $dir" >&2
+      return 1
+      ;;
+  esac
+  if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+    echo "Kernel Git checkout must be a real, non-symlinked managed directory: $dir" >&2
+    return 1
+  fi
+  if [ -d "$dir" ]; then
+    resolved="$(cd "$dir" && pwd -P)"
+    if [ "$resolved" != "$dir" ]; then
+      echo "Kernel Git checkout resolves outside its managed source path: $dir" >&2
+      return 1
+    fi
+    if [ -L "$dir/.git" ] ||
+       { [ -e "$dir/.git" ] && [ ! -d "$dir/.git" ]; }; then
+      echo "Kernel Git metadata must be a real, non-symlinked directory: $dir/.git" >&2
+      return 1
+    fi
+    if [ -d "$dir/.git" ] &&
+       [ "$(cd "$dir/.git" && pwd -P)" != "$dir/.git" ]; then
+      echo "Kernel Git metadata resolves outside its managed checkout: $dir/.git" >&2
+      return 1
+    fi
+  fi
+}
+
 ensure_clean_source() {
   local dir="$1"
 
+  assert_managed_source_path "$dir" || exit 1
   if [ ! -d "$dir" ]; then
     return 0
   fi
 
   if [ "$RESET_SOURCE" = "true" ]; then
     if [ -d "$dir/.git" ]; then
+      assert_managed_source_path "$dir" || exit 1
       git -C "$dir" reset --hard
       git -C "$dir" clean -ffdx
     else
+      assert_managed_source_path "$dir" || exit 1
       rm -rf "$dir"
     fi
     return 0
@@ -457,6 +857,12 @@ ensure_clean_source() {
       echo "Remove them or rerun with --reset-source." >&2
       exit 1
     fi
+    if [ "$RELEASE_BUILD" = "true" ] &&
+       [ -n "$(git -C "$dir" ls-files --others --ignored --exclude-standard)" ]; then
+      echo "Existing release source tree has ignored build outputs or files: $dir" >&2
+      echo "Rerun with --reset-source so patched-tree provenance starts from a pristine checkout." >&2
+      exit 1
+    fi
   else
     echo "Existing non-git source directory found: $dir" >&2
     echo "Move it away or rerun with --reset-source." >&2
@@ -465,7 +871,7 @@ ensure_clean_source() {
 }
 
 prepare_git_source() {
-  local safe_branch dir local_commits ref_kind
+  local safe_branch dir local_commits ref_kind configured_origin
   safe_branch="${GIT_BRANCH//\//-}"
   dir="$source_parent/git-$safe_branch"
   ref_kind=""
@@ -473,7 +879,20 @@ prepare_git_source() {
   ensure_clean_source "$dir"
   if [ ! -d "$dir" ]; then
     git clone --depth 1 --branch "$GIT_BRANCH" "$GIT_URL" "$dir"
+    assert_managed_source_path "$dir" || exit 1
   else
+    if ! configured_origin="$(git -C "$dir" remote get-url origin 2>/dev/null)"; then
+      echo "Existing source tree has no readable origin remote: $dir" >&2
+      echo "Rerun with --reset-source so it is cloned from $GIT_URL." >&2
+      exit 1
+    fi
+    if [ "$configured_origin" != "$GIT_URL" ]; then
+      echo "Existing source tree origin does not match --git-url: $dir" >&2
+      echo "Requested:  $GIT_URL" >&2
+      echo "Configured: $configured_origin" >&2
+      echo "Rerun with --reset-source so retrieval provenance is unambiguous." >&2
+      exit 1
+    fi
     if git -C "$dir" show-ref --verify --quiet "refs/remotes/origin/$GIT_BRANCH"; then
       ref_kind="head"
     elif git -C "$dir" show-ref --verify --quiet "refs/tags/$GIT_BRANCH"; then
@@ -605,48 +1024,71 @@ prepare_apt_source() {
   echo "Using apt source: $source_spec"
 }
 
-apply_patches() {
-  local patch_dir_list
+apply_patch_file() {
+  local patch="$1"
 
-  if [ -n "$PATCH_DIRS" ]; then
-    patch_dir_list="$PATCH_DIRS"
-  else
-    patch_dir_list="$PATCH_DIR"
+  LAST_PATCH_DISPOSITION=""
+  case "$(basename "$patch")" in
+    0001-wifi-ath12k-add-disable-rfkill-devicetree.patch)
+      if grep -q 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
+        "$source_dir/drivers/net/wireless/ath/ath12k/core.c"; then
+        echo "Already satisfied: $(basename "$patch")"
+        LAST_PATCH_DISPOSITION="already-satisfied"
+        return 0
+      fi
+      ;;
+    0002-arm64-dts-qcom-x1-denali-disable-rfkill-for-wifi.patch)
+      if grep -q 'disable-rfkill;' \
+        "$source_dir/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi"; then
+        echo "Already satisfied: $(basename "$patch")"
+        LAST_PATCH_DISPOSITION="already-satisfied"
+        return 0
+      fi
+      ;;
+  esac
+
+  if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
+    echo "Already applied: $(basename "$patch")"
+    LAST_PATCH_DISPOSITION="already-applied"
+    return 0
   fi
 
-  for pd in $patch_dir_list; do
-    echo "Applying patches from $pd"
+  echo "Applying: $(basename "$patch")"
+  git -C "$source_dir" apply --check "$patch"
+  git -C "$source_dir" apply "$patch"
+  LAST_PATCH_DISPOSITION="applied"
+}
 
-    for patch in "$pd"/*.patch; do
-      [ -f "$patch" ] || continue
+apply_patches() {
+  local patch_dir_list patch_index
 
-      case "$(basename "$patch")" in
-        0001-wifi-ath12k-add-disable-rfkill-devicetree.patch)
-          if grep -q 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
-            "$source_dir/drivers/net/wireless/ath/ath12k/core.c"; then
-            echo "Already satisfied: $(basename "$patch")"
-            continue
-          fi
-          ;;
-        0002-arm64-dts-qcom-x1-denali-disable-rfkill-for-wifi.patch)
-          if grep -q 'disable-rfkill;' \
-            "$source_dir/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi"; then
-            echo "Already satisfied: $(basename "$patch")"
-            continue
-          fi
-          ;;
-      esac
-
-      if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
-        echo "Already applied: $(basename "$patch")"
-        continue
+  if [ "$RELEASE_BUILD" = "true" ]; then
+    patch_index=0
+    while [ "$patch_index" -lt "${#RELEASE_PATCH_ABS_PATHS[@]}" ]; do
+      apply_patch_file "${RELEASE_PATCH_ABS_PATHS[$patch_index]}"
+      if [ "$(sha256_file "${RELEASE_PATCH_ABS_PATHS[$patch_index]}")" != \
+           "${RELEASE_PATCH_SHA256S[$patch_index]}" ]; then
+        echo "Release patch changed while it was being applied: ${RELEASE_PATCH_PATHS[$patch_index]}" >&2
+        exit 1
       fi
-
-      echo "Applying: $(basename "$patch")"
-      git -C "$source_dir" apply --check "$patch"
-      git -C "$source_dir" apply "$patch"
+      RELEASE_PATCH_DISPOSITIONS+=("$LAST_PATCH_DISPOSITION")
+      patch_index=$((patch_index + 1))
     done
-  done
+  else
+    if [ -n "$PATCH_DIRS" ]; then
+      patch_dir_list="$PATCH_DIRS"
+    else
+      patch_dir_list="$PATCH_DIR"
+    fi
+
+    for pd in $patch_dir_list; do
+      echo "Applying patches from $pd"
+      for patch in "$pd"/*.patch; do
+        [ -f "$patch" ] || continue
+        apply_patch_file "$patch"
+      done
+    done
+  fi
 
   grep -q 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
     "$source_dir/drivers/net/wireless/ath/ath12k/core.c"
@@ -663,6 +1105,118 @@ find_rules_file() {
     echo "Could not find executable debian/rules or .debian/rules in $source_dir." >&2
     exit 1
   fi
+}
+
+capture_patched_tree_identity() {
+  local temporary_index temporary_diff
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  require_tool cmp
+
+  PATCHED_UNTRACKED_PATHS_FILE="$(mktemp "$work_dir/.sp11-release-untracked-paths.XXXXXX")"
+  if ! git -C "$source_dir" ls-files -z --others --exclude-standard \
+      > "$PATCHED_UNTRACKED_PATHS_FILE"; then
+    rm -f -- "$PATCHED_UNTRACKED_PATHS_FILE"
+    PATCHED_UNTRACKED_PATHS_FILE=""
+    echo "Could not capture the pre-build nonignored untracked source paths." >&2
+    exit 1
+  fi
+
+  temporary_index="$(mktemp "$work_dir/.sp11-release-index.XXXXXX")"
+  temporary_diff="$(mktemp "$work_dir/.sp11-release-diff.XXXXXX")"
+  rm -f -- "$temporary_index"
+
+  if ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" read-tree HEAD ||
+     ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" add -A -f -- . ||
+     ! PATCHED_TREE_ID="$(GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" write-tree)" ||
+     ! GIT_INDEX_FILE="$temporary_index" LC_ALL=C GIT_EXTERNAL_DIFF= \
+       git -C "$source_dir" diff --cached --binary --full-index --no-ext-diff \
+         --no-textconv --src-prefix=a/ --dst-prefix=b/ HEAD -- > "$temporary_diff"; then
+    rm -f -- "$temporary_index" "$temporary_diff"
+    echo "Could not capture the canonical patched kernel tree identity." >&2
+    exit 1
+  fi
+
+  PATCHED_DIFF_SHA256="$(sha256_file "$temporary_diff")"
+  PATCHED_DIFF_GIT_VERSION="$(LC_ALL=C git --version)"
+  rm -f -- "$temporary_index" "$temporary_diff"
+
+  if ! [[ "$PATCHED_TREE_ID" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]] ||
+     ! [[ "$PATCHED_DIFF_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Canonical patched kernel tree identity is incomplete." >&2
+    exit 1
+  fi
+}
+
+verify_patched_tree_stable() {
+  local temporary_index temporary_diff deleted_paths recomputed_tree recomputed_diff_sha
+  local post_untracked_paths source_head deleted_path
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  if ! source_head="$(git -C "$source_dir" rev-parse --verify 'HEAD^{commit}')" ||
+     [ "$source_head" != "$EXPECTED_SOURCE_COMMIT" ]; then
+    echo "Kernel source HEAD changed during the release build." >&2
+    return 1
+  fi
+
+  post_untracked_paths="$(mktemp "$work_dir/.sp11-release-post-untracked-paths.XXXXXX")"
+  if ! git -C "$source_dir" ls-files -z --others --exclude-standard \
+      > "$post_untracked_paths"; then
+    rm -f -- "$post_untracked_paths"
+    echo "Could not inspect post-build nonignored untracked source paths." >&2
+    return 1
+  fi
+  if ! cmp -s "$PATCHED_UNTRACKED_PATHS_FILE" "$post_untracked_paths"; then
+    rm -f -- "$post_untracked_paths"
+    echo "A nonignored source path was added or removed during the release build." >&2
+    return 1
+  fi
+  rm -f -- "$post_untracked_paths"
+
+  # A patched tree can intentionally delete a path from HEAD. Such a path is
+  # absent from the pre-build index, so check the deletion contract explicitly
+  # before refreshing the exact pre-build path set below.
+  deleted_paths="$(mktemp "$work_dir/.sp11-release-deleted-paths.XXXXXX")"
+  if ! git -C "$source_dir" diff-tree -r -z --no-commit-id --name-only \
+      --diff-filter=D HEAD "$PATCHED_TREE_ID" -- > "$deleted_paths"; then
+    rm -f -- "$deleted_paths"
+    echo "Could not verify paths deleted by the captured patched tree." >&2
+    return 1
+  fi
+  while IFS= read -r -d '' deleted_path; do
+    if [ -e "$source_dir/$deleted_path" ] || [ -L "$source_dir/$deleted_path" ]; then
+      rm -f -- "$deleted_paths"
+      echo "A path deleted by the captured patched tree reappeared during the build: $deleted_path" >&2
+      return 1
+    fi
+  done < "$deleted_paths"
+  rm -f -- "$deleted_paths"
+
+  temporary_index="$(mktemp "$work_dir/.sp11-release-recheck-index.XXXXXX")"
+  temporary_diff="$(mktemp "$work_dir/.sp11-release-recheck-diff.XXXXXX")"
+  rm -f -- "$temporary_index"
+  if ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" read-tree "$PATCHED_TREE_ID" ||
+     ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" add -u -- . ||
+     ! recomputed_tree="$(GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" write-tree)" ||
+     ! GIT_INDEX_FILE="$temporary_index" LC_ALL=C GIT_EXTERNAL_DIFF= \
+       git -C "$source_dir" diff --cached --binary --full-index --no-ext-diff \
+         --no-textconv --src-prefix=a/ --dst-prefix=b/ HEAD -- > "$temporary_diff"; then
+    rm -f -- "$temporary_index" "$temporary_diff"
+    echo "Could not recompute the exact pre-build kernel source contract." >&2
+    return 1
+  fi
+  recomputed_diff_sha="$(sha256_file "$temporary_diff")"
+  rm -f -- "$temporary_index" "$temporary_diff"
+
+  if [ "$recomputed_tree" != "$PATCHED_TREE_ID" ] ||
+     [ "$recomputed_diff_sha" != "$PATCHED_DIFF_SHA256" ]; then
+    echo "Patched kernel source input changed during the release build." >&2
+    echo "The completed manifest will not describe a pre-build-only source identity." >&2
+    return 1
+  fi
+  rm -f -- "$PATCHED_UNTRACKED_PATHS_FILE"
+  PATCHED_UNTRACKED_PATHS_FILE=""
 }
 
 write_manifest() {
@@ -750,7 +1304,23 @@ collect_kernel_debs() {
       -o -name 'linux-image-qcom-x1e_*.deb' \
       -o -name 'linux-headers-qcom-x1e_*.deb' \)
   } |
-    sort -u
+    LC_ALL=C sort -u
+}
+
+assert_release_package_output_pristine() {
+  local existing_debs
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  if ! existing_debs="$(collect_kernel_debs)"; then
+    echo "Could not inspect the release work directory for prior package output." >&2
+    return 1
+  fi
+  if [ -n "$existing_debs" ]; then
+    echo "Release work directory contains prior qcom-x1e kernel package output." >&2
+    echo "Use a clean release work directory so stale packages cannot satisfy the release contract." >&2
+    return 1
+  fi
 }
 
 deb_kernel_abi() {
@@ -974,6 +1544,295 @@ write_deb_manifest() {
   collect_kernel_debs > "$work_dir/sp11-kernel-debs.txt"
 }
 
+add_release_output() {
+  local role="$1" relative_path="$2" absolute_path
+
+  absolute_path="$source_dir/$relative_path"
+  if [ ! -f "$absolute_path" ] || [ ! -s "$absolute_path" ] || [ -L "$absolute_path" ]; then
+    echo "Required release build output is missing, empty, or not a regular file: $relative_path" >&2
+    return 1
+  fi
+  RELEASE_OUTPUT_ROLES+=("$role")
+  RELEASE_OUTPUT_PATHS+=("$relative_path")
+  RELEASE_OUTPUT_SIZES+=("$(file_size "$absolute_path")")
+  RELEASE_OUTPUT_SHA256S+=("$(sha256_file "$absolute_path")")
+}
+
+capture_signing_certificate_identity() {
+  local certificate="$source_dir/debian/build/build-qcom-x1e/certs/signing_key.x509"
+  local fingerprint_output serial_output certificate_format
+
+  require_tool openssl
+  SIGNING_CERT_SHA256="$(sha256_file "$certificate")"
+  certificate_format="DER"
+  if ! fingerprint_output="$(openssl x509 -inform DER -in "$certificate" -noout -sha256 -fingerprint 2>/dev/null)"; then
+    certificate_format="PEM"
+    fingerprint_output="$(openssl x509 -inform PEM -in "$certificate" -noout -sha256 -fingerprint)"
+  fi
+  serial_output="$(openssl x509 -inform "$certificate_format" -in "$certificate" -noout -serial)"
+  SIGNING_CERT_FINGERPRINT="${fingerprint_output#*=}"
+  SIGNING_CERT_FINGERPRINT="$(printf '%s' "$SIGNING_CERT_FINGERPRINT" | tr '[:lower:]' '[:upper:]')"
+  SIGNING_CERT_SERIAL="${serial_output#*=}"
+  SIGNING_CERT_SERIAL="$(printf '%s' "$SIGNING_CERT_SERIAL" | tr '[:lower:]' '[:upper:]')"
+
+  if ! [[ "$SIGNING_CERT_FINGERPRINT" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]]; then
+    echo "Could not extract a valid public X.509 SHA-256 fingerprint." >&2
+    return 1
+  fi
+  if ! [[ "$SIGNING_CERT_SERIAL" =~ ^[0-9A-F]+$ ]]; then
+    echo "Could not extract a valid public X.509 serial number." >&2
+    return 1
+  fi
+}
+
+capture_release_build_outputs() {
+  local build_root="debian/build/build-qcom-x1e"
+
+  add_release_output "kernel-config" "$build_root/.config"
+  add_release_output "module-symvers" "$build_root/Module.symvers"
+  add_release_output "system-map" "$build_root/System.map"
+  add_release_output "kernel-efi-stubble" "$build_root/arch/arm64/boot/vmlinuz.efi.stubble"
+  add_release_output "denali-oled-dtb" "$build_root/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled.dtb"
+  add_release_output "denali-oled-el2-dtb" "$build_root/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled-el2.dtb"
+  add_release_output "module-signing-certificate" "$build_root/certs/signing_key.x509"
+  capture_signing_certificate_identity
+}
+
+release_deb_role() {
+  case "$(basename "$1")" in
+    linux-qcom-x1e-headers-*_all.deb) printf '%s\n' common-headers ;;
+    linux-headers-*-qcom-x1e_*.deb) printf '%s\n' headers ;;
+    linux-image-unsigned-*-qcom-x1e_*.deb|linux-image-*-qcom-x1e_*.deb) printf '%s\n' image ;;
+    linux-modules-extra-*-qcom-x1e_*.deb) printf '%s\n' modules-extra ;;
+    linux-modules-*-qcom-x1e_*.deb) printf '%s\n' modules ;;
+    *) return 1 ;;
+  esac
+}
+
+release_deb_abi() {
+  local role="$1" package="$2"
+
+  case "$role:$package" in
+    common-headers:linux-qcom-x1e-headers-*)
+      printf '%s-qcom-x1e\n' "${package#linux-qcom-x1e-headers-}"
+      ;;
+    headers:linux-headers-*) printf '%s\n' "${package#linux-headers-}" ;;
+    image:linux-image-unsigned-*) printf '%s\n' "${package#linux-image-unsigned-}" ;;
+    image:linux-image-*) printf '%s\n' "${package#linux-image-}" ;;
+    modules:linux-modules-*) printf '%s\n' "${package#linux-modules-}" ;;
+    modules-extra:linux-modules-extra-*) printf '%s\n' "${package#linux-modules-extra-}" ;;
+    *) return 1 ;;
+  esac
+}
+
+capture_release_debs() {
+  local deb role package version architecture existing_role required_role found index
+  local base expected_package filename_without_arch expected_version common_version=""
+  local package_abi common_abi=""
+
+  require_tool dpkg-deb
+  while IFS= read -r deb; do
+    [ -n "$deb" ] || continue
+    if [ ! -f "$deb" ] || [ -L "$deb" ]; then
+      echo "Release package must be a regular, non-symlinked file: $deb" >&2
+      return 1
+    fi
+    if ! role="$(release_deb_role "$deb")"; then
+      echo "Unexpected package in release build output: $(basename "$deb")" >&2
+      return 1
+    fi
+    index=0
+    while [ "$index" -lt "${#RELEASE_DEB_ROLES[@]}" ]; do
+      existing_role="${RELEASE_DEB_ROLES[$index]}"
+      if [ "$existing_role" = "$role" ]; then
+        echo "Duplicate $role package in release build output." >&2
+        return 1
+      fi
+      index=$((index + 1))
+    done
+
+    package="$(dpkg-deb -f "$deb" Package 2>/dev/null || true)"
+    version="$(dpkg-deb -f "$deb" Version 2>/dev/null || true)"
+    architecture="$(dpkg-deb -f "$deb" Architecture 2>/dev/null || true)"
+    if [ -z "$package" ] || [ -z "$version" ] || [ -z "$architecture" ]; then
+      echo "Could not read package identity from $(basename "$deb")." >&2
+      return 1
+    fi
+    base="$(basename "$deb")"
+    expected_package="${base%%_*}"
+    if [ "$package" != "$expected_package" ]; then
+      echo "Package field $package does not match release filename $base." >&2
+      return 1
+    fi
+    filename_without_arch="${base%_${architecture}.deb}"
+    expected_version="${filename_without_arch##*_}"
+    if [ "$version" != "$expected_version" ]; then
+      echo "Version field $version does not match release filename $base." >&2
+      return 1
+    fi
+    if [ -z "$common_version" ]; then
+      common_version="$version"
+    elif [ "$version" != "$common_version" ]; then
+      echo "Release build output contains mixed package versions: $common_version and $version." >&2
+      return 1
+    fi
+    if ! package_abi="$(release_deb_abi "$role" "$package")"; then
+      echo "Package $package does not match its release role $role." >&2
+      return 1
+    fi
+    if [ -z "$common_abi" ]; then
+      common_abi="$package_abi"
+    elif [ "$package_abi" != "$common_abi" ]; then
+      echo "Release build output contains mixed kernel ABIs: $common_abi and $package_abi." >&2
+      return 1
+    fi
+    if ! [[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*$ ]] ||
+       ! [[ "$version" =~ ^[0-9A-Za-z.+:~_-]+$ ]] ||
+       ! [[ "$architecture" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+      echo "Package identity contains unsafe or unsupported characters in $(basename "$deb")." >&2
+      return 1
+    fi
+    case "$role:$architecture" in
+      common-headers:all|headers:arm64|image:arm64|modules:arm64|modules-extra:arm64) ;;
+      *)
+        echo "Unexpected architecture $architecture for $role package $(basename "$deb")." >&2
+        return 1
+        ;;
+    esac
+
+    RELEASE_DEB_ROLES+=("$role")
+    RELEASE_DEB_PATHS+=("$(basename "$deb")")
+    RELEASE_DEB_PACKAGES+=("$package")
+    RELEASE_DEB_VERSIONS+=("$version")
+    RELEASE_DEB_ARCHITECTURES+=("$architecture")
+    RELEASE_DEB_SIZES+=("$(file_size "$deb")")
+    RELEASE_DEB_SHA256S+=("$(sha256_file "$deb")")
+  done < <(collect_kernel_debs)
+
+  for required_role in common-headers headers image modules; do
+    found="false"
+    for existing_role in "${RELEASE_DEB_ROLES[@]}"; do
+      [ "$existing_role" = "$required_role" ] && found="true"
+    done
+    if [ "$found" != "true" ]; then
+      echo "Release build is missing the required $required_role package." >&2
+      return 1
+    fi
+  done
+}
+
+write_release_manifest_v2() {
+  local manifest="$work_dir/sp11-kernel-build-manifest.txt" temporary_manifest
+  local source_head container_image container_digest rules_runner
+  local index
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  verify_release_support_stable
+  verify_patched_tree_stable
+  capture_release_build_outputs
+  capture_release_debs
+  verify_release_support_stable
+
+  source_head="$(git -C "$source_dir" rev-parse --verify 'HEAD^{commit}')"
+  source_head="$(printf '%s' "$source_head" | tr '[:upper:]' '[:lower:]')"
+  if [ "$source_head" != "$EXPECTED_SOURCE_COMMIT" ]; then
+    echo "Kernel source HEAD changed during the release build." >&2
+    return 1
+  fi
+  container_image="${SP11_BUILD_CONTAINER_IMAGE}"
+  container_digest="${container_image##*@}"
+  if [ "$(id -u)" -eq 0 ]; then
+    rules_runner="direct-root"
+  else
+    rules_runner="fakeroot"
+  fi
+
+  temporary_manifest="$(mktemp "$work_dir/.sp11-kernel-build-manifest.XXXXXX")"
+  if ! {
+    echo "Provenance schema: sp11-kernel-build-v2"
+    echo "Release build: true"
+    echo "Support start HEAD: $SUPPORT_HEAD_START"
+    echo "Support start dirty: false"
+    echo "Support end HEAD: $SUPPORT_HEAD_START"
+    echo "Support end dirty: false"
+    echo "Source mode: git"
+    echo "Source URL: $GIT_URL"
+    echo "Source ref: $GIT_BRANCH"
+    echo "Expected source commit: $EXPECTED_SOURCE_COMMIT"
+    echo "Source HEAD: $source_head"
+    echo "Container image: $container_image"
+    echo "Container digest: $container_digest"
+    echo "Container platform: ${SP11_BUILD_CONTAINER_PLATFORM}"
+    echo "Build target: $BUILD_TARGET"
+    echo "Jobs: $JOBS"
+    echo "Rules runner: $rules_runner"
+    echo "Patch count: ${#RELEASE_PATCH_PATHS[@]}"
+    index=0
+    while [ "$index" -lt "${#RELEASE_PATCH_PATHS[@]}" ]; do
+      echo "Patch $((index + 1)) path: ${RELEASE_PATCH_PATHS[$index]}"
+      echo "Patch $((index + 1)) SHA256: ${RELEASE_PATCH_SHA256S[$index]}"
+      echo "Patch $((index + 1)) disposition: ${RELEASE_PATCH_DISPOSITIONS[$index]}"
+      index=$((index + 1))
+    done
+    echo "Patched diff format: $PATCHED_DIFF_FORMAT"
+    echo "Patched diff Git version: $PATCHED_DIFF_GIT_VERSION"
+    echo "Patched diff SHA256: $PATCHED_DIFF_SHA256"
+    echo "Patched tree ID: $PATCHED_TREE_ID"
+    echo "Required output roles: kernel-config module-symvers system-map kernel-efi-stubble denali-oled-dtb denali-oled-el2-dtb module-signing-certificate"
+    echo "Optional output roles: none"
+    echo "Output count: ${#RELEASE_OUTPUT_PATHS[@]}"
+    index=0
+    while [ "$index" -lt "${#RELEASE_OUTPUT_PATHS[@]}" ]; do
+      echo "Output $((index + 1)) role: ${RELEASE_OUTPUT_ROLES[$index]}"
+      echo "Output $((index + 1)) required: true"
+      echo "Output $((index + 1)) path: ${RELEASE_OUTPUT_PATHS[$index]}"
+      echo "Output $((index + 1)) size: ${RELEASE_OUTPUT_SIZES[$index]}"
+      echo "Output $((index + 1)) SHA256: ${RELEASE_OUTPUT_SHA256S[$index]}"
+      index=$((index + 1))
+    done
+    echo "Signing certificate SHA256: $SIGNING_CERT_SHA256"
+    echo "Signing certificate fingerprint: $SIGNING_CERT_FINGERPRINT"
+    echo "Signing certificate serial: $SIGNING_CERT_SERIAL"
+    echo "Required Deb roles: common-headers headers image modules"
+    echo "Optional Deb roles: modules-extra"
+    echo "Deb count: ${#RELEASE_DEB_PATHS[@]}"
+    index=0
+    while [ "$index" -lt "${#RELEASE_DEB_PATHS[@]}" ]; do
+      echo "Deb $((index + 1)) role: ${RELEASE_DEB_ROLES[$index]}"
+      if [ "${RELEASE_DEB_ROLES[$index]}" = "modules-extra" ]; then
+        echo "Deb $((index + 1)) required: false"
+      else
+        echo "Deb $((index + 1)) required: true"
+      fi
+      echo "Deb $((index + 1)) path: ${RELEASE_DEB_PATHS[$index]}"
+      echo "Deb $((index + 1)) package: ${RELEASE_DEB_PACKAGES[$index]}"
+      echo "Deb $((index + 1)) version: ${RELEASE_DEB_VERSIONS[$index]}"
+      echo "Deb $((index + 1)) architecture: ${RELEASE_DEB_ARCHITECTURES[$index]}"
+      echo "Deb $((index + 1)) size: ${RELEASE_DEB_SIZES[$index]}"
+      echo "Deb $((index + 1)) SHA256: ${RELEASE_DEB_SHA256S[$index]}"
+      index=$((index + 1))
+    done
+    echo "Build completed: true"
+  } > "$temporary_manifest"; then
+    rm -f -- "$temporary_manifest"
+    echo "Could not write the schema-v2 release build manifest." >&2
+    return 1
+  fi
+  chmod 0644 "$temporary_manifest"
+  if ! mv -f -- "$temporary_manifest" "$manifest"; then
+    rm -f -- "$temporary_manifest"
+    echo "Could not atomically install the schema-v2 release build manifest." >&2
+    return 1
+  fi
+  if ! verify_release_support_stable; then
+    rm -f -- "$manifest"
+    echo "Removed the final manifest because support provenance changed during completion." >&2
+    return 1
+  fi
+  echo "Wrote completed schema-v2 release build manifest: $manifest"
+}
+
 build_kernel() {
   local rules_file target build_targets=()
   rules_file="$(find_rules_file)"
@@ -1048,14 +1907,14 @@ install_kernel_debs() {
     exit 1
   fi
 
-  as_root apt install --reinstall "${debs[@]}"
-
-  if [ -x "$repo_dir/scripts/install-sp11-support.sh" ]; then
-    as_root "$repo_dir/scripts/install-sp11-support.sh" --installed-system
-  elif command -v /usr/local/sbin/sp11-grub-inject-dtb >/dev/null 2>&1; then
-    as_root update-grub
-    as_root /usr/local/sbin/sp11-grub-inject-dtb
+  if [ ! -x "$repo_dir/scripts/install-sp11-support.sh" ]; then
+    echo "Missing support installer: $repo_dir/scripts/install-sp11-support.sh" >&2
+    exit 1
   fi
+
+  as_root "$repo_dir/scripts/install-sp11-support.sh" --retire-loose-dtb-only
+  as_root apt install --reinstall "${debs[@]}"
+  as_root "$repo_dir/scripts/install-sp11-support.sh" --installed-system
 
   if [ -n "$touchscreen_release" ] && [ "$SKIP_TOUCHSCREEN_MODULES" != "true" ]; then
     as_root "$repo_dir/scripts/install-sp11-touchscreen.sh" \
@@ -1084,9 +1943,13 @@ esac
 
 verify_expected_source_commit
 echo "Using source tree: $source_dir"
+assert_release_package_output_pristine
 apply_patches
 install_source_build_dependencies
-write_manifest
+capture_patched_tree_identity
+if [ "$RELEASE_BUILD" != "true" ]; then
+  write_manifest
+fi
 
 if [ "$PREPARE_ONLY" = "true" ]; then
   echo "Prepare-only mode complete."
@@ -1095,6 +1958,7 @@ fi
 
 build_kernel
 write_deb_manifest
+write_release_manifest_v2
 
 echo
 echo "Generated kernel packages:"

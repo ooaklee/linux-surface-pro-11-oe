@@ -175,9 +175,11 @@ branch configures the DMIC clock at 4.8 MHz, which reintroduces microphone
 static, so the Surface Pro 11 v2 patch set restores the validated 2.4 MHz
 clock and gives the result the distinct `7.2-rc5-jg-0sp11v2` ABI:
 
-Use the immutable `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag for a release build.
-The moving `jg/ubuntu-qcom-x1e-7.2rc` branch is useful for development but is
-not durable release provenance.
+Use the immutable `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag for pinned build
+provenance. The command below is a normal local build. A future publishable
+build must also pass `--release-build` and follow
+[Release Prebuilt Kernel Artifacts](how-to-release-kernel-artifacts.md); the
+moving `jg/ubuntu-qcom-x1e-7.2rc` branch is not durable release provenance.
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
@@ -200,7 +202,8 @@ The output is a matching four-package set
 (`linux-image`, `linux-modules`, `linux-headers`,
 `linux-qcom-x1e-headers`). See
 [ADR0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md) for the
-DMIC decision and the installer DTB-selection fix.
+DMIC decision and embedded-DTB correction. ADR0055 retires the former
+installed loose-DTB selector.
 
 ### Johan G. 7.2-rc5 v3 source (touchscreen)
 
@@ -354,32 +357,15 @@ post-install support helper run consistently.
 
 ## Reboot and Validate
 
-1. Confirm GRUB still injects the Surface Pro 11 DTB.
+On the tested installed qcom-x1e Stubble path, each kernel uses the Denali DTB
+embedded in its exact Stubble-wrapped EFI image. The support installer does
+not select, copy, or inject a shared loose DTB. If
+`/boot/sp11-denali.dtb` exists from an earlier release, it is left untouched
+as inert recovery evidence; its presence or contents do not establish
+live-FDT provenance. The guarded install must finish its normal live-root GRUB
+regeneration successfully before reboot.
 
-```bash
-grep -n "devicetree .*sp11-denali" /boot/grub/grub.cfg | head
-```
-
-For the verified separate `/boot` layout, the entries should use:
-
-```text
-devicetree /sp11-denali.dtb
-```
-
-2. Confirm the staged boot DTB contains the rfkill property.
-
-```bash
-sudo grep -a -q 'disable-rfkill' /boot/sp11-denali.dtb \
-  && echo "/boot/sp11-denali.dtb contains disable-rfkill" \
-  || echo "/boot/sp11-denali.dtb is missing disable-rfkill"
-```
-
-If the patched kernel ABI is older than another installed qcom-x1e fallback
-kernel, the support helper must prefer the rfkill-capable DTB rather than the
-newest unpatched DTB. This is recorded in
-[ADR025](../adr/adr-0025-rfkill-capable-dtb-selection.md).
-
-3. Reboot and choose the patched kernel.
+1. Reboot and choose the patched kernel.
 
 ```bash
 sudo reboot

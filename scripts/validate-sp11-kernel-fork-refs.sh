@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+sanitize_git_environment() {
+	local variable_name
+
+	unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_COMMON_DIR
+	unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
+	unset GIT_CONFIG_GLOBAL GIT_DIR GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_EXEC_PATH
+	unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX
+	unset GIT_SHALLOW_FILE GIT_WORK_TREE
+	for variable_name in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
+		unset "$variable_name"
+	done
+	export GIT_CONFIG_NOSYSTEM=1
+	export GIT_CONFIG_SYSTEM=/dev/null
+	export GIT_CONFIG_GLOBAL=/dev/null
+	export GIT_ATTR_NOSYSTEM=1
+	export GIT_NO_REPLACE_OBJECTS=1
+}
+
+sanitize_git_environment
+
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 baseline="${1:-$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env}"
 

@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+sanitize_git_environment() {
+  local variable_name
+
+  unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_COMMON_DIR
+  unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
+  unset GIT_CONFIG_GLOBAL GIT_DIR GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_EXEC_PATH
+  unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX
+  unset GIT_SHALLOW_FILE GIT_WORK_TREE
+  for variable_name in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
+    unset "$variable_name"
+  done
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_SYSTEM=/dev/null
+  export GIT_CONFIG_GLOBAL=/dev/null
+  export GIT_ATTR_NOSYSTEM=1
+  export GIT_NO_REPLACE_OBJECTS=1
+}
+
+sanitize_git_environment
+
 RELEASE_DIR=""
 TAG=""
 REMOTE=""
@@ -91,6 +111,292 @@ single_manifest_value() {
     return 1
   fi
   printf '%s\n' "${values[0]}"
+}
+
+validate_schema_v2_touchscreen_bindings() {
+  local repo_dir validator archive_validator identity_validator build_manifest
+  local kernel_archive_name touch_archive_name kernel_archive touch_archive
+  local patched_tree touch_tree touch_license touch_commit touch_license_mode
+  local binding_dir expected_payload actual_payload asset asset_name asset_sha
+
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  validator="$repo_dir/scripts/validate-sp11-image-release-manifests.py"
+  archive_validator="$repo_dir/scripts/validate-sp11-source-archive.py"
+  identity_validator="$repo_dir/scripts/validate-sp11-payload-identity-list.sh"
+  build_manifest="$RELEASE_DIR/sp11-kernel-build-manifest.txt"
+  for helper in "$validator" "$archive_validator" "$identity_validator"; do
+    if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+      error "schema-v2 release validator is missing: $(basename "$helper")"
+      return
+    fi
+  done
+  if ! have_tool python3; then
+    error "python3 is required for complete schema-v2 release validation."
+    return
+  fi
+
+  kernel_archive_name="$(single_manifest_value "$release_manifest" "Kernel source archive" 2>/dev/null || true)"
+  touch_archive_name="$(single_manifest_value "$release_manifest" "Touchscreen source archive" 2>/dev/null || true)"
+  case "$kernel_archive_name" in
+    ""|.|..|*/*|*[!A-Za-z0-9._+-]*)
+      error "schema-v2 release manifest has missing or unsafe source-archive names."
+      return
+      ;;
+  esac
+  case "$touch_archive_name" in
+    ""|.|..|*/*|*[!A-Za-z0-9._+-]*)
+      error "schema-v2 release manifest has missing or unsafe source-archive names."
+      return
+      ;;
+  esac
+  kernel_archive="$RELEASE_DIR/$kernel_archive_name"
+  touch_archive="$RELEASE_DIR/$touch_archive_name"
+  if [ ! -f "$kernel_archive" ] || [ -L "$kernel_archive" ] ||
+     [ ! -f "$touch_archive" ] || [ -L "$touch_archive" ]; then
+    error "schema-v2 release is missing a regular corresponding-source archive."
+    return
+  fi
+
+  patched_tree="$(single_manifest_value "$release_manifest" "Kernel source tree ID" 2>/dev/null || true)"
+  touch_commit="$(single_manifest_value "$release_manifest" "Touchscreen source commit" 2>/dev/null || true)"
+  touch_tree="$(single_manifest_value "$release_manifest" "Touchscreen source modules tree ID" 2>/dev/null || true)"
+  touch_license="$(single_manifest_value "$release_manifest" "Touchscreen source license blob ID" 2>/dev/null || true)"
+  touch_license_mode="$(single_manifest_value "$touchscreen_manifest" "Source license mode" 2>/dev/null || true)"
+  if ! [[ "$patched_tree" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]] ||
+     ! [[ "$touch_commit" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]] ||
+     ! [[ "$touch_tree" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]] ||
+     ! [[ "$touch_license" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]] ||
+     [ "$touch_license_mode" != "100644" ]; then
+    error "schema-v2 release has incomplete source object identities."
+    return
+  fi
+
+  binding_dir="$(mktemp -d 2>/dev/null || true)"
+  if [ -z "$binding_dir" ] || [ ! -d "$binding_dir" ]; then
+    error "could not create a temporary schema-v2 binding directory."
+    return
+  fi
+  TEMP_DIRS+=("$binding_dir")
+  expected_payload="$binding_dir/expected-payload"
+  actual_payload="$binding_dir/actual-payload"
+  if ! python3 "$validator" \
+      --repo-dir "$repo_dir" \
+      --support-commit "$support_commit" \
+      --release-name "$manifest_release" \
+      --kernel-build-manifest "$build_manifest" \
+      --kernel-release-manifest "$release_manifest" \
+      --touchscreen-module-manifest "$touchscreen_manifest" \
+      --kernel-source "$kernel_archive" \
+      --touchscreen-source "$touch_archive" \
+      --expected-payload-out "$expected_payload" >/dev/null; then
+    error "schema-v2 release manifests and source assets failed complete cross-binding validation."
+    return
+  fi
+  if ! python3 "$archive_validator" kernel \
+      --archive "$kernel_archive" --expected-tree "$patched_tree" >/dev/null ||
+     ! python3 "$archive_validator" touchscreen \
+      --archive "$touch_archive" \
+      --expected-modules-tree "$touch_tree" \
+      --expected-license-blob "$touch_license" \
+      --license-mode "$touch_license_mode" \
+      --expected-archive-comment "$touch_commit" >/dev/null; then
+    error "schema-v2 corresponding-source archives do not match their Git object identities."
+    return
+  fi
+
+  : > "$actual_payload"
+  for asset in "${deb_files[@]}" \
+    "$RELEASE_DIR/gpi.ko" \
+    "$RELEASE_DIR/spi-geni-qcom.ko" \
+    "$RELEASE_DIR/mshw0485_touch.ko" \
+    "$touchscreen_manifest"; do
+    if [ ! -f "$asset" ] || [ -L "$asset" ]; then
+      error "schema-v2 payload binding input is missing: $(basename "$asset")"
+      return
+    fi
+    asset_name="$(basename "$asset")"
+    asset_sha="$(sha256_file "$asset" 2>/dev/null || true)"
+    if [[ ! "$asset_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      error "could not hash schema-v2 payload binding input: $asset_name"
+      return
+    fi
+    printf '%s  %s\n' "${asset_sha,,}" "$asset_name" >> "$actual_payload"
+  done
+  if ! "$identity_validator" --expected "$expected_payload" --actual "$actual_payload" \
+      >/dev/null; then
+    error "schema-v2 release binary payload differs from its bound manifests."
+    return
+  fi
+  checked
+}
+
+validate_schema_v2_kernel_bindings() {
+  local repo_dir validator archive_validator identity_validator build_manifest
+  local kernel_archive_name kernel_archive patched_tree binding_dir
+  local expected_payload actual_payload asset asset_name asset_sha
+
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  validator="$repo_dir/scripts/validate-sp11-image-release-manifests.py"
+  archive_validator="$repo_dir/scripts/validate-sp11-source-archive.py"
+  identity_validator="$repo_dir/scripts/validate-sp11-payload-identity-list.sh"
+  build_manifest="$RELEASE_DIR/sp11-kernel-build-manifest.txt"
+  for helper in "$validator" "$archive_validator" "$identity_validator"; do
+    if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+      error "schema-v2 release validator is missing: $(basename "$helper")"
+      return
+    fi
+  done
+  if ! have_tool python3; then
+    error "python3 is required for complete schema-v2 release validation."
+    return
+  fi
+
+  kernel_archive_name="$(single_manifest_value \
+    "$release_manifest" "Kernel source archive" 2>/dev/null || true)"
+  case "$kernel_archive_name" in
+    ""|.|..|*/*|*[!A-Za-z0-9._+-]*|*.tar.xz.*)
+      error "schema-v2 release manifest has a missing or unsafe kernel source archive name."
+      return
+      ;;
+    *.tar.xz) ;;
+    *)
+      error "schema-v2 release manifest kernel source archive must be a .tar.xz file."
+      return
+      ;;
+  esac
+  kernel_archive="$RELEASE_DIR/$kernel_archive_name"
+  if [ ! -f "$kernel_archive" ] || [ -L "$kernel_archive" ]; then
+    error "schema-v2 release is missing its regular kernel source archive."
+    return
+  fi
+  patched_tree="$(single_manifest_value \
+    "$release_manifest" "Kernel source tree ID" 2>/dev/null || true)"
+  if ! [[ "$patched_tree" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]]; then
+    error "schema-v2 release has an invalid kernel source tree identity."
+    return
+  fi
+
+  binding_dir="$(mktemp -d 2>/dev/null || true)"
+  if [ -z "$binding_dir" ] || [ ! -d "$binding_dir" ]; then
+    error "could not create a temporary schema-v2 binding directory."
+    return
+  fi
+  TEMP_DIRS+=("$binding_dir")
+  expected_payload="$binding_dir/expected-payload"
+  actual_payload="$binding_dir/actual-payload"
+  if ! python3 "$validator" \
+      --kernel-release-only \
+      --repo-dir "$repo_dir" \
+      --support-commit "$support_commit" \
+      --kernel-build-manifest "$build_manifest" \
+      --kernel-release-manifest "$release_manifest" \
+      --kernel-source "$kernel_archive" \
+      --expected-payload-out "$expected_payload" >/dev/null; then
+    error "schema-v2 kernel release manifest and source failed complete cross-binding validation."
+    return
+  fi
+  if ! python3 "$archive_validator" kernel \
+      --archive "$kernel_archive" --expected-tree "$patched_tree" >/dev/null; then
+    error "schema-v2 kernel source archive does not match its Git tree identity."
+    return
+  fi
+
+  : > "$actual_payload"
+  for asset in "${deb_files[@]}"; do
+    if [ ! -f "$asset" ] || [ -L "$asset" ]; then
+      error "schema-v2 kernel payload binding input is missing: $(basename "$asset")"
+      return
+    fi
+    asset_name="$(basename "$asset")"
+    asset_sha="$(sha256_file "$asset" 2>/dev/null || true)"
+    if [[ ! "$asset_sha" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      error "could not hash schema-v2 kernel payload binding input: $asset_name"
+      return
+    fi
+    printf '%s  %s\n' "${asset_sha,,}" "$asset_name" >> "$actual_payload"
+  done
+  if ! "$identity_validator" --kernel-only \
+      --expected "$expected_payload" --actual "$actual_payload" >/dev/null; then
+    error "schema-v2 kernel release binary payload differs from its bound manifests."
+    return
+  fi
+  checked
+}
+
+validate_schema_v2_asset_inventory() {
+  local package_total package_index asset_name label value
+  local values=()
+  local -A allowed_assets=()
+
+  for asset_name in \
+    SHA256SUMS \
+    RELEASE-NOTES.md \
+    sp11-kernel-build-manifest.txt \
+    sp11-kernel-release-manifest.txt \
+    sp11-kernel-debs.txt; do
+    allowed_assets["$asset_name"]=1
+  done
+
+  package_total="$(single_manifest_value "$release_manifest" "Package count" 2>/dev/null || true)"
+  if [[ ! "$package_total" =~ ^[1-9][0-9]*$ ]]; then
+    error "schema-v2 release manifest has an invalid Package count for exact asset validation."
+  else
+    package_index=1
+    while [ "$package_index" -le "$package_total" ]; do
+      asset_name="$(single_manifest_value \
+        "$release_manifest" "Package $package_index file" 2>/dev/null || true)"
+      case "$asset_name" in
+        ""|.|..|*/*|*[!A-Za-z0-9._+-]*)
+          error "schema-v2 release manifest has an unsafe package asset name at index $package_index."
+          ;;
+        *.deb) allowed_assets["$asset_name"]=1 ;;
+        *) error "schema-v2 release manifest package asset is not a .deb at index $package_index." ;;
+      esac
+      package_index=$((package_index + 1))
+    done
+  fi
+
+  for label in "Kernel source archive" "Touchscreen source archive"; do
+    values=()
+    while IFS= read -r value; do values+=("$value"); done \
+      < <(manifest_values "$release_manifest" "$label")
+    if [ "${#values[@]}" -gt 1 ]; then
+      error "schema-v2 release manifest contains multiple '$label' fields."
+      continue
+    fi
+    [ "${#values[@]}" -eq 1 ] || continue
+    asset_name="${values[0]}"
+    case "$asset_name" in
+      ""|.|..|*/*|*[!A-Za-z0-9._+-]*)
+        error "schema-v2 release manifest has an unsafe source archive name in '$label'."
+        ;;
+      *.tar.xz) allowed_assets["$asset_name"]=1 ;;
+      *) error "schema-v2 release manifest source archive is not a .tar.xz in '$label'." ;;
+    esac
+  done
+
+  if [ "$touchscreen_release" = "true" ]; then
+    for asset_name in \
+      gpi.ko \
+      spi-geni-qcom.ko \
+      mshw0485_touch.ko \
+      sp11-touchscreen-modules-manifest.txt; do
+      allowed_assets["$asset_name"]=1
+    done
+  fi
+
+  for asset_name in "${!DIRECTORY_FILES[@]}"; do
+    if [ -z "${allowed_assets[$asset_name]+x}" ]; then
+      error "schema-v2 release contains an unexpected asset: $asset_name"
+    fi
+  done
+  for asset_name in "${!allowed_assets[@]}"; do
+    [ "$asset_name" = "RELEASE-NOTES.md" ] && continue
+    if [ -z "${DIRECTORY_FILES[$asset_name]+x}" ]; then
+      error "schema-v2 release is missing its expected asset: $asset_name"
+    fi
+  done
+  checked
 }
 
 while [ "$#" -gt 0 ]; do
@@ -228,7 +534,7 @@ done < <(find "$RELEASE_DIR" -mindepth 1 -maxdepth 1 -print0)
 declare -A ROLE_FILES=()
 declare -A ROLE_ABIS=()
 declare -A ROLE_VERSIONS=()
-declare -A ROLE_COUNTS=([image]=0 [modules]=0 [headers]=0 [common_headers]=0)
+declare -A ROLE_COUNTS=([image]=0 [modules]=0 [modules_extra]=0 [headers]=0 [common_headers]=0)
 deb_files=()
 
 record_package() {
@@ -270,12 +576,22 @@ while IFS= read -r -d '' deb; do
       package_part="${stem%_$version}"
       abi="${package_part#linux-headers-}"
       ;;
-    linux-image-*_arm64.deb)
+    linux-image-unsigned-*_arm64.deb|linux-image-*_arm64.deb)
       role="image"
       stem="${base%_arm64.deb}"
       version="${stem##*_}"
       package_part="${stem%_$version}"
-      abi="${package_part#linux-image-}"
+      case "$package_part" in
+        linux-image-unsigned-*) abi="${package_part#linux-image-unsigned-}" ;;
+        *) abi="${package_part#linux-image-}" ;;
+      esac
+      ;;
+    linux-modules-extra-*_arm64.deb)
+      role="modules_extra"
+      stem="${base%_arm64.deb}"
+      version="${stem##*_}"
+      package_part="${stem%_$version}"
+      abi="${package_part#linux-modules-extra-}"
       ;;
     linux-modules-*_arm64.deb)
       role="modules"
@@ -305,6 +621,9 @@ done
 if [ "${ROLE_COUNTS[common_headers]}" -gt 1 ]; then
   error "expected at most one common qcom-x1e headers package, found ${ROLE_COUNTS[common_headers]}."
 fi
+if [ "${ROLE_COUNTS[modules_extra]}" -gt 1 ]; then
+  error "expected at most one optional modules-extra package, found ${ROLE_COUNTS[modules_extra]}."
+fi
 
 kernel_abi="${ROLE_ABIS[image]:-}"
 package_version="${ROLE_VERSIONS[image]:-}"
@@ -314,7 +633,7 @@ if [ -n "$kernel_abi" ]; then
     *) error "kernel ABI is not a qcom-x1e ABI: $kernel_abi" ;;
   esac
 fi
-for role in modules headers common_headers; do
+for role in modules modules_extra headers common_headers; do
   [ "${ROLE_COUNTS[$role]}" -eq 1 ] || continue
   if [ -n "$kernel_abi" ] && [ "${ROLE_ABIS[$role]}" != "$kernel_abi" ]; then
     error "$role package ABI ${ROLE_ABIS[$role]} does not match $kernel_abi."
@@ -328,12 +647,22 @@ if [ "${#deb_files[@]}" -gt 0 ]; then
   if ! have_tool dpkg-deb; then
     error "missing required tool for Debian package validation: dpkg-deb"
   else
-    for role in image modules headers common_headers; do
+    for role in image modules modules_extra headers common_headers; do
       [ "${ROLE_COUNTS[$role]}" -eq 1 ] || continue
       deb="${ROLE_FILES[$role]}"
       case "$role" in
-        image) expected_package="linux-image-${ROLE_ABIS[$role]}"; expected_arch="arm64" ;;
+        image)
+          actual_package="$(dpkg-deb -f "$deb" Package 2>/dev/null || true)"
+          case "$actual_package" in
+            linux-image-${ROLE_ABIS[$role]}|linux-image-unsigned-${ROLE_ABIS[$role]})
+              expected_package="$actual_package"
+              ;;
+            *) expected_package="linux-image-${ROLE_ABIS[$role]}" ;;
+          esac
+          expected_arch="arm64"
+          ;;
         modules) expected_package="linux-modules-${ROLE_ABIS[$role]}"; expected_arch="arm64" ;;
+        modules_extra) expected_package="linux-modules-extra-${ROLE_ABIS[$role]}"; expected_arch="arm64" ;;
         headers) expected_package="linux-headers-${ROLE_ABIS[$role]}"; expected_arch="arm64" ;;
         common_headers)
           expected_package="linux-qcom-x1e-headers-${ROLE_ABIS[$role]%-qcom-x1e}"
@@ -370,6 +699,7 @@ fi
 release_manifest="$RELEASE_DIR/sp11-kernel-release-manifest.txt"
 support_commit=""
 manifest_release=""
+schema_v2="false"
 if [ ! -f "$release_manifest" ] || [ -L "$release_manifest" ]; then
   error "missing regular, non-symlinked sp11-kernel-release-manifest.txt."
 else
@@ -380,6 +710,18 @@ else
   if ! manifest_release="$(single_manifest_value "$release_manifest" "Release")"; then
     error "sp11-kernel-release-manifest.txt must contain exactly one nonempty 'Release:' field."
     manifest_release=""
+  fi
+  schema_values=()
+  while IFS= read -r value; do schema_values+=("$value"); done \
+    < <(manifest_values "$release_manifest" "Build provenance schema")
+  if [ "${#schema_values[@]}" -eq 0 ]; then
+    schema_v2="false"
+  elif [ "${#schema_values[@]}" -eq 1 ] &&
+       [ "${schema_values[0]}" = "sp11-kernel-build-v2" ]; then
+    schema_v2="true"
+  else
+    schema_v2="invalid"
+    error "release manifest has an unsupported or ambiguous Build provenance schema declaration."
   fi
   if [[ ! "$support_commit" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]]; then
     error "release manifest Support repo commit must be an immutable 40- or 64-hex commit."
@@ -433,19 +775,66 @@ else
 
     [[ "$manifest_jobs" =~ ^[1-9][0-9]*$ ]] || \
       error "release manifest Jobs must be a positive integer."
-    grep -Eq '^- patches/.+\.patch$' "$release_manifest" || \
-      error "publishable release manifest does not record repository-relative patch assets."
+    if [ "$schema_v2" = "true" ]; then
+      build_manifest="$RELEASE_DIR/sp11-kernel-build-manifest.txt"
+      build_validator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/validate-sp11-image-release-manifests.py"
+      if [ ! -f "$build_manifest" ] || [ -L "$build_manifest" ]; then
+        error "schema-v2 release is missing its exact kernel build manifest."
+      elif ! have_tool python3; then
+        error "python3 is required for strict schema-v2 build-manifest validation."
+      elif [ ! -f "$build_validator" ] || [ -L "$build_validator" ]; then
+        error "strict schema-v2 build-manifest validator is missing."
+      elif ! python3 "$build_validator" \
+          --build-only \
+          --repo-dir "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" \
+          --support-commit "$support_commit" \
+          --kernel-build-manifest "$build_manifest" >/dev/null; then
+        error "attached schema-v2 kernel build manifest failed strict validation."
+      else
+        checked
+      fi
+    elif [ "$schema_v2" = "false" ]; then
+      grep -Eq '^- patches/.+\.patch$' "$release_manifest" || \
+        error "publishable legacy release manifest does not record repository-relative patch assets."
+    fi
     checked
   fi
 
+  package_count="$(single_manifest_value "$release_manifest" "Package count" 2>/dev/null || true)"
   for deb in "${deb_files[@]}"; do
     base="$(basename "$deb")"
     sha="$(sha256_file "$deb" 2>/dev/null || true)"
-    grep -Fq -- "- $base" "$release_manifest" || \
-      error "release manifest does not list package $base."
-    [ -z "$sha" ] || grep -Fiq -- "SHA256: $sha" "$release_manifest" || \
-      error "release manifest does not record the actual SHA-256 for $base."
+    if [ "$schema_v2" = "true" ]; then
+      package_indexes=()
+      while IFS= read -r package_index; do
+        package_indexes+=("$package_index")
+      done < <(awk -v target="$base" '
+        $0 ~ /^Package [1-9][0-9]* file: / {
+          label = $0
+          sub(/^Package /, "", label)
+          sub(/ file: .*/, "", label)
+          value = $0
+          sub(/^Package [1-9][0-9]* file: /, "", value)
+          if (value == target) print label
+        }
+      ' "$release_manifest")
+      if [ "${#package_indexes[@]}" -ne 1 ]; then
+        error "schema-v2 release manifest does not list package $base exactly once."
+      elif [ -n "$sha" ] &&
+           [ "$(single_manifest_value "$release_manifest" "Package ${package_indexes[0]} SHA256" 2>/dev/null || true)" != "$sha" ]; then
+        error "schema-v2 release manifest does not record the actual SHA-256 for $base."
+      fi
+    elif [ "$schema_v2" = "false" ]; then
+      grep -Fq -- "- $base" "$release_manifest" || \
+        error "release manifest does not list package $base."
+      [ -z "$sha" ] || grep -Fiq -- "SHA256: $sha" "$release_manifest" || \
+        error "release manifest does not record the actual SHA-256 for $base."
+    fi
   done
+  if [ "$schema_v2" = "true" ] &&
+     { [[ ! "$package_count" =~ ^[1-9][0-9]*$ ]] || [ "$package_count" -ne "${#deb_files[@]}" ]; }; then
+    error "schema-v2 release manifest package count does not match its assets."
+  fi
 fi
 
 debs_manifest="$RELEASE_DIR/sp11-kernel-debs.txt"
@@ -494,7 +883,8 @@ if [ -n "$TAG" ]; then
     fi
 
     local_target=""
-    if local_target="$(git -C "$repo_dir" rev-parse --verify "refs/tags/$TAG^{commit}" 2>/dev/null)"; then
+    if local_target="$(git -c "safe.directory=$repo_dir" -C "$repo_dir" \
+        rev-parse --verify "refs/tags/$TAG^{commit}" 2>/dev/null)"; then
       local_target="${local_target,,}"
       if [ -n "$support_commit" ] && [ "$support_commit" != "$local_target" ]; then
         error "release manifest support commit $support_commit does not match local tag $TAG target $local_target."
@@ -507,7 +897,8 @@ if [ -n "$TAG" ]; then
 
     if [ -n "$REMOTE" ]; then
       remote_output=""
-      if ! remote_output="$(git -C "$repo_dir" ls-remote --exit-code --tags "$REMOTE" \
+      if ! remote_output="$(git -c "safe.directory=$repo_dir" -C "$repo_dir" \
+        ls-remote --exit-code --tags "$REMOTE" \
         "refs/tags/$TAG" "refs/tags/$TAG^{}" 2>/dev/null)"; then
         error "could not resolve remote tag $TAG from $REMOTE."
       else
@@ -598,6 +989,11 @@ if [ "$touchscreen_release" = "true" ]; then
     fi
   fi
 
+  if [ "$schema_v2" = "true" ] && [ -f "${touchscreen_manifest:-}" ] &&
+     [ ! -L "$touchscreen_manifest" ]; then
+    validate_schema_v2_touchscreen_bindings
+  fi
+
   if ! have_tool modinfo; then
     error "missing required tool for touchscreen module validation: modinfo"
   else
@@ -629,12 +1025,23 @@ if [ "$touchscreen_release" = "true" ]; then
 
       if [ -f "${touchscreen_manifest:-}" ]; then
         module_sha="$(sha256_file "$module_path" 2>/dev/null || true)"
-        grep -Fq -- "- $module_file" "$touchscreen_manifest" || \
-          error "touchscreen provenance does not list $module_file."
-        [ -z "$module_sha" ] || grep -Fiq -- "SHA256: $module_sha" "$touchscreen_manifest" || \
-          error "touchscreen provenance does not record the actual SHA-256 for $module_file."
-        grep -Fq -- "$module_srcversion" "$touchscreen_manifest" || \
-          error "touchscreen provenance does not record the srcversion for $module_file."
+        if single_manifest_value "$touchscreen_manifest" "Module $module_file SHA256" >/dev/null 2>&1; then
+          [ "$(single_manifest_value "$touchscreen_manifest" "Module $module_file name" 2>/dev/null || true)" = \
+            "${EXPECTED_MODULE_NAMES[$module_file]}" ] ||
+            error "flat touchscreen provenance records the wrong name for $module_file."
+          [ -z "$module_sha" ] ||
+            [ "$(single_manifest_value "$touchscreen_manifest" "Module $module_file SHA256" 2>/dev/null || true)" = "$module_sha" ] ||
+            error "flat touchscreen provenance does not record the actual SHA-256 for $module_file."
+          [ "$(single_manifest_value "$touchscreen_manifest" "Module $module_file srcversion" 2>/dev/null || true)" = "$module_srcversion" ] ||
+            error "flat touchscreen provenance does not record the srcversion for $module_file."
+        else
+          grep -Fq -- "- $module_file" "$touchscreen_manifest" || \
+            error "touchscreen provenance does not list $module_file."
+          [ -z "$module_sha" ] || grep -Fiq -- "SHA256: $module_sha" "$touchscreen_manifest" || \
+            error "touchscreen provenance does not record the actual SHA-256 for $module_file."
+          grep -Fq -- "$module_srcversion" "$touchscreen_manifest" || \
+            error "touchscreen provenance does not record the srcversion for $module_file."
+        fi
       fi
     done
 
@@ -726,6 +1133,13 @@ else
   if [ -e "$RELEASE_DIR/sp11-touchscreen-modules-manifest.txt" ]; then
     error "non-sp11v3 release contains an unexpected touchscreen provenance manifest."
   fi
+fi
+
+if [ "$schema_v2" = "true" ] && [ "$touchscreen_release" != "true" ]; then
+  validate_schema_v2_kernel_bindings
+fi
+if [ "$schema_v2" = "true" ]; then
+  validate_schema_v2_asset_inventory
 fi
 
 echo "Validated directory: $RELEASE_DIR"

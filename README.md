@@ -80,6 +80,15 @@ provenance or target-device validation. Experimental kernels are built from an
 expected full source commit and are queued for one boot only after the running
 v3 kernel has also been made the explicit, verified persistent fallback.
 
+On the tested installed qcom-x1e Stubble path, each kernel uses the Denali DTB
+embedded in its exact Stubble-wrapped EFI image. The support installer does
+not select, copy, or inject a shared loose DTB. If
+`/boot/sp11-denali.dtb` exists from an earlier release, it is left untouched
+as inert recovery evidence; its presence or contents do not establish
+live-FDT provenance. Live-USB `/dtb/sp11-denali.dtb` handling is a separate
+boot path. See
+[ADR0055](docs/adr/adr-0055-retire-installed-loose-dtb-injection.md).
+
 ## Quick Start
 
 The custom live-USB builder creates a small ARM64 GRUB boot shim, stores the
@@ -199,6 +208,7 @@ for the full on-device build path and fallback-kernel safety model.
 ```bash
 ./scripts/build-sp11-live-usb-image.sh \
   --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
+  --payload payload/kernel-debs \
   --grub-mode direct \
   --work-dir build/work-direct-boot \
   --out build/sp11-ubuntu-live-direct.img \
@@ -208,6 +218,16 @@ for the full on-device build path and fallback-kernel safety model.
 If auto DTB extraction fails, provide one explicitly via `--dtb`. An explicit
 DTB can come from a kernel package with SP11 support or from a local build of
 `dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus DTB.
+For a publishable image, `--dtb` must be the exact `denali-oled-dtb` output from
+the supplied schema-v2 kernel build manifest; auto extraction is local-only.
+For a publishable build, also pass `--expected-iso-sha256` using a checksum
+verified independently before the build starts.
+The builder writes `build/sp11-live-image-build-manifest.txt`; the release gate
+accepts it only when the ISO is pinned, the embedded DTB matches the
+schema-v2 `denali-oled-dtb` output, the raw image has the exact two-partition
+GPT and FAT32 ESP allowlist, `BOOTAA64.EFI` and `README.txt` match their recorded
+identities, and the image carries the exact committed support tree and kernel
+payload inventory.
 
 To build a live USB with KDE Plasma available by default, add `--desktop kde`.
 See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
@@ -291,7 +311,8 @@ sudo reboot
 The current v3 bundle contains matching image, modules, flavour-header, and
 common-header packages for `7.2-rc5-jg-0sp11v3`, plus the three touchscreen
 modules. The older `7.1.3-jg-1sp11v2` package set remains a kernel-only rollback
-option. After reboot, verify the running kernel and authoritative DMIC clock:
+option. After reboot, verify the running kernel and the active device tree's
+requested DMIC rate:
 
 ```bash
 uname -r
@@ -301,6 +322,8 @@ od -An -tu4 -N4 --endian=big \
 
 Expected values are `7.2-rc5-jg-0sp11v3-qcom-x1e` (or
 `7.1.3-jg-1sp11v2-qcom-x1e` after selecting the rollback kernel) and `2400000`.
+The device-tree property is not a physical clock measurement at the microphone
+pins.
 
 ## Post-Install Bring-Up
 
@@ -435,7 +458,8 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 - [Bring Up Audio](docs/how-to/how-to-bring-up-audio.md)
 - [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
-- [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
+- [Prepare a legacy audio local draft](scripts/prepare-sp11-audio-release-assets.sh)
+  (requires `--local-draft`; the output is nonpublishable)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 - [Touchscreen Clean-Install and Release Retrospective](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [Troubleshoot Docker Overlay Mount Failures on Linux Build Hosts](docs/how-to/how-to-troubleshoot-linux-docker-overlay.md)
@@ -497,6 +521,10 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Build](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
 - [ADR0050: Touchscreen Clean-Install and Release Flow](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [ADR0051: Remove Broken or Incorrect Releases and Tags](docs/adr/adr-0051-release-and-tag-cleanup.md)
+- [ADR0052: Thin Surface Pro 11 Kernel Integration Fork](docs/adr/adr-0052-thin-sp11-kernel-integration-fork.md)
+- [ADR0053: One-Shot Experimental Kernel Boot](docs/adr/adr-0053-one-shot-experimental-kernel-boot.md)
+- [ADR0054: Surface Pro 11 G6 HID Ownership](docs/adr/adr-0054-sp11-g6-hid-ownership.md)
+- [ADR0055: Retire Installed Loose-DTB Injection on the Tested Stubble Path](docs/adr/adr-0055-retire-installed-loose-dtb-injection.md)
 
 ## Windows Firmware
 

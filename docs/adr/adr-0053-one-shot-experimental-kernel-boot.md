@@ -11,6 +11,14 @@ description: Architecture Decision Record (ADR) for queuing Surface Pro 11 exper
 
 Accepted (2026-08-07).
 
+Target preflight observation (2026-08-07): the running kernel and effective
+static `GRUB_DEFAULT` name the known-good v3 ABI, `/boot` is ext4, but
+`grubenv`'s stale `saved_entry` names v2. An unprivileged dry run also cannot
+complete `grub-probe`. No GRUB state was changed. The first apply remains
+blocked until an operator changes the effective default to `saved`, regenerates
+the configuration, records v3 with `grub-set-default`, and reruns the complete
+privileged dry run.
+
 ## Context
 
 [ADR-0052](adr-0052-thin-sp11-kernel-integration-fork.md) introduces parallel
@@ -36,10 +44,15 @@ filesystem; btrfs and ZFS are explicit exclusions. Environment identity,
 filesystem support, and generated-config semantics are therefore all part of
 the safety gate.
 
-A loose DTB selected by GRUB is not authoritative on the tested hardware.
+On the tested installed qcom-x1e Stubble path, a loose DTB selected by GRUB is
+not authoritative.
 [ADR-0042](adr-0042-sp11-touchscreen-troubleshooting.md) established that the
 kernel receives the DTB embedded in its Stubble-wrapped EFI image. A safe boot
 selector cannot compensate for an incorrectly packaged device tree.
+[ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md) retires the
+installed loose-DTB helper and hooks. An old loose file is not a selector,
+live-FDT provenance source, or recovery guarantee; the one-shot gate requires
+confirmation of the exact experimental Stubble image's embedded DTB.
 
 ## Decision
 

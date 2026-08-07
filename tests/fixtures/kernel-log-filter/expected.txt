@@ -1,0 +1,3 @@
+mshw0485_touch: controller initialized profile=phase75
+mshw0485_touch: IRQ fault x=<redacted-input-value> y=<redacted-input-value> pressure=<redacted-input-value>
+camss: peer=<redacted-ipv4> source=/home/<redacted-user>/private.log

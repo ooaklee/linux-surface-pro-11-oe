@@ -47,17 +47,25 @@ fork as a consequence of the dedicated-repository boundary. ADR001's target
 device, Ubuntu focus, and ownership of packaging, documentation, and release
 workflows remain in force.
 
-The fork begins with two branches at Johan G.'s immutable commit
+The fork began with two branches at Johan G.'s immutable commit
 `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`:
 
 - `sp11/base-jg-7.2-rc5-jg-0` is the protected, immutable baseline; and
-- `sp11/integration-7.2-rc5` is the initial combined development branch.
+- `sp11/integration-7.2-rc5` is the advancing combined development branch.
 
 Repository ruleset `20540758` protects branches matching
 `refs/heads/sp11/base-*` from deletion and non-fast-forward updates. CI checks
 the public branch identities without requesting repository-administration
 access. The ruleset itself remains an external repository-setting control and
 is reviewed in GitHub when the baseline changes.
+
+The CI foundation was reviewed in thin-fork pull request 1 and squash-merged
+as `971b5af85ed0c7283ffb33430badeac9b5575057`. Repository ruleset `20545185`
+protects `refs/heads/sp11/integration-7.2-rc5` from deletion and
+non-fast-forward updates and requires the strict `Validate integration delta`
+check. That check verifies ancestry from the immutable base, rejects private or
+generated artifacts, runs `git diff --check`, and applies strict kernel
+`checkpatch.pl` review to the integration delta.
 
 The baseline configuration records separate expected commits for the protected
 base and the advancing integration branch. The base identity never changes.
