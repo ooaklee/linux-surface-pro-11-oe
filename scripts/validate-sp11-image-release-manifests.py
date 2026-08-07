@@ -53,6 +53,14 @@ MODULE_NAMES = {
     "spi-geni-qcom.ko": "spi_geni_qcom",
     "mshw0485_touch.ko": "mshw0485_touch",
 }
+BUILD_INPUT_ROLES = (
+    "docker-build-arguments",
+    "docker-entrypoint",
+    "oci-index",
+    "kernel-build-manifest-v2",
+    "apt-provenance-v1",
+)
+ATTACHED_BASELINE = "config/kernel-baselines/7.2-rc5-jg-0.env"
 
 
 class ValidationError(Exception):
@@ -117,6 +125,14 @@ class Manifest:
                 and line.split(": ", 1)[0] in expected,
                 f"{self.path.name} contains a non-schema line",
             )
+
+    def exact_flat_label_order(self, expected: list[str]) -> None:
+        self.exact_flat_labels(set(expected))
+        actual = [line.split(": ", 1)[0] for line in self.lines]
+        require(
+            actual == expected,
+            f"{self.path.name} field order does not match its schema",
+        )
 
 
 def require(condition: bool, message: str) -> None:
@@ -258,6 +274,133 @@ def sha256_file(path: Path) -> str:
     except OSError as exc:
         raise ValidationError(f"could not hash release input {path.name}: {exc}") from exc
     return digest.hexdigest()
+
+
+def file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError as exc:
+        raise ValidationError(f"could not size release input {path.name}: {exc}") from exc
+
+
+def validate_attached_build_inputs(
+    repo: Path,
+    support_commit: str,
+    build_manifest: Path,
+    apt_provenance: Path,
+    build_inputs: Path,
+) -> dict[str, str]:
+    helper = repo / "scripts/sp11-kernel-build-inputs.py"
+    baseline = repo / ATTACHED_BASELINE
+    regular_input(helper, "attached build-input validator")
+    regular_input(baseline, "kernel baseline")
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(helper),
+                "validate-attached",
+                "--baseline",
+                str(baseline),
+                "--support-head",
+                support_commit,
+                "--build-manifest",
+                str(build_manifest),
+                "--apt-provenance",
+                str(apt_provenance),
+                "--output",
+                str(build_inputs),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=isolated_git_environment(),
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "")
+        raise ValidationError(
+            f"attached immutable build inputs failed flat validation: {detail.strip()}"
+        ) from exc
+    require(
+        "Validated attached immutable build-inputs envelope:" in result.stdout,
+        "attached build-input validator did not report completion",
+    )
+
+    apt = Manifest(apt_provenance)
+    envelope = Manifest(build_inputs)
+    envelope_labels = {
+        "Build inputs schema",
+        "Release build",
+        "Support HEAD",
+        "OCI index image",
+        "OCI index digest",
+        "OCI platform",
+        "OCI platform manifest",
+        "Input count",
+        "Publication schema propagation",
+        "Build inputs complete",
+    }
+    for index in range(1, len(BUILD_INPUT_ROLES) + 1):
+        envelope_labels.update(
+            {
+                f"Input {index} role",
+                f"Input {index} path",
+                f"Input {index} size",
+                f"Input {index} SHA256",
+            }
+        )
+    envelope.exact_flat_labels(envelope_labels)
+    require(
+        envelope.one("Build inputs schema") == "sp11-kernel-build-inputs-v1"
+        and envelope.one("Release build") == "true"
+        and envelope.one("Support HEAD") == support_commit
+        and envelope.one("Input count") == str(len(BUILD_INPUT_ROLES))
+        and envelope.one("Publication schema propagation") == "incomplete"
+        and envelope.one("Build inputs complete") == "true",
+        "attached build-inputs envelope state is incomplete or inconsistent",
+    )
+    for index, role in enumerate(BUILD_INPUT_ROLES, 1):
+        require(
+            envelope.one(f"Input {index} role") == role,
+            f"attached build-inputs role differs at input {index}",
+        )
+    for index, expected_path in (
+        (4, build_manifest),
+        (5, apt_provenance),
+    ):
+        require(
+            envelope.one(f"Input {index} path") == f"artifacts/{expected_path.name}"
+            and envelope.one(f"Input {index} size") == str(file_size(expected_path))
+            and envelope.one(f"Input {index} SHA256") == sha256_file(expected_path),
+            f"attached build-inputs identity differs at input {index}",
+        )
+
+    apt_schema = apt.one("APT provenance schema")
+    snapshot_id = apt.one("Snapshot ID")
+    snapshot_uri = apt.one("Snapshot URI")
+    require(
+        apt_schema == "sp11-kernel-apt-provenance-v1"
+        and apt.one("APT provenance complete") == "true",
+        "attached APT provenance is incomplete or has the wrong schema",
+    )
+    return {
+        "apt_schema": apt_schema,
+        "snapshot_id": snapshot_id,
+        "snapshot_uri": snapshot_uri,
+        "build_inputs_schema": envelope.one("Build inputs schema"),
+        "creation_propagation": envelope.one("Publication schema propagation"),
+        "oci_image": envelope.one("OCI index image"),
+        "oci_digest": envelope.one("OCI index digest"),
+        "oci_platform": envelope.one("OCI platform"),
+        "oci_platform_manifest": envelope.one("OCI platform manifest"),
+        "build_manifest_size": str(file_size(build_manifest)),
+        "build_manifest_sha": sha256_file(build_manifest),
+        "apt_size": str(file_size(apt_provenance)),
+        "apt_sha": sha256_file(apt_provenance),
+        "build_inputs_size": str(file_size(build_inputs)),
+        "build_inputs_sha": sha256_file(build_inputs),
+    }
 
 
 def validate_git_ref(repo: Path, source_ref: str) -> None:
@@ -562,6 +705,10 @@ def validate_build(manifest: Manifest, repo: Path, support_commit: str) -> dict[
 def validate_release(
     manifest: Manifest,
     build: dict[str, object],
+    attached: dict[str, str],
+    build_manifest: Path,
+    apt_provenance: Path,
+    build_inputs: Path,
     kernel_source: Path,
     touchscreen_source: Path | None,
 ) -> dict[str, str]:
@@ -572,6 +719,7 @@ def validate_release(
     scalar_labels = {
         "Generated",
         "Release",
+        "Kernel release schema",
         "Build provenance schema",
         "Release build",
         "Build completed",
@@ -602,6 +750,26 @@ def validate_release(
         "Kernel source archive",
         "Kernel source archive SHA256",
         "Kernel source tree ID",
+        "Kernel build manifest asset",
+        "Kernel build manifest size",
+        "Kernel build manifest SHA256",
+        "APT provenance asset",
+        "APT provenance schema",
+        "APT provenance size",
+        "APT provenance SHA256",
+        "APT snapshot ID",
+        "APT snapshot URI",
+        "Build inputs asset",
+        "Build inputs schema",
+        "Build inputs size",
+        "Build inputs SHA256",
+        "Build envelope creation propagation",
+        "Kernel release propagation",
+        "OCI index image",
+        "OCI index digest",
+        "OCI platform",
+        "OCI platform manifest",
+        "Publication state",
     }
     dynamic_labels = {
         label
@@ -626,7 +794,86 @@ def validate_release(
             }
         )
         dynamic_labels.update(f"Touchscreen module {name} SHA256" for name in MODULE_NAMES)
-    manifest.exact_flat_labels(scalar_labels | dynamic_labels)
+    ordered_labels = [
+        "Generated",
+        "Release",
+        "Kernel release schema",
+        "Build provenance schema",
+        "Release build",
+        "Build completed",
+        "Kernel build manifest asset",
+        "Kernel build manifest size",
+        "Kernel build manifest SHA256",
+        "APT provenance asset",
+        "APT provenance schema",
+        "APT provenance size",
+        "APT provenance SHA256",
+        "APT snapshot ID",
+        "APT snapshot URI",
+        "Build inputs asset",
+        "Build inputs schema",
+        "Build inputs size",
+        "Build inputs SHA256",
+        "Build envelope creation propagation",
+        "Kernel release propagation",
+        "OCI index image",
+        "OCI index digest",
+        "OCI platform",
+        "OCI platform manifest",
+        "Publication state",
+        "Support repo commit",
+        "Support repo dirty",
+        "Source mode",
+        "Source URL",
+        "Source branch",
+        "Source HEAD",
+        "Docker image",
+        "Container digest",
+        "Container platform",
+        "Build target",
+        "Jobs",
+        "Rules runner",
+        "Patched diff format",
+        "Patched diff Git version",
+        "Patched diff SHA256",
+        "Patched tree ID",
+        "Required output roles",
+        "Optional output roles",
+        "Required package roles",
+        "Optional package roles",
+        "Signing certificate SHA256",
+        "Signing certificate fingerprint",
+        "Signing certificate serial",
+        "Package count",
+    ]
+    for index in range(1, len(debs) + 1):
+        ordered_labels.extend((f"Package {index} file", f"Package {index} SHA256"))
+    ordered_labels.extend(
+        ("Kernel source archive", "Kernel source archive SHA256", "Kernel source tree ID")
+    )
+    if touchscreen_source is not None:
+        ordered_labels.extend(
+            (
+                "Touchscreen source archive",
+                "Touchscreen source archive SHA256",
+                "Touchscreen source commit",
+                "Touchscreen source modules tree ID",
+                "Touchscreen source license blob ID",
+                "Touchscreen kernel config SHA256",
+                "Touchscreen kernel Module.symvers SHA256",
+                "Touchscreen kernel headers input mode",
+                "Touchscreen kernel common headers Deb",
+                "Touchscreen kernel common headers Deb SHA256",
+                "Touchscreen kernel architecture headers Deb",
+                "Touchscreen kernel architecture headers Deb SHA256",
+            )
+        )
+        ordered_labels.extend(f"Touchscreen module {name} SHA256" for name in MODULE_NAMES)
+    require(
+        set(ordered_labels) == scalar_labels | dynamic_labels,
+        "internal kernel release schema order is incomplete",
+    )
+    manifest.exact_flat_label_order(ordered_labels)
     require(bool(ISO_UTC.fullmatch(manifest.one("Generated"))), "invalid kernel release timestamp")
     kernel_release_name = manifest.one("Release")
     require(
@@ -636,6 +883,7 @@ def validate_release(
         "kernel release manifest has an unsafe release identity",
     )
     comparisons = {
+        "Kernel release schema": "sp11-kernel-release-v1",
         "Build provenance schema": "sp11-kernel-build-v2",
         "Release build": "true",
         "Build completed": "true",
@@ -665,6 +913,26 @@ def validate_release(
         "Kernel source archive": kernel_source.name,
         "Kernel source archive SHA256": sha256_file(kernel_source),
         "Kernel source tree ID": str(build["tree"]),
+        "Kernel build manifest asset": build_manifest.name,
+        "Kernel build manifest size": attached["build_manifest_size"],
+        "Kernel build manifest SHA256": attached["build_manifest_sha"],
+        "APT provenance asset": apt_provenance.name,
+        "APT provenance schema": attached["apt_schema"],
+        "APT provenance size": attached["apt_size"],
+        "APT provenance SHA256": attached["apt_sha"],
+        "APT snapshot ID": attached["snapshot_id"],
+        "APT snapshot URI": attached["snapshot_uri"],
+        "Build inputs asset": build_inputs.name,
+        "Build inputs schema": attached["build_inputs_schema"],
+        "Build inputs size": attached["build_inputs_size"],
+        "Build inputs SHA256": attached["build_inputs_sha"],
+        "Build envelope creation propagation": attached["creation_propagation"],
+        "Kernel release propagation": "complete",
+        "OCI index image": attached["oci_image"],
+        "OCI index digest": attached["oci_digest"],
+        "OCI platform": attached["oci_platform"],
+        "OCI platform manifest": attached["oci_platform_manifest"],
+        "Publication state": "blocked",
     }
     if touchscreen_source is not None:
         comparisons.update(
@@ -888,6 +1156,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--release-name")
     parser.add_argument("--kernel-build-manifest", required=True, type=Path)
     parser.add_argument("--kernel-release-manifest", type=Path)
+    parser.add_argument("--apt-provenance", type=Path)
+    parser.add_argument("--build-inputs", type=Path)
     parser.add_argument("--touchscreen-module-manifest", type=Path)
     parser.add_argument("--kernel-source", type=Path)
     parser.add_argument("--touchscreen-source", type=Path)
@@ -919,6 +1189,30 @@ def main() -> int:
         print("Validated complete schema-v2 kernel build manifest.")
         return 0
 
+    immutable_paths = (
+        (args.apt_provenance, "APT provenance sidecar"),
+        (args.build_inputs, "build-inputs envelope"),
+    )
+    for path, label in immutable_paths:
+        require(path is not None, f"{label} is required")
+        assert path is not None
+        regular_input(path, label)
+    assert args.apt_provenance is not None
+    assert args.build_inputs is not None
+    attached = validate_attached_build_inputs(
+        args.repo_dir,
+        support_commit,
+        args.kernel_build_manifest,
+        args.apt_provenance,
+        args.build_inputs,
+    )
+    require(
+        attached["oci_image"] == str(build["container_image"])
+        and attached["oci_digest"] == str(build["container_digest"])
+        and attached["oci_platform"] == str(build["platform"]),
+        "attached build-inputs OCI identity differs from the build manifest",
+    )
+
     if args.kernel_release_only:
         required_paths = (
             (args.kernel_release_manifest, "kernel release manifest"),
@@ -935,6 +1229,10 @@ def main() -> int:
         validate_release(
             Manifest(args.kernel_release_manifest),
             build,
+            attached,
+            args.kernel_build_manifest,
+            args.apt_provenance,
+            args.build_inputs,
             args.kernel_source,
             None,
         )
@@ -968,6 +1266,10 @@ def main() -> int:
     release = validate_release(
         Manifest(args.kernel_release_manifest),
         build,
+        attached,
+        args.kernel_build_manifest,
+        args.apt_provenance,
+        args.build_inputs,
         args.kernel_source,
         args.touchscreen_source,
     )

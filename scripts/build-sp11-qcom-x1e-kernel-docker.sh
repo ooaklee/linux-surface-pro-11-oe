@@ -53,6 +53,8 @@ CONTROL_DIR=""
 PAYLOAD_STAGE=""
 KERNEL_BASELINE=""
 IMMUTABLE_APT="false"
+CONTROL_SNAPSHOT_FILES=()
+CONTROL_SNAPSHOT_VALUES=()
 
 usage() {
   cat <<EOF
@@ -486,6 +488,61 @@ verify_release_support_stable() {
     echo "End dirty:  $support_dirty_end" >&2
     exit 1
   fi
+}
+
+docker_control_file_state() {
+  local path="$1" before after digest
+
+  [ -f "$path" ] && [ ! -L "$path" ] || {
+    echo "Docker control input is not a regular non-symlinked file: $path" >&2
+    return 1
+  }
+  case "$(uname -s)" in
+    Darwin) before="$(stat -f '%d:%i:%z:%m:%c:%Lp' "$path")" ;;
+    *) before="$(stat -c '%d:%i:%s:%Y:%Z:%a' -- "$path")" ;;
+  esac
+  digest="$(shasum -a 256 "$path" | awk '{print $1}')"
+  case "$(uname -s)" in
+    Darwin) after="$(stat -f '%d:%i:%z:%m:%c:%Lp' "$path")" ;;
+    *) after="$(stat -c '%d:%i:%s:%Y:%Z:%a' -- "$path")" ;;
+  esac
+  if [ "$before" != "$after" ] || ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Docker control input changed while its identity was captured: $path" >&2
+    return 1
+  fi
+  printf '%s:%s\n' "$before" "$digest"
+}
+
+capture_docker_control_state() {
+  local path state
+
+  require_tool shasum
+  require_tool stat
+  CONTROL_SNAPSHOT_FILES=(
+    "$work_abs/docker-build-args.txt"
+    "$work_abs/docker-build-inside.sh"
+  )
+  if [ "$IMMUTABLE_APT" = "true" ]; then
+    CONTROL_SNAPSHOT_FILES+=("$work_abs/sp11-oci-index.json")
+  fi
+  CONTROL_SNAPSHOT_VALUES=()
+  for path in "${CONTROL_SNAPSHOT_FILES[@]}"; do
+    state="$(docker_control_file_state "$path")" || return 1
+    CONTROL_SNAPSHOT_VALUES+=("$state")
+  done
+}
+
+verify_docker_control_state() {
+  local index=0 current
+
+  while [ "$index" -lt "${#CONTROL_SNAPSHOT_FILES[@]}" ]; do
+    current="$(docker_control_file_state "${CONTROL_SNAPSHOT_FILES[$index]}")" || return 1
+    if [ "$current" != "${CONTROL_SNAPSHOT_VALUES[$index]}" ]; then
+      echo "Docker control input changed after its pre-run validation: ${CONTROL_SNAPSHOT_FILES[$index]}" >&2
+      return 1
+    fi
+    index=$((index + 1))
+  done
 }
 
 find_qcom_kernel_debs() {
@@ -1253,6 +1310,7 @@ if [ "$CONTAINER_WORK_DIR" = "/work" ] &&
   exit 1
 fi
 
+capture_docker_control_state
 set +e
 docker "${docker_args[@]}"
 docker_status=$?
@@ -1263,6 +1321,7 @@ if [ "$docker_status" -ne 0 ]; then
   exit "$docker_status"
 fi
 
+verify_docker_control_state
 verify_release_support_stable
 
 if [ "$RELEASE_BUILD" = "true" ]; then
@@ -1323,7 +1382,8 @@ if [ "$RELEASE_BUILD" = "true" ]; then
         exit 1
       }
     done
-    echo "Publication remains closed: schema-v3 release/image propagation is not implemented."
+    verify_docker_control_state
+    echo "Publication remains blocked: outer release validation and independent real-build, signing, and licence gates must pass."
   fi
 fi
 
@@ -1419,4 +1479,5 @@ fi
 # This is intentionally the final release-mode operation. The host-side APT
 # envelope and any requested payload copy cannot make a changed support tree
 # acceptable after its recorded HEAD and generated controls were validated.
+verify_docker_control_state
 verify_release_support_stable

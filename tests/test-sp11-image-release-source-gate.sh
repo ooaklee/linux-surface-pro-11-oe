@@ -9,6 +9,8 @@ release_prefix="test-image-release-source-gate"
 kernel_release_name="$release_prefix-kernel-bound"
 
 cleanup() {
+  local recovery_dir
+
   rm -rf \
     "$test_root" \
     "$repo_dir/build/$release_prefix-fixture.img" \
@@ -39,16 +41,44 @@ cleanup() {
     "$repo_dir/build/release/$release_prefix-support-tamper" \
     "$repo_dir/build/release/$release_prefix-private-notice" \
     "$repo_dir/build/release/$release_prefix-private-manifest" \
+    "$repo_dir/build/release/$release_prefix-legacy-binding" \
+    "$repo_dir/build/release/$release_prefix-apt-tamper" \
+    "$repo_dir/build/release/$release_prefix-apt-mismatch" \
+    "$repo_dir/build/release/$release_prefix-inputs-tamper" \
+    "$repo_dir/build/release/$release_prefix-release-order" \
+    "$repo_dir/build/release/$release_prefix-image-swap" \
+    "$repo_dir/build/release/$release_prefix-rollback" \
+    "$repo_dir/build/release/$release_prefix-outline-rollback" \
+    "$repo_dir/build/release/$release_prefix-outer-rollback" \
+    "$repo_dir/build/release/$release_prefix-notes-rollback" \
+    "$repo_dir/build/release/$release_prefix-checksums-rollback" \
+    "$repo_dir/build/release/$release_prefix-source-checksums-rollback" \
+    "$repo_dir/build/release/$release_prefix-special-prior" \
+    "$repo_dir/build/release/$release_prefix-occupant-swap" \
+    "$repo_dir/build/release/$release_prefix-prior-drift" \
+    "$repo_dir/build/release/$release_prefix-prior-touch" \
+    "$repo_dir/build/release/$release_prefix-quarantine-mv-failure" \
+    "$repo_dir/build/release/$release_prefix-previous-mv-failure" \
+    "$repo_dir/build/release/$release_prefix-retirement-boundary" \
+    "$repo_dir/build/release/$release_prefix-retirement-failure" \
     "$repo_dir/build/release/$release_prefix-non-schema" \
     "$repo_dir/build/release/$release_prefix-local-tag" \
     "$repo_dir/build/release/$release_prefix-remote-tag" \
     "$repo_dir/build/release/$release_prefix-missing-origin"
+  shopt -s nullglob
+  for recovery_dir in \
+    "$repo_dir/build/release/.$release_prefix-"*.previous.* \
+    "$repo_dir/build/release/.$release_prefix-"*.failed.*; do
+    rm -rf -- "$recovery_dir"
+  done
+  shopt -u nullglob
 }
 trap cleanup EXIT
 cleanup
 mkdir -p "$test_root"
 
 image="$repo_dir/build/$release_prefix-fixture.img"
+image_fixture_base="$(basename "$image")"
 kernel_source="$test_root/fixture-patched-source.tar.xz"
 touch_source="$test_root/sp11-touchscreen-modules-source-fixture.tar.xz"
 source_notice="$test_root/SOURCE-NOTICE.md"
@@ -209,6 +239,42 @@ if printf '%s\n' "$draft_output" | grep -F 'gh release create' >/dev/null; then
 fi
 grep -F 'Not included; this output is a local draft' \
   "$repo_dir/build/release/$release_prefix-draft/sp11-live-image-release-manifest.txt" >/dev/null
+grep -Fxq 'Release manifest schema: sp11-live-image-draft-v1' \
+  "$repo_dir/build/release/$release_prefix-draft/sp11-live-image-release-manifest.txt"
+grep -Fxq 'Kernel provenance propagation: incomplete' \
+  "$repo_dir/build/release/$release_prefix-draft/sp11-live-image-release-manifest.txt"
+grep -Fxq 'Publication state: blocked' \
+  "$repo_dir/build/release/$release_prefix-draft/sp11-live-image-release-manifest.txt"
+grep -F 'This local draft has incomplete kernel-provenance propagation' \
+  "$repo_dir/build/release/$release_prefix-draft/RELEASE-NOTES.md" >/dev/null
+if grep -F 'propagation attestation is complete' \
+    "$repo_dir/build/release/$release_prefix-draft/RELEASE-NOTES.md" >/dev/null; then
+  echo 'Draft release notes claimed complete kernel-provenance propagation.' >&2
+  exit 1
+fi
+printf '%s\n' "$draft_output" | grep -F 'NO-PUBLISH:' >/dev/null
+
+special_prior_dir="$repo_dir/build/release/$release_prefix-special-prior"
+mkdir "$special_prior_dir"
+mkfifo "$special_prior_dir/unsupported-node"
+set +e
+special_prior_output="$($helper \
+  --image "${image#"$repo_dir"/}" \
+  --release-name "$release_prefix-special-prior" \
+  --skip-validate \
+  --allow-dirty \
+  --part-size-bytes 1024 2>&1)"
+special_prior_status=$?
+set -e
+[ "$special_prior_status" -eq 1 ]
+printf '%s\n' "$special_prior_output" |
+  grep -F 'special filesystem nodes are not supported' >/dev/null
+[ -p "$special_prior_dir/unsupported-node" ]
+if find "$repo_dir/build/release" -maxdepth 1 \
+    -name ".$release_prefix-special-prior.previous.*" -print | grep -q .; then
+  echo 'Special-node rejection left an empty previous-output recovery container.' >&2
+  exit 1
+fi
 
 complete_output="$($helper \
   --image "${image#"$repo_dir"/}" \
@@ -243,7 +309,14 @@ if grep -En '/image/|/tmp/tmp\.' \
   exit 1
 fi
 
-grep -F -- '--target %q' "$helper" >/dev/null
+if grep -F 'gh release create' "$helper" >/dev/null; then
+  echo 'Image preparer still contains a direct publication command.' >&2
+  exit 1
+fi
+grep -F 'NO-PUBLISH:' "$helper" >/dev/null
+grep -F -- '--image "$IMAGE_SNAPSHOT"' "$helper" >/dev/null
+grep -F -- '-v "$IMAGE_SNAPSHOT:/image/source.img:ro"' "$helper" >/dev/null
+grep -F 'zstd -T0 -6 --force -o "$compressed_tmp" "$IMAGE_SNAPSHOT"' "$helper" >/dev/null
 
 kernel_repo="$test_root/kernel-repo"
 touch_repo="$test_root/touch-repo"
@@ -287,7 +360,7 @@ python3 "$repo_dir/scripts/sp11-support-tree-manifest.py" \
   --output-identities "$support_identities" >/dev/null
 support_manifest_sha="$(shasum -a 256 "$support_manifest" | awk '{print $1}')"
 input_iso_sha="$(printf 'c%.0s' {1..64})"
-source_commit="$(printf '1%.0s' {1..40})"
+source_commit=8f953dd060bc6e8fb86ca2ea8a92f258141c0169
 config_sha="$(printf '2%.0s' {1..64})"
 symvers_sha="$(printf '3%.0s' {1..64})"
 system_map_sha="$(printf '4%.0s' {1..64})"
@@ -303,7 +376,8 @@ gpi_sha="$(printf 'd%.0s' {1..64})"
 spi_sha="$(printf 'e%.0s' {1..64})"
 touch_sha="$(printf 'f%.0s' {1..64})"
 diff_sha="$(printf '0%.0s' {1..64})"
-container_digest="$(printf 'a%.0s' {1..64})"
+container_digest=678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03
+oci_platform_manifest=sha256:3fe5b610f5c41eeeb56c2995bd4afb4990ac5b80dc980e33f9251eaaa8013615
 image_builder_digest=678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03
 signing_fingerprint="$(printf 'AA:%.0s' {1..31})AA"
 embedded_iso_sha="$input_iso_sha"
@@ -340,6 +414,8 @@ patch_path="$(git -C "$repo_dir" ls-files 'patches/*.patch' 'patches/**/*.patch'
 patch_sha="$(git -C "$repo_dir" show "$support_commit:$patch_path" | shasum -a 256 | awk '{print $1}')"
 kernel_build_manifest="$test_root/sp11-kernel-build-manifest.txt"
 kernel_release_manifest="$test_root/sp11-kernel-release-manifest.txt"
+apt_provenance="$test_root/sp11-kernel-apt-provenance.txt"
+build_inputs="$test_root/sp11-kernel-build-inputs.txt"
 module_manifest="$test_root/sp11-touchscreen-modules-manifest.txt"
 image_build_manifest="$test_root/sp11-live-image-build-manifest.txt"
 bound_notice="$test_root/bound/SOURCE-NOTICE.md"
@@ -409,8 +485,8 @@ Support start dirty: false
 Support end HEAD: $support_commit
 Support end dirty: false
 Source mode: git
-Source URL: https://fixtures.example.com/kernel.git
-Source ref: fixture
+Source URL: https://github.com/jglathe/linux_ms_dev_kit.git
+Source ref: jg/ubuntu-qcom-x1e-7.2-rc5-jg-0
 Expected source commit: $source_commit
 Source HEAD: $source_commit
 Container image: ubuntu:26.04@sha256:$container_digest
@@ -506,6 +582,19 @@ Deb 4 SHA256: $modules_package_sha
 Build completed: true
 EOF_BUILD_MANIFEST
 
+python3 "$repo_dir/tests/fixtures/write-sp11-attached-provenance-fixture.py" \
+  --baseline "$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env" \
+  --support-head "$support_commit" \
+  --build-manifest "$kernel_build_manifest" \
+  --apt-provenance "$apt_provenance" \
+  --build-inputs "$build_inputs"
+kernel_build_manifest_size="$(wc -c < "$kernel_build_manifest" | tr -d '[:space:]')"
+kernel_build_manifest_sha="$(shasum -a 256 "$kernel_build_manifest" | awk '{print $1}')"
+apt_provenance_size="$(wc -c < "$apt_provenance" | tr -d '[:space:]')"
+apt_provenance_sha="$(shasum -a 256 "$apt_provenance" | awk '{print $1}')"
+build_inputs_size="$(wc -c < "$build_inputs" | tr -d '[:space:]')"
+build_inputs_sha="$(shasum -a 256 "$build_inputs" | awk '{print $1}')"
+
 cat > "$module_manifest" <<EOF_MODULE_MANIFEST
 Generated: 2026-08-07T00:00:00Z
 Release: $kernel_release_name
@@ -554,14 +643,35 @@ touch_source_sha="$(shasum -a 256 "$bound_touch_source" | awk '{print $1}')"
 cat > "$kernel_release_manifest" <<EOF_RELEASE_MANIFEST
 Generated: 2026-08-07T00:00:00Z
 Release: $kernel_release_name
+Kernel release schema: sp11-kernel-release-v1
 Build provenance schema: sp11-kernel-build-v2
 Release build: true
 Build completed: true
+Kernel build manifest asset: sp11-kernel-build-manifest.txt
+Kernel build manifest size: $kernel_build_manifest_size
+Kernel build manifest SHA256: $kernel_build_manifest_sha
+APT provenance asset: sp11-kernel-apt-provenance.txt
+APT provenance schema: sp11-kernel-apt-provenance-v1
+APT provenance size: $apt_provenance_size
+APT provenance SHA256: $apt_provenance_sha
+APT snapshot ID: 20260807T000000Z
+APT snapshot URI: https://snapshot.ubuntu.com/ubuntu/20260807T000000Z/
+Build inputs asset: sp11-kernel-build-inputs.txt
+Build inputs schema: sp11-kernel-build-inputs-v1
+Build inputs size: $build_inputs_size
+Build inputs SHA256: $build_inputs_sha
+Build envelope creation propagation: incomplete
+Kernel release propagation: complete
+OCI index image: ubuntu:26.04@sha256:$container_digest
+OCI index digest: sha256:$container_digest
+OCI platform: linux/arm64/v8
+OCI platform manifest: $oci_platform_manifest
+Publication state: blocked
 Support repo commit: $support_commit
 Support repo dirty: false
 Source mode: git
-Source URL: https://fixtures.example.com/kernel.git
-Source branch: fixture
+Source URL: https://github.com/jglathe/linux_ms_dev_kit.git
+Source branch: jg/ubuntu-qcom-x1e-7.2-rc5-jg-0
 Source HEAD: $source_commit
 Docker image: ubuntu:26.04@sha256:$container_digest
 Container digest: sha256:$container_digest
@@ -580,6 +690,15 @@ Optional package roles: modules-extra
 Signing certificate SHA256: $certificate_sha
 Signing certificate fingerprint: $signing_fingerprint
 Signing certificate serial: A1
+Package count: 4
+Package 1 file: $common_headers_name
+Package 1 SHA256: $common_headers_sha
+Package 2 file: $headers_name
+Package 2 SHA256: $headers_sha
+Package 3 file: $image_name
+Package 3 SHA256: $image_package_sha
+Package 4 file: $modules_name
+Package 4 SHA256: $modules_package_sha
 Kernel source archive: $(basename "$bound_kernel_source")
 Kernel source archive SHA256: $kernel_source_sha
 Kernel source tree ID: $kernel_tree
@@ -595,15 +714,6 @@ Touchscreen kernel common headers Deb: $common_headers_name
 Touchscreen kernel common headers Deb SHA256: $common_headers_sha
 Touchscreen kernel architecture headers Deb: $headers_name
 Touchscreen kernel architecture headers Deb SHA256: $headers_sha
-Package count: 4
-Package 1 file: $common_headers_name
-Package 1 SHA256: $common_headers_sha
-Package 2 file: $headers_name
-Package 2 SHA256: $headers_sha
-Package 3 file: $image_name
-Package 3 SHA256: $image_package_sha
-Package 4 file: $modules_name
-Package 4 SHA256: $modules_package_sha
 Touchscreen module gpi.ko SHA256: $gpi_sha
 Touchscreen module spi-geni-qcom.ko SHA256: $spi_sha
 Touchscreen module mshw0485_touch.ko SHA256: $touch_sha
@@ -628,6 +738,7 @@ cat > "$mock_bin/docker" <<'EOF_DOCKER'
 set -euo pipefail
 payload_output=""
 validation_output=""
+image_mount=""
 previous=""
 stdin_attached=false
 for argument in "$@"; do
@@ -636,6 +747,7 @@ for argument in "$@"; do
     case "$argument" in
       *:/payload-output) payload_output="${argument%:/payload-output}" ;;
       *:/validation-output) validation_output="${argument%:/validation-output}" ;;
+      *:/image/source.img:ro) image_mount="${argument%:/image/source.img:ro}" ;;
     esac
   fi
   previous="$argument"
@@ -645,6 +757,32 @@ done
   exit 1
 }
 docker_script="$(cat)"
+restore_swapped_image() {
+  if [ -n "${FIXTURE_SWAP_HOLD:-}" ] && [ -e "$FIXTURE_SWAP_HOLD" ]; then
+    if [ -e "$FIXTURE_SWAP_SOURCE" ] && [ ! -e "$FIXTURE_SWAP_VALID" ]; then
+      mv -- "$FIXTURE_SWAP_SOURCE" "$FIXTURE_SWAP_VALID"
+    fi
+    mv -- "$FIXTURE_SWAP_HOLD" "$FIXTURE_SWAP_SOURCE"
+  fi
+}
+if [ -n "$payload_output" ] && [ "${FIXTURE_IMAGE_SWAP:-false}" = "true" ]; then
+  [ -n "$image_mount" ] && [ -n "${FIXTURE_SWAP_SOURCE:-}" ] &&
+    [ -n "${FIXTURE_SWAP_VALID:-}" ] && [ -n "${FIXTURE_SWAP_HOLD:-}" ] &&
+    [ -n "${FIXTURE_SWAP_MARKER:-}" ] && [ -n "${FIXTURE_SWAP_EXPECTED_SHA:-}" ] || {
+    echo 'fixture image-swap hook is incomplete' >&2
+    exit 2
+  }
+  mv -- "$FIXTURE_SWAP_SOURCE" "$FIXTURE_SWAP_HOLD"
+  mv -- "$FIXTURE_SWAP_VALID" "$FIXTURE_SWAP_SOURCE"
+  trap restore_swapped_image EXIT HUP INT TERM
+  mounted_image_sha="$(shasum -a 256 "$image_mount" | awk '{print $1}')"
+  printf 'Mount path: %s\nMount SHA256: %s\n' \
+    "$image_mount" "$mounted_image_sha" > "$FIXTURE_SWAP_MARKER"
+  if [ "$mounted_image_sha" != "$FIXTURE_SWAP_EXPECTED_SHA" ]; then
+    echo 'fixture semantic extractor did not receive the temporarily swapped image' >&2
+    exit 86
+  fi
+fi
 if [ -n "$payload_output" ] || [ -n "$validation_output" ]; then
   printf '%s\n' "$docker_script" | grep -F 'chmod 0644 "$binding_output"' >/dev/null || {
     echo 'fixture Docker invocation omitted the host-readable binding-output handoff' >&2
@@ -667,9 +805,18 @@ fi
 echo 'fixture image validation'
 EOF_DOCKER
 real_git="$(command -v git)"
+real_mv="$(command -v mv)"
+real_rm="$(command -v rm)"
+real_rmdir="$(command -v rmdir)"
 cat > "$mock_bin/git" <<'EOF_GIT'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${FIXTURE_FAIL_SUPPORT_AFTER_INSTALL:-false}" = "true" ] &&
+  [ -e "${FIXTURE_INSTALLED_MARKER:-}" ]; then
+  case " $* " in
+    *' status --porcelain --untracked-files=all '*) exit 2 ;;
+  esac
+fi
 if [ "${FIXTURE_DIRTY_GIT:-false}" = "true" ]; then
   case " $* " in
     *' status --porcelain --untracked-files=all '*)
@@ -706,6 +853,165 @@ elif [ "${FIXTURE_CLEAN_GIT:-false}" = "true" ]; then
 fi
 exec "$FIXTURE_REAL_GIT" "$@"
 EOF_GIT
+cat > "$mock_bin/mv" <<'EOF_MV'
+#!/usr/bin/env bash
+set -euo pipefail
+rewrite_main_checksums() {
+  local destination="$1" checksum_name
+  local checksum_names=()
+  while IFS= read -r checksum_name; do
+    checksum_names+=("$checksum_name")
+  done < <(awk '{print $2}' "$destination/SHA256SUMS")
+  (
+    cd "$destination"
+    shasum -a 256 "${checksum_names[@]}" > .SHA256SUMS.mutated
+    "$FIXTURE_REAL_MV" .SHA256SUMS.mutated SHA256SUMS
+  )
+}
+if [ "${FIXTURE_FAIL_PREVIOUS_MV:-false}" = "true" ] && [ "$#" -eq 2 ] &&
+  [ "$1" = "${FIXTURE_FAIL_PREVIOUS_DEST:-}" ]; then
+  case "$2" in
+    "${FIXTURE_RELEASE_ROOT:-}/.${FIXTURE_FAIL_PREVIOUS_RELEASE:-}.previous."*/original)
+      printf 'previous move blocked\n' > "$FIXTURE_FAIL_PREVIOUS_MARKER"
+      exit 1
+      ;;
+  esac
+fi
+if [ "${FIXTURE_FAIL_CANDIDATE_QUARANTINE:-false}" = "true" ] &&
+  [ "$#" -eq 2 ] && [ "$1" = "${FIXTURE_QUARANTINE_FINAL:-}" ]; then
+  case "$2" in
+    "${FIXTURE_RELEASE_ROOT:-}/.${FIXTURE_QUARANTINE_RELEASE:-}.failed."*/candidate)
+      printf 'candidate quarantine blocked\n' > "$FIXTURE_QUARANTINE_FAILURE_MARKER"
+      exit 1
+      ;;
+  esac
+fi
+if [ "${FIXTURE_MUTATE_INSTALLED_OUTPUT:-false}" = "true" ] && [ "$#" -eq 2 ] &&
+  [ "$2" = "${FIXTURE_MUTATE_DEST:-}" ] && [ ! -e "${FIXTURE_MUTATE_MARKER:-}" ]; then
+  case "$1" in
+    "${FIXTURE_RELEASE_ROOT:-}/."*.staging.*)
+      "$FIXTURE_REAL_MV" "$@"
+      case "${FIXTURE_MUTATE_KIND:-attachment}" in
+        attachment)
+          chmod u+w "$2/sp11-kernel-apt-provenance.txt"
+          printf 'Late mutation: rejected\n' >> "$2/sp11-kernel-apt-provenance.txt"
+          ;;
+        outline)
+          printf 'Forged outline row\n' >> "$2/sp11-live-image-outline.txt"
+          rewrite_main_checksums "$2"
+          ;;
+        outer)
+          awk '
+            /^Image source: / { print "Image source: build/forged.img"; next }
+            /^## Image$/ { print "Injected non-schema row" }
+            { print }
+          ' "$2/sp11-live-image-release-manifest.txt" \
+            > "$2/.sp11-live-image-release-manifest.mutated"
+          "$FIXTURE_REAL_MV" "$2/.sp11-live-image-release-manifest.mutated" \
+            "$2/sp11-live-image-release-manifest.txt"
+          rewrite_main_checksums "$2"
+          ;;
+        notes)
+          printf 'Forged publication instruction\n' >> "$2/RELEASE-NOTES.md"
+          ;;
+        checksums)
+          awk '{ rows[NR] = $0 } END { for (row = NR; row >= 1; row--) print rows[row] }' \
+            "$2/SHA256SUMS" > "$2/.SHA256SUMS.reordered"
+          "$FIXTURE_REAL_MV" "$2/.SHA256SUMS.reordered" "$2/SHA256SUMS"
+          ;;
+        source-checksums)
+          awk '{ rows[NR] = $0 } END { for (row = NR; row >= 1; row--) print rows[row] }' \
+            "$2/SOURCE-SHA256SUMS" > "$2/.SOURCE-SHA256SUMS.reordered"
+          "$FIXTURE_REAL_MV" "$2/.SOURCE-SHA256SUMS.reordered" \
+            "$2/SOURCE-SHA256SUMS"
+          ;;
+        occupant-swap)
+          [ -n "${FIXTURE_OCCUPANT_CANDIDATE_HOLD:-}" ] || exit 2
+          "$FIXTURE_REAL_MV" "$2" "$FIXTURE_OCCUPANT_CANDIDATE_HOLD"
+          mkdir "$2"
+          printf 'unexpected occupant must survive\n' > "$2/unexpected-occupant"
+          ;;
+        prior-drift)
+          previous_matches=()
+          shopt -s nullglob
+          previous_matches=(
+            "${FIXTURE_RELEASE_ROOT}/.$(basename "$2").previous."*/original
+          )
+          shopt -u nullglob
+          [ "${#previous_matches[@]}" -eq 1 ] || exit 2
+          printf 'concurrent prior mutation\n' >> "${previous_matches[0]}/prior-output"
+          printf 'concurrent prior addition\n' > "${previous_matches[0]}/concurrent-prior-addition"
+          chmod u+w "$2/sp11-kernel-apt-provenance.txt"
+          printf 'Late mutation: rejected\n' >> "$2/sp11-kernel-apt-provenance.txt"
+          printf 'concurrent candidate addition\n' > "$2/concurrent-candidate-addition"
+          ;;
+        prior-touch)
+          previous_matches=()
+          shopt -s nullglob
+          previous_matches=(
+            "${FIXTURE_RELEASE_ROOT}/.$(basename "$2").previous."*/original
+          )
+          shopt -u nullglob
+          [ "${#previous_matches[@]}" -eq 1 ] || exit 2
+          touch -t 203001010101 "${previous_matches[0]}/prior-output"
+          chmod u+w "$2/sp11-kernel-apt-provenance.txt"
+          printf 'Late mutation: rejected\n' >> "$2/sp11-kernel-apt-provenance.txt"
+          ;;
+        retirement-boundary)
+          :
+          ;;
+        *)
+          echo 'fixture installed-output mutation kind is invalid' >&2
+          exit 2
+          ;;
+      esac
+      printf '%s\n' "${FIXTURE_MUTATE_KIND:-attachment}" > "$FIXTURE_MUTATE_MARKER"
+      exit 0
+      ;;
+  esac
+fi
+exec "$FIXTURE_REAL_MV" "$@"
+EOF_MV
+cat > "$mock_bin/rm" <<'EOF_RM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${FIXTURE_FAIL_PREVIOUS_RETIREMENT:-false}" = "true" ] && [ "$#" -ge 1 ]; then
+  target="${!#}"
+  case "$target" in
+    "${FIXTURE_RELEASE_ROOT:-}/.${FIXTURE_RETIREMENT_RELEASE_NAME:-}.previous."*)
+      if [ ! -e "${FIXTURE_RETIREMENT_MARKER:-}" ]; then
+        printf 'retirement blocked\n' > "$FIXTURE_RETIREMENT_MARKER"
+        exit 1
+      fi
+      ;;
+  esac
+fi
+exec "$FIXTURE_REAL_RM" "$@"
+EOF_RM
+cat > "$mock_bin/rmdir" <<'EOF_RMDIR'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${FIXTURE_MUTATE_FAILED_BEFORE_RETIREMENT:-false}" = "true" ] &&
+  [ "$#" -eq 1 ]; then
+  case "$1" in
+    "${FIXTURE_RELEASE_ROOT:-}/.${FIXTURE_RETIREMENT_BOUNDARY_RELEASE:-}.previous."*)
+      if [ ! -e "${FIXTURE_RETIREMENT_BOUNDARY_MARKER:-}" ]; then
+        shopt -s nullglob
+        failed_candidates=(
+          "${FIXTURE_RELEASE_ROOT}/.${FIXTURE_RETIREMENT_BOUNDARY_RELEASE}.failed."*/candidate
+        )
+        shopt -u nullglob
+        [ "${#failed_candidates[@]}" -eq 1 ] || exit 2
+        printf 'post-restore candidate addition\n' \
+          > "${failed_candidates[0]}/post-restore-candidate-addition"
+        printf 'failed candidate changed before retirement\n' \
+          > "$FIXTURE_RETIREMENT_BOUNDARY_MARKER"
+      fi
+      ;;
+  esac
+fi
+exec "$FIXTURE_REAL_RMDIR" "$@"
+EOF_RMDIR
 cat > "$mock_bin/dpkg-deb" <<'EOF_DPKG_DEB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -784,13 +1090,19 @@ case "$node:$property" in
   *) exit 2 ;;
 esac
 EOF_FDTGET
-chmod +x "$mock_bin/docker" "$mock_bin/git"
+chmod +x "$mock_bin/docker" "$mock_bin/git" "$mock_bin/mv" "$mock_bin/rm" \
+  "$mock_bin/rmdir"
 chmod +x "$mock_bin/dpkg-deb" "$mock_bin/modinfo" "$mock_bin/tar" "$mock_bin/fdtget"
 export FIXTURE_REAL_GIT="$real_git"
+export FIXTURE_REAL_MV="$real_mv"
+export FIXTURE_REAL_RM="$real_rm"
+export FIXTURE_REAL_RMDIR="$real_rmdir"
 
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   cp "$kernel_build_manifest" "$standalone_release/sp11-kernel-build-manifest.txt"
   cp "$kernel_release_manifest" "$standalone_release/sp11-kernel-release-manifest.txt"
+  cp "$apt_provenance" "$standalone_release/sp11-kernel-apt-provenance.txt"
+  cp "$build_inputs" "$standalone_release/sp11-kernel-build-inputs.txt"
   cp "$module_manifest" "$standalone_release/sp11-touchscreen-modules-manifest.txt"
   cp "$bound_kernel_source" "$standalone_release/$(basename "$bound_kernel_source")"
   cp "$bound_touch_source" "$standalone_release/$(basename "$bound_touch_source")"
@@ -864,9 +1176,30 @@ common_publish_args=(
   --source-notice "${bound_notice#"$repo_dir"/}"
   --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}"
   --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}"
+  --apt-provenance "${apt_provenance#"$repo_dir"/}"
+  --build-inputs "${build_inputs#"$repo_dir"/}"
   --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}"
   --image-build-manifest "${image_build_manifest#"$repo_dir"/}"
 )
+set +e
+legacy_binding_output="$($helper \
+  --image "${image#"$repo_dir"/}" \
+  --release-name "$release_prefix-legacy-binding" \
+  --allow-dirty \
+  --kernel-source-asset "${bound_kernel_source#"$repo_dir"/}" \
+  --touchscreen-source-asset "${bound_touch_source#"$repo_dir"/}" \
+  --source-notice "${bound_notice#"$repo_dir"/}" \
+  --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
+  --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
+  --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
+  --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
+legacy_binding_status=$?
+set -e
+[ "$legacy_binding_status" -eq 2 ]
+printf '%s\n' "$legacy_binding_output" |
+  grep -F 'Supply --kernel-build-manifest, --kernel-release-manifest, --apt-provenance, --build-inputs' >/dev/null
+[ ! -e "$repo_dir/build/release/$release_prefix-legacy-binding" ]
+
 for tag_mode in local-wrong remote-wrong; do
   tag_suffix="${tag_mode%-wrong}-tag"
   set +e
@@ -901,6 +1234,7 @@ printf '%s\n' '# Source fixture' "Private path: $private_path_prefix/release-inp
 set +e
 fixture_binding_env=(
   "PATH=$mock_bin:$PATH"
+  "FIXTURE_DIRTY_GIT=true"
   "FIXTURE_ACTUAL_PAYLOAD=$bound_actual_payload"
   "FIXTURE_SUPPORT_MANIFEST=$support_manifest"
   "FIXTURE_SUPPORT_IDENTITIES=$support_identities"
@@ -908,6 +1242,471 @@ fixture_binding_env=(
   "FIXTURE_EMBEDDED_ISO_SHA=$embedded_iso_sha"
   "FIXTURE_EMBEDDED_DTB_SHA=$embedded_dtb_sha"
 )
+
+image_swap_dir="$test_root/image-swap"
+mkdir "$image_swap_dir"
+swap_valid_image="$image_swap_dir/valid-image.img"
+printf 'different semantic image fixture\n' > "$swap_valid_image"
+truncate -s "$image_fixture_size" "$swap_valid_image"
+swap_valid_sha="$(shasum -a 256 "$swap_valid_image" | awk '{print $1}')"
+[ "$swap_valid_sha" != "$image_fixture_sha" ]
+swap_image_manifest="$image_swap_dir/sp11-live-image-build-manifest.txt"
+awk -v digest="$image_fixture_sha" '
+     /^Output image SHA256: / { print "Output image SHA256: " digest; next }
+     { print }' "$image_build_manifest" > "$swap_image_manifest"
+swap_marker="$image_swap_dir/docker-image-mount"
+swap_hold="$image_swap_dir/original-image-held"
+set +e
+image_swap_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_IMAGE_SWAP=true \
+    "FIXTURE_SWAP_SOURCE=$image" \
+    "FIXTURE_SWAP_VALID=$swap_valid_image" \
+    "FIXTURE_SWAP_HOLD=$swap_hold" \
+    "FIXTURE_SWAP_MARKER=$swap_marker" \
+    "FIXTURE_SWAP_EXPECTED_SHA=$swap_valid_sha" \
+    "$helper" \
+      --image "${image#"$repo_dir"/}" \
+      --release-name "$release_prefix-image-swap" \
+      --allow-dirty \
+      --part-size-bytes 1024 \
+      --kernel-source-asset "${bound_kernel_source#"$repo_dir"/}" \
+      --touchscreen-source-asset "${bound_touch_source#"$repo_dir"/}" \
+      --source-notice "${bound_notice#"$repo_dir"/}" \
+      --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
+      --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
+      --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+      --build-inputs "${build_inputs#"$repo_dir"/}" \
+      --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
+      --image-build-manifest "${swap_image_manifest#"$repo_dir"/}" 2>&1)"
+image_swap_status=$?
+set -e
+[ "$image_swap_status" -eq 1 ]
+printf '%s\n' "$image_swap_output" |
+  grep -F 'Could not extract actual image payload identities.' >/dev/null
+[ ! -e "$repo_dir/build/release/$release_prefix-image-swap" ]
+[ ! -e "$swap_hold" ]
+[ "$(shasum -a 256 "$image" | awk '{print $1}')" = "$image_fixture_sha" ]
+[ "$(shasum -a 256 "$swap_valid_image" | awk '{print $1}')" = "$swap_valid_sha" ]
+grep -Fxq "Mount SHA256: $image_fixture_sha" "$swap_marker"
+if grep -Fxq "Mount path: $image" "$swap_marker"; then
+  echo 'Semantic image extraction used the mutable public image path.' >&2
+  exit 1
+fi
+grep -E "^Mount path: $repo_dir/build/release/\\.image-raw-snapshot\\.[^/]+/$(basename "$image")$" \
+  "$swap_marker" >/dev/null
+
+expect_install_mutation_rollback() {
+  local label="$1" kind="$2" expected="$3"
+  local release_name="$release_prefix-$label"
+  local rollback_dir="$repo_dir/build/release/$release_name"
+  local rollback_marker="$image_swap_dir/post-install-mutation-$kind"
+  local rollback_output rollback_status failed_dir
+  local failed_dirs=()
+
+  mkdir -p "$rollback_dir"
+  printf 'prior output sentinel\n' > "$rollback_dir/prior-output"
+  set +e
+  rollback_output="$(env "${fixture_binding_env[@]}" \
+      FIXTURE_MUTATE_INSTALLED_OUTPUT=true \
+      "FIXTURE_MUTATE_KIND=$kind" \
+      "FIXTURE_MUTATE_DEST=$rollback_dir" \
+      "FIXTURE_MUTATE_MARKER=$rollback_marker" \
+      "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+      "$helper" "${common_publish_args[@]}" \
+        --release-name "$release_name" --allow-dirty 2>&1)"
+  rollback_status=$?
+  set -e
+  [ "$rollback_status" -eq 1 ]
+  printf '%s\n' "$rollback_output" | grep -F "$expected" >/dev/null
+  printf '%s\n' "$rollback_output" |
+    grep -F 'Post-install image release verification failed; restored the prior output.' >/dev/null
+  grep -Fxq "$kind" "$rollback_marker"
+  grep -Fxq 'prior output sentinel' "$rollback_dir/prior-output"
+  [ "$(find "$rollback_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')" -eq 1 ]
+  if find "$repo_dir/build/release" -maxdepth 1 \
+      -name ".$release_name.previous.*" -print | grep -q .; then
+    echo 'Post-install rollback left a previous-output recovery directory after restoration.' >&2
+    exit 1
+  fi
+  shopt -s nullglob
+  failed_dirs=("$repo_dir/build/release/.$release_name.failed."*)
+  shopt -u nullglob
+  [ "${#failed_dirs[@]}" -eq 1 ]
+  failed_dir="${failed_dirs[0]}"
+  [ -d "$failed_dir/candidate" ] && [ ! -L "$failed_dir/candidate" ]
+  printf '%s\n' "$rollback_output" |
+    grep -F "Preserved failed image candidate for manual recovery: $failed_dir" >/dev/null
+  "$real_rm" -rf -- "$failed_dir"
+}
+
+expect_install_mutation_rollback \
+  rollback attachment 'Prepared image output does not match its final SHA256SUMS.'
+expect_install_mutation_rollback \
+  outline-rollback outline 'Prepared image outline bytes changed after generation.'
+expect_install_mutation_rollback \
+  outer-rollback outer 'Prepared live-image outer manifest bytes changed after generation.'
+expect_install_mutation_rollback \
+  notes-rollback notes 'Prepared image release-note bytes changed after generation.'
+expect_install_mutation_rollback \
+  checksums-rollback checksums 'Prepared image SHA256SUMS bytes changed after generation.'
+expect_install_mutation_rollback \
+  source-checksums-rollback source-checksums \
+  'Prepared image SOURCE-SHA256SUMS bytes changed after generation.'
+
+directory_mode() {
+  local mode
+  if mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  else
+    stat -f '%Lp' "$1"
+  fi
+}
+
+occupant_release_name="$release_prefix-occupant-swap"
+occupant_dir="$repo_dir/build/release/$occupant_release_name"
+occupant_hold="$image_swap_dir/occupant-held-candidate"
+occupant_marker="$image_swap_dir/post-install-mutation-occupant-swap"
+mkdir -p "$occupant_dir"
+printf 'prior output sentinel\n' > "$occupant_dir/prior-output"
+set +e
+occupant_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_MUTATE_INSTALLED_OUTPUT=true \
+    FIXTURE_MUTATE_KIND=occupant-swap \
+    "FIXTURE_MUTATE_DEST=$occupant_dir" \
+    "FIXTURE_MUTATE_MARKER=$occupant_marker" \
+    "FIXTURE_OCCUPANT_CANDIDATE_HOLD=$occupant_hold" \
+    "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+    "$helper" "${common_publish_args[@]}" \
+      --release-name "$occupant_release_name" --allow-dirty 2>&1)"
+occupant_status=$?
+set -e
+[ "$occupant_status" -eq 1 ]
+grep -Fxq 'occupant-swap' "$occupant_marker"
+grep -Fxq 'unexpected occupant must survive' "$occupant_dir/unexpected-occupant"
+[ -d "$occupant_hold" ] && [ -f "$occupant_hold/SHA256SUMS" ]
+printf '%s\n' "$occupant_output" |
+  grep -F 'preserving unexpected image output occupant during rollback' >/dev/null
+shopt -s nullglob
+occupant_previous_dirs=(
+  "$repo_dir/build/release/.$occupant_release_name.previous."*
+)
+shopt -u nullglob
+[ "${#occupant_previous_dirs[@]}" -eq 1 ]
+occupant_previous_dir="${occupant_previous_dirs[0]}"
+[ "$(directory_mode "$occupant_previous_dir")" = 700 ]
+grep -Fxq 'prior output sentinel' "$occupant_previous_dir/original/prior-output"
+printf '%s\n' "$occupant_output" |
+  grep -F "Preserved previous image output recovery data: $occupant_previous_dir" >/dev/null
+"$real_rm" -rf -- "$occupant_dir" "$occupant_hold" "$occupant_previous_dir"
+
+prior_drift_release_name="$release_prefix-prior-drift"
+prior_drift_dir="$repo_dir/build/release/$prior_drift_release_name"
+prior_drift_marker="$image_swap_dir/post-install-mutation-prior-drift"
+mkdir -p "$prior_drift_dir"
+printf 'prior output sentinel\n' > "$prior_drift_dir/prior-output"
+set +e
+prior_drift_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_MUTATE_INSTALLED_OUTPUT=true \
+    FIXTURE_MUTATE_KIND=prior-drift \
+    "FIXTURE_MUTATE_DEST=$prior_drift_dir" \
+    "FIXTURE_MUTATE_MARKER=$prior_drift_marker" \
+    "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+    "$helper" "${common_publish_args[@]}" \
+      --release-name "$prior_drift_release_name" --allow-dirty 2>&1)"
+prior_drift_status=$?
+set -e
+[ "$prior_drift_status" -eq 1 ]
+grep -Fxq 'prior-drift' "$prior_drift_marker"
+[ ! -e "$prior_drift_dir" ]
+shopt -s nullglob
+prior_drift_previous_dirs=(
+  "$repo_dir/build/release/.$prior_drift_release_name.previous."*
+)
+prior_drift_failed_dirs=(
+  "$repo_dir/build/release/.$prior_drift_release_name.failed."*
+)
+shopt -u nullglob
+[ "${#prior_drift_previous_dirs[@]}" -eq 1 ]
+[ "${#prior_drift_failed_dirs[@]}" -eq 1 ]
+prior_drift_previous_dir="${prior_drift_previous_dirs[0]}"
+prior_drift_failed_dir="${prior_drift_failed_dirs[0]}"
+[ "$(directory_mode "$prior_drift_previous_dir")" = 700 ]
+[ "$(directory_mode "$prior_drift_failed_dir")" = 700 ]
+grep -Fxq 'prior output sentinel' <(sed -n '1p' \
+  "$prior_drift_previous_dir/original/prior-output")
+grep -Fxq 'concurrent prior mutation' <(sed -n '2p' \
+  "$prior_drift_previous_dir/original/prior-output")
+grep -Fxq 'concurrent prior addition' \
+  "$prior_drift_previous_dir/original/concurrent-prior-addition"
+[ -f "$prior_drift_failed_dir/candidate/sp11-kernel-apt-provenance.txt" ]
+grep -Fxq 'concurrent candidate addition' \
+  "$prior_drift_failed_dir/candidate/concurrent-candidate-addition"
+printf '%s\n' "$prior_drift_output" |
+  grep -F "Preserved failed image candidate for manual recovery: $prior_drift_failed_dir" >/dev/null
+printf '%s\n' "$prior_drift_output" |
+  grep -F "Preserved previous image output recovery data: $prior_drift_previous_dir" >/dev/null
+"$real_rm" -rf -- "$prior_drift_previous_dir" "$prior_drift_failed_dir"
+
+prior_touch_release_name="$release_prefix-prior-touch"
+prior_touch_dir="$repo_dir/build/release/$prior_touch_release_name"
+prior_touch_marker="$image_swap_dir/post-install-mutation-prior-touch"
+mkdir -p "$prior_touch_dir"
+printf 'prior output sentinel\n' > "$prior_touch_dir/prior-output"
+set +e
+prior_touch_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_MUTATE_INSTALLED_OUTPUT=true \
+    FIXTURE_MUTATE_KIND=prior-touch \
+    "FIXTURE_MUTATE_DEST=$prior_touch_dir" \
+    "FIXTURE_MUTATE_MARKER=$prior_touch_marker" \
+    "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+    "$helper" "${common_publish_args[@]}" \
+      --release-name "$prior_touch_release_name" --allow-dirty 2>&1)"
+prior_touch_status=$?
+set -e
+[ "$prior_touch_status" -eq 1 ]
+grep -Fxq 'prior-touch' "$prior_touch_marker"
+[ ! -e "$prior_touch_dir" ]
+shopt -s nullglob
+prior_touch_previous_dirs=(
+  "$repo_dir/build/release/.$prior_touch_release_name.previous."*
+)
+prior_touch_failed_dirs=(
+  "$repo_dir/build/release/.$prior_touch_release_name.failed."*
+)
+shopt -u nullglob
+[ "${#prior_touch_previous_dirs[@]}" -eq 1 ]
+[ "${#prior_touch_failed_dirs[@]}" -eq 1 ]
+prior_touch_previous_dir="${prior_touch_previous_dirs[0]}"
+prior_touch_failed_dir="${prior_touch_failed_dirs[0]}"
+[ "$(directory_mode "$prior_touch_previous_dir")" = 700 ]
+[ "$(directory_mode "$prior_touch_failed_dir")" = 700 ]
+grep -Fxq 'prior output sentinel' "$prior_touch_previous_dir/original/prior-output"
+[ -f "$prior_touch_failed_dir/candidate/sp11-kernel-apt-provenance.txt" ]
+printf '%s\n' "$prior_touch_output" |
+  grep -F "Preserved failed image candidate for manual recovery: $prior_touch_failed_dir" >/dev/null
+printf '%s\n' "$prior_touch_output" |
+  grep -F "Preserved previous image output recovery data: $prior_touch_previous_dir" >/dev/null
+"$real_rm" -rf -- "$prior_touch_previous_dir" "$prior_touch_failed_dir"
+
+previous_mv_release_name="$release_prefix-previous-mv-failure"
+previous_mv_dir="$repo_dir/build/release/$previous_mv_release_name"
+previous_mv_marker="$image_swap_dir/previous-mv-failure"
+mkdir -p "$previous_mv_dir"
+printf 'prior output sentinel\n' > "$previous_mv_dir/prior-output"
+set +e
+previous_mv_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_FAIL_PREVIOUS_MV=true \
+    "FIXTURE_FAIL_PREVIOUS_DEST=$previous_mv_dir" \
+    "FIXTURE_FAIL_PREVIOUS_RELEASE=$previous_mv_release_name" \
+    "FIXTURE_FAIL_PREVIOUS_MARKER=$previous_mv_marker" \
+    "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+    "$helper" "${common_publish_args[@]}" \
+      --release-name "$previous_mv_release_name" --allow-dirty 2>&1)"
+previous_mv_status=$?
+set -e
+[ "$previous_mv_status" -eq 1 ]
+grep -Fxq 'previous move blocked' "$previous_mv_marker"
+grep -Fxq 'prior output sentinel' "$previous_mv_dir/prior-output"
+[ "$(find "$previous_mv_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')" -eq 1 ]
+printf '%s\n' "$previous_mv_output" |
+  grep -F 'Could not retain the previous image release directory privately.' >/dev/null
+if find "$repo_dir/build/release" -maxdepth 1 \
+    \( -name ".$previous_mv_release_name.previous.*" \
+       -o -name ".$previous_mv_release_name.failed.*" \) -print | grep -q .; then
+  echo 'Failed previous-output move left an exact empty recovery container.' >&2
+  exit 1
+fi
+
+quarantine_release_name="$release_prefix-quarantine-mv-failure"
+quarantine_dir="$repo_dir/build/release/$quarantine_release_name"
+quarantine_install_marker="$image_swap_dir/post-install-mutation-quarantine"
+quarantine_failure_marker="$image_swap_dir/candidate-quarantine-failure"
+mkdir -p "$quarantine_dir"
+printf 'prior output sentinel\n' > "$quarantine_dir/prior-output"
+set +e
+quarantine_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_MUTATE_INSTALLED_OUTPUT=true \
+    FIXTURE_MUTATE_KIND=attachment \
+    "FIXTURE_MUTATE_DEST=$quarantine_dir" \
+    "FIXTURE_MUTATE_MARKER=$quarantine_install_marker" \
+    FIXTURE_FAIL_CANDIDATE_QUARANTINE=true \
+    "FIXTURE_QUARANTINE_FINAL=$quarantine_dir" \
+    "FIXTURE_QUARANTINE_RELEASE=$quarantine_release_name" \
+    "FIXTURE_QUARANTINE_FAILURE_MARKER=$quarantine_failure_marker" \
+    "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+    "$helper" "${common_publish_args[@]}" \
+      --release-name "$quarantine_release_name" --allow-dirty 2>&1)"
+quarantine_status=$?
+set -e
+[ "$quarantine_status" -eq 1 ]
+grep -Fxq 'attachment' "$quarantine_install_marker"
+grep -Fxq 'candidate quarantine blocked' "$quarantine_failure_marker"
+[ -f "$quarantine_dir/SHA256SUMS" ]
+[ ! -e "$quarantine_dir/prior-output" ]
+printf '%s\n' "$quarantine_output" |
+  grep -F 'could not quarantine the failed image candidate' >/dev/null
+shopt -s nullglob
+quarantine_previous_dirs=(
+  "$repo_dir/build/release/.$quarantine_release_name.previous."*
+)
+quarantine_failed_dirs=(
+  "$repo_dir/build/release/.$quarantine_release_name.failed."*
+)
+shopt -u nullglob
+[ "${#quarantine_previous_dirs[@]}" -eq 1 ]
+[ "${#quarantine_failed_dirs[@]}" -eq 0 ]
+quarantine_previous_dir="${quarantine_previous_dirs[0]}"
+grep -Fxq 'prior output sentinel' "$quarantine_previous_dir/original/prior-output"
+printf '%s\n' "$quarantine_output" |
+  grep -F "Preserved previous image output recovery data: $quarantine_previous_dir" >/dev/null
+"$real_rm" -rf -- "$quarantine_dir" "$quarantine_previous_dir"
+
+retirement_boundary_release_name="$release_prefix-retirement-boundary"
+retirement_boundary_dir="$repo_dir/build/release/$retirement_boundary_release_name"
+retirement_boundary_install_marker="$image_swap_dir/post-install-mutation-retirement-boundary"
+retirement_boundary_marker="$image_swap_dir/failed-candidate-retirement-mutation"
+mkdir -p "$retirement_boundary_dir"
+printf 'prior output sentinel\n' > "$retirement_boundary_dir/prior-output"
+set +e
+retirement_boundary_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_MUTATE_INSTALLED_OUTPUT=true \
+    FIXTURE_MUTATE_KIND=retirement-boundary \
+    "FIXTURE_MUTATE_DEST=$retirement_boundary_dir" \
+    "FIXTURE_MUTATE_MARKER=$retirement_boundary_install_marker" \
+    FIXTURE_FAIL_SUPPORT_AFTER_INSTALL=true \
+    "FIXTURE_INSTALLED_MARKER=$retirement_boundary_install_marker" \
+    FIXTURE_MUTATE_FAILED_BEFORE_RETIREMENT=true \
+    "FIXTURE_RETIREMENT_BOUNDARY_RELEASE=$retirement_boundary_release_name" \
+    "FIXTURE_RETIREMENT_BOUNDARY_MARKER=$retirement_boundary_marker" \
+    "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+    "$helper" "${common_publish_args[@]}" \
+      --release-name "$retirement_boundary_release_name" --allow-dirty 2>&1)"
+retirement_boundary_status=$?
+set -e
+[ "$retirement_boundary_status" -eq 1 ]
+grep -Fxq 'retirement-boundary' "$retirement_boundary_install_marker"
+grep -Fxq 'failed candidate changed before retirement' "$retirement_boundary_marker"
+grep -Fxq 'prior output sentinel' "$retirement_boundary_dir/prior-output"
+[ "$(find "$retirement_boundary_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')" -eq 1 ]
+shopt -s nullglob
+retirement_boundary_previous_dirs=(
+  "$repo_dir/build/release/.$retirement_boundary_release_name.previous."*
+)
+retirement_boundary_failed_dirs=(
+  "$repo_dir/build/release/.$retirement_boundary_release_name.failed."*
+)
+shopt -u nullglob
+[ "${#retirement_boundary_previous_dirs[@]}" -eq 0 ]
+[ "${#retirement_boundary_failed_dirs[@]}" -eq 1 ]
+retirement_boundary_failed_dir="${retirement_boundary_failed_dirs[0]}"
+grep -Fxq 'post-restore candidate addition' \
+  "$retirement_boundary_failed_dir/candidate/post-restore-candidate-addition"
+printf '%s\n' "$retirement_boundary_output" |
+  grep -F "Preserved failed image candidate for manual recovery: $retirement_boundary_failed_dir" >/dev/null
+"$real_rm" -rf -- "$retirement_boundary_failed_dir"
+
+retirement_release_name="$release_prefix-retirement-failure"
+retirement_dir="$repo_dir/build/release/$retirement_release_name"
+retirement_marker="$image_swap_dir/previous-retirement-failure"
+mkdir -p "$retirement_dir"
+printf 'prior output sentinel\n' > "$retirement_dir/prior-output"
+retirement_output="$(env "${fixture_binding_env[@]}" \
+    FIXTURE_FAIL_PREVIOUS_RETIREMENT=true \
+    "FIXTURE_RETIREMENT_RELEASE_NAME=$retirement_release_name" \
+    "FIXTURE_RETIREMENT_MARKER=$retirement_marker" \
+    "FIXTURE_RELEASE_ROOT=$repo_dir/build/release" \
+    "$helper" "${common_publish_args[@]}" \
+      --release-name "$retirement_release_name" --allow-dirty 2>&1)"
+grep -Fxq 'retirement blocked' "$retirement_marker"
+[ -f "$retirement_dir/SHA256SUMS" ]
+[ ! -e "$retirement_dir/prior-output" ]
+printf '%s\n' "$retirement_output" |
+  grep -F 'verified image output is committed, but previous-output retirement failed' >/dev/null
+shopt -s nullglob
+retirement_previous_dirs=(
+  "$repo_dir/build/release/.$retirement_release_name.previous."*
+)
+shopt -u nullglob
+[ "${#retirement_previous_dirs[@]}" -eq 1 ]
+retirement_previous_dir="${retirement_previous_dirs[0]}"
+[ "$(directory_mode "$retirement_previous_dir")" = 700 ]
+grep -Fxq 'prior output sentinel' "$retirement_previous_dir/original/prior-output"
+"$real_rm" -rf -- "$retirement_previous_dir"
+
+expect_provenance_failure() {
+  local label="$1" expected="$2" candidate_apt="$3" candidate_inputs="$4"
+  local candidate_release="$5" output status
+  set +e
+  output="$(env "${fixture_binding_env[@]}" "$helper" \
+    --image "${image#"$repo_dir"/}" \
+    --release-name "$release_prefix-$label" \
+    --allow-dirty \
+    --part-size-bytes 1024 \
+    --kernel-source-asset "${bound_kernel_source#"$repo_dir"/}" \
+    --touchscreen-source-asset "${bound_touch_source#"$repo_dir"/}" \
+    --source-notice "${bound_notice#"$repo_dir"/}" \
+    --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
+    --kernel-release-manifest "${candidate_release#"$repo_dir"/}" \
+    --apt-provenance "${candidate_apt#"$repo_dir"/}" \
+    --build-inputs "${candidate_inputs#"$repo_dir"/}" \
+    --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
+    --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
+  status=$?
+  set -e
+  [ "$status" -eq 1 ]
+  printf '%s\n' "$output" | grep -F "$expected" >/dev/null
+  [ ! -e "$repo_dir/build/release/$release_prefix-$label" ]
+}
+
+apt_tamper_dir="$test_root/apt-tamper"
+mkdir "$apt_tamper_dir"
+cp "$apt_provenance" "$apt_tamper_dir/sp11-kernel-apt-provenance.txt"
+printf 'Unexpected field: rejected\n' >> "$apt_tamper_dir/sp11-kernel-apt-provenance.txt"
+expect_provenance_failure apt-tamper \
+  'attached immutable build inputs failed flat validation' \
+  "$apt_tamper_dir/sp11-kernel-apt-provenance.txt" "$build_inputs" \
+  "$kernel_release_manifest"
+
+inputs_tamper_dir="$test_root/inputs-tamper"
+mkdir "$inputs_tamper_dir"
+cp "$build_inputs" "$inputs_tamper_dir/sp11-kernel-build-inputs.txt"
+printf 'Unexpected field: rejected\n' >> "$inputs_tamper_dir/sp11-kernel-build-inputs.txt"
+expect_provenance_failure inputs-tamper \
+  'attached immutable build inputs failed flat validation' \
+  "$apt_provenance" "$inputs_tamper_dir/sp11-kernel-build-inputs.txt" \
+  "$kernel_release_manifest"
+
+apt_mismatch_dir="$test_root/apt-mismatch"
+mkdir "$apt_mismatch_dir"
+awk 'BEGIN { changed = 0 }
+     /^APT list target 1 SHA256: / && changed == 0 {
+       print "APT list target 1 SHA256: 0000000000000000000000000000000000000000000000000000000000000000"
+       changed = 1
+       next
+     }
+     { print }
+     END { if (changed == 0) exit 1 }' \
+  "$apt_provenance" > "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt"
+mismatch_apt_sha="$(shasum -a 256 "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt" | awk '{print $1}')"
+awk -v digest="$mismatch_apt_sha" '
+     /^Input 5 SHA256: / { print "Input 5 SHA256: " digest; next }
+     { print }' "$build_inputs" > "$apt_mismatch_dir/sp11-kernel-build-inputs.txt"
+expect_provenance_failure apt-mismatch \
+  'kernel release field does not match build: APT provenance SHA256' \
+  "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt" \
+  "$apt_mismatch_dir/sp11-kernel-build-inputs.txt" "$kernel_release_manifest"
+
+release_order_dir="$test_root/release-order"
+mkdir "$release_order_dir"
+awk 'NR == 4 { held = $0; next }
+     NR == 5 { print; print held; next }
+     { print }' "$kernel_release_manifest" \
+  > "$release_order_dir/sp11-kernel-release-manifest.txt"
+expect_provenance_failure release-order \
+  'field order does not match its schema' "$apt_provenance" "$build_inputs" \
+  "$release_order_dir/sp11-kernel-release-manifest.txt"
+
+set +e
 private_notice_output="$(env "${fixture_binding_env[@]}" "$helper" \
     --image "${image#"$repo_dir"/}" \
     --release-name "$release_prefix-private-notice" \
@@ -918,6 +1717,8 @@ private_notice_output="$(env "${fixture_binding_env[@]}" "$helper" \
     --source-notice "${private_notice_dir#"$repo_dir"/}/SOURCE-NOTICE.md" \
     --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
     --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
+    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+    --build-inputs "${build_inputs#"$repo_dir"/}" \
     --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
     --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
 private_notice_status=$?
@@ -942,6 +1743,8 @@ private_manifest_output="$(env "${fixture_binding_env[@]}" "$helper" \
     --source-notice "${bound_notice#"$repo_dir"/}" \
     --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
     --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
+    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+    --build-inputs "${build_inputs#"$repo_dir"/}" \
     --touchscreen-module-manifest \
       "${private_manifest_dir#"$repo_dir"/}/sp11-touchscreen-modules-manifest.txt" \
     --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
@@ -968,6 +1771,8 @@ non_schema_output="$(env "${fixture_binding_env[@]}" "$helper" \
     --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
     --kernel-release-manifest \
       "${non_schema_dir#"$repo_dir"/}/sp11-kernel-release-manifest.txt" \
+    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+    --build-inputs "${build_inputs#"$repo_dir"/}" \
     --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
     --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
 non_schema_status=$?
@@ -991,6 +1796,8 @@ missing_role_output="$(env "${fixture_binding_env[@]}" "$helper" \
     --source-notice "${bound_notice#"$repo_dir"/}" \
     --kernel-build-manifest "${invalid_build_dir#"$repo_dir"/}/sp11-kernel-build-manifest.txt" \
     --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
+    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+    --build-inputs "${build_inputs#"$repo_dir"/}" \
     --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
     --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
 missing_role_status=$?
@@ -1013,6 +1820,8 @@ expect_image_manifest_failure() {
     --source-notice "${bound_notice#"$repo_dir"/}" \
     --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
     --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
+    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+    --build-inputs "${build_inputs#"$repo_dir"/}" \
     --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
     --image-build-manifest "${candidate#"$repo_dir"/}" 2>&1)"
   status=$?
@@ -1148,6 +1957,8 @@ for url_contract_index in "${!url_contract_labels[@]}"; do
       --release-name "$release_prefix-cross-$url_contract_label" \
       --kernel-build-manifest "$kernel_build_manifest" \
       --kernel-release-manifest "$kernel_release_manifest" \
+      --apt-provenance "$apt_provenance" \
+      --build-inputs "$build_inputs" \
       --touchscreen-module-manifest \
         "$url_contract_dir/sp11-touchscreen-modules-manifest.txt" \
       --kernel-source "$bound_kernel_source" \
@@ -1192,6 +2003,8 @@ bound_output="$(env "${fixture_binding_env[@]}" FIXTURE_DIRTY_GIT=true "$helper"
     --source-notice "${bound_notice#"$repo_dir"/}" \
     --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
     --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
+    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+    --build-inputs "${build_inputs#"$repo_dir"/}" \
     --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
     --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
 printf '%s\n' "$bound_output" | grep -F 'Local draft only:' >/dev/null
@@ -1199,16 +2012,36 @@ bound_dir="$repo_dir/build/release/$release_prefix-bound"
 for attached in \
   sp11-kernel-build-manifest.txt \
   sp11-kernel-release-manifest.txt \
+  sp11-kernel-apt-provenance.txt \
+  sp11-kernel-build-inputs.txt \
   sp11-touchscreen-modules-manifest.txt \
   sp11-live-image-build-manifest.txt; do
   [ -s "$bound_dir/$attached" ]
   grep -F "  $attached" "$bound_dir/SHA256SUMS" >/dev/null
   grep -F "  $attached" "$bound_dir/SOURCE-SHA256SUMS" >/dev/null
 done
+outer_manifest="$bound_dir/sp11-live-image-release-manifest.txt"
+grep -Fxq 'Release manifest schema: sp11-live-image-release-v1' "$outer_manifest"
+grep -Fxq 'Kernel release schema: sp11-kernel-release-v1' "$outer_manifest"
+grep -Fxq 'Build envelope creation propagation: incomplete' "$outer_manifest"
+grep -Fxq 'Kernel release propagation: complete' "$outer_manifest"
+grep -Fxq 'Kernel provenance propagation: complete' "$outer_manifest"
+grep -Fxq 'Publication state: blocked' "$outer_manifest"
+grep -F 'propagation attestation is complete' "$bound_dir/RELEASE-NOTES.md" >/dev/null
+printf '%s\n' "$bound_output" | grep -F 'NO-PUBLISH:' >/dev/null
+if printf '%s\n' "$bound_output" | grep -F 'gh release create' >/dev/null; then
+  echo 'Fully bound image preparation printed a publication command.' >&2
+  exit 1
+fi
 (
   cd "$bound_dir"
   shasum -a 256 -c SHA256SUMS >/dev/null
   shasum -a 256 -c SOURCE-SHA256SUMS >/dev/null
 )
+bound_raw_sha="$(
+  cat "$bound_dir/$image_fixture_base.zst.part-"* |
+    zstd -dc | shasum -a 256 | awk '{print $1}'
+)"
+[ "$bound_raw_sha" = "$image_fixture_sha" ]
 
 echo 'Live-image corresponding-source release gate passed.'

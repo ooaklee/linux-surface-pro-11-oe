@@ -10,6 +10,8 @@ import json
 import os
 import re
 import stat
+import subprocess
+import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
@@ -52,6 +54,67 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def stable_file_snapshot(path: Path, label: str) -> tuple[int, int, int, int, int, str]:
+    """Hash one regular file through a no-follow descriptor and prove stability."""
+
+    try:
+        path_before = path.lstat()
+    except OSError as exc:
+        fail(f"could not inspect {label}: {exc}")
+    if not stat.S_ISREG(path_before.st_mode):
+        fail(f"{label} must be a regular non-symlinked file")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        fail(f"could not open {label} without following links: {exc}")
+    digest = hashlib.sha256()
+    try:
+        descriptor_before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(descriptor_before.st_mode)
+            or (descriptor_before.st_dev, descriptor_before.st_ino)
+            != (path_before.st_dev, path_before.st_ino)
+        ):
+            fail(f"{label} changed before its no-follow descriptor was opened")
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        descriptor_after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        path_after = path.lstat()
+    except OSError as exc:
+        fail(f"could not re-inspect {label}: {exc}")
+    identity_before = (
+        descriptor_before.st_dev,
+        descriptor_before.st_ino,
+        descriptor_before.st_size,
+        descriptor_before.st_mtime_ns,
+        descriptor_before.st_ctime_ns,
+    )
+    identity_after = (
+        descriptor_after.st_dev,
+        descriptor_after.st_ino,
+        descriptor_after.st_size,
+        descriptor_after.st_mtime_ns,
+        descriptor_after.st_ctime_ns,
+    )
+    path_identity_after = (
+        path_after.st_dev,
+        path_after.st_ino,
+        path_after.st_size,
+        path_after.st_mtime_ns,
+        path_after.st_ctime_ns,
+    )
+    if identity_before != identity_after or identity_before != path_identity_after:
+        fail(f"{label} changed while it was hashed")
+    return (*identity_before, digest.hexdigest())
 
 
 def regular_file(path: Path, label: str) -> os.stat_result:
@@ -134,7 +197,7 @@ def positive_count(fields: dict[str, str], key: str, maximum: int = 100000) -> i
 
 
 def safe_input(work_dir: Path, path: Path, label: str) -> tuple[str, int, str]:
-    metadata = regular_file(path, label)
+    regular_file(path, label)
     work_real = work_dir.resolve(strict=True)
     path_real = path.resolve(strict=True)
     try:
@@ -145,7 +208,8 @@ def safe_input(work_dir: Path, path: Path, label: str) -> tuple[str, int, str]:
         fail(f"{label} contains a symlinked or non-canonical path component")
     relative_text = relative.as_posix()
     safe_relative(relative_text, f"{label} envelope path")
-    return relative_text, metadata.st_size, sha256(path)
+    snapshot = stable_file_snapshot(path, label)
+    return relative_text, snapshot[2], snapshot[5]
 
 
 def validate_inventory(
@@ -645,8 +709,8 @@ def validate_retained_apt(
         fail("retained local build-deps Deb differs from sidecar")
 
 
-def retained_snapshot(args: argparse.Namespace) -> tuple[tuple[str, str, int, str], ...]:
-    rows: list[tuple[str, str, int, str]] = []
+def retained_snapshot(args: argparse.Namespace) -> tuple[tuple[object, ...], ...]:
+    rows: list[tuple[object, ...]] = []
     for label, root in (
         ("archives", args.apt_archives_dir),
         ("indexes", args.apt_index_cache_dir),
@@ -659,19 +723,31 @@ def retained_snapshot(args: argparse.Namespace) -> tuple[tuple[str, str, int, st
             if stat.S_ISDIR(metadata.st_mode) and not path.is_symlink():
                 rows.append((label, relative + "/", 0, "directory"))
             elif stat.S_ISREG(metadata.st_mode):
-                rows.append((label, relative, metadata.st_size, sha256(path)))
+                rows.append((label, relative, *stable_file_snapshot(path, f"retained {label}/{relative}")))
             else:
                 fail(f"retained {label} contains a symlink or special path: {relative}")
-    for label, path in (
+    stable_files = [
+        ("build-arguments", args.build_args),
+        ("entrypoint", args.entrypoint),
+        ("oci-index", args.oci_index),
+        ("build-manifest", args.build_manifest),
         ("pre-inventory", args.apt_pre_inventory),
         ("post-inventory", args.apt_post_inventory),
         ("sidecar", args.apt_provenance),
-    ):
-        metadata = regular_file(path, label)
-        rows.append((label, path.name, metadata.st_size, sha256(path)))
+    ]
+    if args.mode in ("validate", "validate-release-snapshot"):
+        stable_files.append(("build-inputs", args.output))
+    for label, path in stable_files:
+        assert path is not None
+        rows.append((label, path.name, *stable_file_snapshot(path, label)))
     for path in sorted(args.apt_local_build_deps_dir.glob("*-build-deps_*.deb")):
-        metadata = regular_file(path, "local build-deps snapshot")
-        rows.append(("local-build-deps", path.name, metadata.st_size, sha256(path)))
+        rows.append(
+            (
+                "local-build-deps",
+                path.name,
+                *stable_file_snapshot(path, "local build-deps snapshot"),
+            )
+        )
     return tuple(rows)
 
 
@@ -735,23 +811,43 @@ def validate_manifest(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("write", "validate"))
+    parser.add_argument(
+        "mode",
+        choices=("write", "validate", "validate-attached", "validate-release-snapshot"),
+    )
     parser.add_argument("--baseline", required=True, type=Path)
-    parser.add_argument("--work-dir", required=True, type=Path)
+    parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--support-head", required=True)
-    parser.add_argument("--build-args", required=True, type=Path)
-    parser.add_argument("--entrypoint", required=True, type=Path)
-    parser.add_argument("--oci-index", required=True, type=Path)
+    parser.add_argument("--build-args", type=Path)
+    parser.add_argument("--entrypoint", type=Path)
+    parser.add_argument("--oci-index", type=Path)
     parser.add_argument("--build-manifest", required=True, type=Path)
     parser.add_argument("--apt-provenance", required=True, type=Path)
-    parser.add_argument("--apt-archives-dir", required=True, type=Path)
-    parser.add_argument("--apt-lists-dir", required=True, type=Path)
-    parser.add_argument("--apt-index-cache-dir", required=True, type=Path)
-    parser.add_argument("--apt-local-build-deps-dir", required=True, type=Path)
-    parser.add_argument("--apt-pre-inventory", required=True, type=Path)
-    parser.add_argument("--apt-post-inventory", required=True, type=Path)
+    parser.add_argument("--apt-archives-dir", type=Path)
+    parser.add_argument("--apt-lists-dir", type=Path)
+    parser.add_argument("--apt-index-cache-dir", type=Path)
+    parser.add_argument("--apt-local-build-deps-dir", type=Path)
+    parser.add_argument("--apt-pre-inventory", type=Path)
+    parser.add_argument("--apt-post-inventory", type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.mode != "validate-attached":
+        required = (
+            "work_dir",
+            "build_args",
+            "entrypoint",
+            "oci_index",
+            "apt_archives_dir",
+            "apt_lists_dir",
+            "apt_index_cache_dir",
+            "apt_local_build_deps_dir",
+            "apt_pre_inventory",
+            "apt_post_inventory",
+        )
+        missing = [f"--{name.replace('_', '-')}" for name in required if getattr(args, name) is None]
+        if missing:
+            parser.error(f"{args.mode} requires: {' '.join(missing)}")
+    return args
 
 
 def envelope_keys() -> list[str]:
@@ -779,6 +875,10 @@ def envelope_keys() -> list[str]:
 
 
 def validate_envelope(args: argparse.Namespace, baseline: dict[str, str]) -> None:
+    assert args.work_dir is not None
+    assert args.build_args is not None
+    assert args.entrypoint is not None
+    assert args.oci_index is not None
     fields = parse_unique_lines(args.output)
     exact_keys(fields, envelope_keys(), "build-inputs envelope")
     if required(fields, "Build inputs schema") != "sp11-kernel-build-inputs-v1":
@@ -827,16 +927,219 @@ def validate_envelope(args: argparse.Namespace, baseline: dict[str, str]) -> Non
             fail(f"build-inputs size mismatch at input {index}")
         if required(fields, f"Input {index} SHA256") != digest:
             fail(f"build-inputs hash mismatch at input {index}")
+        if index == 3 and digest != required(fields, "OCI index digest").removeprefix(
+            "sha256:"
+        ):
+            fail("build-inputs raw OCI index hash does not match its index digest")
+
+
+def validate_exact_build_manifest(path: Path, support_head: str) -> None:
+    repo_dir = Path(__file__).resolve().parent.parent
+    validator = repo_dir / "scripts/validate-sp11-image-release-manifests.py"
+    regular_file(validator, "exact schema-v2 build-manifest validator")
+    command = (
+        sys.executable,
+        str(validator),
+        "--build-only",
+        "--repo-dir",
+        str(repo_dir),
+        "--support-commit",
+        support_head,
+        "--kernel-build-manifest",
+        str(path),
+    )
+    completed = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        fail(
+            "attached kernel build manifest failed exact schema-v2 validation"
+            + (f": {detail}" if detail else "")
+        )
+
+
+def attached_trio_snapshot(
+    args: argparse.Namespace,
+) -> tuple[tuple[int, int, int, int, int, str], ...]:
+    return tuple(
+        stable_file_snapshot(path, label)
+        for path, label in (
+            (args.build_manifest, "attached kernel build manifest"),
+            (args.apt_provenance, "attached APT provenance"),
+            (args.output, "attached build-inputs envelope"),
+        )
+    )
+
+
+def validate_attached(args: argparse.Namespace, baseline: dict[str, str]) -> None:
+    """Validate the self-contained release copy of the immutable build trio."""
+
+    before = attached_trio_snapshot(args)
+    validate_exact_build_manifest(args.build_manifest, args.support_head)
+    validate_manifest(args.build_manifest, baseline, args.support_head)
+    validate_apt_sidecar(args.apt_provenance, baseline)
+
+    fields = parse_unique_lines(args.output)
+    exact_keys(fields, envelope_keys(), "build-inputs envelope")
+    if required(fields, "Build inputs schema") != "sp11-kernel-build-inputs-v1":
+        fail("unsupported build-inputs schema")
+    if required(fields, "Release build") != "true":
+        fail("build-inputs envelope is not marked as a release build")
+    if required(fields, "Support HEAD") != args.support_head:
+        fail("build-inputs support HEAD changed")
+
+    image = required(baseline, "SP11_KERNEL_DOCKER_IMAGE")
+    index_digest = image.rsplit("@", 1)[1]
+    platform = required(baseline, "SP11_KERNEL_DOCKER_PLATFORM")
+    platform_manifest = required(baseline, "SP11_KERNEL_DOCKER_PLATFORM_MANIFEST")
+    for label, expected in (
+        ("OCI index image", image),
+        ("OCI index digest", index_digest),
+        ("OCI platform", platform),
+        ("OCI platform manifest", platform_manifest),
+    ):
+        if required(fields, label) != expected:
+            fail(f"build-inputs {label} does not match baseline/build provenance")
+    if required(fields, "Input count") != str(len(INPUT_ROLES)):
+        fail("build-inputs envelope has an unexpected input count")
+    if required(fields, "Publication schema propagation") != "incomplete":
+        fail("build-envelope creation propagation state is not the literal build-time fact")
+    if required(fields, "Build inputs complete") != "true":
+        fail("build-inputs envelope is incomplete")
+
+    expected_paths = (
+        "docker-build-args.txt",
+        "docker-build-inside.sh",
+        "sp11-oci-index.json",
+        "artifacts/sp11-kernel-build-manifest.txt",
+        "artifacts/sp11-kernel-apt-provenance.txt",
+    )
+    attached = {
+        4: args.build_manifest,
+        5: args.apt_provenance,
+    }
+    for index, (role, path_value) in enumerate(zip(INPUT_ROLES, expected_paths), 1):
+        if required(fields, f"Input {index} role") != role:
+            fail(f"build-inputs role mismatch at input {index}")
+        if required(fields, f"Input {index} path") != path_value:
+            fail(f"build-inputs path mismatch at input {index}")
+        size_value = required(fields, f"Input {index} size")
+        digest_value = required(fields, f"Input {index} SHA256")
+        if not size_value.isdigit() or int(size_value) <= 0:
+            fail(f"build-inputs size is invalid at input {index}")
+        if not SHA256_RE.fullmatch(digest_value):
+            fail(f"build-inputs hash is invalid at input {index}")
+        if index == 3 and digest_value != index_digest.removeprefix("sha256:"):
+            fail("build-inputs raw OCI index hash does not match its index digest")
+        if index in attached:
+            snapshot = before[index - 4]
+            if snapshot[2] != int(size_value):
+                fail(f"attached {role} size differs from build-inputs envelope")
+            if snapshot[5] != digest_value:
+                fail(f"attached {role} hash differs from build-inputs envelope")
+    if attached_trio_snapshot(args) != before:
+        fail("attached immutable build-input trio changed during validation")
+
+
+def validate_release_snapshot(
+    args: argparse.Namespace, baseline: dict[str, str]
+) -> None:
+    """Bind a private release trio directly to every retained/live build input."""
+
+    assert args.work_dir is not None
+    assert args.build_args is not None
+    assert args.entrypoint is not None
+    assert args.oci_index is not None
+    before = retained_snapshot(args)
+
+    validate_attached(args, baseline)
+    apt_fields = validate_apt_sidecar(args.apt_provenance, baseline)
+    validate_retained_apt(args, apt_fields, baseline)
+    validate_oci_index(args.oci_index, baseline)
+
+    envelope = parse_unique_lines(args.output)
+    live_inputs = (args.build_args, args.entrypoint, args.oci_index)
+    expected_paths = (
+        "docker-build-args.txt",
+        "docker-build-inside.sh",
+        "sp11-oci-index.json",
+    )
+    for index, (role, path, expected_path) in enumerate(
+        zip(INPUT_ROLES[:3], live_inputs, expected_paths), 1
+    ):
+        relative, size, digest = safe_input(args.work_dir, path, role)
+        if relative != expected_path:
+            fail(f"live release input path changed at row {index}")
+        if required(envelope, f"Input {index} role") != role:
+            fail(f"release-snapshot role mismatch at input {index}")
+        if required(envelope, f"Input {index} path") != expected_path:
+            fail(f"release-snapshot path mismatch at input {index}")
+        if required(envelope, f"Input {index} size") != str(size):
+            fail(f"release-snapshot size mismatch at input {index}")
+        if required(envelope, f"Input {index} SHA256") != digest:
+            fail(f"release-snapshot hash mismatch at input {index}")
+
+    if retained_snapshot(args) != before:
+        fail("release-snapshot inputs changed during direct retained-input validation")
 
 
 def main() -> None:
     args = parse_args()
     if not COMMIT_RE.fullmatch(args.support_head):
         fail("support HEAD must be a full lowercase commit")
+    baseline = read_baseline(args.baseline)
+    if tuple(required(baseline, "SP11_APT_SNAPSHOT_SUITES").split()) != SUITES:
+        fail("baseline suite order changed")
+    if tuple(required(baseline, "SP11_APT_SNAPSHOT_COMPONENTS").split()) != COMPONENTS:
+        fail("baseline component order changed")
+    if args.mode == "validate-attached":
+        validate_attached(args, baseline)
+        print(f"Validated attached immutable build-inputs envelope: {args.output}")
+        return
+
+    assert args.work_dir is not None
+    assert args.build_args is not None
+    assert args.entrypoint is not None
+    assert args.oci_index is not None
+    assert args.apt_archives_dir is not None
+    assert args.apt_lists_dir is not None
+    assert args.apt_index_cache_dir is not None
+    assert args.apt_local_build_deps_dir is not None
+    assert args.apt_pre_inventory is not None
+    assert args.apt_post_inventory is not None
     if args.work_dir.is_symlink() or not args.work_dir.is_dir():
         fail("Docker work directory must be real")
     if args.work_dir.resolve(strict=True) != args.work_dir.absolute():
         fail("Docker work directory must have no symlinked path components")
+    if args.mode == "validate-release-snapshot":
+        for actual, expected, label in (
+            (args.build_args, args.work_dir / "docker-build-args.txt", "Docker build arguments"),
+            (args.entrypoint, args.work_dir / "docker-build-inside.sh", "Docker entrypoint"),
+            (args.oci_index, args.work_dir / "sp11-oci-index.json", "OCI index"),
+        ):
+            assert actual is not None
+            if actual.absolute() != expected:
+                fail(f"{label} path is not the exact managed work path")
+        snapshot_parent = real_directory(
+            args.build_manifest.parent, "private release provenance snapshot"
+        )
+        for actual, name, label in (
+            (args.build_manifest, "sp11-kernel-build-manifest.txt", "kernel build manifest"),
+            (args.apt_provenance, "sp11-kernel-apt-provenance.txt", "APT provenance"),
+            (args.output, "sp11-kernel-build-inputs.txt", "build-inputs envelope"),
+        ):
+            if actual.absolute() != snapshot_parent / name:
+                fail(f"{label} is not in the exact private release snapshot")
+            regular_file(actual, label)
+        validate_release_snapshot(args, baseline)
+        print(f"Validated private release snapshot against retained inputs: {snapshot_parent}")
+        return
+
     expected_paths = (
         (args.build_args, args.work_dir / "docker-build-args.txt", "Docker build arguments"),
         (args.entrypoint, args.work_dir / "docker-build-inside.sh", "Docker entrypoint"),
@@ -860,13 +1163,9 @@ def main() -> None:
     for actual, expected, label in expected_paths:
         if actual.absolute() != expected:
             fail(f"{label} path is not the exact managed work path")
-    baseline = read_baseline(args.baseline)
-    if tuple(required(baseline, "SP11_APT_SNAPSHOT_SUITES").split()) != SUITES:
-        fail("baseline suite order changed")
-    if tuple(required(baseline, "SP11_APT_SNAPSHOT_COMPONENTS").split()) != COMPONENTS:
-        fail("baseline component order changed")
-
     before = retained_snapshot(args)
+    written_output_snapshot: tuple[int, int, int, int, int, str] | None = None
+    validate_exact_build_manifest(args.build_manifest, args.support_head)
     validate_manifest(args.build_manifest, baseline, args.support_head)
     apt_fields = validate_apt_sidecar(args.apt_provenance, baseline)
     validate_retained_apt(args, apt_fields, baseline)
@@ -928,12 +1227,21 @@ def main() -> None:
         finally:
             if temporary_path.exists():
                 temporary_path.unlink()
+        written_output_snapshot = stable_file_snapshot(
+            args.output, "new build-inputs envelope"
+        )
 
     validate_envelope(args, baseline)
     apt_fields = validate_apt_sidecar(args.apt_provenance, baseline)
     validate_retained_apt(args, apt_fields, baseline)
     if retained_snapshot(args) != before:
         fail("retained APT inputs changed during envelope generation/validation")
+    if (
+        written_output_snapshot is not None
+        and stable_file_snapshot(args.output, "new build-inputs envelope")
+        != written_output_snapshot
+    ):
+        fail("new build-inputs envelope changed before write-mode success")
     print(f"Validated immutable build-inputs envelope: {args.output}")
 
 

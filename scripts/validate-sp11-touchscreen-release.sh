@@ -114,7 +114,7 @@ single_manifest_value() {
 }
 
 validate_schema_v2_touchscreen_bindings() {
-  local repo_dir validator archive_validator identity_validator build_manifest
+  local repo_dir validator archive_validator identity_validator build_manifest apt_provenance build_inputs
   local kernel_archive_name touch_archive_name kernel_archive touch_archive
   local patched_tree touch_tree touch_license touch_commit touch_license_mode
   local binding_dir expected_payload actual_payload asset asset_name asset_sha
@@ -124,6 +124,8 @@ validate_schema_v2_touchscreen_bindings() {
   archive_validator="$repo_dir/scripts/validate-sp11-source-archive.py"
   identity_validator="$repo_dir/scripts/validate-sp11-payload-identity-list.sh"
   build_manifest="$RELEASE_DIR/sp11-kernel-build-manifest.txt"
+  apt_provenance="$RELEASE_DIR/sp11-kernel-apt-provenance.txt"
+  build_inputs="$RELEASE_DIR/sp11-kernel-build-inputs.txt"
   for helper in "$validator" "$archive_validator" "$identity_validator"; do
     if [ ! -f "$helper" ] || [ -L "$helper" ]; then
       error "schema-v2 release validator is missing: $(basename "$helper")"
@@ -185,6 +187,8 @@ validate_schema_v2_touchscreen_bindings() {
       --release-name "$manifest_release" \
       --kernel-build-manifest "$build_manifest" \
       --kernel-release-manifest "$release_manifest" \
+      --apt-provenance "$apt_provenance" \
+      --build-inputs "$build_inputs" \
       --touchscreen-module-manifest "$touchscreen_manifest" \
       --kernel-source "$kernel_archive" \
       --touchscreen-source "$touch_archive" \
@@ -231,7 +235,7 @@ validate_schema_v2_touchscreen_bindings() {
 }
 
 validate_schema_v2_kernel_bindings() {
-  local repo_dir validator archive_validator identity_validator build_manifest
+  local repo_dir validator archive_validator identity_validator build_manifest apt_provenance build_inputs
   local kernel_archive_name kernel_archive patched_tree binding_dir
   local expected_payload actual_payload asset asset_name asset_sha
 
@@ -240,6 +244,8 @@ validate_schema_v2_kernel_bindings() {
   archive_validator="$repo_dir/scripts/validate-sp11-source-archive.py"
   identity_validator="$repo_dir/scripts/validate-sp11-payload-identity-list.sh"
   build_manifest="$RELEASE_DIR/sp11-kernel-build-manifest.txt"
+  apt_provenance="$RELEASE_DIR/sp11-kernel-apt-provenance.txt"
+  build_inputs="$RELEASE_DIR/sp11-kernel-build-inputs.txt"
   for helper in "$validator" "$archive_validator" "$identity_validator"; do
     if [ ! -f "$helper" ] || [ -L "$helper" ]; then
       error "schema-v2 release validator is missing: $(basename "$helper")"
@@ -290,6 +296,8 @@ validate_schema_v2_kernel_bindings() {
       --support-commit "$support_commit" \
       --kernel-build-manifest "$build_manifest" \
       --kernel-release-manifest "$release_manifest" \
+      --apt-provenance "$apt_provenance" \
+      --build-inputs "$build_inputs" \
       --kernel-source "$kernel_archive" \
       --expected-payload-out "$expected_payload" >/dev/null; then
     error "schema-v2 kernel release manifest and source failed complete cross-binding validation."
@@ -332,6 +340,8 @@ validate_schema_v2_asset_inventory() {
     SHA256SUMS \
     RELEASE-NOTES.md \
     sp11-kernel-build-manifest.txt \
+    sp11-kernel-apt-provenance.txt \
+    sp11-kernel-build-inputs.txt \
     sp11-kernel-release-manifest.txt \
     sp11-kernel-debs.txt; do
     allowed_assets["$asset_name"]=1
@@ -700,6 +710,7 @@ release_manifest="$RELEASE_DIR/sp11-kernel-release-manifest.txt"
 support_commit=""
 manifest_release=""
 schema_v2="false"
+kernel_release_schema_v1="false"
 if [ ! -f "$release_manifest" ] || [ -L "$release_manifest" ]; then
   error "missing regular, non-symlinked sp11-kernel-release-manifest.txt."
 else
@@ -722,6 +733,18 @@ else
   else
     schema_v2="invalid"
     error "release manifest has an unsupported or ambiguous Build provenance schema declaration."
+  fi
+  release_schema_values=()
+  while IFS= read -r value; do release_schema_values+=("$value"); done \
+    < <(manifest_values "$release_manifest" "Kernel release schema")
+  if [ "${#release_schema_values[@]}" -eq 0 ]; then
+    kernel_release_schema_v1="false"
+  elif [ "${#release_schema_values[@]}" -eq 1 ] &&
+       [ "${release_schema_values[0]}" = "sp11-kernel-release-v1" ]; then
+    kernel_release_schema_v1="true"
+  else
+    kernel_release_schema_v1="invalid"
+    error "release manifest has an unsupported or ambiguous Kernel release schema declaration."
   fi
   if [[ ! "$support_commit" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]]; then
     error "release manifest Support repo commit must be an immutable 40- or 64-hex commit."
@@ -777,19 +800,29 @@ else
       error "release manifest Jobs must be a positive integer."
     if [ "$schema_v2" = "true" ]; then
       build_manifest="$RELEASE_DIR/sp11-kernel-build-manifest.txt"
-      build_validator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/validate-sp11-image-release-manifests.py"
-      if [ ! -f "$build_manifest" ] || [ -L "$build_manifest" ]; then
-        error "schema-v2 release is missing its exact kernel build manifest."
+      apt_provenance="$RELEASE_DIR/sp11-kernel-apt-provenance.txt"
+      build_inputs="$RELEASE_DIR/sp11-kernel-build-inputs.txt"
+      build_inputs_validator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/sp11-kernel-build-inputs.py"
+      kernel_baseline="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/config/kernel-baselines/7.2-rc5-jg-0.env"
+      if [ "$kernel_release_schema_v1" != "true" ]; then
+        error "schema-v2 release is missing its exact sp11-kernel-release-v1 outer attestation."
+      elif [ ! -f "$build_manifest" ] || [ -L "$build_manifest" ] ||
+           [ ! -f "$apt_provenance" ] || [ -L "$apt_provenance" ] ||
+           [ ! -f "$build_inputs" ] || [ -L "$build_inputs" ]; then
+        error "schema-v2 release is missing its exact regular immutable build-input trio."
       elif ! have_tool python3; then
         error "python3 is required for strict schema-v2 build-manifest validation."
-      elif [ ! -f "$build_validator" ] || [ -L "$build_validator" ]; then
-        error "strict schema-v2 build-manifest validator is missing."
-      elif ! python3 "$build_validator" \
-          --build-only \
-          --repo-dir "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" \
-          --support-commit "$support_commit" \
-          --kernel-build-manifest "$build_manifest" >/dev/null; then
-        error "attached schema-v2 kernel build manifest failed strict validation."
+      elif [ ! -f "$build_inputs_validator" ] || [ -L "$build_inputs_validator" ]; then
+        error "strict immutable build-input validator is missing."
+      elif [ ! -f "$kernel_baseline" ] || [ -L "$kernel_baseline" ]; then
+        error "reviewed immutable kernel baseline is missing."
+      elif ! python3 "$build_inputs_validator" validate-attached \
+          --baseline "$kernel_baseline" \
+          --support-head "$support_commit" \
+          --build-manifest "$build_manifest" \
+          --apt-provenance "$apt_provenance" \
+          --output "$build_inputs" >/dev/null; then
+        error "attached immutable kernel build-input trio failed strict validation."
       else
         checked
       fi

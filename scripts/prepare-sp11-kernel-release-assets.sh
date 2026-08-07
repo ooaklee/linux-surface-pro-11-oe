@@ -23,6 +23,7 @@ sanitize_git_environment
 
 KERNEL_DEBS_DIR="payload/kernel-debs"
 ARTIFACTS_DIR="build/docker-sp11-qcom-x1e-kernel/artifacts"
+KERNEL_BASELINE="config/kernel-baselines/7.2-rc5-jg-0.env"
 PATCH_DIRS=("patches/ubuntu-qcom-x1e-7.0")
 PATCH_DIR_EXPLICIT="false"
 OUT_DIR=""
@@ -53,6 +54,16 @@ TOUCHSCREEN_MODULE_MANIFEST="sp11-touchscreen-modules-manifest.txt"
 SOURCE_SNAPSHOT_DIR=""
 PROVENANCE_SNAPSHOT_DIR=""
 OUTPUT_STAGING_DIR=""
+FINAL_OUT_DIR=""
+PREVIOUS_OUTPUT_CONTAINER=""
+PREVIOUS_OUTPUT_DIR=""
+PREVIOUS_OUTPUT_STATE=""
+PREVIOUS_OUTPUT_STATE_SIZE=""
+PREVIOUS_OUTPUT_STATE_SHA=""
+PREVIOUS_CONTAINER_IDENTITY=""
+PREVIOUS_OUTPUT_IDENTITY=""
+OUTPUT_INSTALL_PENDING="false"
+INSTALLED_OUTPUT_IDENTITY=""
 
 usage() {
   cat <<EOF
@@ -64,8 +75,9 @@ Surface Pro 11 qcom-x1e kernel packages. It does not publish anything.
 Options:
   --kernel-debs-dir DIR   Directory containing built qcom-x1e .debs,
                           default $KERNEL_DEBS_DIR.
-  --artifacts-dir DIR     Directory containing the final schema-v2 release
-                          build manifest,
+  --artifacts-dir DIR     Exact Docker work artifacts directory containing the
+                          final schema-v2 build manifest, v1 APT sidecar, and
+                          v1 build-inputs envelope,
                           default $ARTIFACTS_DIR.
   --patch-dir DIR         Patch directory. Repeat to record ordered patch sets;
                           default ${PATCH_DIRS[0]}.
@@ -238,7 +250,169 @@ cleanup_output_staging() {
     *) echo "Warning: refusing to remove unexpected release staging directory: $OUTPUT_STAGING_DIR" >&2 ;;
   esac
 }
-trap 'cleanup_output_staging; cleanup_source_snapshot; cleanup_provenance_snapshot' EXIT
+directory_identity() {
+  local path="$1" identity
+
+  if identity="$(stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$identity"
+  elif identity="$(stat -f '%d:%i' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$identity"
+  else
+    return 1
+  fi
+}
+directory_mode() {
+  local path="$1" mode
+
+  if mode="$(stat -c '%a' -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  elif mode="$(stat -f '%Lp' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  else
+    return 1
+  fi
+}
+verify_private_container() {
+  local root="$1" expected_identity="$2" child
+  local -a child_args=()
+  shift 2
+
+  [ -d "$root" ] && [ ! -L "$root" ] &&
+    [ "$(directory_identity "$root" 2>/dev/null || true)" = "$expected_identity" ] &&
+    [ "$(directory_mode "$root" 2>/dev/null || true)" = "700" ] || return 1
+  for child in "$@"; do
+    child_args+=(--child "$child")
+  done
+  if [ "${#child_args[@]}" -eq 0 ]; then
+    python3 "$release_tree_state_validator" validate-private \
+      --root "$root" >/dev/null || return 1
+  else
+    python3 "$release_tree_state_validator" validate-private \
+      --root "$root" "${child_args[@]}" >/dev/null || return 1
+  fi
+  [ -d "$root" ] && [ ! -L "$root" ] &&
+    [ "$(directory_identity "$root" 2>/dev/null || true)" = "$expected_identity" ] &&
+    [ "$(directory_mode "$root" 2>/dev/null || true)" = "700" ]
+}
+verify_previous_state_authority() {
+  local size sha
+
+  [ -n "$PREVIOUS_OUTPUT_STATE" ] &&
+    [ -f "$PREVIOUS_OUTPUT_STATE" ] && [ ! -L "$PREVIOUS_OUTPUT_STATE" ] || return 1
+  size="$(file_size "$PREVIOUS_OUTPUT_STATE")"
+  sha="$(shasum -a 256 "$PREVIOUS_OUTPUT_STATE" | awk '{print $1}')"
+  [ "$size" = "$PREVIOUS_OUTPUT_STATE_SIZE" ] &&
+    [ "$sha" = "$PREVIOUS_OUTPUT_STATE_SHA" ]
+}
+verify_previous_output_tree_at() {
+  local root="$1"
+
+  verify_previous_state_authority &&
+    [ "$(directory_identity "$root" 2>/dev/null || true)" = "$PREVIOUS_OUTPUT_IDENTITY" ] &&
+    python3 "$release_tree_state_validator" validate \
+      --root "$root" --snapshot "$PREVIOUS_OUTPUT_STATE" >/dev/null
+}
+verify_previous_output_backup() {
+  [ -n "$PREVIOUS_OUTPUT_CONTAINER" ] &&
+    verify_private_container "$PREVIOUS_OUTPUT_CONTAINER" \
+      "$PREVIOUS_CONTAINER_IDENTITY" original tree-state.json &&
+    [ -d "$PREVIOUS_OUTPUT_DIR" ] &&
+    [ ! -L "$PREVIOUS_OUTPUT_DIR" ] &&
+    verify_previous_output_tree_at "$PREVIOUS_OUTPUT_DIR"
+}
+rollback_output_install() {
+  local current_identity="" rollback_ok="true"
+  local failed_container="" failed_candidate="" failed_candidate_exact="false"
+  local failed_container_identity=""
+  local restored_previous="false"
+
+  [ "$OUTPUT_INSTALL_PENDING" = "true" ] || return 0
+  case "$FINAL_OUT_DIR" in
+    "${repo_dir:-}/build/release/"?*) ;;
+    *)
+      echo "Warning: refusing to remove unexpected failed release output: $FINAL_OUT_DIR" >&2
+      return 0
+      ;;
+  esac
+  if [ -e "$FINAL_OUT_DIR" ]; then
+    current_identity="$(directory_identity "$FINAL_OUT_DIR" 2>/dev/null || true)"
+    if [ -z "$INSTALLED_OUTPUT_IDENTITY" ] ||
+       [ "$current_identity" != "$INSTALLED_OUTPUT_IDENTITY" ]; then
+      echo "Warning: preserving unexpected output occupant during rollback: $FINAL_OUT_DIR" >&2
+      rollback_ok="false"
+    else
+      failed_container="$(mktemp -d "$release_root_abs/.${out_leaf}.failed.XXXXXX")"
+      chmod 700 "$failed_container"
+      failed_container_identity="$(directory_identity "$failed_container")"
+      failed_candidate="$failed_container/candidate"
+      if ! verify_private_container "$failed_container" \
+          "$failed_container_identity"; then
+        echo "Warning: failed-output recovery container is unsafe: $failed_container" >&2
+        rollback_ok="false"
+      elif ! mv "$FINAL_OUT_DIR" "$failed_candidate"; then
+        echo "Warning: could not move failed release output into private recovery: $FINAL_OUT_DIR" >&2
+        rollback_ok="false"
+      elif ! verify_private_container "$failed_container" \
+          "$failed_container_identity" candidate; then
+        echo "Warning: failed-output recovery container changed during recovery move: $failed_container" >&2
+        rollback_ok="false"
+      elif [ "$(directory_identity "$failed_candidate" 2>/dev/null || true)" != \
+             "$INSTALLED_OUTPUT_IDENTITY" ]; then
+        echo "Warning: failed release output identity changed during recovery move: $failed_candidate" >&2
+        rollback_ok="false"
+      elif verify_output_snapshot "$failed_candidate" >/dev/null 2>&1; then
+        failed_candidate_exact="true"
+      else
+        echo "Warning: preserving changed failed release output for recovery: $failed_candidate" >&2
+      fi
+    fi
+  fi
+  if [ -n "$PREVIOUS_OUTPUT_DIR" ] && [ -e "$PREVIOUS_OUTPUT_DIR" ]; then
+    if [ "$rollback_ok" = "true" ]; then
+      if ! verify_previous_output_backup; then
+        echo "Warning: preserving changed previous release output for recovery: $PREVIOUS_OUTPUT_CONTAINER" >&2
+        rollback_ok="false"
+      elif [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
+        echo "Warning: refusing to overwrite an occupied release output during rollback: $FINAL_OUT_DIR" >&2
+        rollback_ok="false"
+      elif ! mv "$PREVIOUS_OUTPUT_DIR" "$FINAL_OUT_DIR"; then
+        echo "Warning: could not restore previous release output: $PREVIOUS_OUTPUT_DIR" >&2
+        rollback_ok="false"
+      elif ! verify_previous_output_tree_at "$FINAL_OUT_DIR"; then
+        echo "Warning: restored previous release output failed its exact tree check: $FINAL_OUT_DIR" >&2
+        rollback_ok="false"
+      else
+        restored_previous="true"
+        if ! rm -f -- "$PREVIOUS_OUTPUT_STATE" ||
+           ! rmdir "$PREVIOUS_OUTPUT_CONTAINER"; then
+          echo "Warning: previous-output container contains unexpected recovery data: $PREVIOUS_OUTPUT_CONTAINER" >&2
+        fi
+      fi
+    fi
+  elif [ -n "$PREVIOUS_OUTPUT_CONTAINER" ]; then
+    echo "Warning: previous-output recovery container is incomplete: $PREVIOUS_OUTPUT_CONTAINER" >&2
+    rollback_ok="false"
+  fi
+  if [ "$rollback_ok" = "true" ]; then
+    if [ "$failed_candidate_exact" = "true" ]; then
+      if ! verify_private_container "$failed_container" \
+           "$failed_container_identity" candidate ||
+         [ "$(directory_identity "$failed_candidate" 2>/dev/null || true)" != \
+           "$INSTALLED_OUTPUT_IDENTITY" ] ||
+         ! verify_output_snapshot "$failed_candidate" >/dev/null 2>&1; then
+        echo "Warning: preserving changed failed release output for recovery: $failed_container" >&2
+      elif ! rm -rf -- "$failed_candidate" || ! rmdir "$failed_container"; then
+        echo "Warning: exact failed candidate could not be retired: $failed_container" >&2
+      fi
+    fi
+    if [ "$restored_previous" = "true" ]; then
+      PREVIOUS_OUTPUT_CONTAINER=""
+      PREVIOUS_OUTPUT_DIR=""
+    fi
+    OUTPUT_INSTALL_PENDING="false"
+  fi
+}
+trap 'rollback_output_install; cleanup_output_staging; cleanup_source_snapshot; cleanup_provenance_snapshot' EXIT
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -363,6 +537,11 @@ fi
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_dir"
 public_content_validator="$repo_dir/scripts/validate-sp11-public-content.sh"
+release_tree_state_validator="$repo_dir/scripts/sp11-release-tree-state.py"
+if [ ! -f "$release_tree_state_validator" ] || [ -L "$release_tree_state_validator" ]; then
+  echo "Missing regular release-tree state validator." >&2
+  exit 1
+fi
 
 if [ ! -d "$KERNEL_DEBS_DIR" ] || [ -L "$KERNEL_DEBS_DIR" ]; then
   echo "Kernel deb directory not found or is a symlink: $KERNEL_DEBS_DIR" >&2
@@ -798,27 +977,108 @@ OUT_DIR="$release_root_abs/$out_leaf"
 OUT_DIR_DISPLAY="$release_root/$out_leaf"
 
 build_manifest="$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
-if [ ! -f "$build_manifest" ] || [ -L "$build_manifest" ]; then
-  echo "Refusing assets without a regular, non-symlinked kernel build manifest: $build_manifest" >&2
+apt_provenance="$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
+build_inputs="$ARTIFACTS_DIR/sp11-kernel-build-inputs.txt"
+artifacts_abs="$(cd "$ARTIFACTS_DIR" && pwd -P)"
+build_work_dir="$(dirname "$artifacts_abs")"
+if [ "$(basename "$artifacts_abs")" != "artifacts" ]; then
+  echo "Build artifacts directory must be the exact artifacts child of its retained Docker work root." >&2
+  exit 1
+fi
+if [ ! -f "$KERNEL_BASELINE" ] || [ -L "$KERNEL_BASELINE" ]; then
+  echo "Missing regular reviewed kernel baseline: $KERNEL_BASELINE" >&2
+  exit 1
+fi
+for provenance_input in "$build_manifest" "$apt_provenance" "$build_inputs"; do
+  if [ ! -f "$provenance_input" ] || [ -L "$provenance_input" ]; then
+    echo "Refusing assets without a regular, non-symlinked immutable provenance input: $provenance_input" >&2
+    exit 1
+  fi
+done
+
+require_tool python3
+build_support_head="$(required_manifest_value "$build_manifest" "Support start HEAD")"
+build_support_end="$(required_manifest_value "$build_manifest" "Support end HEAD")"
+repo_commit="$(git rev-parse 'HEAD^{commit}')"
+repo_commit="$(printf '%s' "$repo_commit" | tr '[:upper:]' '[:lower:]')"
+build_support_head="$(printf '%s' "$build_support_head" | tr '[:upper:]' '[:lower:]')"
+build_support_end="$(printf '%s' "$build_support_end" | tr '[:upper:]' '[:lower:]')"
+if [ "$build_support_head" != "$build_support_end" ] ||
+   [ "$build_support_head" != "$repo_commit" ]; then
+  echo "Immutable build inputs do not bind the current stable support repository commit." >&2
+  exit 1
+fi
+
+build_inputs_validator="$repo_dir/scripts/sp11-kernel-build-inputs.py"
+if [ ! -f "$build_inputs_validator" ] || [ -L "$build_inputs_validator" ]; then
+  echo "Missing regular immutable build-input validator." >&2
   exit 1
 fi
 PROVENANCE_SNAPSHOT_DIR="$(mktemp -d "$release_root_abs/.provenance-snapshot.XXXXXX")"
-build_manifest_before_sha="$(shasum -a 256 "$build_manifest" | awk '{print $1}')"
-cp -p "$build_manifest" "$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-manifest.txt"
-build_manifest_after_sha="$(shasum -a 256 "$build_manifest" | awk '{print $1}')"
+for provenance_name in \
+  sp11-kernel-build-manifest.txt \
+  sp11-kernel-apt-provenance.txt \
+  sp11-kernel-build-inputs.txt; do
+  provenance_input="$artifacts_abs/$provenance_name"
+  provenance_before_sha="$(shasum -a 256 "$provenance_input" | awk '{print $1}')"
+  provenance_before_size="$(file_size "$provenance_input")"
+  cp -p "$provenance_input" "$PROVENANCE_SNAPSHOT_DIR/$provenance_name"
+  provenance_after_sha="$(shasum -a 256 "$provenance_input" | awk '{print $1}')"
+  provenance_after_size="$(file_size "$provenance_input")"
+  provenance_snapshot_sha="$(shasum -a 256 "$PROVENANCE_SNAPSHOT_DIR/$provenance_name" | awk '{print $1}')"
+  provenance_snapshot_size="$(file_size "$PROVENANCE_SNAPSHOT_DIR/$provenance_name")"
+  if [ "$provenance_before_sha" != "$provenance_after_sha" ] ||
+     [ "$provenance_before_sha" != "$provenance_snapshot_sha" ] ||
+     [ "$provenance_before_size" != "$provenance_after_size" ] ||
+     [ "$provenance_before_size" != "$provenance_snapshot_size" ]; then
+    echo "Immutable provenance input changed while its validation snapshot was created: $provenance_name" >&2
+    exit 1
+  fi
+done
+
+python3 "$build_inputs_validator" validate-release-snapshot \
+  --baseline "$repo_dir/$KERNEL_BASELINE" \
+  --work-dir "$build_work_dir" \
+  --support-head "$repo_commit" \
+  --build-args "$build_work_dir/docker-build-args.txt" \
+  --entrypoint "$build_work_dir/docker-build-inside.sh" \
+  --oci-index "$build_work_dir/sp11-oci-index.json" \
+  --build-manifest "$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-manifest.txt" \
+  --apt-provenance "$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-apt-provenance.txt" \
+  --apt-archives-dir "$build_work_dir/apt-archives" \
+  --apt-lists-dir "$build_work_dir/apt-lists" \
+  --apt-index-cache-dir "$build_work_dir/apt-indexes" \
+  --apt-local-build-deps-dir "$artifacts_abs" \
+  --apt-pre-inventory "$build_work_dir/sp11-apt-installed-pre.txt" \
+  --apt-post-inventory "$build_work_dir/sp11-apt-installed-post.txt" \
+  --output "$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-inputs.txt"
+
 build_manifest="$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-manifest.txt"
+apt_provenance="$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-apt-provenance.txt"
+build_inputs="$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-inputs.txt"
 build_manifest_snapshot_sha="$(shasum -a 256 "$build_manifest" | awk '{print $1}')"
-if [ "$build_manifest_before_sha" != "$build_manifest_after_sha" ] ||
-   [ "$build_manifest_before_sha" != "$build_manifest_snapshot_sha" ]; then
-  echo "Kernel build manifest changed while its immutable validation snapshot was created." >&2
-  exit 1
-fi
+build_manifest_snapshot_size="$(file_size "$build_manifest")"
+apt_provenance_snapshot_sha="$(shasum -a 256 "$apt_provenance" | awk '{print $1}')"
+apt_provenance_snapshot_size="$(file_size "$apt_provenance")"
+build_inputs_snapshot_sha="$(shasum -a 256 "$build_inputs" | awk '{print $1}')"
+build_inputs_snapshot_size="$(file_size "$build_inputs")"
+
+python3 "$build_inputs_validator" validate-attached \
+  --baseline "$repo_dir/$KERNEL_BASELINE" \
+  --support-head "$repo_commit" \
+  --build-manifest "$build_manifest" \
+  --apt-provenance "$apt_provenance" \
+  --output "$build_inputs"
 if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   [ -x "$public_content_validator" ] && [ ! -L "$public_content_validator" ] || {
     echo "Missing executable public-content validator." >&2
     exit 1
   }
-  public_input_args=(--file "$build_manifest")
+  public_input_args=(
+    --file "$build_manifest"
+    --file "$apt_provenance"
+    --file "$build_inputs"
+  )
   if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
     public_input_args+=(--file "$input_touchscreen_manifest")
   fi
@@ -857,9 +1117,24 @@ signing_certificate_serial="$(required_manifest_value "$build_manifest" "Signing
 required_deb_role_set="$(required_manifest_value "$build_manifest" "Required Deb roles")"
 optional_deb_role_set="$(required_manifest_value "$build_manifest" "Optional Deb roles")"
 manifest_deb_count="$(required_manifest_value "$build_manifest" "Deb count")"
+apt_provenance_schema="$(required_manifest_value "$apt_provenance" "APT provenance schema")"
+apt_snapshot_id="$(required_manifest_value "$apt_provenance" "Snapshot ID")"
+apt_snapshot_uri="$(required_manifest_value "$apt_provenance" "Snapshot URI")"
+build_inputs_schema="$(required_manifest_value "$build_inputs" "Build inputs schema")"
+build_envelope_creation_propagation="$(required_manifest_value "$build_inputs" "Publication schema propagation")"
+oci_index_image="$(required_manifest_value "$build_inputs" "OCI index image")"
+oci_index_digest="$(required_manifest_value "$build_inputs" "OCI index digest")"
+oci_platform="$(required_manifest_value "$build_inputs" "OCI platform")"
+oci_platform_manifest="$(required_manifest_value "$build_inputs" "OCI platform manifest")"
 
 if [ "$provenance_schema" != "sp11-kernel-build-v2" ]; then
   echo "Refusing non-v2 kernel build provenance: $provenance_schema" >&2
+  exit 1
+fi
+if [ "$apt_provenance_schema" != "sp11-kernel-apt-provenance-v1" ] ||
+   [ "$build_inputs_schema" != "sp11-kernel-build-inputs-v1" ] ||
+   [ "$build_envelope_creation_propagation" != "incomplete" ]; then
+  echo "Immutable build-input schemas or build-time propagation state changed after validation." >&2
   exit 1
 fi
 if [ "$release_build" != "true" ]; then
@@ -1518,6 +1793,167 @@ append_upload_asset() {
   upload_assets+=("$name")
 }
 
+checksummed_assets=()
+expected_output_names=()
+expected_output_sizes=()
+expected_output_shas=()
+trusted_checksum_file=""
+
+append_expected_output() {
+  local root="$1" name="$2" path
+  local size_before size_after sha_before sha_after
+
+  path="$root/$name"
+
+  if [ ! -f "$path" ] || [ -L "$path" ]; then
+    echo "Cannot anchor missing or unsafe prepared output: $name" >&2
+    return 1
+  fi
+  size_before="$(file_size "$path")"
+  sha_before="$(shasum -a 256 "$path" | awk '{print $1}')"
+  size_after="$(file_size "$path")"
+  sha_after="$(shasum -a 256 "$path" | awk '{print $1}')"
+  if [ "$size_before" != "$size_after" ] || [ "$sha_before" != "$sha_after" ]; then
+    echo "Prepared output changed while its expected bytes were captured: $name" >&2
+    return 1
+  fi
+  expected_output_names+=("$name")
+  expected_output_sizes+=("$size_before")
+  expected_output_shas+=("$sha_before")
+}
+
+verify_expected_output_bytes() {
+  local root="$1" index=0 name path size sha
+
+  while [ "$index" -lt "${#expected_output_names[@]}" ]; do
+    name="${expected_output_names[$index]}"
+    path="$root/$name"
+    if [ ! -f "$path" ] || [ -L "$path" ]; then
+      echo "Prepared output is missing an expected regular file: $name" >&2
+      return 1
+    fi
+    size="$(file_size "$path")"
+    sha="$(shasum -a 256 "$path" | awk '{print $1}')"
+    if [ "$size" != "${expected_output_sizes[$index]}" ] ||
+       [ "$sha" != "${expected_output_shas[$index]}" ]; then
+      echo "Prepared output differs from its independently captured bytes: $name" >&2
+      return 1
+    fi
+    index=$((index + 1))
+  done
+}
+
+validate_prepared_semantics() {
+  local root="$1"
+  local expected_payload="$PROVENANCE_SNAPSHOT_DIR/expected-kernel-payload.txt"
+  local index=0 expected_deb_list deb
+  local -a validator_args public_output_args
+
+  python3 "$build_inputs_validator" validate-attached \
+    --baseline "$repo_dir/$KERNEL_BASELINE" \
+    --support-head "$repo_commit" \
+    --build-manifest "$root/sp11-kernel-build-manifest.txt" \
+    --apt-provenance "$root/sp11-kernel-apt-provenance.txt" \
+    --output "$root/sp11-kernel-build-inputs.txt" >/dev/null
+
+  if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
+    validator_args=(
+      --repo-dir "$repo_dir"
+      --support-commit "$repo_commit"
+      --kernel-build-manifest "$root/sp11-kernel-build-manifest.txt"
+      --kernel-release-manifest "$root/sp11-kernel-release-manifest.txt"
+      --apt-provenance "$root/sp11-kernel-apt-provenance.txt"
+      --build-inputs "$root/sp11-kernel-build-inputs.txt"
+      --kernel-source "$root/$(basename "$KERNEL_SOURCE_ASSET")"
+      --expected-payload-out "$expected_payload"
+    )
+    if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+      validator_args+=(
+        --release-name "$RELEASE_NAME"
+        --touchscreen-module-manifest "$root/$TOUCHSCREEN_MODULE_MANIFEST"
+        --touchscreen-source "$root/$(basename "$TOUCHSCREEN_SOURCE_ASSET")"
+      )
+    else
+      validator_args+=(--kernel-release-only)
+    fi
+    python3 "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
+      "${validator_args[@]}" >/dev/null
+  else
+    : > "$expected_payload"
+    while [ "$index" -lt "${#manifest_deb_paths[@]}" ]; do
+      printf '%s  %s\n' \
+        "${manifest_deb_sha256s[$index]}" "${manifest_deb_paths[$index]}" \
+        >> "$expected_payload"
+      index=$((index + 1))
+    done
+  fi
+  (cd "$root" && shasum -a 256 -c "$expected_payload" >/dev/null)
+
+  expected_deb_list="$PROVENANCE_SNAPSHOT_DIR/expected-kernel-debs.txt"
+  : > "$expected_deb_list"
+  for deb in "${debs[@]}"; do
+    basename "$deb" >> "$expected_deb_list"
+  done
+  if ! cmp -s "$expected_deb_list" "$root/sp11-kernel-debs.txt"; then
+    echo "Prepared kernel package list differs from exact build provenance." >&2
+    return 1
+  fi
+
+  public_output_args=(
+    --file "$root/sp11-kernel-build-manifest.txt"
+    --file "$root/sp11-kernel-apt-provenance.txt"
+    --file "$root/sp11-kernel-build-inputs.txt"
+    --file "$root/sp11-kernel-release-manifest.txt"
+    --file "$root/sp11-kernel-debs.txt"
+    --file "$root/RELEASE-NOTES.md"
+  )
+  if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+    public_output_args+=(--file "$root/$TOUCHSCREEN_MODULE_MANIFEST")
+  fi
+  "$public_content_validator" "${public_output_args[@]}" >/dev/null
+}
+
+verify_output_snapshot() {
+  local root="$1" actual_path actual_name expected_name matched actual_count=0
+  local expected_count="${#expected_output_names[@]}"
+
+  while IFS= read -r actual_path; do
+    actual_name="$(basename "$actual_path")"
+    if [ ! -f "$actual_path" ] || [ -L "$actual_path" ]; then
+      echo "Prepared output contains a directory, symlink, or special entry: $actual_name" >&2
+      return 1
+    fi
+    matched="false"
+    for expected_name in "${expected_output_names[@]}"; do
+      [ "$actual_name" = "$expected_name" ] && matched="true"
+    done
+    if [ "$matched" != "true" ]; then
+      echo "Prepared output contains an unexpected file: $actual_name" >&2
+      return 1
+    fi
+    actual_count=$((actual_count + 1))
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)
+  if [ "$actual_count" -ne "$expected_count" ]; then
+    echo "Prepared output does not contain the exact expected file count." >&2
+    return 1
+  fi
+
+  verify_expected_output_bytes "$root"
+  if ! cmp -s "$trusted_checksum_file" "$root/SHA256SUMS"; then
+    echo "Prepared SHA256SUMS bytes or row order changed after capture." >&2
+    return 1
+  fi
+  (cd "$root" && shasum -a 256 -c SHA256SUMS >/dev/null)
+}
+
+verify_prepared_output() {
+  local root="$1"
+
+  verify_output_snapshot "$root"
+  validate_prepared_semantics "$root"
+  verify_output_snapshot "$root"
+}
+
 claim_output_name "SHA256SUMS" "generated checksum file"
 claim_output_name "RELEASE-NOTES.md" "generated release notes"
 
@@ -1541,6 +1977,8 @@ fi
 append_upload_asset "sp11-kernel-release-manifest.txt" "generated kernel release manifest"
 append_upload_asset "sp11-kernel-debs.txt" "generated kernel package list"
 append_upload_asset "sp11-kernel-build-manifest.txt" "schema-v2 kernel build provenance"
+append_upload_asset "sp11-kernel-apt-provenance.txt" "immutable APT provenance"
+append_upload_asset "sp11-kernel-build-inputs.txt" "immutable build-input envelope"
 
 FINAL_OUT_DIR="$OUT_DIR"
 OUTPUT_STAGING_DIR="$(mktemp -d "$release_root_abs/.${out_leaf}.staging.XXXXXX")"
@@ -1552,6 +1990,25 @@ if [ "$(shasum -a 256 "$build_manifest" | awk '{print $1}')" != "$build_manifest
   echo "Staged kernel build manifest changed after provenance validation." >&2
   exit 1
 fi
+mv "$apt_provenance" "$OUT_DIR/sp11-kernel-apt-provenance.txt"
+apt_provenance="$OUT_DIR/sp11-kernel-apt-provenance.txt"
+if [ "$(shasum -a 256 "$apt_provenance" | awk '{print $1}')" != "$apt_provenance_snapshot_sha" ]; then
+  echo "Staged APT provenance changed after validation." >&2
+  exit 1
+fi
+mv "$build_inputs" "$OUT_DIR/sp11-kernel-build-inputs.txt"
+build_inputs="$OUT_DIR/sp11-kernel-build-inputs.txt"
+if [ "$(shasum -a 256 "$build_inputs" | awk '{print $1}')" != "$build_inputs_snapshot_sha" ]; then
+  echo "Staged build-input envelope changed after validation." >&2
+  exit 1
+fi
+
+python3 "$build_inputs_validator" validate-attached \
+  --baseline "$repo_dir/$KERNEL_BASELINE" \
+  --support-head "$repo_commit" \
+  --build-manifest "$build_manifest" \
+  --apt-provenance "$apt_provenance" \
+  --output "$build_inputs"
 
 for deb in "${debs[@]}"; do
   cp "$deb" "$OUT_DIR/"
@@ -1664,9 +2121,30 @@ fi
 {
   echo "Generated: $generated_at"
   echo "Release: $RELEASE_NAME"
+  echo "Kernel release schema: sp11-kernel-release-v1"
   echo "Build provenance schema: $provenance_schema"
   echo "Release build: $release_build"
   echo "Build completed: $build_completed"
+  echo "Kernel build manifest asset: sp11-kernel-build-manifest.txt"
+  echo "Kernel build manifest size: $build_manifest_snapshot_size"
+  echo "Kernel build manifest SHA256: $build_manifest_snapshot_sha"
+  echo "APT provenance asset: sp11-kernel-apt-provenance.txt"
+  echo "APT provenance schema: $apt_provenance_schema"
+  echo "APT provenance size: $apt_provenance_snapshot_size"
+  echo "APT provenance SHA256: $apt_provenance_snapshot_sha"
+  echo "APT snapshot ID: $apt_snapshot_id"
+  echo "APT snapshot URI: $apt_snapshot_uri"
+  echo "Build inputs asset: sp11-kernel-build-inputs.txt"
+  echo "Build inputs schema: $build_inputs_schema"
+  echo "Build inputs size: $build_inputs_snapshot_size"
+  echo "Build inputs SHA256: $build_inputs_snapshot_sha"
+  echo "Build envelope creation propagation: $build_envelope_creation_propagation"
+  echo "Kernel release propagation: complete"
+  echo "OCI index image: $oci_index_image"
+  echo "OCI index digest: $oci_index_digest"
+  echo "OCI platform: $oci_platform"
+  echo "OCI platform manifest: $oci_platform_manifest"
+  echo "Publication state: blocked"
   echo "Support repo commit: $repo_commit"
   echo "Support repo dirty: $dirty"
   echo "Source mode: ${source_mode:-unknown}"
@@ -1790,7 +2268,8 @@ cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 ## Provenance
 
 See \`sp11-kernel-release-manifest.txt\` for package hashes, source metadata,
-support repository commit, and patch checksums.
+support repository commit, patch checksums, and exact hashes for the attached
+schema-v2 build manifest, v1 APT sidecar, and v1 build-inputs envelope.
 
 Recorded source:
 
@@ -1803,6 +2282,8 @@ echo "- Docker image: \`$DOCKER_IMAGE\`" >> "$OUT_DIR/RELEASE-NOTES.md"
 echo "- Container platform: \`$manifest_container_platform\`" >> "$OUT_DIR/RELEASE-NOTES.md"
 echo "- Patched tree ID: \`$patched_tree_id\`" >> "$OUT_DIR/RELEASE-NOTES.md"
 echo "- Patched diff SHA256: \`$patched_diff_sha256\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+echo "- APT snapshot: \`$apt_snapshot_id\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+echo "- OCI platform manifest: \`$oci_platform_manifest\`" >> "$OUT_DIR/RELEASE-NOTES.md"
 
 echo "- Ordered patch count: \`$patch_count\`" >> "$OUT_DIR/RELEASE-NOTES.md"
 
@@ -1817,59 +2298,99 @@ fi
 cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 
 These artifacts were built from recorded inputs; they are not claimed to be
-bit-for-bit reproducible.
+bit-for-bit reproducible. Kernel-release provenance propagation is complete,
+but publication remains blocked by the independent real-build, signing, and
+licence gates. This preparer deliberately emits no publication command.
 EOF
 
-if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
-  public_output_args=(
-    --file "$OUT_DIR/sp11-kernel-build-manifest.txt"
-    --file "$OUT_DIR/sp11-kernel-release-manifest.txt"
-    --file "$OUT_DIR/sp11-kernel-debs.txt"
-    --file "$OUT_DIR/RELEASE-NOTES.md"
-  )
-  if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
-    public_output_args+=(--file "$OUT_DIR/$TOUCHSCREEN_MODULE_MANIFEST")
-  fi
-  "$public_content_validator" "${public_output_args[@]}"
-fi
-
+checksummed_assets=("${upload_assets[@]}")
 for asset in "${upload_assets[@]}"; do
   if [ ! -f "$OUT_DIR/$asset" ]; then
     echo "Expected upload asset was not generated: $asset" >&2
     exit 1
   fi
 done
+if [ ! -f "$OUT_DIR/RELEASE-NOTES.md" ] || [ -L "$OUT_DIR/RELEASE-NOTES.md" ]; then
+  echo "Expected regular release notes were not generated." >&2
+  exit 1
+fi
 
+for asset in "${checksummed_assets[@]}" RELEASE-NOTES.md; do
+  append_expected_output "$OUT_DIR" "$asset"
+done
+validate_prepared_semantics "$OUT_DIR"
+verify_expected_output_bytes "$OUT_DIR"
+
+trusted_checksum_file="$PROVENANCE_SNAPSHOT_DIR/expected-kernel-SHA256SUMS"
 (
   cd "$OUT_DIR"
-  shasum -a 256 "${upload_assets[@]}" > SHA256SUMS
-  shasum -a 256 -c SHA256SUMS
-)
-upload_assets+=("SHA256SUMS")
+  shasum -a 256 "${checksummed_assets[@]}"
+) > "$trusted_checksum_file"
+cp "$trusted_checksum_file" "$OUT_DIR/SHA256SUMS"
+append_expected_output "$OUT_DIR" SHA256SUMS
 
 verify_final_support_state
-previous_output=""
-if [ -e "$FINAL_OUT_DIR" ]; then
-  previous_output="$(mktemp -d "$release_root_abs/.${out_leaf}.previous.XXXXXX")"
-  rmdir "$previous_output"
-  mv "$FINAL_OUT_DIR" "$previous_output"
+verify_prepared_output "$OUT_DIR"
+INSTALLED_OUTPUT_IDENTITY="$(directory_identity "$OUTPUT_STAGING_DIR")"
+OUTPUT_INSTALL_PENDING="true"
+if [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
+  if [ ! -d "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
+    echo "Existing release output must be a real directory before replacement." >&2
+    exit 1
+  fi
+  PREVIOUS_OUTPUT_CONTAINER="$(mktemp -d "$release_root_abs/.${out_leaf}.previous.XXXXXX")"
+  chmod 700 "$PREVIOUS_OUTPUT_CONTAINER"
+  PREVIOUS_CONTAINER_IDENTITY="$(directory_identity "$PREVIOUS_OUTPUT_CONTAINER")"
+  PREVIOUS_OUTPUT_DIR="$PREVIOUS_OUTPUT_CONTAINER/original"
+  PREVIOUS_OUTPUT_STATE="$PREVIOUS_OUTPUT_CONTAINER/tree-state.json"
+  PREVIOUS_OUTPUT_IDENTITY="$(directory_identity "$FINAL_OUT_DIR")"
+  python3 "$release_tree_state_validator" snapshot \
+    --root "$FINAL_OUT_DIR" --snapshot "$PREVIOUS_OUTPUT_STATE" >/dev/null
+  PREVIOUS_OUTPUT_STATE_SIZE="$(file_size "$PREVIOUS_OUTPUT_STATE")"
+  PREVIOUS_OUTPUT_STATE_SHA="$(shasum -a 256 "$PREVIOUS_OUTPUT_STATE" | awk '{print $1}')"
+  if ! mv "$FINAL_OUT_DIR" "$PREVIOUS_OUTPUT_DIR"; then
+    echo "Could not retain the previous prepared release directory." >&2
+    exit 1
+  fi
+  if ! verify_previous_output_backup; then
+    echo "Previous release output changed while it was retained privately: $PREVIOUS_OUTPUT_CONTAINER" >&2
+    exit 1
+  fi
 fi
 if ! mv "$OUTPUT_STAGING_DIR" "$FINAL_OUT_DIR"; then
-  if [ -n "$previous_output" ] && [ ! -e "$FINAL_OUT_DIR" ]; then
-    mv "$previous_output" "$FINAL_OUT_DIR"
-  fi
   echo "Could not atomically install the prepared release directory." >&2
   exit 1
 fi
-OUTPUT_STAGING_DIR=""
 OUT_DIR="$FINAL_OUT_DIR"
-if [ -n "$previous_output" ]; then
-  rm -rf -- "$previous_output"
+if [ "$(directory_identity "$OUT_DIR")" != "$INSTALLED_OUTPUT_IDENTITY" ]; then
+  echo "Installed release directory identity changed during atomic installation." >&2
+  exit 1
 fi
+verify_prepared_output "$OUT_DIR"
 verify_final_support_state
+verify_prepared_output "$OUT_DIR"
+
+OUTPUT_INSTALL_PENDING="false"
+INSTALLED_OUTPUT_IDENTITY=""
+OUTPUT_STAGING_DIR=""
+if [ -n "$PREVIOUS_OUTPUT_CONTAINER" ]; then
+  if ! verify_previous_output_backup; then
+    echo "The new release output is committed, but changed previous output was preserved for recovery: $PREVIOUS_OUTPUT_CONTAINER" >&2
+    exit 1
+  fi
+  if ! rm -rf -- "$PREVIOUS_OUTPUT_DIR" ||
+     ! rm -f -- "$PREVIOUS_OUTPUT_STATE" ||
+     ! rmdir "$PREVIOUS_OUTPUT_CONTAINER"; then
+    echo "The new release output is committed, but the retained previous output could not be removed: $PREVIOUS_OUTPUT_CONTAINER" >&2
+    exit 1
+  fi
+  PREVIOUS_OUTPUT_CONTAINER=""
+  PREVIOUS_OUTPUT_DIR=""
+fi
 
 echo "Prepared release assets in $OUT_DIR_DISPLAY"
 echo
+echo "NO-PUBLISH: kernel-release propagation is complete, but independent release gates remain open."
 if [ "$SOURCE_ASSET_COUNT" -eq 0 ] || [ "$dirty" = "true" ]; then
   echo "This is a local draft only."
   if [ "$SOURCE_ASSET_COUNT" -eq 0 ]; then
@@ -1879,11 +2400,5 @@ if [ "$SOURCE_ASSET_COUNT" -eq 0 ] || [ "$dirty" = "true" ]; then
     echo "Rerun from a clean support repository before publishing binaries."
   fi
 else
-  echo "Review $OUT_DIR_DISPLAY/RELEASE-NOTES.md, then publish with a command like:"
-  printf '  (cd %q && gh release create %q --target %q --prerelease --title %q --notes-file RELEASE-NOTES.md' \
-    "$OUT_DIR_DISPLAY" "$RELEASE_NAME" "$repo_commit" "$RELEASE_NAME"
-  for asset in "${upload_assets[@]}"; do
-    printf ' %q' "$asset"
-  done
-  printf ')\n'
+  echo "The source-bound candidate is ready for offline review only; no publication command was generated."
 fi

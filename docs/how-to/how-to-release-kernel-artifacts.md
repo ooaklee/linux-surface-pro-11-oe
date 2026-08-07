@@ -7,8 +7,9 @@ description: How-to guide for preparing optional Surface Pro 11 qcom-x1e kernel 
 
 # How To: Release Prebuilt Kernel Artifacts
 
-Use this procedure to prepare an optional GitHub prerelease containing prebuilt
-Surface Pro 11 qcom-x1e kernel `.deb` packages.
+Use this procedure to prepare and review a local candidate containing prebuilt
+Surface Pro 11 qcom-x1e kernel `.deb` packages. It is not a publication
+procedure.
 
 ## Purpose
 
@@ -18,22 +19,25 @@ without rebuilding it, while keeping large binaries out of git.
 
 This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifacts.md):
 
-- publish `.deb` packages as GitHub Release assets, not git-tracked files,
+- if future publication is separately authorized, use GitHub Release assets
+  for `.deb` packages rather than tracking them in git,
 - keep `payload/kernel-debs/` as local USB staging only,
 - include `SHA256SUMS`, sanitized manifests, and corresponding source assets,
 - do not publish proprietary firmware, Windows driver extracts, diagnostics,
   service reports, or hardware identifiers.
 
 > **Current publication gate:** closed for newly built artifacts. Release mode
-> now emits a schema-v2 kernel manifest plus the
-> `sp11-kernel-apt-provenance-v1` sidecar and
-> `sp11-kernel-build-inputs-v1` envelope. The release and image preparers do
-> not yet consume the envelope. Complete the build/evidence inspection below,
-> but do not prepare, upload, or publish a new prerelease until a later schema
-> propagates and validates all three artifacts. The signing policy is also
-> still open. This is not an exhaustive blocker list: P0.3 independently keeps
-> publication at **NO-PUBLISH** until the repository owner documents the
-> project-code licence boundary and resolves UCM provenance.
+> emits a schema-v2 kernel manifest, the
+> `sp11-kernel-apt-provenance-v1` sidecar, and the
+> `sp11-kernel-build-inputs-v1` envelope. The kernel release preparer now
+> validates and attaches those exact bytes and emits a
+> `sp11-kernel-release-v1` completion attestation. The build envelope's literal
+> `Publication schema propagation: incomplete` remains unchanged as its
+> build-time state; the outer manifest records kernel-release propagation as
+> complete while keeping `Publication state: blocked`. The preparer emits
+> **NO-PUBLISH** and no publication command. A real clean build, the signing
+> policy, and P0.3's project-code licence and UCM provenance decisions remain
+> independent blockers.
 
 ## Prerequisites
 
@@ -53,9 +57,8 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
 - For an `sp11v3` release, the exact-ABI `gpi.ko`, `spi-geni-qcom.ko`, and
   `mshw0485_touch.ko` bundle produced by
   `scripts/build-sp11-touchscreen-modules.sh`, including its build manifest.
-- GitHub CLI (`gh`) authenticated for the target repository.
 - A human review that the selected source assets are sufficient for the binary
-  packages being released.
+  packages in the local candidate.
 
 ## Procedure
 
@@ -71,7 +74,7 @@ contain the release instructions, patch state, or helper behavior.
 
 2. Reserve a fresh host work directory and Linux Docker volume. Do not seed
    either one from `payload/kernel-debs/` or a prior build. The next step
-   creates and inspects the exact packages that will be released.
+   creates and inspects the exact packages in the local candidate.
 
 3. Prepare or identify the corresponding source assets.
 
@@ -84,17 +87,17 @@ linux-qcom-x1e_<version>.orig.tar.*
 linux-qcom-x1e_<version>.debian.tar.*
 ```
 
-That is not the current path. Current publication uses Git source and requires
-the exact patched-tree archive described below; another durable link or a
-checkout assembled from instructions is not a substitute.
+That is not the current path. The current candidate gate uses Git source and
+requires the exact patched-tree archive described below; another durable link
+or a checkout assembled from instructions is not a substitute.
 
-Before preparing a future release, rerun the pinned kernel build command from
+Before preparing a local candidate, rerun the pinned kernel build command from
 [How To: Build a Patched qcom-x1e Kernel](how-to-build-patched-qcom-x1e-kernel.md)
-with `--release-build`. A normal or historical build manifest is not
-publishable. Do not try to recreate or re-prepare the already-published r1
-artifacts with the current helper; r1 is immutable historical output created
+with `--release-build`. A normal or historical build manifest is not accepted
+by the current gate. Do not try to recreate or re-prepare the already-published
+r1 artifacts with the current helper; r1 is immutable historical output created
 before the schema-v2 gate. Use one new host artifact directory and one new
-Linux Docker volume for the whole future release workflow:
+Linux Docker volume for the whole candidate workflow:
 
 ```bash
 RELEASE_WORK_DIR=build/docker-sp11-qcom-x1e-kernel-release-r2
@@ -143,11 +146,11 @@ grep -Fx 'Publication schema propagation: incomplete' \
   "$ARTIFACTS_DIR/sp11-kernel-build-inputs.txt"
 ```
 
-The final `grep` is an intentional publication stop condition, not a waiver.
-Preserve the work directory and complete only the evidence/source inspection
-in the remainder of step 3. Steps 4 onward describe the intended flow after
-release/image schema propagation is implemented; they are not authorized for
-the current v1 envelope.
+The final `grep` preserves the envelope's immutable build-time state. It is not
+a waiver or an instruction to edit the envelope. The outer release manifest
+later validates the exact attached trio and records kernel-release propagation
+as complete. That completion closes the propagation gap only; it does not open
+publication.
 
 Do not reuse either path from a prior build. The release gate rejects stale
 package output, and the source archive must come from this same volume.
@@ -284,16 +287,15 @@ Inspect the archive and confirm it contains no objects, modules,
 kernel source archive because the out-of-tree modules require the exact kernel
 headers and configuration.
 
-4. Blocked future step: prepare release assets after schema propagation.
+4. Prepare a local review candidate.
 
-The current preparer's older gate accepts a fresh schema-v2 `--release-build`
-manifest, but that is no longer sufficient: it does not consume the new APT
-sidecar or build-inputs envelope. Do not run it for a new publication until the
-schema-propagation work above is complete. Legacy r1 build artifacts also
-cannot be passed back through this gate. After that future update, an `sp11vN`
-release must supply the ABI-matched module directory and both validated source
-archives. This future-candidate example deliberately uses a new tag and build
-directory:
+The preparer snapshots the exact v2 build manifest, v1 APT sidecar, and v1
+build-inputs envelope, revalidates them against the retained build controls and
+APT inputs, and attaches all three. It rejects missing, changed, extra, and
+legacy publishable inputs. Legacy r1 output remains immutable and cannot be
+passed back through this gate. An `sp11vN` candidate must also supply the
+ABI-matched module directory and both validated source archives. This example
+uses a new candidate name and build directory:
 
 ```bash
 TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
@@ -311,11 +313,12 @@ TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
   --touchscreen-source-ref 6bbcf7a4759a73014047a57e819219dd7f34951a
 ```
 
-For a clean publishable run, the preparer also checks any existing local tag
-against the recorded support commit, requires an `origin` remote, and performs
-a fail-closed remote tag lookup. A mismatched tag, missing origin, or remote
-lookup failure stops preparation before a publish command is printed. Keep
-network access to the public release remote available for this preflight.
+For a clean source-bound candidate, the preparer also checks any existing local
+tag against the recorded support commit, requires an `origin` remote, and
+performs a fail-closed remote tag lookup. A mismatched tag, missing origin, or
+remote lookup failure stops preparation. Successful preparation still produces
+only a local review directory and a **NO-PUBLISH** result; it never prints a
+publication command.
 
 Repeat `--patch-dir` in the exact order used for the fresh kernel build. The
 committed patch paths and hashes must match every entry in its schema-v2
@@ -328,8 +331,8 @@ The helper writes an ignored directory under:
 build/release/<release-name>/
 ```
 
-It refuses to publish source-less output. Use `--allow-missing-source` only for
-local rehearsal, never for a public binary release.
+It refuses to prepare a source-less source-bound candidate. Use
+`--allow-missing-source` only for a local draft rehearsal.
 
 5. Review the generated release directory.
 
@@ -346,6 +349,8 @@ Check that the directory contains:
   `modules-extra` package only when recorded by schema v2,
 - `SHA256SUMS`,
 - the exact snapshotted `sp11-kernel-build-manifest.txt` used by the preparer,
+- the exact snapshotted `sp11-kernel-apt-provenance.txt`,
+- the exact snapshotted `sp11-kernel-build-inputs.txt`,
 - `sp11-kernel-release-manifest.txt`,
 - `sp11-kernel-debs.txt`,
 - the corresponding source assets,
@@ -362,11 +367,11 @@ Check that the directory contains:
   shasum -a 256 -c SHA256SUMS)
 ```
 
-Then run the semantic validator. It checks package identities, exact asset and
-checksum coverage, tag provenance, module metadata, and the packaged Denali
-OLED touchscreen device tree. The validator requires Bash 4 and Linux package
-inspection tools, so run it in the same digest-pinned ARM64 build image rather
-than directly under macOS Bash 3.2:
+Then run the semantic validator. It checks the exact immutable provenance trio,
+outer release binding, package identities, exact asset and checksum coverage,
+module metadata, and the packaged Denali OLED touchscreen device tree. The
+validator requires Bash 4 and Linux package inspection tools, so run it in the
+same digest-pinned ARM64 build image rather than directly under macOS Bash 3.2:
 
 ```bash
 validate_release_dir() {
@@ -391,67 +396,25 @@ validate_release_dir() {
 validate_release_dir "build/release/$TAG"
 ```
 
-For a pre-tag local rehearsal, omit `--tag` and `--remote`. Run the full command
-after creating the tag and again against a fresh directory containing exactly
-the downloaded release assets. If `gh release create` created a new remote tag,
-fetch that exact tag before invoking the validator, which checks both its local
-and remote targets:
+7. Review the explicit **NO-PUBLISH** result.
 
-```bash
-TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
-git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+The helper emits no publication command. Confirm the outer manifest says
+`Kernel release propagation: complete` and `Publication state: blocked`, and
+confirm the release notes disclose the real-build, signing, and licence gates.
+Do not add, remove, or regenerate files after validation.
 
-validate_release_dir "build/release/$TAG" --tag "$TAG" --remote origin
-```
+8. Record the offline review result.
 
-7. Review the generated publish command.
+Retain the candidate path, checksum result, semantic-validator result, and
+human source/licence review with the evidence for the future real-build run.
+Do not create or move a tag, upload assets, or change the historical r1
+release.
 
-The helper prints a `gh release create` command when source assets are present.
-It uses `RELEASE-NOTES.md` as `--notes-file` and uploads the generated assets
-named by the command, including `SHA256SUMS`. `RELEASE-NOTES.md` becomes the
-release body rather than a separate uploaded asset unless you deliberately add
-it to the command.
+9. Stop at the publication boundary.
 
-Do not add extra assets to the command unless you also regenerate
-`SHA256SUMS` and verify the files are safe to publish.
-
-8. Publish as a prerelease.
-
-Run the generated `gh release create ... --target <support-commit>
---prerelease ...` command only after the source, checksum, privacy, and
-release-note reviews pass. The target must be the clean support commit recorded
-in both generated manifests; never let GitHub infer the default branch tip.
-
-The project owner authorized the historical r1 kernel and image as explicitly
-experimental prereleases while the complete clean-install hardware matrix was
-still outstanding. The same disclosure is required for any future
-experimental candidate that has not completed that matrix. This exception
-does not make an artifact
-hardware-qualified and does not waive the clean-install gate for a stable or
-promoted release. The release notes must disclose that distinction and retain
-the fallback-kernel and recovery-media requirements.
-
-9. Verify the published release.
-
-```bash
-TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
-gh release view "$TAG" \
-  --json tagName,targetCommitish,isPrerelease,assets
-
-download_dir="$(mktemp -d)"
-gh release download "$TAG" \
-  --repo ooaklee/linux-surface-pro-11-oe \
-  --dir "$download_dir"
-git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
-
-validate_release_dir "$download_dir" --tag "$TAG" --remote origin
-```
-
-Confirm the release is marked as a prerelease and that every uploaded binary or
-source asset is listed in `SHA256SUMS`. Confirm the remote tag resolves to the
-manifest support commit. Download the assets into a new empty directory, fetch
-the new tag locally, and rerun `validate-sp11-touchscreen-release.sh` with
-`--tag` and `--remote origin`.
+This procedure intentionally ends with a local candidate. Publication requires
+a separately authorized future procedure after every remaining gate is closed;
+successful preparation alone is not that authorization.
 
 ## Expected Output
 
@@ -464,6 +427,8 @@ The local release directory should contain a flat asset set:
 - `linux-qcom-x1e-headers-<base-version>_<version>_all.deb`,
 - `SHA256SUMS`,
 - `sp11-kernel-build-manifest.txt`,
+- `sp11-kernel-apt-provenance.txt`,
+- `sp11-kernel-build-inputs.txt`,
 - `sp11-kernel-release-manifest.txt`,
 - `sp11-kernel-debs.txt`,
 - one or more corresponding source assets,
@@ -493,15 +458,16 @@ SOURCE-SHA256SUMS
 SHA256SUMS
 ```
 
-`RELEASE-NOTES.md` is the GitHub release body and is not an uploaded asset.
+For historical r1, `RELEASE-NOTES.md` supplied the release body and was not an
+uploaded asset. That statement documents the immutable historical set; it is
+not a current publication instruction.
 
-The published GitHub release should include the `.deb` packages, checksums,
-manifests, and source assets. `RELEASE-NOTES.md` should normally be used as the
-release body rather than uploaded as a separate asset.
+The current local candidate includes the packages, checksums, manifests,
+immutable provenance trio, source assets, and `RELEASE-NOTES.md` shown above.
 
 ## Validation
 
-Run these checks before publishing:
+Run these checks before accepting the local candidate for offline review:
 
 ```bash
 git status --short
@@ -512,7 +478,8 @@ release_dir=build/release/<release-name>
 public_args=()
 for public_name in \
   RELEASE-NOTES.md SHA256SUMS SOURCE-SHA256SUMS \
-  sp11-kernel-build-manifest.txt sp11-kernel-release-manifest.txt \
+  sp11-kernel-build-manifest.txt sp11-kernel-apt-provenance.txt \
+  sp11-kernel-build-inputs.txt sp11-kernel-release-manifest.txt \
   sp11-touchscreen-modules-manifest.txt sp11-kernel-debs.txt; do
   test ! -e "$release_dir/$public_name" ||
     public_args+=(--file "$release_dir/$public_name")
@@ -529,14 +496,14 @@ human responsibility. Corresponding-source archive metadata is checked by the
 release preparer rather than scanned as arbitrary binary data.
 
 It does not prove that the source asset is legally sufficient. That still
-requires human review before publishing.
+requires human review and a separately authorized future publication process.
 
 ## Privacy and Safety
 
 Never commit generated release assets. `build/`, `payload/kernel-debs/`, and
 `*.deb` are ignored intentionally.
 
-Before publishing, check that release assets do not include:
+During offline review, check that candidate assets do not include:
 
 - proprietary firmware blobs or Windows driver-store files,
 - service reports, raw diagnostics, or screenshots with private data,
@@ -555,16 +522,15 @@ If the helper refuses a dirty repository, commit or stash changes and rerun it.
 Use `--allow-dirty` only for local draft rehearsals.
 
 If the helper refuses missing source assets, provide one or more
-`--source-asset` values. Do not use `--allow-missing-source` for a public
-binary release.
+`--source-asset` values. Use `--allow-missing-source` only for a local draft.
 
 If the helper refuses the output directory, use the default
 `build/release/<release-name>/` layout. The helper intentionally rejects
 path traversal, dot-prefixed names, symlinked release roots, and outputs
 outside `build/release/`.
 
-If GitHub rejects an upload, confirm the asset size and retry with a fresh
-release tag. Do not move large binary packages into git as a fallback.
+This procedure does not cover upload failures because publication is blocked.
+Do not move large binary packages into git as a fallback.
 
 ## Related Documents
 

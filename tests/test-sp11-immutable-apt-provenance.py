@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -25,7 +26,12 @@ BASELINE_VALIDATOR = REPO / "scripts/validate-sp11-kernel-baseline.sh"
 SUITES = ("resolute", "resolute-updates", "resolute-backports", "resolute-security")
 COMPONENTS = ("main", "universe", "restricted", "multiverse")
 FINGERPRINT = "F6ECB3762474EDA9D21B7022871920D1991BC93C"
-SUPPORT_HEAD = "a" * 40
+SUPPORT_HEAD = subprocess.run(
+    ["git", "-C", str(REPO), "rev-parse", "--verify", "HEAD^{commit}"],
+    check=True,
+    stdout=subprocess.PIPE,
+    text=True,
+).stdout.strip()
 SOURCE_HEAD = "b" * 40
 CHILD_DIGEST = "sha256:" + "c" * 64
 CREATED_FIXTURES: list[Path] = []
@@ -33,6 +39,100 @@ CREATED_FIXTURES: list[Path] = []
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def write_exact_build_manifest(fixture: "Fixture", path: Path) -> None:
+    patch_path = "patches/jglathe-qcom-x1e-7.2-rc5/0001-debian-qcom-x1e-update-annotations-for-7.2-rc5-jg-0.patch"
+    patch_bytes = subprocess.run(
+        ["git", "-C", str(REPO), "show", f"{SUPPORT_HEAD}:{patch_path}"],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    image_digest = "sha256:" + digest(fixture.oci_raw)
+    output_rows = (
+        ("kernel-config", "debian/build/build-qcom-x1e/.config"),
+        ("module-symvers", "debian/build/build-qcom-x1e/Module.symvers"),
+        ("system-map", "debian/build/build-qcom-x1e/System.map"),
+        ("kernel-efi-stubble", "debian/build/build-qcom-x1e/arch/arm64/boot/vmlinuz.efi.stubble"),
+        ("denali-oled-dtb", "debian/build/build-qcom-x1e/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled.dtb"),
+        ("denali-oled-el2-dtb", "debian/build/build-qcom-x1e/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled-el2.dtb"),
+        ("module-signing-certificate", "debian/build/build-qcom-x1e/certs/signing_key.x509"),
+    )
+    deb_rows = (
+        ("common-headers", "linux-qcom-x1e-headers-7.2.0-1", "all"),
+        ("headers", "linux-headers-7.2.0-1-qcom-x1e", "arm64"),
+        ("image", "linux-image-7.2.0-1-qcom-x1e", "arm64"),
+        ("modules", "linux-modules-7.2.0-1-qcom-x1e", "arm64"),
+    )
+    lines = [
+        "Provenance schema: sp11-kernel-build-v2",
+        "Release build: true",
+        f"Support start HEAD: {SUPPORT_HEAD}",
+        "Support start dirty: false",
+        f"Support end HEAD: {SUPPORT_HEAD}",
+        "Support end dirty: false",
+        "Source mode: git",
+        "Source URL: https://github.com/example/linux.git",
+        "Source ref: fixture/ref",
+        f"Expected source commit: {SOURCE_HEAD}",
+        f"Source HEAD: {SOURCE_HEAD}",
+        f"Container image: ubuntu:26.04@{image_digest}",
+        f"Container digest: {image_digest}",
+        "Container platform: linux/arm64/v8",
+        "Build target: binary-indep binary-qcom-x1e",
+        "Jobs: 1",
+        "Rules runner: direct-root",
+        "Patch count: 1",
+        f"Patch 1 path: {patch_path}",
+        f"Patch 1 SHA256: {digest(patch_bytes)}",
+        "Patch 1 disposition: applied",
+        "Patched diff format: git-diff-full-index-binary-v1",
+        "Patched diff Git version: git version fixture",
+        f"Patched diff SHA256: {'d' * 64}",
+        f"Patched tree ID: {SOURCE_HEAD}",
+        "Required output roles: kernel-config module-symvers system-map kernel-efi-stubble denali-oled-dtb denali-oled-el2-dtb module-signing-certificate",
+        "Optional output roles: none",
+        f"Output count: {len(output_rows)}",
+    ]
+    for index, (role, output_path) in enumerate(output_rows, 1):
+        output_hash = f"{index:x}" * 64
+        lines.extend(
+            (
+                f"Output {index} role: {role}",
+                f"Output {index} required: true",
+                f"Output {index} path: {output_path}",
+                f"Output {index} size: {index}",
+                f"Output {index} SHA256: {output_hash}",
+            )
+        )
+    certificate_hash = f"{len(output_rows):x}" * 64
+    lines.extend(
+        (
+            f"Signing certificate SHA256: {certificate_hash}",
+            "Signing certificate fingerprint: " + ":".join(["AA"] * 32),
+            "Signing certificate serial: 01",
+            "Required Deb roles: common-headers headers image modules",
+            "Optional Deb roles: modules-extra",
+            f"Deb count: {len(deb_rows)}",
+        )
+    )
+    for index, (role, package, architecture) in enumerate(deb_rows, 1):
+        version = "7.2.0-1"
+        deb_hash = f"{index + 7:x}" * 64
+        lines.extend(
+            (
+                f"Deb {index} role: {role}",
+                "Deb %d required: true" % index,
+                f"Deb {index} path: {package}_{version}_{architecture}.deb",
+                f"Deb {index} package: {package}",
+                f"Deb {index} version: {version}",
+                f"Deb {index} architecture: {architecture}",
+                f"Deb {index} size: {index}",
+                f"Deb {index} SHA256: {deb_hash}",
+            )
+        )
+    lines.append("Build completed: true")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run(command: list[str], env: dict[str, str], expect: bool = True) -> subprocess.CompletedProcess[str]:
@@ -485,7 +585,7 @@ def assert_wrapper_contract() -> None:
         "SP11_IMMUTABLE_APT_REQUIRED=true",
         "sp11-kernel-apt-provenance.txt",
         "sp11-kernel-build-inputs.txt",
-        "Publication remains closed: schema-v3",
+        "Publication remains blocked: outer release validation",
     ):
         assert required_text in wrapper
     assert 'mk_build_deps_args+=(--remove)' in inner
@@ -796,31 +896,7 @@ def envelope_cases(fixture: Fixture) -> None:
     build_args.write_text("--release-build\n", encoding="utf-8")
     entrypoint.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     manifest = fixture.artifacts / "sp11-kernel-build-manifest.txt"
-    image_digest = "sha256:" + digest(fixture.oci_raw)
-    manifest.write_text(
-        "\n".join(
-            (
-                "Provenance schema: sp11-kernel-build-v2",
-                "Release build: true",
-                f"Support start HEAD: {SUPPORT_HEAD}",
-                "Support start dirty: false",
-                f"Support end HEAD: {SUPPORT_HEAD}",
-                "Support end dirty: false",
-                "Source mode: git",
-                "Source URL: https://github.com/example/linux.git",
-                "Source ref: fixture/ref",
-                f"Expected source commit: {SOURCE_HEAD}",
-                f"Source HEAD: {SOURCE_HEAD}",
-                f"Container image: ubuntu:26.04@{image_digest}",
-                f"Container digest: {image_digest}",
-                "Container platform: linux/arm64/v8",
-                "Build target: binary-indep binary-qcom-x1e",
-                "Build completed: true",
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    write_exact_build_manifest(fixture, manifest)
     envelope = fixture.artifacts / "sp11-kernel-build-inputs.txt"
     base_command = [
         sys.executable,
@@ -861,10 +937,131 @@ def envelope_cases(fixture: Fixture) -> None:
     validate_command = base_command.copy()
     validate_command[2] = "validate"
     run(validate_command, fixture.env())
+    attached_command = [
+        sys.executable,
+        str(ENVELOPE),
+        "validate-attached",
+        "--baseline",
+        str(fixture.baseline),
+        "--support-head",
+        SUPPORT_HEAD,
+        "--build-manifest",
+        str(manifest),
+        "--apt-provenance",
+        str(sidecar),
+        "--output",
+        str(envelope),
+    ]
+    run(attached_command, fixture.env())
+    release_snapshot = fixture.root / "release-snapshot"
+    release_snapshot.mkdir()
+    snapshot_manifest = release_snapshot / manifest.name
+    snapshot_sidecar = release_snapshot / sidecar.name
+    snapshot_envelope = release_snapshot / envelope.name
+    shutil.copy2(manifest, snapshot_manifest)
+    shutil.copy2(sidecar, snapshot_sidecar)
+    shutil.copy2(envelope, snapshot_envelope)
+    release_snapshot_command = validate_command.copy()
+    release_snapshot_command[2] = "validate-release-snapshot"
+    for old_path, new_path in (
+        (manifest, snapshot_manifest),
+        (sidecar, snapshot_sidecar),
+        (envelope, snapshot_envelope),
+    ):
+        release_snapshot_command[
+            release_snapshot_command.index(str(old_path))
+        ] = str(new_path)
+    run(release_snapshot_command, fixture.env())
+
+    snapshot_envelope_text = snapshot_envelope.read_text(encoding="utf-8")
+    input_one_hash = next(
+        line for line in snapshot_envelope_text.splitlines() if line.startswith("Input 1 SHA256: ")
+    )
+    snapshot_envelope.write_text(
+        snapshot_envelope_text.replace(input_one_hash, f"Input 1 SHA256: {'0' * 64}"),
+        encoding="utf-8",
+    )
+    run(release_snapshot_command, fixture.env(), expect=False)
+    snapshot_envelope.write_text(snapshot_envelope_text, encoding="utf-8")
+
+    def assert_mid_validation_mutation_rejected(
+        target: Path,
+        hook_name: str,
+        suffix: bytes,
+        command: list[str] = validate_command,
+    ) -> None:
+        module_name = f"sp11_kernel_build_inputs_fixture_{hook_name}_{target.name.replace('.', '_')}"
+        specification = importlib.util.spec_from_file_location(module_name, ENVELOPE)
+        assert specification is not None and specification.loader is not None
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        original_hook = getattr(module, hook_name)
+        original_bytes = target.read_bytes()
+        mutated = False
+
+        def mutating_hook(*args: object, **kwargs: object) -> object:
+            nonlocal mutated
+            result = original_hook(*args, **kwargs)
+            if not mutated:
+                target.write_bytes(original_bytes + suffix)
+                mutated = True
+            return result
+
+        setattr(module, hook_name, mutating_hook)
+        saved_arguments = sys.argv
+        sys.argv = [str(ENVELOPE), *command[2:]]
+        try:
+            try:
+                module.main()
+            except SystemExit as exc:
+                assert "changed" in str(exc)
+            else:
+                raise AssertionError(
+                    f"full envelope validation accepted a mid-validation mutation of {target.name}"
+                )
+        finally:
+            sys.argv = saved_arguments
+            target.write_bytes(original_bytes)
+        assert mutated
+
+    assert_mid_validation_mutation_rejected(
+        manifest, "validate_manifest", b"mid-validation manifest mutation\n"
+    )
+    assert_mid_validation_mutation_rejected(
+        build_args, "validate_manifest", b"mid-validation control mutation\n"
+    )
+    assert_mid_validation_mutation_rejected(
+        oci, "validate_oci_index", b"mid-validation OCI mutation\n"
+    )
+    assert_mid_validation_mutation_rejected(
+        envelope, "validate_envelope", b"mid-validation envelope mutation\n"
+    )
+    assert_mid_validation_mutation_rejected(
+        snapshot_manifest,
+        "validate_manifest",
+        b"mid-attached-validation manifest mutation\n",
+        [
+            str(snapshot_manifest)
+            if value == str(manifest)
+            else str(snapshot_sidecar)
+            if value == str(sidecar)
+            else str(snapshot_envelope)
+            if value == str(envelope)
+            else value
+            for value in attached_command
+        ],
+    )
+    assert_mid_validation_mutation_rejected(
+        envelope,
+        "validate_envelope",
+        b"post-write envelope mutation\n",
+        base_command,
+    )
 
     original_sidecar = sidecar.read_text(encoding="utf-8")
     sidecar.write_text(original_sidecar + "Unexpected field: rejected\n", encoding="utf-8")
     run(validate_command, fixture.env(), expect=False)
+    run(attached_command, fixture.env(), expect=False)
     sidecar.write_text(original_sidecar, encoding="utf-8")
 
     uri_line = next(
@@ -917,6 +1114,24 @@ def envelope_cases(fixture: Fixture) -> None:
     original_envelope = envelope.read_text(encoding="utf-8")
     envelope.write_text(original_envelope + "Unexpected field: rejected\n", encoding="utf-8")
     run(validate_command, fixture.env(), expect=False)
+    run(attached_command, fixture.env(), expect=False)
+    envelope.write_text(original_envelope, encoding="utf-8")
+
+    manifest_bytes = manifest.read_bytes()
+    manifest.write_bytes(manifest_bytes + b"Unexpected build field: rejected\n")
+    run(base_command, fixture.env(), expect=False)
+    assert envelope.read_text(encoding="utf-8") == original_envelope
+    run(attached_command, fixture.env(), expect=False)
+    manifest.write_bytes(manifest_bytes)
+
+    envelope.write_text(
+        original_envelope.replace(
+            f"Input 3 SHA256: {digest(fixture.oci_raw)}",
+            f"Input 3 SHA256: {'0' * 64}",
+        ),
+        encoding="utf-8",
+    )
+    run(attached_command, fixture.env(), expect=False)
     envelope.write_text(original_envelope, encoding="utf-8")
 
     retained_deb = fixture.archives / fixture.debs[0][0]
@@ -979,6 +1194,40 @@ def envelope_cases(fixture: Fixture) -> None:
     )
 
 
+def emit_release_template(
+    destination: Path, baseline_output: Path, source_head: str, source_ref: str
+) -> None:
+    if len(source_head) not in (40, 64) or any(character not in "0123456789abcdef" for character in source_head):
+        raise SystemExit("source commit must be a full lowercase Git object ID")
+    if destination.exists():
+        raise SystemExit(f"template destination already exists: {destination}")
+    if baseline_output.exists():
+        raise SystemExit(f"baseline destination already exists: {baseline_output}")
+    fixture = bootstrap_and_finalize(Path(tempfile.gettempdir()).resolve())
+    sidecar = fixture.artifacts / "sp11-kernel-apt-provenance.txt"
+    run(fixture.writer_command(sidecar), fixture.env())
+    (fixture.work / "docker-build-args.txt").write_text(
+        "--release-build\n", encoding="utf-8"
+    )
+    (fixture.work / "docker-build-inside.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
+    (fixture.work / "sp11-oci-index.json").write_bytes(fixture.oci_raw)
+    baseline_text = fixture.baseline.read_text(encoding="utf-8").replace(
+        f'SP11_KERNEL_UPSTREAM_COMMIT="{SOURCE_HEAD}"',
+        f'SP11_KERNEL_UPSTREAM_COMMIT="{source_head}"',
+    )
+    baseline_text = baseline_text.replace(
+        'SP11_KERNEL_UPSTREAM_REF="fixture/ref"',
+        f'SP11_KERNEL_UPSTREAM_REF="{source_ref}"',
+    )
+    if f'SP11_KERNEL_UPSTREAM_COMMIT="{source_head}"' not in baseline_text:
+        raise AssertionError("could not specialize immutable-APT fixture baseline")
+    baseline_output.parent.mkdir(parents=True, exist_ok=True)
+    baseline_output.write_text(baseline_text, encoding="utf-8")
+    shutil.copytree(fixture.work, destination)
+
+
 def main() -> None:
     temp_root = Path(tempfile.gettempdir()).resolve()
     try:
@@ -996,4 +1245,18 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 6 and sys.argv[1] == "--emit-release-template":
+        try:
+            emit_release_template(
+                Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4], sys.argv[5]
+            )
+        finally:
+            for path in reversed(CREATED_FIXTURES):
+                shutil.rmtree(path, ignore_errors=True)
+    elif len(sys.argv) == 1:
+        main()
+    else:
+        raise SystemExit(
+            "usage: test-sp11-immutable-apt-provenance.py "
+            "[--emit-release-template DESTINATION BASELINE SOURCE_COMMIT SOURCE_REF]"
+        )

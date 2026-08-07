@@ -264,9 +264,11 @@ artifacts/sp11-kernel-build-inputs.txt
 
 This P0.4c path is implemented and fixture-tested, not yet verified by a real
 kernel build. The last envelope deliberately records publication schema
-propagation as incomplete. Do not pass this output to a release or image
-publisher until a later schema consumes and validates that envelope. The
-release-signing decision is also still open.
+propagation as incomplete because that is its immutable build-time state. The
+kernel and image preparation paths now consume and validate the exact trio and
+record their propagation completion in outer manifests while keeping overall
+publication blocked. Preserve all three files byte-for-byte. A real clean build,
+the release-signing decision, and the independent licence gates are still open.
 
 The kernel ABI carries the touchscreen device tree, but the runtime QSPI
 support ships as out-of-tree modules from the geocausa Phase 91 baseline

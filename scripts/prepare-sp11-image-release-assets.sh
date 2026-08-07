@@ -33,10 +33,24 @@ TOUCHSCREEN_SOURCE_ASSET=""
 SOURCE_NOTICE=""
 KERNEL_BUILD_MANIFEST=""
 KERNEL_RELEASE_MANIFEST=""
+APT_PROVENANCE=""
+BUILD_INPUTS=""
 TOUCHSCREEN_MODULE_MANIFEST=""
 IMAGE_BUILD_MANIFEST=""
 SOURCE_SNAPSHOT_DIR=""
+IMAGE_SNAPSHOT_DIR=""
+IMAGE_SNAPSHOT=""
 OUTPUT_STAGING_DIR=""
+OUTPUT_STAGING_IDENTITY=""
+OUTPUT_STAGING_TREE=""
+OUTPUT_INSTALL_PENDING="false"
+INSTALLED_OUTPUT_IDENTITY=""
+INSTALLED_OUTPUT_TREE=""
+PREVIOUS_OUTPUT_CONTAINER=""
+PREVIOUS_OUTPUT_CONTAINER_IDENTITY=""
+PREVIOUS_OUTPUT_PATH=""
+PREVIOUS_OUTPUT_IDENTITY=""
+PREVIOUS_OUTPUT_TREE=""
 SOURCE_BINDING_IMAGE="ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03"
 
 MANIFEST_NAME="sp11-live-image-release-manifest.txt"
@@ -44,6 +58,8 @@ OUTLINE_NAME="sp11-live-image-outline.txt"
 SOURCE_NOTICE_NAME="SOURCE-NOTICE.md"
 SOURCE_CHECKSUM_NAME="SOURCE-SHA256SUMS"
 IMAGE_BUILD_MANIFEST_NAME="sp11-live-image-build-manifest.txt"
+APT_PROVENANCE_NAME="sp11-kernel-apt-provenance.txt"
+BUILD_INPUTS_NAME="sp11-kernel-build-inputs.txt"
 
 usage() {
   cat <<EOF
@@ -74,6 +90,10 @@ Options:
                          Exact schema-v2 release-build manifest.
   --kernel-release-manifest PATH
                          Kernel release manifest matching the image payload.
+  --apt-provenance PATH   Exact $APT_PROVENANCE_NAME v1 sidecar from the same
+                         immutable release build.
+  --build-inputs PATH     Exact $BUILD_INPUTS_NAME v1 envelope from the same
+                         immutable release build.
   --touchscreen-module-manifest PATH
                          Module release manifest matching the image payload.
   --image-build-manifest PATH
@@ -88,7 +108,7 @@ Output (under build/release/<release-name>/):
   <image>.img.zst.part-*
   $OUTLINE_NAME
   $MANIFEST_NAME
-  corresponding-source archives and source checksums for publishable output
+  corresponding-source archives and source checksums for validation-complete output
   SHA256SUMS
   RELEASE-NOTES.md
 EOF
@@ -172,14 +192,321 @@ cleanup_source_snapshot() {
   esac
 }
 
+cleanup_image_snapshot() {
+  [ -n "$IMAGE_SNAPSHOT_DIR" ] || return 0
+  case "$IMAGE_SNAPSHOT_DIR" in
+    "${repo_dir:-}/build/release/.image-raw-snapshot."*) rm -rf -- "$IMAGE_SNAPSHOT_DIR" ;;
+    *) echo "Warning: refusing to remove unexpected raw-image snapshot: $IMAGE_SNAPSHOT_DIR" >&2 ;;
+  esac
+}
+
 cleanup_output_staging() {
+  local current_identity=""
+
   [ -n "$OUTPUT_STAGING_DIR" ] || return 0
   case "$OUTPUT_STAGING_DIR" in
-    "${repo_dir:-}/build/release/."*.staging.*) rm -rf -- "$OUTPUT_STAGING_DIR" ;;
+    "${repo_dir:-}/build/release/."*.staging.*)
+      current_identity="$(directory_identity "$OUTPUT_STAGING_DIR" 2>/dev/null || true)"
+      if [ -n "$OUTPUT_STAGING_IDENTITY" ] &&
+        [ "$current_identity" = "$OUTPUT_STAGING_IDENTITY" ]; then
+        rm -rf -- "$OUTPUT_STAGING_DIR"
+      elif [ -e "$OUTPUT_STAGING_DIR" ] || [ -L "$OUTPUT_STAGING_DIR" ]; then
+        echo "Warning: preserving unexpected image release staging occupant: $OUTPUT_STAGING_DIR" >&2
+      fi
+      ;;
     *) echo "Warning: refusing to remove unexpected image release staging directory: $OUTPUT_STAGING_DIR" >&2 ;;
   esac
 }
-trap 'cleanup_output_staging; cleanup_source_snapshot' EXIT
+
+directory_identity() {
+  local path="$1" identity
+
+  if identity="$(stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
+    printf '%s\n' "$identity"
+  elif identity="$(stat -f '%d:%i' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$identity"
+  else
+    return 1
+  fi
+}
+
+directory_tree_identity() {
+  python3 - "$1" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+
+root = os.fsencode(sys.argv[1])
+root_stat = os.lstat(root)
+if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+    raise SystemExit("tree identity root is not a real directory")
+
+result = hashlib.sha256()
+
+
+def frame(tag: bytes, value: bytes) -> None:
+    result.update(len(tag).to_bytes(4, "big"))
+    result.update(tag)
+    result.update(len(value).to_bytes(8, "big"))
+    result.update(value)
+
+
+def stable_fields(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def visit(path: bytes, relative: bytes) -> None:
+    before = os.lstat(path)
+    mode = before.st_mode
+    if stat.S_ISREG(mode):
+        kind = b"file"
+    elif stat.S_ISDIR(mode):
+        kind = b"directory"
+    elif stat.S_ISLNK(mode):
+        kind = b"symlink"
+    else:
+        kind = b"special"
+    frame(b"path", relative)
+    frame(b"kind", kind)
+    frame(
+        b"metadata",
+        (
+            f"{before.st_dev}:{before.st_ino}:{before.st_mode}:"
+            f"{before.st_nlink}:{before.st_uid}:{before.st_gid}:"
+            f"{before.st_size}:{before.st_rdev}"
+        ).encode("ascii"),
+    )
+    if relative:
+        frame(
+            b"timestamps",
+            f"{before.st_mtime_ns}:{before.st_ctime_ns}".encode("ascii"),
+        )
+    if stat.S_ISREG(mode):
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            descriptor_before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(descriptor_before.st_mode)
+                or descriptor_before.st_dev != before.st_dev
+                or descriptor_before.st_ino != before.st_ino
+            ):
+                raise RuntimeError("regular file changed before descriptor capture")
+            content = hashlib.sha256()
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                content.update(chunk)
+            descriptor_after = os.fstat(descriptor)
+            if stable_fields(descriptor_before) != stable_fields(descriptor_after):
+                raise RuntimeError("regular file changed while it was hashed")
+            after = os.lstat(path)
+            if stable_fields(before) != stable_fields(after):
+                raise RuntimeError("regular file path changed while it was hashed")
+            frame(b"content", content.digest())
+        finally:
+            os.close(descriptor)
+    elif stat.S_ISDIR(mode):
+        names = sorted(os.listdir(path))
+        for name in names:
+            child_relative = name if not relative else relative + b"/" + name
+            visit(os.path.join(path, name), child_relative)
+        after = os.lstat(path)
+        if stable_fields(before) != stable_fields(after):
+            raise RuntimeError("directory changed while it was traversed")
+    elif stat.S_ISLNK(mode):
+        target = os.readlink(path)
+        after = os.lstat(path)
+        if stable_fields(before) != stable_fields(after):
+            raise RuntimeError("symlink changed while it was read")
+        frame(b"target", target)
+    else:
+        raise RuntimeError("special filesystem nodes are not supported")
+
+
+visit(root, b"")
+print(result.hexdigest())
+PY
+}
+
+stable_directory_tree_identity() {
+  local path="$1" first second
+
+  first="$(directory_tree_identity "$path")" || return 1
+  second="$(directory_tree_identity "$path")" || return 1
+  [ "$first" = "$second" ] || {
+    echo "Directory tree changed between identity passes: $path" >&2
+    return 1
+  }
+  printf '%s\n' "$first"
+}
+
+private_container_has_only() {
+  python3 - "$1" "$2" <<'PY'
+import os
+import stat
+import sys
+
+container = os.fsencode(sys.argv[1])
+expected = os.fsencode(sys.argv[2])
+metadata = os.lstat(container)
+if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+    raise SystemExit(1)
+if stat.S_IMODE(metadata.st_mode) != 0o700:
+    raise SystemExit(1)
+if os.listdir(container) != [expected]:
+    raise SystemExit(1)
+PY
+}
+
+private_container_is_empty() {
+  python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+container = os.fsencode(sys.argv[1])
+metadata = os.lstat(container)
+if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+    raise SystemExit(1)
+if stat.S_IMODE(metadata.st_mode) != 0o700 or os.listdir(container):
+    raise SystemExit(1)
+PY
+}
+
+remove_exact_empty_private_container() {
+  local container="$1" expected_identity="$2"
+
+  [ -n "$container" ] && [ -n "$expected_identity" ] &&
+    [ "$(directory_identity "$container" 2>/dev/null || true)" = \
+      "$expected_identity" ] &&
+    private_container_is_empty "$container" && rmdir "$container"
+}
+
+rollback_output_install() {
+  local current_identity="" current_tree="" failed_container=""
+  local failed_container_identity="" failed_path="" failed_identity=""
+  local candidate_exact="false" failed_candidate_placed="false" restore_ok="true"
+
+  [ "$OUTPUT_INSTALL_PENDING" = "true" ] || return 0
+  OUTPUT_INSTALL_PENDING="false"
+
+  if [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
+    current_identity="$(directory_identity "$FINAL_OUT_DIR" 2>/dev/null || true)"
+    if [ -z "$INSTALLED_OUTPUT_IDENTITY" ] ||
+      [ "$current_identity" != "$INSTALLED_OUTPUT_IDENTITY" ]; then
+      echo "Warning: preserving unexpected image output occupant during rollback: $FINAL_OUT_DIR" >&2
+      restore_ok="false"
+    else
+      failed_container="$(mktemp -d "$release_root_abs/.${out_leaf}.failed.XXXXXX")"
+      chmod 700 "$failed_container"
+      failed_container_identity="$(directory_identity "$failed_container")"
+      failed_path="$failed_container/candidate"
+      if ! mv "$FINAL_OUT_DIR" "$failed_path"; then
+        echo "Warning: could not quarantine the failed image candidate: $FINAL_OUT_DIR" >&2
+        if remove_exact_empty_private_container \
+            "$failed_container" "$failed_container_identity"; then
+          failed_container=""
+        else
+          echo "Warning: preserving changed failed-candidate recovery container: $failed_container" >&2
+        fi
+        restore_ok="false"
+      else
+        failed_candidate_placed="true"
+        failed_identity="$(directory_identity "$failed_path" 2>/dev/null || true)"
+        current_tree="$(stable_directory_tree_identity "$failed_path" 2>/dev/null || true)"
+        if [ "$failed_identity" = "$INSTALLED_OUTPUT_IDENTITY" ] &&
+          [ -n "$INSTALLED_OUTPUT_TREE" ] && [ "$current_tree" = "$INSTALLED_OUTPUT_TREE" ] &&
+          [ "$(directory_identity "$failed_container" 2>/dev/null || true)" = \
+            "$failed_container_identity" ] &&
+          private_container_has_only "$failed_container" candidate; then
+          candidate_exact="true"
+        fi
+      fi
+    fi
+  fi
+
+  if [ "$restore_ok" = "true" ] && [ -n "$PREVIOUS_OUTPUT_PATH" ]; then
+    current_identity="$(directory_identity "$PREVIOUS_OUTPUT_PATH" 2>/dev/null || true)"
+    current_tree="$(stable_directory_tree_identity "$PREVIOUS_OUTPUT_PATH" 2>/dev/null || true)"
+    if [ "$(directory_identity "$PREVIOUS_OUTPUT_CONTAINER" 2>/dev/null || true)" != \
+        "$PREVIOUS_OUTPUT_CONTAINER_IDENTITY" ] ||
+      ! private_container_has_only "$PREVIOUS_OUTPUT_CONTAINER" original ||
+      [ "$current_identity" != "$PREVIOUS_OUTPUT_IDENTITY" ] ||
+      [ -z "$PREVIOUS_OUTPUT_TREE" ] || [ "$current_tree" != "$PREVIOUS_OUTPUT_TREE" ] ||
+      [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
+      echo "Warning: preserving changed previous image output for manual recovery: $PREVIOUS_OUTPUT_CONTAINER" >&2
+      restore_ok="false"
+    elif ! mv "$PREVIOUS_OUTPUT_PATH" "$FINAL_OUT_DIR"; then
+      echo "Warning: could not restore previous image output: $PREVIOUS_OUTPUT_CONTAINER" >&2
+      restore_ok="false"
+    else
+      current_identity="$(directory_identity "$FINAL_OUT_DIR" 2>/dev/null || true)"
+      current_tree="$(stable_directory_tree_identity "$FINAL_OUT_DIR" 2>/dev/null || true)"
+      if [ "$current_identity" != "$PREVIOUS_OUTPUT_IDENTITY" ] ||
+        [ "$current_tree" != "$PREVIOUS_OUTPUT_TREE" ]; then
+        echo "Warning: restored image output changed during recovery: $FINAL_OUT_DIR" >&2
+        restore_ok="false"
+      elif [ "$(directory_identity "$PREVIOUS_OUTPUT_CONTAINER" 2>/dev/null || true)" != \
+          "$PREVIOUS_OUTPUT_CONTAINER_IDENTITY" ] ||
+        ! private_container_is_empty "$PREVIOUS_OUTPUT_CONTAINER" ||
+        ! rmdir "$PREVIOUS_OUTPUT_CONTAINER"; then
+        echo "Warning: restored the previous image output but preserved its nonempty recovery container: $PREVIOUS_OUTPUT_CONTAINER" >&2
+      else
+        PREVIOUS_OUTPUT_CONTAINER=""
+      fi
+    fi
+  elif [ "$restore_ok" = "true" ] &&
+    { [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; }; then
+    echo "Warning: failed image output remains at its final path: $FINAL_OUT_DIR" >&2
+    restore_ok="false"
+  fi
+
+  if [ -n "$failed_container" ] && [ -e "$failed_container" ]; then
+    if [ "$failed_candidate_placed" = "true" ] &&
+      [ "$restore_ok" = "true" ] && [ "$candidate_exact" = "true" ] &&
+      [ "$(directory_identity "$failed_container" 2>/dev/null || true)" = \
+        "$failed_container_identity" ] &&
+      private_container_has_only "$failed_container" candidate &&
+      [ "$(directory_identity "$failed_path" 2>/dev/null || true)" = \
+        "$INSTALLED_OUTPUT_IDENTITY" ] &&
+      [ "$(stable_directory_tree_identity "$failed_path" 2>/dev/null || true)" = \
+        "$INSTALLED_OUTPUT_TREE" ]; then
+      if ! rm -rf -- "$failed_container"; then
+        echo "Warning: preserving exact failed image candidate after cleanup failure: $failed_container" >&2
+      fi
+    elif [ "$failed_candidate_placed" = "true" ]; then
+      echo "Preserved failed image candidate for manual recovery: $failed_container" >&2
+    else
+      echo "Preserved failed-candidate recovery container for manual inspection: $failed_container" >&2
+    fi
+  fi
+
+  if [ "$restore_ok" = "true" ]; then
+    if [ -n "$PREVIOUS_OUTPUT_IDENTITY" ]; then
+      echo "Post-install image release verification failed; restored the prior output." >&2
+    else
+      echo "Post-install image release verification failed; no prior output was replaced." >&2
+    fi
+  elif [ -n "$PREVIOUS_OUTPUT_CONTAINER" ]; then
+    echo "Preserved previous image output recovery data: $PREVIOUS_OUTPUT_CONTAINER" >&2
+  fi
+}
+
+trap 'rollback_output_install; cleanup_output_staging; cleanup_image_snapshot; cleanup_source_snapshot' EXIT
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -232,6 +559,16 @@ while [ "$#" -gt 0 ]; do
       KERNEL_RELEASE_MANIFEST="$2"
       shift 2
       ;;
+    --apt-provenance)
+      require_arg "$1" "${2:-}"
+      APT_PROVENANCE="$2"
+      shift 2
+      ;;
+    --build-inputs)
+      require_arg "$1" "${2:-}"
+      BUILD_INPUTS="$2"
+      shift 2
+      ;;
     --touchscreen-module-manifest)
       require_arg "$1" "${2:-}"
       TOUCHSCREEN_MODULE_MANIFEST="$2"
@@ -259,7 +596,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 require_tool awk
+require_tool cp
 require_tool git
+require_tool python3
 require_tool shasum
 require_tool split
 require_tool stat
@@ -282,10 +621,12 @@ fi
 
 binding_complete="false"
 if [ -n "$KERNEL_BUILD_MANIFEST" ] || [ -n "$KERNEL_RELEASE_MANIFEST" ] ||
+  [ -n "$APT_PROVENANCE" ] || [ -n "$BUILD_INPUTS" ] ||
   [ -n "$TOUCHSCREEN_MODULE_MANIFEST" ] || [ -n "$IMAGE_BUILD_MANIFEST" ]; then
   if [ -z "$KERNEL_BUILD_MANIFEST" ] || [ -z "$KERNEL_RELEASE_MANIFEST" ] ||
+    [ -z "$APT_PROVENANCE" ] || [ -z "$BUILD_INPUTS" ] ||
     [ -z "$TOUCHSCREEN_MODULE_MANIFEST" ] || [ -z "$IMAGE_BUILD_MANIFEST" ]; then
-    echo "Supply --kernel-build-manifest, --kernel-release-manifest, --touchscreen-module-manifest, and --image-build-manifest together." >&2
+    echo "Supply --kernel-build-manifest, --kernel-release-manifest, --apt-provenance, --build-inputs, --touchscreen-module-manifest, and --image-build-manifest together." >&2
     exit 2
   fi
   binding_complete="true"
@@ -293,14 +634,13 @@ fi
 
 if [ "$VALIDATE_IMAGE" = "true" ] &&
   { [ "$source_complete" != "true" ] || [ "$binding_complete" != "true" ]; }; then
-  echo "Refusing publishable live-image assets without bound corresponding source and payload manifests." >&2
-  echo "Pass both source archives, $SOURCE_NOTICE_NAME, and all four manifest inputs; or use --skip-validate for a local draft." >&2
+  echo "Refusing validation-complete live-image assets without bound corresponding source and payload manifests." >&2
+  echo "Pass both source archives, $SOURCE_NOTICE_NAME, and all six provenance inputs; or use --skip-validate for a local draft." >&2
   exit 1
 fi
 if [ "$VALIDATE_IMAGE" = "true" ]; then
   require_tool cmp
   require_tool docker
-  require_tool python3
 fi
 
 canonical_source_file() {
@@ -372,10 +712,14 @@ fi
 if [ "$binding_complete" = "true" ]; then
   KERNEL_BUILD_MANIFEST="$(canonical_source_file "$KERNEL_BUILD_MANIFEST")"
   KERNEL_RELEASE_MANIFEST="$(canonical_source_file "$KERNEL_RELEASE_MANIFEST")"
+  APT_PROVENANCE="$(canonical_source_file "$APT_PROVENANCE")"
+  BUILD_INPUTS="$(canonical_source_file "$BUILD_INPUTS")"
   TOUCHSCREEN_MODULE_MANIFEST="$(canonical_source_file "$TOUCHSCREEN_MODULE_MANIFEST")"
   IMAGE_BUILD_MANIFEST="$(canonical_source_file "$IMAGE_BUILD_MANIFEST")"
   kernel_build_manifest_base="$(basename "$KERNEL_BUILD_MANIFEST")"
   kernel_release_manifest_base="$(basename "$KERNEL_RELEASE_MANIFEST")"
+  apt_provenance_base="$(basename "$APT_PROVENANCE")"
+  build_inputs_base="$(basename "$BUILD_INPUTS")"
   touchscreen_module_manifest_base="$(basename "$TOUCHSCREEN_MODULE_MANIFEST")"
   image_build_manifest_base="$(basename "$IMAGE_BUILD_MANIFEST")"
   [ "$kernel_build_manifest_base" = "sp11-kernel-build-manifest.txt" ] || {
@@ -386,6 +730,14 @@ if [ "$binding_complete" = "true" ]; then
     echo "Kernel release manifest basename must be sp11-kernel-release-manifest.txt." >&2
     exit 2
   }
+  [ "$apt_provenance_base" = "$APT_PROVENANCE_NAME" ] || {
+    echo "APT provenance basename must be $APT_PROVENANCE_NAME." >&2
+    exit 2
+  }
+  [ "$build_inputs_base" = "$BUILD_INPUTS_NAME" ] || {
+    echo "Build-inputs basename must be $BUILD_INPUTS_NAME." >&2
+    exit 2
+  }
   [ "$touchscreen_module_manifest_base" = "sp11-touchscreen-modules-manifest.txt" ] || {
     echo "Touchscreen module manifest basename must be sp11-touchscreen-modules-manifest.txt." >&2
     exit 2
@@ -394,15 +746,24 @@ if [ "$binding_complete" = "true" ]; then
     echo "Image build manifest basename must be $IMAGE_BUILD_MANIFEST_NAME." >&2
     exit 2
   }
-  if [ "$KERNEL_BUILD_MANIFEST" = "$KERNEL_RELEASE_MANIFEST" ] ||
-    [ "$KERNEL_BUILD_MANIFEST" = "$TOUCHSCREEN_MODULE_MANIFEST" ] ||
-    [ "$KERNEL_RELEASE_MANIFEST" = "$TOUCHSCREEN_MODULE_MANIFEST" ] ||
-    [ "$IMAGE_BUILD_MANIFEST" = "$KERNEL_BUILD_MANIFEST" ] ||
-    [ "$IMAGE_BUILD_MANIFEST" = "$KERNEL_RELEASE_MANIFEST" ] ||
-    [ "$IMAGE_BUILD_MANIFEST" = "$TOUCHSCREEN_MODULE_MANIFEST" ]; then
-    echo "Image, build, release, and module manifests must be distinct files." >&2
-    exit 2
-  fi
+  binding_paths=(
+    "$KERNEL_BUILD_MANIFEST"
+    "$KERNEL_RELEASE_MANIFEST"
+    "$APT_PROVENANCE"
+    "$BUILD_INPUTS"
+    "$TOUCHSCREEN_MODULE_MANIFEST"
+    "$IMAGE_BUILD_MANIFEST"
+  )
+  for binding_path_index in "${!binding_paths[@]}"; do
+    comparison_index=$((binding_path_index + 1))
+    while [ "$comparison_index" -lt "${#binding_paths[@]}" ]; do
+      if [ "${binding_paths[$binding_path_index]}" = "${binding_paths[$comparison_index]}" ]; then
+        echo "Image release provenance inputs must be distinct files." >&2
+        exit 2
+      fi
+      comparison_index=$((comparison_index + 1))
+    done
+  done
 fi
 
 if [ ! -s "$IMAGE" ] || [ ! -f "$IMAGE" ] || [ -L "$IMAGE" ]; then
@@ -508,12 +869,12 @@ if [ "$VALIDATE_IMAGE" = "true" ] && [ "$source_complete" = "true" ] &&
         exit 1
       fi
     elif [ "$remote_tag_status" -ne 2 ]; then
-      echo "Refusing a publishable image because remote tag $RELEASE_NAME could not be checked on origin." >&2
+      echo "Refusing a validation-complete image because remote tag $RELEASE_NAME could not be checked on origin." >&2
       echo "Restore remote access and rerun so an existing tag cannot be reused accidentally." >&2
       exit 1
     fi
   else
-    echo "Refusing a publishable image because the support repository has no origin remote." >&2
+    echo "Refusing a validation-complete image because the support repository has no origin remote." >&2
     echo "Configure the public release remote and rerun so an existing tag cannot be missed." >&2
     exit 1
   fi
@@ -563,6 +924,57 @@ case "$image_abs" in
     ;;
 esac
 
+IMAGE_SNAPSHOT_DIR="$(mktemp -d "$release_root_abs/.image-raw-snapshot.XXXXXX")"
+chmod 700 "$IMAGE_SNAPSHOT_DIR"
+IMAGE_SNAPSHOT="$IMAGE_SNAPSHOT_DIR/$image_base"
+image_source_before_size="$(file_size "$image_abs")"
+image_source_before_sha="$(shasum -a 256 "$image_abs" | awk '{print $1}')"
+
+snapshot_created="false"
+if cp -c -- "$image_abs" "$IMAGE_SNAPSHOT" 2>/dev/null; then
+  snapshot_created="true"
+else
+  rm -f -- "$IMAGE_SNAPSHOT"
+fi
+if [ "$snapshot_created" != "true" ]; then
+  if cp --reflink=always --sparse=always -- "$image_abs" "$IMAGE_SNAPSHOT" 2>/dev/null; then
+    snapshot_created="true"
+  else
+    rm -f -- "$IMAGE_SNAPSHOT"
+  fi
+fi
+if [ "$snapshot_created" != "true" ]; then
+  if cp --sparse=always -- "$image_abs" "$IMAGE_SNAPSHOT" 2>/dev/null; then
+    snapshot_created="true"
+  else
+    rm -f -- "$IMAGE_SNAPSHOT"
+  fi
+fi
+if [ "$snapshot_created" != "true" ]; then
+  if cp -- "$image_abs" "$IMAGE_SNAPSHOT"; then
+    snapshot_created="true"
+  else
+    rm -f -- "$IMAGE_SNAPSHOT"
+  fi
+fi
+[ "$snapshot_created" = "true" ] && [ -s "$IMAGE_SNAPSHOT" ] &&
+  [ -f "$IMAGE_SNAPSHOT" ] && [ ! -L "$IMAGE_SNAPSHOT" ] || {
+  echo "Could not create a private regular snapshot of the raw image." >&2
+  exit 1
+}
+chmod 0400 "$IMAGE_SNAPSHOT"
+image_source_after_size="$(file_size "$image_abs")"
+image_source_after_sha="$(shasum -a 256 "$image_abs" | awk '{print $1}')"
+image_size="$(file_size "$IMAGE_SNAPSHOT")"
+image_sha="$(shasum -a 256 "$IMAGE_SNAPSHOT" | awk '{print $1}')"
+if [ "$image_source_before_size" != "$image_source_after_size" ] ||
+  [ "$image_source_before_sha" != "$image_source_after_sha" ] ||
+  [ "$image_source_before_size" != "$image_size" ] ||
+  [ "$image_source_before_sha" != "$image_sha" ]; then
+  echo "Raw image changed while its private validation snapshot was created." >&2
+  exit 1
+fi
+
 if [ "$source_complete" = "true" ] || [ "$binding_complete" = "true" ]; then
   SOURCE_SNAPSHOT_DIR="$(mktemp -d "$release_root_abs/.image-source-snapshot.XXXXXX")"
   snapshot_inputs=()
@@ -573,6 +985,8 @@ if [ "$source_complete" = "true" ] || [ "$binding_complete" = "true" ]; then
     snapshot_inputs+=(
       "$KERNEL_BUILD_MANIFEST"
       "$KERNEL_RELEASE_MANIFEST"
+      "$APT_PROVENANCE"
+      "$BUILD_INPUTS"
       "$TOUCHSCREEN_MODULE_MANIFEST"
       "$IMAGE_BUILD_MANIFEST"
     )
@@ -601,6 +1015,8 @@ if [ "$source_complete" = "true" ] || [ "$binding_complete" = "true" ]; then
   if [ "$binding_complete" = "true" ]; then
     KERNEL_BUILD_MANIFEST="$SOURCE_SNAPSHOT_DIR/$kernel_build_manifest_base"
     KERNEL_RELEASE_MANIFEST="$SOURCE_SNAPSHOT_DIR/$kernel_release_manifest_base"
+    APT_PROVENANCE="$SOURCE_SNAPSHOT_DIR/$apt_provenance_base"
+    BUILD_INPUTS="$SOURCE_SNAPSHOT_DIR/$build_inputs_base"
     TOUCHSCREEN_MODULE_MANIFEST="$SOURCE_SNAPSHOT_DIR/$touchscreen_module_manifest_base"
     IMAGE_BUILD_MANIFEST="$SOURCE_SNAPSHOT_DIR/$image_build_manifest_base"
   fi
@@ -612,21 +1028,31 @@ if [ "$source_complete" = "true" ]; then
   source_notice_snapshot_sha="$(shasum -a 256 "$SOURCE_NOTICE" | awk '{print $1}')"
 fi
 if [ "$binding_complete" = "true" ]; then
+  kernel_build_manifest_size="$(file_size "$KERNEL_BUILD_MANIFEST")"
+  kernel_release_manifest_size="$(file_size "$KERNEL_RELEASE_MANIFEST")"
+  apt_provenance_size="$(file_size "$APT_PROVENANCE")"
+  build_inputs_size="$(file_size "$BUILD_INPUTS")"
+  touchscreen_module_manifest_size="$(file_size "$TOUCHSCREEN_MODULE_MANIFEST")"
+  image_build_manifest_size="$(file_size "$IMAGE_BUILD_MANIFEST")"
   kernel_build_manifest_snapshot_sha="$(shasum -a 256 "$KERNEL_BUILD_MANIFEST" | awk '{print $1}')"
   kernel_release_manifest_snapshot_sha="$(shasum -a 256 "$KERNEL_RELEASE_MANIFEST" | awk '{print $1}')"
+  apt_provenance_snapshot_sha="$(shasum -a 256 "$APT_PROVENANCE" | awk '{print $1}')"
+  build_inputs_snapshot_sha="$(shasum -a 256 "$BUILD_INPUTS" | awk '{print $1}')"
   touchscreen_module_manifest_snapshot_sha="$(shasum -a 256 "$TOUCHSCREEN_MODULE_MANIFEST" | awk '{print $1}')"
   image_build_manifest_snapshot_sha="$(shasum -a 256 "$IMAGE_BUILD_MANIFEST" | awk '{print $1}')"
 fi
 
+[ -x "$public_content_validator" ] && [ ! -L "$public_content_validator" ] || {
+  echo "Missing executable public-content validator." >&2
+  exit 1
+}
 if [ "$VALIDATE_IMAGE" = "true" ]; then
-  [ -x "$public_content_validator" ] && [ ! -L "$public_content_validator" ] || {
-    echo "Missing executable public-content validator." >&2
-    exit 1
-  }
   "$public_content_validator" \
     --file "$SOURCE_NOTICE" \
     --file "$KERNEL_BUILD_MANIFEST" \
     --file "$KERNEL_RELEASE_MANIFEST" \
+    --file "$APT_PROVENANCE" \
+    --file "$BUILD_INPUTS" \
     --file "$TOUCHSCREEN_MODULE_MANIFEST" \
     --file "$IMAGE_BUILD_MANIFEST"
   source_archive_validator="$repo_dir/scripts/validate-sp11-source-archive.py"
@@ -667,6 +1093,8 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
       --release-name "$RELEASE_NAME" \
       --kernel-build-manifest "$KERNEL_BUILD_MANIFEST" \
       --kernel-release-manifest "$KERNEL_RELEASE_MANIFEST" \
+      --apt-provenance "$APT_PROVENANCE" \
+      --build-inputs "$BUILD_INPUTS" \
       --touchscreen-module-manifest "$TOUCHSCREEN_MODULE_MANIFEST" \
       --kernel-source "$KERNEL_SOURCE_ASSET" \
       --touchscreen-source "$TOUCHSCREEN_SOURCE_ASSET" \
@@ -744,7 +1172,7 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   }
   if ! python3 "$image_build_manifest_validator" \
       --manifest "$IMAGE_BUILD_MANIFEST" \
-      --image "$image_abs" \
+      --image "$IMAGE_SNAPSHOT" \
       --support-commit "$repo_commit" \
       --support-manifest "$expected_support_manifest" \
       --expected-kernel-dtb-sha256 "$build_kernel_dtb_sha"; then
@@ -783,6 +1211,7 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     binding_index=$((binding_index + 1))
   done
 
+  release_outer_schema="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel release schema")"
   release_schema="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Build provenance schema")"
   bound_kernel_release_name="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Release")"
   release_build="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Release build")"
@@ -800,7 +1229,51 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   release_touch_license="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Touchscreen source license blob ID")"
   release_touch_headers_mode="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Touchscreen kernel headers input mode")"
   release_package_count="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Package count")"
-  if [ "$release_schema" != "$build_schema" ] || [ "$release_build" != "true" ] ||
+  release_build_manifest_asset="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel build manifest asset")"
+  release_build_manifest_size="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel build manifest size")"
+  release_build_manifest_sha="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel build manifest SHA256")"
+  release_apt_asset="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "APT provenance asset")"
+  release_apt_schema="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "APT provenance schema")"
+  release_apt_size="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "APT provenance size")"
+  release_apt_sha="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "APT provenance SHA256")"
+  release_apt_snapshot_id="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "APT snapshot ID")"
+  release_apt_snapshot_uri="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "APT snapshot URI")"
+  release_inputs_asset="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Build inputs asset")"
+  release_inputs_schema="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Build inputs schema")"
+  release_inputs_size="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Build inputs size")"
+  release_inputs_sha="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Build inputs SHA256")"
+  release_creation_propagation="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Build envelope creation propagation")"
+  release_kernel_propagation="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel release propagation")"
+  release_oci_image="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "OCI index image")"
+  release_oci_digest="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "OCI index digest")"
+  release_oci_platform="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "OCI platform")"
+  release_oci_platform_manifest="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "OCI platform manifest")"
+  release_publication_state="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Publication state")"
+
+  apt_schema="$(required_manifest_value "$APT_PROVENANCE" "APT provenance schema")"
+  apt_snapshot_id="$(required_manifest_value "$APT_PROVENANCE" "Snapshot ID")"
+  apt_snapshot_uri="$(required_manifest_value "$APT_PROVENANCE" "Snapshot URI")"
+  apt_completed="$(required_manifest_value "$APT_PROVENANCE" "APT provenance complete")"
+  inputs_schema="$(required_manifest_value "$BUILD_INPUTS" "Build inputs schema")"
+  inputs_support="$(required_manifest_value "$BUILD_INPUTS" "Support HEAD")"
+  inputs_oci_image="$(required_manifest_value "$BUILD_INPUTS" "OCI index image")"
+  inputs_oci_digest="$(required_manifest_value "$BUILD_INPUTS" "OCI index digest")"
+  inputs_oci_platform="$(required_manifest_value "$BUILD_INPUTS" "OCI platform")"
+  inputs_oci_platform_manifest="$(required_manifest_value "$BUILD_INPUTS" "OCI platform manifest")"
+  inputs_creation_propagation="$(required_manifest_value "$BUILD_INPUTS" "Publication schema propagation")"
+  inputs_completed="$(required_manifest_value "$BUILD_INPUTS" "Build inputs complete")"
+  inputs_build_role="$(required_manifest_value "$BUILD_INPUTS" "Input 4 role")"
+  inputs_build_path="$(required_manifest_value "$BUILD_INPUTS" "Input 4 path")"
+  inputs_build_size="$(required_manifest_value "$BUILD_INPUTS" "Input 4 size")"
+  inputs_build_sha="$(required_manifest_value "$BUILD_INPUTS" "Input 4 SHA256")"
+  inputs_apt_role="$(required_manifest_value "$BUILD_INPUTS" "Input 5 role")"
+  inputs_apt_path="$(required_manifest_value "$BUILD_INPUTS" "Input 5 path")"
+  inputs_apt_size="$(required_manifest_value "$BUILD_INPUTS" "Input 5 size")"
+  inputs_apt_sha="$(required_manifest_value "$BUILD_INPUTS" "Input 5 SHA256")"
+  image_build_schema="$(required_manifest_value "$IMAGE_BUILD_MANIFEST" "Schema")"
+
+  if [ "$release_outer_schema" != "sp11-kernel-release-v1" ] ||
+    [ "$release_schema" != "$build_schema" ] || [ "$release_build" != "true" ] ||
     [ "$release_completed" != "true" ] || [ "$release_support" != "$build_support_start" ] ||
     [ "$release_source_head" != "$build_source_head" ] ||
     [ "$release_patched_tree" != "$build_patched_tree" ] ||
@@ -816,6 +1289,46 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     ! [[ "$release_package_count" =~ ^[1-9][0-9]*$ ]] ||
     [ "$release_package_count" -ne "$build_deb_count" ]; then
     echo "Kernel release manifest does not match its schema-v2 build/source identities." >&2
+    exit 1
+  fi
+  if [ "$apt_schema" != "sp11-kernel-apt-provenance-v1" ] ||
+    [ "$apt_completed" != "true" ] ||
+    [ "$inputs_schema" != "sp11-kernel-build-inputs-v1" ] ||
+    [ "$inputs_support" != "$repo_commit" ] || [ "$inputs_completed" != "true" ] ||
+    [ "$inputs_creation_propagation" != "incomplete" ] ||
+    [ "$inputs_build_role" != "kernel-build-manifest-v2" ] ||
+    [ "$inputs_build_path" != "artifacts/$kernel_build_manifest_base" ] ||
+    [ "$inputs_build_size" != "$kernel_build_manifest_size" ] ||
+    [ "$inputs_build_sha" != "$kernel_build_manifest_snapshot_sha" ] ||
+    [ "$inputs_apt_role" != "apt-provenance-v1" ] ||
+    [ "$inputs_apt_path" != "artifacts/$apt_provenance_base" ] ||
+    [ "$inputs_apt_size" != "$apt_provenance_size" ] ||
+    [ "$inputs_apt_sha" != "$apt_provenance_snapshot_sha" ] ||
+    [ "$image_build_schema" != "sp11-live-image-build-v1" ]; then
+    echo "Immutable APT sidecar and build-inputs envelope are not exact or cross-bound." >&2
+    exit 1
+  fi
+  if [ "$release_build_manifest_asset" != "$kernel_build_manifest_base" ] ||
+    [ "$release_build_manifest_size" != "$kernel_build_manifest_size" ] ||
+    [ "$release_build_manifest_sha" != "$kernel_build_manifest_snapshot_sha" ] ||
+    [ "$release_apt_asset" != "$apt_provenance_base" ] ||
+    [ "$release_apt_schema" != "$apt_schema" ] ||
+    [ "$release_apt_size" != "$apt_provenance_size" ] ||
+    [ "$release_apt_sha" != "$apt_provenance_snapshot_sha" ] ||
+    [ "$release_apt_snapshot_id" != "$apt_snapshot_id" ] ||
+    [ "$release_apt_snapshot_uri" != "$apt_snapshot_uri" ] ||
+    [ "$release_inputs_asset" != "$build_inputs_base" ] ||
+    [ "$release_inputs_schema" != "$inputs_schema" ] ||
+    [ "$release_inputs_size" != "$build_inputs_size" ] ||
+    [ "$release_inputs_sha" != "$build_inputs_snapshot_sha" ] ||
+    [ "$release_creation_propagation" != "$inputs_creation_propagation" ] ||
+    [ "$release_kernel_propagation" != "complete" ] ||
+    [ "$release_oci_image" != "$inputs_oci_image" ] ||
+    [ "$release_oci_digest" != "$inputs_oci_digest" ] ||
+    [ "$release_oci_platform" != "$inputs_oci_platform" ] ||
+    [ "$release_oci_platform_manifest" != "$inputs_oci_platform_manifest" ] ||
+    [ "$release_publication_state" != "blocked" ]; then
+    echo "Kernel release manifest does not complete the exact immutable-input propagation contract." >&2
     exit 1
   fi
   actual_kernel_source_sha="$(shasum -a 256 "$KERNEL_SOURCE_ASSET" | awk '{print $1}')"
@@ -938,14 +1451,14 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     echo "Missing executable payload-identity validator." >&2
     exit 1
   }
-  bound_image_sha="$(shasum -a 256 "$image_abs" | awk '{print $1}')"
+  bound_image_sha="$image_sha"
   image_binding_extractor="$repo_dir/scripts/extract-sp11-image-bindings.sh"
   [ -f "$image_binding_extractor" ] && [ ! -L "$image_binding_extractor" ] || {
     echo "Missing regular raw-image binding extractor." >&2
     exit 1
   }
   if ! docker run --rm -i --platform linux/arm64/v8 \
-      -v "$image_abs:/image/source.img:ro" \
+      -v "$IMAGE_SNAPSHOT:/image/source.img:ro" \
       -v "$payload_output_dir:/payload-output" \
       -v "$image_binding_extractor:/validator/extract-sp11-image-bindings.sh:ro" \
       "$SOURCE_BINDING_IMAGE" bash -s >"$image_binding_log" 2>&1 <<'IMAGE_BINDING_EOF'
@@ -1006,7 +1519,7 @@ IMAGE_BINDING_EOF
   fi
   if ! python3 "$image_build_manifest_validator" \
       --manifest "$IMAGE_BUILD_MANIFEST" \
-      --image "$image_abs" \
+      --image "$IMAGE_SNAPSHOT" \
       --support-commit "$repo_commit" \
       --support-manifest "$expected_support_manifest" \
       --expected-kernel-dtb-sha256 "$build_kernel_dtb_sha" \
@@ -1023,8 +1536,8 @@ IMAGE_BINDING_EOF
     echo "Raw image ISO or DTB identity differs from the image-build manifest." >&2
     exit 1
   fi
-  if [ "$(shasum -a 256 "$image_abs" | awk '{print $1}')" != "$bound_image_sha" ]; then
-    echo "Image changed while its embedded payload identities were validated." >&2
+  if [ "$(shasum -a 256 "$IMAGE_SNAPSHOT" | awk '{print $1}')" != "$bound_image_sha" ]; then
+    echo "Private image snapshot changed while its embedded payload identities were validated." >&2
     exit 1
   fi
 fi
@@ -1042,13 +1555,15 @@ fi
 
 FINAL_OUT_DIR="$OUT_DIR"
 OUTPUT_STAGING_DIR="$(mktemp -d "$release_root_abs/.${out_leaf}.staging.XXXXXX")"
+chmod 700 "$OUTPUT_STAGING_DIR"
+OUTPUT_STAGING_IDENTITY="$(directory_identity "$OUTPUT_STAGING_DIR")"
 OUT_DIR="$OUTPUT_STAGING_DIR"
 
 outline="$OUT_DIR/$OUTLINE_NAME"
 if [ "$VALIDATE_IMAGE" = "true" ]; then
   outline_raw="$OUT_DIR/$OUTLINE_NAME.raw"
   if ! ./scripts/build-sp11-live-usb-image.sh \
-    --validate-image "$image_relative" >"$outline_raw" 2>&1; then
+    --validate-image "$IMAGE_SNAPSHOT" >"$outline_raw" 2>&1; then
     echo "Image validation failed. See $OUT_DIR_DISPLAY/$OUTLINE_NAME.raw." >&2
     exit 1
   fi
@@ -1067,18 +1582,17 @@ else
 fi
 
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-image_size="$(file_size "$image_abs")"
-image_sha="$(shasum -a 256 "$image_abs" | awk '{print $1}')"
-if [ "$VALIDATE_IMAGE" = "true" ] && [ "$image_sha" != "$bound_image_sha" ]; then
-  echo "Image changed after embedded payload validation." >&2
+if [ "$(file_size "$IMAGE_SNAPSHOT")" != "$image_size" ] ||
+  [ "$(shasum -a 256 "$IMAGE_SNAPSHOT" | awk '{print $1}')" != "$image_sha" ]; then
+  echo "Private image snapshot changed after embedded payload validation." >&2
   exit 1
 fi
 outline_sha="$(shasum -a 256 "$outline" | awk '{print $1}')"
 compressed_tmp="$OUT_DIR/$compressed_base"
 
-zstd -T0 -6 --force -o "$compressed_tmp" "$image_abs"
-if [ "$(shasum -a 256 "$image_abs" | awk '{print $1}')" != "$image_sha" ]; then
-  echo "Image changed while the release archive was compressed." >&2
+zstd -T0 -6 --force -o "$compressed_tmp" "$IMAGE_SNAPSHOT"
+if [ "$(shasum -a 256 "$IMAGE_SNAPSHOT" | awk '{print $1}')" != "$image_sha" ]; then
+  echo "Private image snapshot changed while the release archive was compressed." >&2
   exit 1
 fi
 decompressed_sha="$(zstd -dc "$compressed_tmp" | shasum -a 256 | awk '{print $1}')"
@@ -1129,14 +1643,20 @@ if [ "$source_complete" = "true" ]; then
   if [ "$binding_complete" = "true" ]; then
     mv "$KERNEL_BUILD_MANIFEST" "$OUT_DIR/$kernel_build_manifest_base"
     mv "$KERNEL_RELEASE_MANIFEST" "$OUT_DIR/$kernel_release_manifest_base"
+    mv "$APT_PROVENANCE" "$OUT_DIR/$apt_provenance_base"
+    mv "$BUILD_INPUTS" "$OUT_DIR/$build_inputs_base"
     mv "$TOUCHSCREEN_MODULE_MANIFEST" "$OUT_DIR/$touchscreen_module_manifest_base"
     mv "$IMAGE_BUILD_MANIFEST" "$OUT_DIR/$image_build_manifest_base"
     KERNEL_BUILD_MANIFEST="$OUT_DIR/$kernel_build_manifest_base"
     KERNEL_RELEASE_MANIFEST="$OUT_DIR/$kernel_release_manifest_base"
+    APT_PROVENANCE="$OUT_DIR/$apt_provenance_base"
+    BUILD_INPUTS="$OUT_DIR/$build_inputs_base"
     TOUCHSCREEN_MODULE_MANIFEST="$OUT_DIR/$touchscreen_module_manifest_base"
     IMAGE_BUILD_MANIFEST="$OUT_DIR/$image_build_manifest_base"
     if [ "$(shasum -a 256 "$KERNEL_BUILD_MANIFEST" | awk '{print $1}')" != "$kernel_build_manifest_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$KERNEL_RELEASE_MANIFEST" | awk '{print $1}')" != "$kernel_release_manifest_snapshot_sha" ] ||
+      [ "$(shasum -a 256 "$APT_PROVENANCE" | awk '{print $1}')" != "$apt_provenance_snapshot_sha" ] ||
+      [ "$(shasum -a 256 "$BUILD_INPUTS" | awk '{print $1}')" != "$build_inputs_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$TOUCHSCREEN_MODULE_MANIFEST" | awk '{print $1}')" != "$touchscreen_module_manifest_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$IMAGE_BUILD_MANIFEST" | awk '{print $1}')" != "$image_build_manifest_snapshot_sha" ]; then
       echo "Staged source-binding manifests changed after validation." >&2
@@ -1145,6 +1665,8 @@ if [ "$source_complete" = "true" ]; then
     source_checksum_inputs+=(
       "$kernel_build_manifest_base"
       "$kernel_release_manifest_base"
+      "$apt_provenance_base"
+      "$build_inputs_base"
       "$touchscreen_module_manifest_base"
       "$image_build_manifest_base"
     )
@@ -1160,6 +1682,46 @@ fi
   echo
   echo "Generated: $generated_at"
   echo "Release: $RELEASE_NAME"
+  if [ "$VALIDATE_IMAGE" = "true" ]; then
+    echo "Release manifest schema: sp11-live-image-release-v1"
+    echo "Kernel build schema: $build_schema"
+    echo "Kernel release schema: $release_outer_schema"
+    echo "Touchscreen module contract: $module_contract"
+    echo "Image build schema: $image_build_schema"
+    echo "Kernel build manifest asset: $kernel_build_manifest_base"
+    echo "Kernel build manifest size: $kernel_build_manifest_size"
+    echo "Kernel build manifest SHA256: $kernel_build_manifest_snapshot_sha"
+    echo "Kernel release manifest asset: $kernel_release_manifest_base"
+    echo "Kernel release manifest size: $kernel_release_manifest_size"
+    echo "Kernel release manifest SHA256: $kernel_release_manifest_snapshot_sha"
+    echo "APT provenance asset: $apt_provenance_base"
+    echo "APT provenance schema: $apt_schema"
+    echo "APT provenance size: $apt_provenance_size"
+    echo "APT provenance SHA256: $apt_provenance_snapshot_sha"
+    echo "Build inputs asset: $build_inputs_base"
+    echo "Build inputs schema: $inputs_schema"
+    echo "Build inputs size: $build_inputs_size"
+    echo "Build inputs SHA256: $build_inputs_snapshot_sha"
+    echo "Touchscreen module manifest asset: $touchscreen_module_manifest_base"
+    echo "Touchscreen module manifest size: $touchscreen_module_manifest_size"
+    echo "Touchscreen module manifest SHA256: $touchscreen_module_manifest_snapshot_sha"
+    echo "Image build manifest asset: $image_build_manifest_base"
+    echo "Image build manifest size: $image_build_manifest_size"
+    echo "Image build manifest SHA256: $image_build_manifest_snapshot_sha"
+    echo "APT snapshot ID: $apt_snapshot_id"
+    echo "APT snapshot URI: $apt_snapshot_uri"
+    echo "Build envelope creation propagation: $inputs_creation_propagation"
+    echo "Kernel release propagation: $release_kernel_propagation"
+    echo "Kernel provenance propagation: complete"
+    echo "OCI index image: $inputs_oci_image"
+    echo "OCI index digest: $inputs_oci_digest"
+    echo "OCI platform: $inputs_oci_platform"
+    echo "OCI platform manifest: $inputs_oci_platform_manifest"
+  else
+    echo "Release manifest schema: sp11-live-image-draft-v1"
+    echo "Kernel provenance propagation: incomplete"
+  fi
+  echo "Publication state: blocked"
   echo "Support repo commit: $repo_commit"
   echo "Support repo dirty: $dirty"
   echo "Image source: $image_relative"
@@ -1206,6 +1768,8 @@ fi
       for binding_file in \
         "$kernel_build_manifest_base" \
         "$kernel_release_manifest_base" \
+        "$apt_provenance_base" \
+        "$build_inputs_base" \
         "$touchscreen_module_manifest_base" \
         "$image_build_manifest_base"; do
         echo "- $binding_file"
@@ -1216,6 +1780,99 @@ fi
     echo "- Not included; this output is a local draft and cannot be published."
   fi
 } > "$OUT_DIR/$MANIFEST_NAME"
+
+outer_labels="$(awk '
+  /^## / { exit }
+  /^[A-Za-z][A-Za-z0-9 -]*: / {
+    sub(/:.*/, "")
+    print
+  }
+' "$OUT_DIR/$MANIFEST_NAME")"
+if [ "$VALIDATE_IMAGE" = "true" ]; then
+  expected_outer_labels="$(printf '%s\n' \
+    Generated \
+    Release \
+    'Release manifest schema' \
+    'Kernel build schema' \
+    'Kernel release schema' \
+    'Touchscreen module contract' \
+    'Image build schema' \
+    'Kernel build manifest asset' \
+    'Kernel build manifest size' \
+    'Kernel build manifest SHA256' \
+    'Kernel release manifest asset' \
+    'Kernel release manifest size' \
+    'Kernel release manifest SHA256' \
+    'APT provenance asset' \
+    'APT provenance schema' \
+    'APT provenance size' \
+    'APT provenance SHA256' \
+    'Build inputs asset' \
+    'Build inputs schema' \
+    'Build inputs size' \
+    'Build inputs SHA256' \
+    'Touchscreen module manifest asset' \
+    'Touchscreen module manifest size' \
+    'Touchscreen module manifest SHA256' \
+    'Image build manifest asset' \
+    'Image build manifest size' \
+    'Image build manifest SHA256' \
+    'APT snapshot ID' \
+    'APT snapshot URI' \
+    'Build envelope creation propagation' \
+    'Kernel release propagation' \
+    'Kernel provenance propagation' \
+    'OCI index image' \
+    'OCI index digest' \
+    'OCI platform' \
+    'OCI platform manifest' \
+    'Publication state' \
+    'Support repo commit' \
+    'Support repo dirty' \
+    'Image source' \
+    'Image validation' \
+    Compression \
+    'Compressed image' \
+    'Compressed image size' \
+    'Compressed image SHA256' \
+    'Part size limit')"
+  [ "$outer_labels" = "$expected_outer_labels" ] || {
+    echo "Generated live-image release manifest field order does not match schema v1." >&2
+    exit 1
+  }
+  [ "$(required_manifest_value "$OUT_DIR/$MANIFEST_NAME" "Release manifest schema")" = \
+      "sp11-live-image-release-v1" ] &&
+    [ "$(required_manifest_value "$OUT_DIR/$MANIFEST_NAME" "Kernel provenance propagation")" = \
+      "complete" ] || {
+      echo "Generated live-image release manifest does not attest completed kernel propagation." >&2
+      exit 1
+    }
+else
+  expected_outer_labels="$(printf '%s\n' \
+    Generated \
+    Release \
+    'Release manifest schema' \
+    'Kernel provenance propagation' \
+    'Publication state' \
+    'Support repo commit' \
+    'Support repo dirty' \
+    'Image source' \
+    'Image validation' \
+    Compression \
+    'Compressed image' \
+    'Compressed image size' \
+    'Compressed image SHA256' \
+    'Part size limit')"
+  [ "$outer_labels" = "$expected_outer_labels" ] || {
+    echo "Generated live-image draft manifest field order does not match its schema." >&2
+    exit 1
+  }
+fi
+[ "$(required_manifest_value "$OUT_DIR/$MANIFEST_NAME" "Publication state")" = "blocked" ] || {
+  echo "Generated live-image manifest is not explicitly blocked from publication." >&2
+  exit 1
+}
+outer_manifest_sha="$(shasum -a 256 "$OUT_DIR/$MANIFEST_NAME" | awk '{print $1}')"
 
 (
   cd "$OUT_DIR"
@@ -1231,6 +1888,8 @@ fi
       checksum_inputs+=(
         "$kernel_build_manifest_base"
         "$kernel_release_manifest_base"
+        "$apt_provenance_base"
+        "$build_inputs_base"
         "$touchscreen_module_manifest_base"
         "$image_build_manifest_base"
       )
@@ -1238,6 +1897,13 @@ fi
   fi
   shasum -a 256 "${checksum_inputs[@]}" > SHA256SUMS
 )
+main_checksum_sha="$(shasum -a 256 "$OUT_DIR/SHA256SUMS" | awk '{print $1}')"
+source_checksum_sha=""
+if [ "$source_complete" = "true" ]; then
+  source_checksum_sha="$(
+    shasum -a 256 "$OUT_DIR/$SOURCE_CHECKSUM_NAME" | awk '{print $1}'
+  )"
+fi
 
 cat > "$OUT_DIR/RELEASE-NOTES.md" <<RELEASE_NOTES_END
 # Surface Pro 11 Live USB Image
@@ -1302,7 +1968,8 @@ $(if [ "$source_complete" = "true" ]; then
     "The release includes \`$kernel_source_base\`," \
     "\`$touchscreen_source_base\`, \`$SOURCE_NOTICE_NAME\`, and" \
     "\`$SOURCE_CHECKSUM_NAME\`. The supplied image-build, kernel-build," \
-    "kernel-release, and module manifests cryptographically bind those archives," \
+    "kernel-release, APT-provenance, build-inputs, and module manifests" \
+    "cryptographically bind those archives," \
     "the embedded ISO/DTB/support tree, and the image payload." \
     "Together they cover the patched kernel and exact" \
     "source/build-control files for the three touchscreen modules embedded in the" \
@@ -1320,7 +1987,16 @@ bytes each.
 
 These artifacts were built from recorded inputs; they are not claimed to be
 bit-for-bit reproducible.
+
+Publication remains blocked. $(if [ "$VALIDATE_IMAGE" = "true" ] &&
+  [ "$source_complete" = "true" ] && [ "$binding_complete" = "true" ]; then
+  printf '%s' 'The immutable APT and build-input propagation attestation is complete, but'
+else
+  printf '%s' 'This local draft has incomplete kernel-provenance propagation, and'
+fi) this preparation does not waive the independent real-build, signing,
+licensing, or release-authorization gates.
 RELEASE_NOTES_END
+release_notes_sha="$(shasum -a 256 "$OUT_DIR/RELEASE-NOTES.md" | awk '{print $1}')"
 
 if [ "$VALIDATE_IMAGE" = "true" ]; then
   public_output_args=(
@@ -1330,6 +2006,8 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     --file "$OUT_DIR/$SOURCE_CHECKSUM_NAME"
     --file "$OUT_DIR/$kernel_build_manifest_base"
     --file "$OUT_DIR/$kernel_release_manifest_base"
+    --file "$OUT_DIR/$apt_provenance_base"
+    --file "$OUT_DIR/$build_inputs_base"
     --file "$OUT_DIR/$touchscreen_module_manifest_base"
     --file "$OUT_DIR/$image_build_manifest_base"
     --file "$OUT_DIR/SHA256SUMS"
@@ -1354,6 +2032,8 @@ if [ "$source_complete" = "true" ]; then
     release_assets+=(
       "$kernel_build_manifest_base"
       "$kernel_release_manifest_base"
+      "$apt_provenance_base"
+      "$build_inputs_base"
       "$touchscreen_module_manifest_base"
       "$image_build_manifest_base"
     )
@@ -1363,48 +2043,519 @@ for part in "${parts[@]}"; do
   release_assets+=("$(basename "$part")")
 done
 
-if ! (cd "$OUT_DIR" && shasum -a 256 -c SHA256SUMS >/dev/null); then
-  echo "Prepared image release assets do not match their final SHA256SUMS." >&2
-  exit 1
-fi
-if [ "$source_complete" = "true" ] &&
-   ! (cd "$OUT_DIR" && shasum -a 256 -c "$SOURCE_CHECKSUM_NAME" >/dev/null); then
-  echo "Prepared image source assets do not match their final $SOURCE_CHECKSUM_NAME." >&2
-  exit 1
-fi
+verify_prepared_output() {
+  local prepared_dir="$1"
+  local actual_members expected_members release_asset expected_checksum_members
+  local actual_checksum_members expected_source_members actual_source_members
+  local final_outer_labels final_expected_payload final_compressed_sha final_raw_sha
+  local binding_index binding_file binding_label binding_size binding_sha
+  local outer_index outer_value part_file part_base part_size part_sha
+  local public_args=()
+  local prepared_members=("${release_assets[@]}" "RELEASE-NOTES.md")
+  local checksum_members=()
+  local part_files=()
+
+  [ -d "$prepared_dir" ] && [ ! -L "$prepared_dir" ] || {
+    echo "Prepared image output is not a regular directory." >&2
+    return 1
+  }
+  expected_members="$(printf '%s\n' "${prepared_members[@]}" | LC_ALL=C sort)"
+  actual_members="$(
+    find "$prepared_dir" -mindepth 1 -maxdepth 1 -print |
+      while IFS= read -r prepared_path; do basename "$prepared_path"; done |
+      LC_ALL=C sort
+  )"
+  if [ "$actual_members" != "$expected_members" ]; then
+    echo "Prepared image output membership differs from the exact allowlist." >&2
+    return 1
+  fi
+  for release_asset in "${prepared_members[@]}"; do
+    [ -s "$prepared_dir/$release_asset" ] && [ -f "$prepared_dir/$release_asset" ] &&
+      [ ! -L "$prepared_dir/$release_asset" ] || {
+      echo "Prepared image output has an unsafe or empty final file: $release_asset" >&2
+      return 1
+    }
+  done
+  if [ "$(shasum -a 256 "$prepared_dir/$OUTLINE_NAME" | awk '{print $1}')" != \
+      "$outline_sha" ]; then
+    echo "Prepared image outline bytes changed after generation." >&2
+    return 1
+  fi
+  if [ "$(shasum -a 256 "$prepared_dir/$MANIFEST_NAME" | awk '{print $1}')" != \
+      "$outer_manifest_sha" ]; then
+    echo "Prepared live-image outer manifest bytes changed after generation." >&2
+    return 1
+  fi
+  if [ "$(shasum -a 256 "$prepared_dir/RELEASE-NOTES.md" | awk '{print $1}')" != \
+      "$release_notes_sha" ]; then
+    echo "Prepared image release-note bytes changed after generation." >&2
+    return 1
+  fi
+  if [ "$(shasum -a 256 "$prepared_dir/SHA256SUMS" | awk '{print $1}')" != \
+      "$main_checksum_sha" ]; then
+    echo "Prepared image SHA256SUMS bytes changed after generation." >&2
+    return 1
+  fi
+  if [ "$source_complete" = "true" ] &&
+    [ "$(shasum -a 256 "$prepared_dir/$SOURCE_CHECKSUM_NAME" | awk '{print $1}')" != \
+      "$source_checksum_sha" ]; then
+    echo "Prepared image $SOURCE_CHECKSUM_NAME bytes changed after generation." >&2
+    return 1
+  fi
+
+  for release_asset in "${release_assets[@]}"; do
+    [ "$release_asset" = "SHA256SUMS" ] || checksum_members+=("$release_asset")
+  done
+  if ! grep -Eq '^[0-9a-f]{64}  [A-Za-z0-9._+-]+$' "$prepared_dir/SHA256SUMS" ||
+    grep -Evq '^[0-9a-f]{64}  [A-Za-z0-9._+-]+$' "$prepared_dir/SHA256SUMS"; then
+    echo "Prepared image SHA256SUMS has an invalid row." >&2
+    return 1
+  fi
+  expected_checksum_members="$(printf '%s\n' "${checksum_members[@]}" | LC_ALL=C sort)"
+  actual_checksum_members="$(awk '{print $2}' "$prepared_dir/SHA256SUMS" | LC_ALL=C sort)"
+  if [ "$actual_checksum_members" != "$expected_checksum_members" ]; then
+    echo "Prepared image SHA256SUMS membership differs from the exact upload inventory." >&2
+    return 1
+  fi
+  if ! (cd "$prepared_dir" && shasum -a 256 -c SHA256SUMS >/dev/null); then
+    echo "Prepared image output does not match its final SHA256SUMS." >&2
+    return 1
+  fi
+
+  if [ "$source_complete" = "true" ]; then
+    if ! grep -Eq '^[0-9a-f]{64}  [A-Za-z0-9._+-]+$' \
+        "$prepared_dir/$SOURCE_CHECKSUM_NAME" ||
+      grep -Evq '^[0-9a-f]{64}  [A-Za-z0-9._+-]+$' \
+        "$prepared_dir/$SOURCE_CHECKSUM_NAME"; then
+      echo "Prepared image $SOURCE_CHECKSUM_NAME has an invalid row." >&2
+      return 1
+    fi
+    expected_source_members="$(printf '%s\n' "${source_checksum_inputs[@]}" | LC_ALL=C sort)"
+    actual_source_members="$(
+      awk '{print $2}' "$prepared_dir/$SOURCE_CHECKSUM_NAME" | LC_ALL=C sort
+    )"
+    if [ "$actual_source_members" != "$expected_source_members" ]; then
+      echo "Prepared image $SOURCE_CHECKSUM_NAME membership is not exact." >&2
+      return 1
+    fi
+    if ! (cd "$prepared_dir" && shasum -a 256 -c "$SOURCE_CHECKSUM_NAME" >/dev/null); then
+      echo "Prepared image source assets do not match $SOURCE_CHECKSUM_NAME." >&2
+      return 1
+    fi
+    if [ "$(shasum -a 256 "$prepared_dir/$kernel_source_base" | awk '{print $1}')" != \
+        "$kernel_source_snapshot_sha" ] ||
+      [ "$(shasum -a 256 "$prepared_dir/$touchscreen_source_base" | awk '{print $1}')" != \
+        "$touchscreen_source_snapshot_sha" ] ||
+      [ "$(shasum -a 256 "$prepared_dir/$SOURCE_NOTICE_NAME" | awk '{print $1}')" != \
+        "$source_notice_snapshot_sha" ]; then
+      echo "Prepared image corresponding-source bytes changed after validation." >&2
+      return 1
+    fi
+  fi
+
+  if [ "$binding_complete" = "true" ]; then
+    local binding_files=(
+      "$kernel_build_manifest_base"
+      "$kernel_release_manifest_base"
+      "$apt_provenance_base"
+      "$build_inputs_base"
+      "$touchscreen_module_manifest_base"
+      "$image_build_manifest_base"
+    )
+    local binding_labels=(
+      'Kernel build manifest'
+      'Kernel release manifest'
+      'APT provenance'
+      'Build inputs'
+      'Touchscreen module manifest'
+      'Image build manifest'
+    )
+    local binding_sizes=(
+      "$kernel_build_manifest_size"
+      "$kernel_release_manifest_size"
+      "$apt_provenance_size"
+      "$build_inputs_size"
+      "$touchscreen_module_manifest_size"
+      "$image_build_manifest_size"
+    )
+    local binding_shas=(
+      "$kernel_build_manifest_snapshot_sha"
+      "$kernel_release_manifest_snapshot_sha"
+      "$apt_provenance_snapshot_sha"
+      "$build_inputs_snapshot_sha"
+      "$touchscreen_module_manifest_snapshot_sha"
+      "$image_build_manifest_snapshot_sha"
+    )
+    binding_index=0
+    while [ "$binding_index" -lt "${#binding_files[@]}" ]; do
+      binding_file="${binding_files[$binding_index]}"
+      binding_label="${binding_labels[$binding_index]}"
+      binding_size="${binding_sizes[$binding_index]}"
+      binding_sha="${binding_shas[$binding_index]}"
+      if [ "$(file_size "$prepared_dir/$binding_file")" != "$binding_size" ] ||
+        [ "$(shasum -a 256 "$prepared_dir/$binding_file" | awk '{print $1}')" != \
+          "$binding_sha" ]; then
+        echo "Prepared $binding_label bytes changed after validation." >&2
+        return 1
+      fi
+      binding_index=$((binding_index + 1))
+    done
+  fi
+
+  final_outer_labels="$(awk '
+    /^## / { exit }
+    /^[A-Za-z][A-Za-z0-9 -]*: / { sub(/:.*/, ""); print }
+  ' "$prepared_dir/$MANIFEST_NAME")"
+  if [ "$final_outer_labels" != "$expected_outer_labels" ]; then
+    echo "Prepared live-image outer manifest field order changed." >&2
+    return 1
+  fi
+  if [ "$(required_manifest_value "$prepared_dir/$MANIFEST_NAME" "Publication state")" != \
+      "blocked" ] ||
+    [ "$(required_manifest_value "$prepared_dir/$MANIFEST_NAME" "Compressed image")" != \
+      "$compressed_base" ] ||
+    [ "$(required_manifest_value "$prepared_dir/$MANIFEST_NAME" "Compressed image size")" != \
+      "$compressed_size bytes" ] ||
+    [ "$(required_manifest_value "$prepared_dir/$MANIFEST_NAME" "Compressed image SHA256")" != \
+      "$compressed_sha" ]; then
+    echo "Prepared live-image outer manifest changed its archive or publication state." >&2
+    return 1
+  fi
+  grep -Fxq -- "- $image_base" "$prepared_dir/$MANIFEST_NAME" &&
+    grep -Fxq "  - Size: $image_size bytes" "$prepared_dir/$MANIFEST_NAME" &&
+    grep -Fxq "  - SHA256: $image_sha" "$prepared_dir/$MANIFEST_NAME" || {
+    echo "Prepared live-image outer manifest changed its raw-image identity." >&2
+    return 1
+  }
+
+  if [ "$VALIDATE_IMAGE" = "true" ]; then
+    local outer_labels_to_check=(
+      'Release manifest schema'
+      'Kernel build schema'
+      'Kernel release schema'
+      'Touchscreen module contract'
+      'Image build schema'
+      'Kernel build manifest asset'
+      'Kernel build manifest size'
+      'Kernel build manifest SHA256'
+      'Kernel release manifest asset'
+      'Kernel release manifest size'
+      'Kernel release manifest SHA256'
+      'APT provenance asset'
+      'APT provenance schema'
+      'APT provenance size'
+      'APT provenance SHA256'
+      'Build inputs asset'
+      'Build inputs schema'
+      'Build inputs size'
+      'Build inputs SHA256'
+      'Touchscreen module manifest asset'
+      'Touchscreen module manifest size'
+      'Touchscreen module manifest SHA256'
+      'Image build manifest asset'
+      'Image build manifest size'
+      'Image build manifest SHA256'
+      'APT snapshot ID'
+      'APT snapshot URI'
+      'Build envelope creation propagation'
+      'Kernel release propagation'
+      'Kernel provenance propagation'
+      'OCI index image'
+      'OCI index digest'
+      'OCI platform'
+      'OCI platform manifest'
+    )
+    local outer_values_to_check=(
+      'sp11-live-image-release-v1'
+      "$build_schema"
+      "$release_outer_schema"
+      "$module_contract"
+      "$image_build_schema"
+      "$kernel_build_manifest_base"
+      "$kernel_build_manifest_size"
+      "$kernel_build_manifest_snapshot_sha"
+      "$kernel_release_manifest_base"
+      "$kernel_release_manifest_size"
+      "$kernel_release_manifest_snapshot_sha"
+      "$apt_provenance_base"
+      "$apt_schema"
+      "$apt_provenance_size"
+      "$apt_provenance_snapshot_sha"
+      "$build_inputs_base"
+      "$inputs_schema"
+      "$build_inputs_size"
+      "$build_inputs_snapshot_sha"
+      "$touchscreen_module_manifest_base"
+      "$touchscreen_module_manifest_size"
+      "$touchscreen_module_manifest_snapshot_sha"
+      "$image_build_manifest_base"
+      "$image_build_manifest_size"
+      "$image_build_manifest_snapshot_sha"
+      "$apt_snapshot_id"
+      "$apt_snapshot_uri"
+      "$inputs_creation_propagation"
+      "$release_kernel_propagation"
+      'complete'
+      "$inputs_oci_image"
+      "$inputs_oci_digest"
+      "$inputs_oci_platform"
+      "$inputs_oci_platform_manifest"
+    )
+    outer_index=0
+    while [ "$outer_index" -lt "${#outer_labels_to_check[@]}" ]; do
+      outer_value="$(
+        required_manifest_value "$prepared_dir/$MANIFEST_NAME" \
+          "${outer_labels_to_check[$outer_index]}"
+      )"
+      if [ "$outer_value" != "${outer_values_to_check[$outer_index]}" ]; then
+        echo "Prepared live-image outer manifest binding changed: ${outer_labels_to_check[$outer_index]}" >&2
+        return 1
+      fi
+      outer_index=$((outer_index + 1))
+    done
+  elif [ "$(required_manifest_value "$prepared_dir/$MANIFEST_NAME" \
+      "Release manifest schema")" != "sp11-live-image-draft-v1" ] ||
+    [ "$(required_manifest_value "$prepared_dir/$MANIFEST_NAME" \
+      "Kernel provenance propagation")" != "incomplete" ]; then
+    echo "Prepared live-image draft lost its explicit nonpublishable state." >&2
+    return 1
+  fi
+
+  for part_file in "${parts[@]}"; do
+    part_base="$(basename "$part_file")"
+    part_file="$prepared_dir/$part_base"
+    part_size="$(file_size "$part_file")"
+    part_sha="$(shasum -a 256 "$part_file" | awk '{print $1}')"
+    grep -Fxq -- "- $part_base" "$prepared_dir/$MANIFEST_NAME" &&
+      grep -Fxq "  - Size: $part_size bytes" "$prepared_dir/$MANIFEST_NAME" &&
+      grep -Fxq "  - SHA256: $part_sha" "$prepared_dir/$MANIFEST_NAME" || {
+      echo "Prepared live-image outer manifest changed a split-part identity." >&2
+      return 1
+    }
+    part_files+=("$part_file")
+  done
+  if [ "$(file_size "$IMAGE_SNAPSHOT")" != "$image_size" ] ||
+    [ "$(shasum -a 256 "$IMAGE_SNAPSHOT" | awk '{print $1}')" != "$image_sha" ]; then
+    echo "Private raw-image snapshot changed before final output verification." >&2
+    return 1
+  fi
+  final_compressed_sha="$(cat "${part_files[@]}" | shasum -a 256 | awk '{print $1}')"
+  final_raw_sha="$(cat "${part_files[@]}" | zstd -dc | shasum -a 256 | awk '{print $1}')"
+  if [ "$final_compressed_sha" != "$compressed_sha" ] || [ "$final_raw_sha" != "$image_sha" ]; then
+    echo "Prepared split archive does not reconstruct the validated raw-image snapshot." >&2
+    return 1
+  fi
+
+  if [ "$VALIDATE_IMAGE" = "true" ]; then
+    final_expected_payload="$SOURCE_SNAPSHOT_DIR/final-expected-payload-sha256"
+    if ! python3 "$release_manifest_validator" \
+        --require-current-head \
+        --repo-dir "$repo_dir" \
+        --support-commit "$repo_commit" \
+        --release-name "$RELEASE_NAME" \
+        --kernel-build-manifest "$prepared_dir/$kernel_build_manifest_base" \
+        --kernel-release-manifest "$prepared_dir/$kernel_release_manifest_base" \
+        --apt-provenance "$prepared_dir/$apt_provenance_base" \
+        --build-inputs "$prepared_dir/$build_inputs_base" \
+        --touchscreen-module-manifest "$prepared_dir/$touchscreen_module_manifest_base" \
+        --kernel-source "$prepared_dir/$kernel_source_base" \
+        --touchscreen-source "$prepared_dir/$touchscreen_source_base" \
+        --expected-payload-out "$final_expected_payload"; then
+      echo "Prepared image attachments failed final six-manifest validation." >&2
+      return 1
+    fi
+    if ! "$payload_identity_validator" \
+        --expected "$final_expected_payload" \
+        --actual "$payload_output_dir/actual-payload-sha256" >/dev/null; then
+      echo "Prepared manifests no longer match the validated raw-image payload." >&2
+      return 1
+    fi
+    if ! python3 "$source_archive_validator" kernel \
+        --archive "$prepared_dir/$kernel_source_base" --expected-tree "$build_patched_tree" ||
+      ! python3 "$source_archive_validator" touchscreen \
+        --archive "$prepared_dir/$touchscreen_source_base" \
+        --expected-modules-tree "$module_source_tree" \
+        --expected-license-blob "$module_license_blob" \
+        --license-mode "$module_license_mode" \
+        --expected-archive-comment "$module_source_commit"; then
+      echo "Prepared corresponding-source archives failed final exact-tree validation." >&2
+      return 1
+    fi
+    if ! python3 "$image_build_manifest_validator" \
+        --manifest "$prepared_dir/$image_build_manifest_base" \
+        --image "$IMAGE_SNAPSHOT" \
+        --support-commit "$repo_commit" \
+        --support-manifest "$expected_support_manifest" \
+        --expected-kernel-dtb-sha256 "$build_kernel_dtb_sha" \
+        --actual-layout "$payload_output_dir/actual-image-layout" >/dev/null; then
+      echo "Prepared image-build manifest failed final raw-image validation." >&2
+      return 1
+    fi
+  fi
+
+  public_args=(
+    --file "$prepared_dir/$OUTLINE_NAME"
+    --file "$prepared_dir/$MANIFEST_NAME"
+    --file "$prepared_dir/SHA256SUMS"
+    --file "$prepared_dir/RELEASE-NOTES.md"
+  )
+  if [ "$source_complete" = "true" ]; then
+    public_args+=(
+      --file "$prepared_dir/$SOURCE_NOTICE_NAME"
+      --file "$prepared_dir/$SOURCE_CHECKSUM_NAME"
+    )
+    if [ "$binding_complete" = "true" ]; then
+      public_args+=(
+        --file "$prepared_dir/$kernel_build_manifest_base"
+        --file "$prepared_dir/$kernel_release_manifest_base"
+        --file "$prepared_dir/$apt_provenance_base"
+        --file "$prepared_dir/$build_inputs_base"
+        --file "$prepared_dir/$touchscreen_module_manifest_base"
+        --file "$prepared_dir/$image_build_manifest_base"
+      )
+    fi
+  fi
+  if ! "$public_content_validator" "${public_args[@]}" >/dev/null; then
+    echo "Prepared image output failed final public-content validation." >&2
+    return 1
+  fi
+}
 
 verify_final_support_state
-previous_output=""
-if [ -e "$FINAL_OUT_DIR" ]; then
-  previous_output="$(mktemp -d "$release_root_abs/.${out_leaf}.previous.XXXXXX")"
-  rmdir "$previous_output"
-  mv "$FINAL_OUT_DIR" "$previous_output"
+if ! verify_prepared_output "$OUT_DIR"; then
+  echo "Pre-install image release verification failed." >&2
+  exit 1
 fi
-if ! mv "$OUTPUT_STAGING_DIR" "$FINAL_OUT_DIR"; then
-  if [ -n "$previous_output" ] && [ ! -e "$FINAL_OUT_DIR" ]; then
-    mv "$previous_output" "$FINAL_OUT_DIR"
+if [ "$(directory_identity "$OUTPUT_STAGING_DIR" 2>/dev/null || true)" != \
+    "$OUTPUT_STAGING_IDENTITY" ]; then
+  echo "Prepared image staging directory identity changed before installation." >&2
+  exit 1
+fi
+OUTPUT_STAGING_TREE="$(stable_directory_tree_identity "$OUTPUT_STAGING_DIR")" || {
+  echo "Could not capture a stable prepared image tree before installation." >&2
+  exit 1
+}
+INSTALLED_OUTPUT_IDENTITY="$OUTPUT_STAGING_IDENTITY"
+INSTALLED_OUTPUT_TREE="$OUTPUT_STAGING_TREE"
+
+if [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
+  [ -d "$FINAL_OUT_DIR" ] && [ ! -L "$FINAL_OUT_DIR" ] || {
+    echo "Refusing to replace a non-directory or symlinked image release output." >&2
+    exit 1
+  }
+  PREVIOUS_OUTPUT_IDENTITY="$(directory_identity "$FINAL_OUT_DIR")"
+  PREVIOUS_OUTPUT_TREE="$(stable_directory_tree_identity "$FINAL_OUT_DIR")" || {
+    echo "Could not capture a stable identity for the existing image output." >&2
+    exit 1
+  }
+  PREVIOUS_OUTPUT_CONTAINER="$(
+    mktemp -d "$release_root_abs/.${out_leaf}.previous.XXXXXX"
+  )"
+  chmod 700 "$PREVIOUS_OUTPUT_CONTAINER"
+  PREVIOUS_OUTPUT_CONTAINER_IDENTITY="$(directory_identity "$PREVIOUS_OUTPUT_CONTAINER")"
+  PREVIOUS_OUTPUT_PATH="$PREVIOUS_OUTPUT_CONTAINER/original"
+fi
+OUTPUT_INSTALL_PENDING="true"
+if [ -n "$PREVIOUS_OUTPUT_PATH" ]; then
+  if ! mv "$FINAL_OUT_DIR" "$PREVIOUS_OUTPUT_PATH"; then
+    OUTPUT_INSTALL_PENDING="false"
+    if remove_exact_empty_private_container \
+        "$PREVIOUS_OUTPUT_CONTAINER" "$PREVIOUS_OUTPUT_CONTAINER_IDENTITY"; then
+      PREVIOUS_OUTPUT_CONTAINER=""
+      PREVIOUS_OUTPUT_PATH=""
+    else
+      echo "Preserved changed previous-output recovery container: $PREVIOUS_OUTPUT_CONTAINER" >&2
+    fi
+    echo "Could not retain the previous image release directory privately." >&2
+    exit 1
   fi
+  if [ "$(directory_identity "$PREVIOUS_OUTPUT_PATH" 2>/dev/null || true)" != \
+      "$PREVIOUS_OUTPUT_IDENTITY" ] ||
+    [ "$(directory_identity "$PREVIOUS_OUTPUT_CONTAINER" 2>/dev/null || true)" != \
+      "$PREVIOUS_OUTPUT_CONTAINER_IDENTITY" ] ||
+    ! private_container_has_only "$PREVIOUS_OUTPUT_CONTAINER" original; then
+    echo "Previous image output identity changed while it was retained." >&2
+    exit 1
+  fi
+  moved_previous_tree="$(stable_directory_tree_identity "$PREVIOUS_OUTPUT_PATH")" || {
+    echo "Could not capture a stable private identity for the previous image output." >&2
+    exit 1
+  }
+  if [ "$moved_previous_tree" != "$PREVIOUS_OUTPUT_TREE" ]; then
+    echo "Previous image output tree changed while it was retained privately." >&2
+    exit 1
+  fi
+fi
+[ ! -e "$FINAL_OUT_DIR" ] && [ ! -L "$FINAL_OUT_DIR" ] || {
+  echo "Image release destination was occupied during atomic installation." >&2
+  exit 1
+}
+if ! mv "$OUTPUT_STAGING_DIR" "$FINAL_OUT_DIR"; then
   echo "Could not atomically install the prepared image release directory." >&2
   exit 1
 fi
-OUTPUT_STAGING_DIR=""
 OUT_DIR="$FINAL_OUT_DIR"
-if [ -n "$previous_output" ]; then
-  rm -rf -- "$previous_output"
+if [ "$(directory_identity "$FINAL_OUT_DIR" 2>/dev/null || true)" != \
+    "$INSTALLED_OUTPUT_IDENTITY" ]; then
+  echo "Installed image release directory identity changed during atomic installation." >&2
+  exit 1
 fi
-verify_final_support_state
+OUTPUT_STAGING_DIR=""
+OUTPUT_STAGING_IDENTITY=""
+OUTPUT_STAGING_TREE=""
+if ! verify_prepared_output "$FINAL_OUT_DIR"; then
+  echo "Post-install image release verification failed." >&2
+  exit 1
+fi
+if ! verify_final_support_state; then
+  echo "Post-install support-state verification failed." >&2
+  exit 1
+fi
+if ! verify_prepared_output "$FINAL_OUT_DIR"; then
+  echo "Final committed image release verification failed." >&2
+  exit 1
+fi
+
+retired_previous_container="$PREVIOUS_OUTPUT_CONTAINER"
+retired_previous_container_identity="$PREVIOUS_OUTPUT_CONTAINER_IDENTITY"
+retired_previous_path="$PREVIOUS_OUTPUT_PATH"
+retired_previous_identity="$PREVIOUS_OUTPUT_IDENTITY"
+retired_previous_tree="$PREVIOUS_OUTPUT_TREE"
+OUTPUT_INSTALL_PENDING="false"
+INSTALLED_OUTPUT_IDENTITY=""
+INSTALLED_OUTPUT_TREE=""
+PREVIOUS_OUTPUT_CONTAINER=""
+PREVIOUS_OUTPUT_CONTAINER_IDENTITY=""
+PREVIOUS_OUTPUT_PATH=""
+PREVIOUS_OUTPUT_IDENTITY=""
+PREVIOUS_OUTPUT_TREE=""
+
+if [ -n "$retired_previous_container" ]; then
+  retire_previous="true"
+  if [ "$(directory_identity "$retired_previous_container" 2>/dev/null || true)" != \
+      "$retired_previous_container_identity" ] ||
+    ! private_container_has_only "$retired_previous_container" original ||
+    [ "$(directory_identity "$retired_previous_path" 2>/dev/null || true)" != \
+      "$retired_previous_identity" ] ||
+    [ "$(stable_directory_tree_identity "$retired_previous_path" 2>/dev/null || true)" != \
+      "$retired_previous_tree" ]; then
+    retire_previous="false"
+  fi
+  if [ "$retire_previous" = "true" ]; then
+    if ! rm -rf -- "$retired_previous_container"; then
+      echo "The verified image output is committed, but previous-output retirement failed; preserved recovery data: $retired_previous_container" >&2
+    fi
+  else
+    echo "The verified image output is committed, but the previous output changed; preserved recovery data: $retired_previous_container" >&2
+  fi
+fi
 
 echo "Prepared release assets in $OUT_DIR_DISPLAY"
 echo
 if [ "$VALIDATE_IMAGE" != "true" ] || [ "$source_complete" != "true" ] ||
-  [ "$dirty" != "false" ]; then
-  echo "Local draft only: validation, complete source, and a clean support tree are required before publication."
-  exit 0
+  [ "$binding_complete" != "true" ] || [ "$dirty" != "false" ]; then
+  echo "Local draft only: validation, complete source/provenance, and a clean support tree are required before any publication review."
+else
+  echo "Validated preparation only: immutable kernel provenance propagation is complete."
 fi
-echo "Review $OUT_DIR_DISPLAY/RELEASE-NOTES.md, then publish with a command like:"
-printf '  (cd %q && gh release create %q --target %q --prerelease --title %q --notes-file RELEASE-NOTES.md' \
-  "$OUT_DIR_DISPLAY" "$RELEASE_NAME" "$repo_commit" "$RELEASE_NAME"
-for asset in "${release_assets[@]}"; do
-  printf ' %q' "$asset"
-done
-printf ')\n'
+echo "NO-PUBLISH: independent real-build, signing, licensing, and release-authorization gates remain open."

@@ -211,7 +211,7 @@ state.
 | P0.1 | None | Verify the Johan G. baseline ref resolves to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; make build scripts reject any other source HEAD before applying patches | Passing exact-commit build preflight and manifest containing expected and actual source commits |
 | P0.2 | P0.1 | Verify protected `sp11/base-jg-7.2-rc5-jg-0` and development `sp11/integration-7.2-rc5` begin at the same commit; prohibit force-push/deletion of the base branch | Public fork settings and CI output showing both branch identities |
 | P0.3 | None | Validate `config/source-ledger.tsv`; resolve licences before importing candidates; keep ACPI and the video evidence-only; require the repository owner to choose and document the licence boundary for original project code rather than inferring one | Passing ledger validator, reviewed source-ledger update, and explicit project licence decision before redistribution |
-| P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, and dated APT snapshot in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report and three bound provenance artifacts; every unexplained difference is a blocker, and publication stays closed until the envelope is propagated through a later release/image schema |
+| P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, and dated APT snapshot in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report, three bound provenance artifacts, and exact outer release/image propagation; every unexplained difference is a blocker, and publication stays closed while real-build, signing, and licence gates remain open |
 | P0.5 | P0.1-P0.3 | Require shell syntax checks, public-content scan, source-ledger validation, exact remote-ref validation, patch-apply smoke test, and build dry-run in CI | Required green CI for this repository and the thin-fork branch |
 | P0.6 | None | Run `scripts/collect-sp11-feature-parity-inventory.sh` read-only; separately capture an optional sanitized kernel-log section; manually review both | Baseline inventory with no serial, UUID, MAC/IP, account, credential, or access-endpoint data |
 | P0.7 | P0.4, P0.6 | Migrate the target with the current support installer; require the retire-only transaction to commit, successful live-root GRUB regeneration, no project-managed loose-DTB lines, and unchanged `grubenv` and historical loose-DTB identity; verify the exact recovery ABI from `config/kernel-baselines/7.2-rc5-jg-0.env` is installed, running, boot-tested, and has matching image/initramfs/modules plus packaged, embedded, and active-FDT evidence | Migration transcript, transaction postchecks, recovery checklist, and checksums; any old loose DTB remains byte-for-byte unchanged and inert; any obstructed rollback blocks reboot and package operations until its private recovery backup is reconciled |
@@ -224,11 +224,12 @@ P0.4's first adjacent-build audit is complete and recorded in the
 All functional payload differences were classified and normalized comparison
 passed with zero unknown bytes, but every raw `.deb` differed. Immutable future
 replay for that pair is also unproven because APT was not snapshot-pinned.
-P0.4c now has a fail-closed dated-snapshot implementation with hostile fixtures,
-but no real clean kernel build has exercised it. P0.4 therefore remains in
-evidence review: semantic equivalence passed, byte reproducibility failed, the
-new immutable-input path is implemented-but-unverified, and publication schema
-propagation plus signing remain open.
+P0.4c now has a fail-closed dated-snapshot implementation and exact outer
+release/image propagation with hostile fixtures, but no real clean kernel build
+has exercised it. P0.4 therefore remains in evidence review: semantic
+equivalence passed, byte reproducibility failed, the immutable-input path is
+implemented-but-unverified on a real build, and signing plus the independent
+licence gates remain open.
 
 P0.6 is complete for the current target observation. The schema-3 inventory
 collector ran read-only, and both its sanitized result and a separately

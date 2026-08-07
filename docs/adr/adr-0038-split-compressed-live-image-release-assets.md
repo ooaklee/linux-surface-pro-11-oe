@@ -32,6 +32,16 @@ notice, and source checksums. The r1 image received those assets additively;
 future image preparation fails closed when any member of that source set is
 missing.
 
+Immutable-build-input amendment (2026-08-07): current image preparation also
+requires the exact kernel APT-provenance sidecar and build-inputs envelope. It
+attaches those files without rewriting them, validates them independently,
+and cross-binds them through both the kernel and image release manifests. The
+preparer now produces validation-complete or draft asset sets only; it never
+prints or runs a publication command, and every generated outer manifest
+records `Publication state: blocked`. Before any semantic validation, the
+preparer also creates a private byte-exact snapshot of the raw image and uses
+only that snapshot for validation, hashing, and compression.
+
 ## Context
 
 The Surface Pro 11 bring-up can produce a direct-boot Ubuntu live USB raw disk
@@ -100,12 +110,20 @@ will:
 9. verify the exact two-partition GPT, FAT32/ext4 labels, ESP allowlist and
    boot-file identities, embedded ISO, kernel-built DTB, exact committed
    `/support` tree, and exact `/payload/kernel-debs` inventory against their
-   four provenance manifests
+   six attached provenance manifests
 10. copy and hash the reviewed kernel source, touchscreen source, source
-   notice, and all four manifests required by an image containing the v3
+   notice, and all six manifests required by an image containing the v3
    binary payload
-11. print a `gh release create` command with an explicit
-   `--target <support-commit>` that uploads only GitHub-safe assets
+11. finish with an explicit `NO-PUBLISH` result while independent real-build,
+   signing, licensing, and release-authorization gates remain open
+
+Snapshot creation compares the source image's size and SHA-256 before and
+after the copy with the private snapshot's size and SHA-256. Clone or reflink
+copying is preferred, sparse copying is the next fallback, and a full copy is
+the final fallback. The original `build/*.img` path is retained only as the
+public display identity after that proof; Docker extraction, image-manifest
+validation, outline generation, release hashing, and compression all consume
+the private snapshot.
 
 The default part size is 2,000,000,000 bytes. The helper rejects any configured
 part size that is greater than or equal to 2,147,483,648 bytes.
@@ -120,6 +138,14 @@ manifest binds that exact file by name and SHA256:
 - validator outline SHA256
 - support repository commit and dirty state
 - whether validation ran
+- the exact kernel-build, kernel-release, APT-provenance, build-inputs,
+  touchscreen-module, and image-build manifest names, sizes, and SHA-256
+  identities
+- the APT snapshot identity and immutable snapshot URI
+- the kernel OCI index and ARM64 platform-manifest identities
+- preserved build-envelope creation state and completed kernel-release and
+  image-level kernel-provenance propagation
+- an explicitly blocked publication state
 - exact GPT geometry, type GUIDs, partition names and flags
 - FAT32/ext4 filesystem labels and the ESP boot/README paths, sizes, and hashes
 - corresponding-source asset names and hashes
@@ -144,7 +170,7 @@ exact-ABI touchscreen modules under `SP11DATA/payload/kernel-debs` are consumed
 only by the guarded installed-system flow; their presence does not add
 touchscreen support to the live session.
 
-Publishable output requires all of:
+A validation-complete release candidate requires all of:
 
 ```text
 --kernel-source-asset <patched-kernel-source.tar.xz>
@@ -152,20 +178,29 @@ Publishable output requires all of:
 --source-notice <reviewed-SOURCE-NOTICE.md>
 --kernel-build-manifest <schema-v2-release-build-manifest.txt>
 --kernel-release-manifest <matching-kernel-release-manifest.txt>
+--apt-provenance <matching-kernel-apt-provenance.txt>
+--build-inputs <matching-kernel-build-inputs.txt>
 --touchscreen-module-manifest <matching-module-release-manifest.txt>
 --image-build-manifest <matching-image-build-manifest.txt>
 ```
 
-The helper validates the two archives, cross-binds the four manifests to the
+The helper validates the two archives, cross-binds all six manifests to the
 clean support commit and exact kernel/module package identities extracted from
-the raw image, and attaches all seven provenance inputs plus
-`SOURCE-SHA256SUMS` to the main asset inventory. `--skip-validate` can prepare
-a clearly nonpublishable local draft, but source-incomplete or unvalidated
-output never receives a publication command.
+the raw image, and attaches all nine provenance inputs plus
+`SOURCE-SHA256SUMS` to the main asset inventory. It preserves the exact
+`sp11-kernel-build-inputs-v1` bytes, including their build-time
+`Publication schema propagation: incomplete` value. The outer
+`sp11-live-image-release-v1` manifest separately records
+`Build envelope creation propagation: incomplete`, verifies that the kernel
+release completed its propagation, attests
+`Kernel provenance propagation: complete`, and remains blocked from
+publication. `--skip-validate` instead prepares a clearly nonpublishable
+`sp11-live-image-draft-v1` asset set with incomplete propagation and never
+emits a publication command.
 
 The corrective r1 image is immutable historical output. It cannot be
 re-prepared by the current schema-v2 gate. A future candidate uses a new tag
-and supplies all seven binding inputs:
+and supplies all nine provenance inputs:
 
 ```bash
 TAG=sp11-ubuntu-live-direct-future-sp11vN-experimental-r2
@@ -192,6 +227,8 @@ ISO_URL=https://people.canonical.com/~platform/images/ubuntu-concept/resolute-de
   --source-notice build/release-source/SOURCE-NOTICE.md \
   --kernel-build-manifest build/future-provenance/sp11-kernel-build-manifest.txt \
   --kernel-release-manifest build/future-provenance/sp11-kernel-release-manifest.txt \
+  --apt-provenance build/future-provenance/sp11-kernel-apt-provenance.txt \
+  --build-inputs build/future-provenance/sp11-kernel-build-inputs.txt \
   --touchscreen-module-manifest build/future-provenance/sp11-touchscreen-modules-manifest.txt \
   --image-build-manifest build/sp11-live-image-build-manifest.txt
 ```
@@ -199,13 +236,14 @@ ISO_URL=https://people.canonical.com/~platform/images/ubuntu-concept/resolute-de
 The preparer accepts the raw image only as a direct, regular, non-symlinked
 `build/*.img` child of the support repository. This keeps the Docker bind-mount
 source and the public repository-relative path within the builder's canonical
-output location.
+output location until the private snapshot is established.
 
 The image manifest must name a public HTTPS ISO and its predeclared SHA-256,
 use the digest-pinned ARM64 builder, and bind the embedded DTB to the
-`denali-oled-dtb` output in the schema-v2 kernel manifest. The publishable flow
-therefore builds with an explicit DTB from that exact output; `--dtb auto`
-remains a local-image convenience, not a publication provenance source. The
+`denali-oled-dtb` output in the schema-v2 kernel manifest. The
+validation-complete preparation path therefore builds with an explicit DTB
+from that exact output; `--dtb auto` remains a local-image convenience, not a
+publication provenance source. The
 builder stages only `payload/kernel-debs` beneath `/payload/kernel-debs`.
 For `gnome`, the embedded ISO must be byte-identical to the pinned input ISO.
 The `kde` path intentionally remasters that ISO, so its manifest records and
@@ -214,9 +252,12 @@ package transaction remains an experimental reproducibility limitation and is
 not suitable for a stable-release claim.
 
 Only after exact raw-image ISO, DTB, support-tree, and payload extraction plus
-source/manifest validation does the helper print a `gh release create` command
-with the clean support commit as `--target`. Retired image tags must not be
-reused, and GitHub must not infer the target from the default branch.
+source/manifest validation does the helper produce a validation-complete asset
+set. It still reports `NO-PUBLISH` and never prints or runs a
+`gh release create` command. A later, separately authorized publication step
+must use the clean support commit as its explicit target. Retired image tags
+must not be reused, and GitHub must not infer the target from the default
+branch.
 The raw gate also rejects unexpected SP11DATA root entries, payload siblings,
 support files, symlinks, special files, unsafe modes, and hard links.
 It additionally requires valid primary and backup GPT metadata with exactly the
@@ -228,8 +269,10 @@ builder's exact public text bytes.
 
 ## Consequences
 
-The image can be published entirely through GitHub Releases without relying on
-Google Drive, external object storage, or a separate hosting account.
+The split asset design can be published entirely through GitHub Releases
+without relying on Google Drive, external object storage, or a separate
+hosting account. Current preparation does not itself authorize or perform that
+publication.
 
 Users must download multiple part files and reconstruct the compressed image
 before writing the USB disk. This adds one step, but keeps all release assets
@@ -275,7 +318,7 @@ GB, which still requires splitting.
 ## Verification
 
 The split/compression behavior was originally validated against the direct
-image generated for the Johan G. qcom-x1e 7.1.1 path. The seven-input
+image generated for the Johan G. qcom-x1e 7.1.1 path. The nine-input
 source-and-payload gate was added later and is covered by
 `tests/test-sp11-image-release-source-gate.sh`, which uses synthetic complete
 schema-v2 manifests, exact source-tree archives, and a mocked tiny payload
@@ -285,6 +328,11 @@ builds genuine builder-shaped sparse GPT images with FAT32 and ext4 filesystems
 under Linux. It exercises exact partition geometry and metadata, filesystem
 labels, ESP contents and hashes, payload, support, ISO, DTB, modes, hard links,
 and unexpected-entry rejection.
+
+The source-gate regression also swaps the original raw-image path from one
+byte identity to another and back while the mocked semantic extractor runs.
+It requires the extractor to receive the private snapshot instead, rejects
+the forged semantic result, and leaves no prepared output directory.
 
 Current static and synthetic regression commands are:
 
@@ -296,7 +344,7 @@ bash -n scripts/prepare-sp11-image-release-assets.sh
 ```
 
 A genuine future candidate is expected to produce this asset shape after the
-real raw-image payload, exact archives, and all four real manifests pass the
+real raw-image payload, exact archives, and all six real manifests pass the
 same gate:
 
 ```text
@@ -308,6 +356,8 @@ future-patched-source-kernel.tar.xz
 sp11-touchscreen-modules-source-FUTURE_COMMIT.tar.xz
 sp11-kernel-build-manifest.txt
 sp11-kernel-release-manifest.txt
+sp11-kernel-apt-provenance.txt
+sp11-kernel-build-inputs.txt
 sp11-touchscreen-modules-manifest.txt
 sp11-live-image-build-manifest.txt
 SHA256SUMS

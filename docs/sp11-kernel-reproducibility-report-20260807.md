@@ -20,8 +20,9 @@ Scope: `7.2-rc5-jg-0sp11v3-qcom-x1e`, build pair A/B
 > **P0.4 remains in evidence review and is blocked if interpreted bytewise.**
 > This report supports adjacent-pair semantic equivalence; it does not support
 > a bit-for-bit reproducibility claim. The P0.4c implementation gate is ready
-> for a real-build verification run; publication schema propagation and the
-> signing decision remain open.
+> for a real-build verification run. Release/image schema propagation is now
+> implemented and hostile-fixture tested; signing and the independent licence
+> gates remain open.
 
 ## Scope and method
 
@@ -338,9 +339,12 @@ metadata, indexes, lists, Debs, local build-dependencies package, and package
 inventories before and after envelope creation.
 
 P0.4c is therefore **implemented but not yet real-build verified**. The current
-release/image preparers do not consume this v1 envelope. Publication remains
-closed until a later schema version propagates these bindings end to end. The
-release-signing model and byte-reproducibility remediation also remain open.
+release/image preparation paths validate and attach the exact v2 manifest, v1
+APT sidecar, and v1 build-inputs envelope, then attest their propagation in
+outer manifests. The envelope's literal incomplete state remains unchanged as
+a build-time fact. Publication remains closed because real-build evidence, the
+release-signing model, byte-reproducibility remediation, and independent
+licence gates remain open.
 
 ## Required remediation before a byte-reproducible claim
 
@@ -353,13 +357,12 @@ release-signing model and byte-reproducibility remediation also remain open.
    payload production separate from release signing. Never generate an
    unrecorded ephemeral certificate while claiming byte reproducibility.
 3. Run and retain a real clean-build result from the implemented dated-snapshot
-   path, then propagate its APT sidecar and build-inputs envelope through the
-   release/image schemas. Do not treat hostile-fixture coverage as build
-   evidence.
+   path, then verify its exact attached trio and outer release/image bindings.
+   Do not treat hostile-fixture coverage as build evidence.
 4. Retain the schema-v2 manifest's existing support HEAD/dirty-state, ordered
    patch, patched-tree/diff, exact source, output, and certificate bindings.
-   Propagate the v1 envelope's OCI-child, APT, and generated-control identities
-   through a later release/image schema, and add the genuinely missing raw and
+   Retain the current outer-schema propagation of the v1 envelope's OCI-child,
+   APT, and generated-control identities, and add the genuinely missing raw and
    normalized comparison hashes needed for a byte-reproducibility decision.
 5. Version the comparison and normalization specification. Preserve the raw
    artifacts and raw hashes alongside normalized evidence so later reviewers
@@ -386,7 +389,8 @@ implementation exists, but no real build has yet verified it.
 P0.4 should therefore remain in evidence review. It is blocked if its required
 meaning is bit-for-bit identity, and it must not be cited as complete proof of
 immutable future replay. P0.4c remains implemented-but-unverified, and
-publication remains blocked on later schema propagation and a real clean run.
+publication remains blocked on a real clean run, signing, and the independent
+licence gates even though outer-schema propagation is implemented.
 A reviewer may separately accept the adjacent-pair semantic-equivalence result
 for continued non-release development, provided the bytewise and future-input
 limitations remain explicit.

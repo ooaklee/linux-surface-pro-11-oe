@@ -10,7 +10,10 @@ description: Decision record for auditing the project's GitHub releases and tags
 ## Status
 
 Accepted and executed (2026-08-07). Amended the same day to record the names
-and validation rules for the authorized experimental r1 successors.
+and validation rules for the authorized experimental r1 successors. A later
+same-day amendment separates validation-complete image preparation from
+publication authorization and requires immutable kernel build-input
+propagation through future image release manifests.
 
 ## Context
 
@@ -198,8 +201,8 @@ either artifact to hardware-qualified or stable status.
 
 Before publishing any new binary release:
 
-- create it with an explicit `--target <support-commit>`, including image
-  releases prepared by `prepare-sp11-image-release-assets.sh`;
+- use an explicit `--target <support-commit>` in the separately authorized
+  publication operation;
 - require the manifest support commit and local and remote tag targets to
   agree;
 - generate checksums from the exact upload list rather than adding assets
@@ -210,9 +213,22 @@ Before publishing any new binary release:
   release body; and
 - retain a new tag only after the release validator passes.
 
-When `gh release create` creates a previously absent tag, fetch that exact tag
-locally before the post-publication validator runs. The validator compares the
-manifest support commit with both the local and remote tag targets.
+`prepare-sp11-image-release-assets.sh` does not print or run a publication
+command. A validation-complete image preparation must attach and independently
+validate the exact kernel build manifest, kernel release manifest,
+APT-provenance sidecar, build-inputs envelope, touchscreen-module manifest,
+and image-build manifest. The image outer manifest preserves the envelope's
+build-time incomplete-creation fact while attesting that kernel-provenance
+propagation is complete. Every semantic validator, hash, and compression step
+must consume one privately snapshotted raw-image identity rather than the
+mutable public input path; its publication state remains blocked. A
+`--skip-validate` draft cannot satisfy that attestation and is never
+publishable.
+
+If a separately authorized `gh release create` operation creates a previously
+absent tag, fetch that exact tag locally before the post-publication validator
+runs. The validator compares the manifest support commit with both the local
+and remote tag targets.
 
 Touchscreen releases additionally follow the exact-ABI module, DTB,
 initramfs, and provenance gates in ADR0050.

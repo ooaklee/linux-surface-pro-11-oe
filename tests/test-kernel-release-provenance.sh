@@ -5,10 +5,12 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 temporary_root=""
 temporary_parent=""
 real_git="$(command -v git)"
+real_mv="$(command -v mv)"
 real_python3="$(command -v python3)"
-digest="sha256:$(printf 'a%.0s' {1..64})"
+real_rm="$(command -v rm)"
+digest="sha256:db2cb7b11291904f12adeed10ae23fbc95e7bed27f27bd3e35ade0d501e302ce"
 container_image="ubuntu:26.04@$digest"
-source_url="https://fixtures.example.com/sp11-kernel-fixture.git"
+source_url="https://github.com/example/linux.git"
 source_commit=""
 mock_bin=""
 
@@ -37,6 +39,44 @@ done
 temporary_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 temporary_root="$(mktemp -d "$temporary_parent/sp11-release-provenance.XXXXXX")"
 temporary_root="$(cd "$temporary_root" && pwd -P)"
+tree_state_root="$temporary_root/tree-state-root"
+tree_state_file="$temporary_root/tree-state.json"
+mkdir -p "$tree_state_root/nested"
+printf 'tree state fixture\n' > "$tree_state_root/nested/value"
+printf 'newline-safe fixture\n' > "$tree_state_root/"$'line\nbreak'
+python3 "$repo_dir/scripts/sp11-release-tree-state.py" snapshot \
+  --root "$tree_state_root" --snapshot "$tree_state_file" >/dev/null
+python3 "$repo_dir/scripts/sp11-release-tree-state.py" validate \
+  --root "$tree_state_root" --snapshot "$tree_state_file" >/dev/null
+printf 'tampered\n' >> "$tree_state_root/nested/value"
+if python3 "$repo_dir/scripts/sp11-release-tree-state.py" validate \
+    --root "$tree_state_root" --snapshot "$tree_state_file" \
+    > "$temporary_root/tree-state-tamper.log" 2>&1; then
+  die "release-tree state validator accepted changed file bytes"
+fi
+printf 'tree state fixture\n' > "$tree_state_root/nested/value"
+ln -s value "$tree_state_root/nested/unsafe-link"
+if python3 "$repo_dir/scripts/sp11-release-tree-state.py" snapshot \
+    --root "$tree_state_root" --snapshot "$temporary_root/unsafe-tree-state.json" \
+    > "$temporary_root/tree-state-symlink.log" 2>&1; then
+  die "release-tree state validator accepted a symlinked entry"
+fi
+rm "$tree_state_root/nested/unsafe-link"
+private_container_root="$temporary_root/private-container"
+mkdir "$private_container_root"
+chmod 700 "$private_container_root"
+python3 "$repo_dir/scripts/sp11-release-tree-state.py" validate-private \
+  --root "$private_container_root" >/dev/null
+mkdir "$private_container_root/candidate"
+python3 "$repo_dir/scripts/sp11-release-tree-state.py" validate-private \
+  --root "$private_container_root" --child candidate >/dev/null
+printf 'unknown private entry\n' > "$private_container_root/"$'\n'
+if python3 "$repo_dir/scripts/sp11-release-tree-state.py" validate-private \
+    --root "$private_container_root" --child candidate \
+    > "$temporary_root/private-container-extra.log" 2>&1; then
+  die "private-container validator accepted an extra newline-named child"
+fi
+rm "$private_container_root/"$'\n'
 support_seed="$temporary_root/support-seed"
 source_repo="$temporary_root/source-repository"
 mock_bin="$temporary_root/mock-bin"
@@ -45,8 +85,10 @@ mkdir -p "$support_seed/scripts" "$support_seed/patches/release" "$source_repo" 
 cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/prepare-sp11-kernel-release-assets.sh" "$support_seed/scripts/"
+cp "$repo_dir/scripts/sp11-release-tree-state.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-source-archive.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-image-release-manifests.py" "$support_seed/scripts/"
+cp "$repo_dir/scripts/sp11-kernel-build-inputs.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-payload-identity-list.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-public-content.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" "$support_seed/scripts/"
@@ -145,9 +187,35 @@ git -C "$source_repo" add .
 git -C "$source_repo" commit --quiet -m "Create kernel source fixture"
 source_commit="$(git -C "$source_repo" rev-parse 'HEAD^{commit}')"
 
+apt_template="$temporary_root/immutable-apt-template"
+mkdir -p "$support_seed/config/kernel-baselines"
+python3 "$repo_dir/tests/test-sp11-immutable-apt-provenance.py" \
+  --emit-release-template "$apt_template" \
+  "$support_seed/config/kernel-baselines/7.2-rc5-jg-0.env" \
+  "$source_commit" fixture
+git -C "$support_seed" add config/kernel-baselines/7.2-rc5-jg-0.env
+git -C "$support_seed" -c user.name='SP11 CI fixture' \
+  -c user.email='sp11-ci@example.invalid' commit --quiet -m 'Add immutable input fixture'
+
 cat > "$mock_bin/git" <<'EOF_GIT'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${FAIL_FINAL_SUPPORT_STATE:-false}" = "true" ] &&
+   [ "${1:-}" = "status" ] &&
+   [ -f "$FIXTURE_FINAL_OUT_DIR/sp11-kernel-release-manifest.txt" ]; then
+  if [ "${MUTATE_RETAINED_PREVIOUS:-false}" = "true" ]; then
+    previous_original="$(find "$(dirname "$FIXTURE_FINAL_OUT_DIR")" \
+      -mindepth 2 -maxdepth 2 -type d \
+      -path "*/.${FIXTURE_PREVIOUS_RELEASE_NAME}.previous.*/original" \
+      -print | sed -n '1p')"
+    [ -n "$previous_original" ]
+    printf 'unknown concurrent previous-output bytes\n' \
+      > "$previous_original/concurrent-unknown.txt"
+    : > "$FIXTURE_PREVIOUS_MUTATION_MARKER"
+  fi
+  : > "$FIXTURE_FINAL_SUPPORT_FAILURE_MARKER"
+  exit 88
+fi
 args=()
 for arg in "$@"; do
   if [ "$arg" = "$FIXTURE_PUBLIC_SOURCE_URL" ]; then
@@ -159,6 +227,59 @@ done
 exec "$FIXTURE_REAL_GIT" "${args[@]}"
 EOF_GIT
 
+cat > "$mock_bin/mv" <<'EOF_MV'
+#!/usr/bin/env bash
+set -euo pipefail
+real_mv="${FIXTURE_REAL_MV:-/bin/mv}"
+if [ "${MUTATE_STAGING_AT_INSTALL:-false}" = "true" ] &&
+   [ "$#" -eq 2 ] &&
+   [[ "$(basename "$1")" == .*\.staging.* ]] &&
+   [ "$2" = "$FIXTURE_FINAL_OUT_DIR" ]; then
+  target="$1/sp11-kernel-build-inputs.txt"
+  printf 'Forged post-validation field: rejected\n' >> "$target"
+  digest="$(shasum -a 256 "$target" | awk '{print $1}')"
+  awk -v digest="$digest" '
+    $2 == "sp11-kernel-build-inputs.txt" {
+      print digest "  sp11-kernel-build-inputs.txt"
+      next
+    }
+    { print }
+  ' "$1/SHA256SUMS" > "$1/.SHA256SUMS.mutated"
+  "$real_mv" "$1/.SHA256SUMS.mutated" "$1/SHA256SUMS"
+  : > "$FIXTURE_STAGING_MUTATION_MARKER"
+fi
+if [ "${MUTATE_FAILED_CANDIDATE_BEFORE_RETIREMENT:-false}" = "true" ] &&
+   [ "$#" -eq 2 ] && [ "$(basename "$1")" = "original" ] &&
+   [ "$2" = "$FIXTURE_FINAL_OUT_DIR" ]; then
+  failed_candidate="$(find "$(dirname "$FIXTURE_FINAL_OUT_DIR")" \
+    -mindepth 2 -maxdepth 2 -type d \
+    -path "*/.${FIXTURE_RETIREMENT_RELEASE_NAME}.failed.*/candidate" \
+    -print | sed -n '1p')"
+  [ -n "$failed_candidate" ]
+  printf 'unknown concurrent failed-candidate bytes\n' \
+    > "$failed_candidate/concurrent-unknown.txt"
+  : > "$FIXTURE_FAILED_CANDIDATE_MUTATION_MARKER"
+fi
+exec "$real_mv" "$@"
+EOF_MV
+
+cat > "$mock_bin/rm" <<'EOF_RM'
+#!/usr/bin/env bash
+set -euo pipefail
+real_rm="${FIXTURE_REAL_RM:-/bin/rm}"
+if [ "${FAIL_PREVIOUS_OUTPUT_CLEANUP:-false}" = "true" ]; then
+  for argument in "$@"; do
+    case "$(basename "$(dirname "$argument")")/$(basename "$argument")" in
+      ".${FIXTURE_CLEANUP_RELEASE_NAME}.previous."*/original)
+        : > "$FIXTURE_PREVIOUS_CLEANUP_FAILURE_MARKER"
+        exit 89
+        ;;
+    esac
+  done
+fi
+exec "$real_rm" "$@"
+EOF_RM
+
 cat > "$mock_bin/fakeroot" <<'EOF_FAKEROOT'
 #!/usr/bin/env bash
 exec "$@"
@@ -167,6 +288,18 @@ EOF_FAKEROOT
 cat > "$mock_bin/python3" <<'EOF_PYTHON3'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${SWAP_PROVENANCE_DURING_RELEASE_VALIDATION:-false}" = "true" ] &&
+  [[ "$*" == *"sp11-kernel-build-inputs.py validate-release-snapshot --baseline"* ]] &&
+  [ ! -e "$FIXTURE_PROVENANCE_MUTATION_MARKER" ]; then
+  cp "$FIXTURE_VALID_PROVENANCE" "$FIXTURE_PROVENANCE_TO_MUTATE"
+  set +e
+  "$FIXTURE_REAL_PYTHON3" "$@"
+  validation_status=$?
+  set -e
+  cp "$FIXTURE_FORGED_PROVENANCE" "$FIXTURE_PROVENANCE_TO_MUTATE"
+  : > "$FIXTURE_PROVENANCE_MUTATION_MARKER"
+  exit "$validation_status"
+fi
 if [ "${MUTATE_SOURCE_AFTER_SNAPSHOT:-false}" = "true" ] &&
   [[ "$*" == *"validate-sp11-source-archive.py"* ]] &&
   [ ! -e "$FIXTURE_SOURCE_MUTATION_MARKER" ]; then
@@ -226,6 +359,8 @@ run_release_build() {
   shift 2
   PATH="$mock_bin:/usr/bin:/bin" \
     FIXTURE_REAL_GIT="$real_git" \
+    FIXTURE_REAL_MV="$real_mv" \
+    FIXTURE_REAL_RM="$real_rm" \
     FIXTURE_SOURCE_REPO="$source_repo" \
     FIXTURE_PUBLIC_SOURCE_URL="$source_url" \
     SP11_BUILD_CONTAINER_IMAGE="$container_image" \
@@ -248,6 +383,60 @@ run_release_build() {
 manifest_value() {
   local file="$1" label="$2"
   sed -n "s/^$label: //p" "$file"
+}
+
+make_provenance_work() {
+  local support_dir="$1" build_work="$2" provenance_work="$3"
+  local support_head deb
+
+  [ ! -e "$provenance_work" ] || die "provenance fixture work already exists: $provenance_work"
+  mkdir -p "$provenance_work"
+  cp -R "$apt_template/." "$provenance_work/"
+  cp "$build_work/sp11-kernel-build-manifest.txt" \
+    "$provenance_work/artifacts/sp11-kernel-build-manifest.txt"
+  while IFS= read -r deb; do
+    cp "$deb" "$provenance_work/artifacts/"
+  done < <(find "$build_work/source" -maxdepth 1 -type f -name '*.deb' | LC_ALL=C sort)
+  support_head="$(git -C "$support_dir" rev-parse 'HEAD^{commit}')"
+  python3 "$support_dir/scripts/sp11-kernel-build-inputs.py" write \
+    --baseline "$support_dir/config/kernel-baselines/7.2-rc5-jg-0.env" \
+    --work-dir "$provenance_work" \
+    --support-head "$support_head" \
+    --build-args "$provenance_work/docker-build-args.txt" \
+    --entrypoint "$provenance_work/docker-build-inside.sh" \
+    --oci-index "$provenance_work/sp11-oci-index.json" \
+    --build-manifest "$provenance_work/artifacts/sp11-kernel-build-manifest.txt" \
+    --apt-provenance "$provenance_work/artifacts/sp11-kernel-apt-provenance.txt" \
+    --apt-archives-dir "$provenance_work/apt-archives" \
+    --apt-lists-dir "$provenance_work/apt-lists" \
+    --apt-index-cache-dir "$provenance_work/apt-indexes" \
+    --apt-local-build-deps-dir "$provenance_work/artifacts" \
+    --apt-pre-inventory "$provenance_work/sp11-apt-installed-pre.txt" \
+    --apt-post-inventory "$provenance_work/sp11-apt-installed-post.txt" \
+    --output "$provenance_work/artifacts/sp11-kernel-build-inputs.txt" \
+    >/dev/null
+}
+
+clone_provenance_work() {
+  local source_work="$1" destination_work="$2"
+  [ ! -e "$destination_work" ] || die "cloned provenance work already exists: $destination_work"
+  mkdir -p "$destination_work"
+  cp -R "$source_work/." "$destination_work/"
+}
+
+refresh_build_manifest_envelope_binding() {
+  local provenance_work="$1" manifest envelope size digest temporary
+  manifest="$provenance_work/artifacts/sp11-kernel-build-manifest.txt"
+  envelope="$provenance_work/artifacts/sp11-kernel-build-inputs.txt"
+  size="$(wc -c < "$manifest" | tr -d '[:space:]')"
+  digest="$(shasum -a 256 "$manifest" | awk '{print $1}')"
+  temporary="$provenance_work/artifacts/.sp11-kernel-build-inputs.refresh"
+  awk -v size="$size" -v digest="$digest" '
+    /^Input 4 size: / { print "Input 4 size: " size; next }
+    /^Input 4 SHA256: / { print "Input 4 SHA256: " digest; next }
+    { print }
+  ' "$envelope" > "$temporary"
+  mv "$temporary" "$envelope"
 }
 
 support_a="$(clone_support support-a)"
@@ -313,6 +502,11 @@ if ! INCLUDE_OPTIONAL_DEB=true UNSIGNED_IMAGE=true \
   cat "$temporary_root/build-b.log" >&2
   die "fixture release build B failed"
 fi
+
+provenance_a="$temporary_root/provenance-a"
+provenance_b="$temporary_root/provenance-b"
+make_provenance_work "$support_a" "$work_a" "$provenance_a"
+make_provenance_work "$support_b" "$work_b" "$provenance_b"
 
 manifest_a="$work_a/sp11-kernel-build-manifest.txt"
 manifest_b="$work_b/sp11-kernel-build-manifest.txt"
@@ -571,6 +765,8 @@ run_preparer() {
   fi
   PATH="$mock_bin:/usr/bin:/bin" \
     FIXTURE_REAL_GIT="$real_git" \
+    FIXTURE_REAL_MV="$real_mv" \
+    FIXTURE_REAL_RM="$real_rm" \
     FIXTURE_SOURCE_REPO="$source_repo" \
     FIXTURE_PUBLIC_SOURCE_URL="$source_url" \
     FIXTURE_REAL_PYTHON3="$real_python3" \
@@ -583,15 +779,38 @@ run_preparer() {
       "${source_args[@]}"
 }
 
-if ! run_preparer "$support_a" "$work_a" fixture-v2 > "$temporary_root/prepare-valid.log" 2>&1; then
+if ! run_preparer "$support_a" "$provenance_a/artifacts" fixture-v2 > "$temporary_root/prepare-valid.log" 2>&1; then
   cat "$temporary_root/prepare-valid.log" >&2
   die "valid schema-v2 release preparation failed"
 fi
-if ! run_preparer "$support_b" "$work_b" fixture-v2-optional "$work_b/source" \
+if ! run_preparer "$support_b" "$provenance_b/artifacts" fixture-v2-optional "$work_b/source" \
     > "$temporary_root/prepare-optional.log" 2>&1; then
   cat "$temporary_root/prepare-optional.log" >&2
   die "schema-v2 release preparation rejected a present optional package"
 fi
+
+provenance_valid="$temporary_root/build-inputs.valid"
+provenance_forged="$temporary_root/build-inputs.forged"
+cp "$provenance_a/artifacts/sp11-kernel-build-inputs.txt" "$provenance_valid"
+sed "s/^Input 1 SHA256: .*/Input 1 SHA256: $(printf '0%.0s' {1..64})/" \
+  "$provenance_valid" > "$provenance_forged"
+cp "$provenance_forged" "$provenance_a/artifacts/sp11-kernel-build-inputs.txt"
+provenance_mutation_marker="$temporary_root/provenance-mutated"
+if SWAP_PROVENANCE_DURING_RELEASE_VALIDATION=true \
+    FIXTURE_PROVENANCE_TO_MUTATE="$provenance_a/artifacts/sp11-kernel-build-inputs.txt" \
+    FIXTURE_VALID_PROVENANCE="$provenance_valid" \
+    FIXTURE_FORGED_PROVENANCE="$provenance_forged" \
+    FIXTURE_PROVENANCE_MUTATION_MARKER="$provenance_mutation_marker" \
+    run_preparer "$support_a" "$provenance_a/artifacts" fixture-provenance-race \
+      > "$temporary_root/provenance-race.log" 2>&1; then
+  die "kernel release preparer accepted an A/B/A envelope swap around retained validation"
+fi
+[ -e "$provenance_mutation_marker" ] ||
+  die "provenance validation-race fixture did not mutate its target"
+grep -Fq 'release-snapshot hash mismatch at input 1' \
+  "$temporary_root/provenance-race.log" ||
+  die "A/B/A provenance swap rejection was not explicit"
+cp "$provenance_valid" "$provenance_a/artifacts/sp11-kernel-build-inputs.txt"
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   if PATH="$mock_bin:/usr/bin:/bin" \
       GIT_DIR="$source_repo/.git" \
@@ -611,7 +830,7 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
 else
   printf 'Skipping standalone release-validator round trip: Bash 4+ is exercised in Linux CI.\n'
 fi
-if run_preparer "$support_status_failure" "$work_a" fixture-status-failure \
+if run_preparer "$support_status_failure" "$provenance_a/artifacts" fixture-status-failure \
     > "$temporary_root/status-prepare.log" 2>&1; then
   die "release preparer interpreted a failed support status as clean"
 fi
@@ -619,11 +838,39 @@ grep -Fq 'Could not inspect the support repository worktree state' "$temporary_r
   die "release preparer status failure was not explicit"
 release_manifest="$support_a/build/release/fixture-v2/sp11-kernel-release-manifest.txt"
 attached_build_manifest="$support_a/build/release/fixture-v2/sp11-kernel-build-manifest.txt"
-cmp "$manifest_a" "$attached_build_manifest" ||
+attached_apt_provenance="$support_a/build/release/fixture-v2/sp11-kernel-apt-provenance.txt"
+attached_build_inputs="$support_a/build/release/fixture-v2/sp11-kernel-build-inputs.txt"
+release_notes="$support_a/build/release/fixture-v2/RELEASE-NOTES.md"
+release_notes_sha="$(shasum -a 256 "$release_notes" | awk '{print $1}')"
+[ "$(grep -Fxc 'Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11.' \
+    "$release_notes")" = 1 ] ||
+  die "kernel release notes duplicated or omitted their opening sentence"
+if ! cmp "$manifest_a" "$attached_build_manifest"; then
+  cat "$temporary_root/prepare-valid.log" >&2
+  find "$support_a/build/release" -mindepth 1 -maxdepth 2 -print >&2 || true
   die "kernel release did not attach the exact validated schema-v2 build manifest"
+fi
+cmp "$provenance_a/artifacts/sp11-kernel-apt-provenance.txt" "$attached_apt_provenance" ||
+  die "kernel release did not attach the exact validated APT sidecar"
+cmp "$provenance_a/artifacts/sp11-kernel-build-inputs.txt" "$attached_build_inputs" ||
+  die "kernel release did not attach the exact validated build-inputs envelope"
 grep -Fq '  sp11-kernel-build-manifest.txt' \
   "$support_a/build/release/fixture-v2/SHA256SUMS" ||
   die "kernel release checksums omitted the schema-v2 build manifest"
+grep -Fq '  sp11-kernel-apt-provenance.txt' \
+  "$support_a/build/release/fixture-v2/SHA256SUMS" ||
+  die "kernel release checksums omitted the APT sidecar"
+grep -Fq '  sp11-kernel-build-inputs.txt' \
+  "$support_a/build/release/fixture-v2/SHA256SUMS" ||
+  die "kernel release checksums omitted the build-inputs envelope"
+grep -Fxq 'Kernel release schema: sp11-kernel-release-v1' "$release_manifest" ||
+  die "release manifest omitted its outer v1 schema"
+grep -Fxq 'Build envelope creation propagation: incomplete' "$release_manifest" ||
+  die "release manifest rewrote the build-time envelope state"
+grep -Fxq 'Kernel release propagation: complete' "$release_manifest" ||
+  die "release manifest omitted its completed kernel propagation attestation"
+grep -Fxq 'Publication state: blocked' "$release_manifest" ||
+  die "release manifest did not preserve the publication block"
 grep -Fxq 'Build provenance schema: sp11-kernel-build-v2' "$release_manifest" ||
   die "release manifest omitted schema-v2 provenance"
 grep -Fxq "Container platform: linux/arm64/v8" "$release_manifest" ||
@@ -648,13 +895,20 @@ git -C "$work_a/source/git-fixture" archive \
 kernel_source_archive_sha="$(shasum -a 256 "$kernel_source_archive" | awk '{print $1}')"
 if ! GIT_DIR="$source_repo/.git" GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true \
-    run_preparer "$support_a" "$work_a" fixture-v2-source "$work_a/source" \
+    run_preparer "$support_a" "$provenance_a/artifacts" fixture-v2-source "$work_a/source" \
     "$kernel_source_archive" > "$temporary_root/prepare-source.log" 2>&1; then
   cat "$temporary_root/prepare-source.log" >&2
   die "release preparer rejected an exact patched-tree source archive"
 fi
-grep -Fq 'gh release create' "$temporary_root/prepare-source.log" ||
-  die "validated source preparation did not produce a publish command"
+[ "$(shasum -a 256 \
+    "$support_a/build/release/fixture-v2-source/RELEASE-NOTES.md" | awk '{print $1}')" = \
+  "$release_notes_sha" ] ||
+  die "equivalent release inputs did not reproduce the exact release-note bytes"
+grep -Fq 'NO-PUBLISH:' "$temporary_root/prepare-source.log" ||
+  die "validated source preparation did not report the publication stop"
+if grep -Fq 'gh release create' "$temporary_root/prepare-source.log"; then
+  die "validated source preparation exposed a publication command while gates remain open"
+fi
 
 release_source_dir_b="$support_b/build/release-source"
 mkdir -p "$release_source_dir_b"
@@ -664,7 +918,7 @@ git -C "$work_b/source/git-fixture" archive \
   --prefix=fixture-v2-optional-patched-source/ \
   "$tree_b" |
   xz --threads=1 -6 > "$kernel_source_archive_b"
-if ! run_preparer "$support_b" "$work_b" fixture-v2-optional-source \
+if ! run_preparer "$support_b" "$provenance_b/artifacts" fixture-v2-optional-source \
     "$work_b/source" "$kernel_source_archive_b" \
     > "$temporary_root/prepare-optional-source.log" 2>&1; then
   cat "$temporary_root/prepare-optional-source.log" >&2
@@ -737,6 +991,24 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     "$bound_release_dir/sp11-kernel-release-manifest.txt"
   rewrite_release_checksums "$bound_release_dir"
 
+  awk '
+    /^Kernel release schema: / { kernel_schema = $0; next }
+    /^Build provenance schema: / { print; print kernel_schema; next }
+    { print }
+  ' "$temporary_root/kernel-release-manifest.original" \
+    > "$bound_release_dir/sp11-kernel-release-manifest.txt"
+  rewrite_release_checksums "$bound_release_dir"
+  if validate_schema_v2_dir "$support_a" fixture-v2-source \
+      validate-flat-v2-schema-order.log; then
+    die "standalone release validator accepted reordered outer v1 fields"
+  fi
+  grep -Fq 'field order does not match its schema' \
+    "$temporary_root/validate-flat-v2-schema-order.log" ||
+    die "reordered outer v1 field rejection was not explicit"
+  cp "$temporary_root/kernel-release-manifest.original" \
+    "$bound_release_dir/sp11-kernel-release-manifest.txt"
+  rewrite_release_checksums "$bound_release_dir"
+
   support_ahead="$(clone_support support-validator-ahead)"
   mkdir -p "$support_ahead/build/release"
   cp -R "$bound_release_dir" "$support_ahead/build/release/fixture-v2-source"
@@ -757,7 +1029,7 @@ git -C "$support_no_origin" remote remove origin
 mkdir -p "$support_no_origin/build/release-source"
 no_origin_source="$support_no_origin/build/release-source/fixture-v2-patched-source.tar.xz"
 cp "$kernel_source_archive" "$no_origin_source"
-if run_preparer "$support_no_origin" "$work_a" fixture-v2-no-origin \
+if run_preparer "$support_no_origin" "$provenance_a/artifacts" fixture-v2-no-origin \
     "$work_a/source" "$no_origin_source" \
     > "$temporary_root/prepare-no-origin.log" 2>&1; then
   die "publishable kernel preparer accepted a repository without origin"
@@ -769,11 +1041,12 @@ grep -Fq 'support repository has no origin remote' \
 }
 
 augmented_artifacts="$temporary_root/augmented-artifacts"
-mkdir -p "$augmented_artifacts"
-cp "$manifest_a" "$augmented_artifacts/sp11-kernel-build-manifest.txt"
+clone_provenance_work "$provenance_a" "$augmented_artifacts"
+cp "$manifest_a" "$augmented_artifacts/artifacts/sp11-kernel-build-manifest.txt"
 printf 'Forged extra field: accepted-by-loose-parser\n' \
-  >> "$augmented_artifacts/sp11-kernel-build-manifest.txt"
-if run_preparer "$support_a" "$augmented_artifacts" fixture-v2-extra-field \
+  >> "$augmented_artifacts/artifacts/sp11-kernel-build-manifest.txt"
+refresh_build_manifest_envelope_binding "$augmented_artifacts"
+if run_preparer "$support_a" "$augmented_artifacts/artifacts" fixture-v2-extra-field \
     "$work_a/source" "$kernel_source_archive" \
     > "$temporary_root/prepare-extra-field.log" 2>&1; then
   die "release preparer accepted an extra schema-v2 build-manifest field"
@@ -781,10 +1054,11 @@ fi
 grep -Fq 'unexpected top-level field' "$temporary_root/prepare-extra-field.log" ||
   die "extra build-manifest field rejection was not explicit"
 
-cp "$manifest_a" "$augmented_artifacts/sp11-kernel-build-manifest.txt"
+cp "$manifest_a" "$augmented_artifacts/artifacts/sp11-kernel-build-manifest.txt"
 printf 'forged colonless release claim\n' \
-  >> "$augmented_artifacts/sp11-kernel-build-manifest.txt"
-if run_preparer "$support_a" "$augmented_artifacts" fixture-v2-nonschema \
+  >> "$augmented_artifacts/artifacts/sp11-kernel-build-manifest.txt"
+refresh_build_manifest_envelope_binding "$augmented_artifacts"
+if run_preparer "$support_a" "$augmented_artifacts/artifacts" fixture-v2-nonschema \
     "$work_a/source" "$kernel_source_archive" \
     > "$temporary_root/prepare-nonschema.log" 2>&1; then
   die "release preparer accepted a non-schema build-manifest line"
@@ -798,7 +1072,7 @@ mutation_marker="$temporary_root/source-mutated"
 if ! MUTATE_SOURCE_AFTER_SNAPSHOT=true \
     FIXTURE_SOURCE_ASSET_TO_MUTATE="$toctou_archive" \
     FIXTURE_SOURCE_MUTATION_MARKER="$mutation_marker" \
-    run_preparer "$support_a" "$work_a" fixture-v2-toctou "$work_a/source" \
+    run_preparer "$support_a" "$provenance_a/artifacts" fixture-v2-toctou "$work_a/source" \
       "$toctou_archive" > "$temporary_root/prepare-toctou.log" 2>&1; then
   cat "$temporary_root/prepare-toctou.log" >&2
   die "release preparer did not preserve its validated source snapshot"
@@ -817,6 +1091,201 @@ expect_prepare_failure() {
     die "release preparer did not explain $release_name failure"
 }
 
+assert_previous_output_restored() {
+  local release_name="$1" expected_failed_recovery="${2:-false}" final_dir
+  local expected_recovery_path="${3:-}" entry_count
+  local failed_recovery_dir
+
+  final_dir="$support_a/build/release/$release_name"
+
+  [ -f "$final_dir/previous-output-sentinel.txt" ] ||
+    die "failed $release_name transaction did not restore its previous output"
+  grep -Fxq 'previous output must survive' "$final_dir/previous-output-sentinel.txt" ||
+    die "failed $release_name transaction changed its previous output"
+  entry_count="$(find "$final_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')"
+  [ "$entry_count" = 1 ] ||
+    die "failed $release_name transaction nested or mixed candidate and previous output"
+  if find "$support_a/build/release" -mindepth 1 -maxdepth 1 \
+      \( -name ".$release_name.staging.*" -o -name ".$release_name.previous.*" \) \
+      -print | grep -q .; then
+    die "failed $release_name transaction retained a staging or previous directory"
+  fi
+  failed_recovery_dir="$(find "$support_a/build/release" -mindepth 1 -maxdepth 1 \
+    -type d -name ".$release_name.failed.*" -print | sed -n '1p')"
+  if [ "$expected_failed_recovery" = "true" ]; then
+    [ -n "$failed_recovery_dir" ] ||
+      die "changed failed candidate was not preserved as recovery data"
+    if [ -n "$expected_recovery_path" ]; then
+      [ -f "$failed_recovery_dir/candidate/$expected_recovery_path" ] ||
+        die "concurrently changed failed candidate was not preserved"
+    else
+      grep -Fq 'Forged post-validation field: rejected' \
+        "$failed_recovery_dir/candidate/sp11-kernel-build-inputs.txt" ||
+        die "changed failed candidate was not preserved as recovery data"
+    fi
+    "$real_rm" -rf -- "$failed_recovery_dir"
+  elif [ -n "$failed_recovery_dir" ]; then
+    die "unchanged failed candidate was not retired after rollback"
+  fi
+}
+
+post_install_mutation_release=fixture-post-install-mutation
+post_install_mutation_dir="$support_a/build/release/$post_install_mutation_release"
+mkdir "$post_install_mutation_dir"
+printf 'previous output must survive\n' \
+  > "$post_install_mutation_dir/previous-output-sentinel.txt"
+post_install_mutation_marker="$temporary_root/post-install-mutated"
+if MUTATE_STAGING_AT_INSTALL=true \
+    FIXTURE_FINAL_OUT_DIR="$post_install_mutation_dir" \
+    FIXTURE_STAGING_MUTATION_MARKER="$post_install_mutation_marker" \
+    run_preparer "$support_a" "$provenance_a/artifacts" \
+      "$post_install_mutation_release" \
+      > "$temporary_root/post-install-mutation.log" 2>&1; then
+  die "release preparer accepted post-validation mutation plus checksum rewrite"
+fi
+[ -e "$post_install_mutation_marker" ] ||
+  die "post-install mutation fixture did not mutate the staged candidate"
+grep -Eq 'independently captured bytes|SHA256SUMS bytes or row order changed' \
+  "$temporary_root/post-install-mutation.log" ||
+  die "post-install mutation rejection was not explicit"
+grep -Fq 'preserving changed failed release output for recovery' \
+  "$temporary_root/post-install-mutation.log" || {
+    cat "$temporary_root/post-install-mutation.log" >&2
+    die "changed failed-candidate preservation was not explicit"
+  }
+assert_previous_output_restored "$post_install_mutation_release" true
+
+late_support_release=fixture-late-support-failure
+late_support_dir="$support_a/build/release/$late_support_release"
+mkdir "$late_support_dir"
+printf 'previous output must survive\n' \
+  > "$late_support_dir/previous-output-sentinel.txt"
+late_support_marker="$temporary_root/late-support-failed"
+failed_candidate_mutation_marker="$temporary_root/failed-candidate-mutated"
+if FAIL_FINAL_SUPPORT_STATE=true MUTATE_FAILED_CANDIDATE_BEFORE_RETIREMENT=true \
+    FIXTURE_FINAL_OUT_DIR="$late_support_dir" \
+    FIXTURE_FINAL_SUPPORT_FAILURE_MARKER="$late_support_marker" \
+    FIXTURE_RETIREMENT_RELEASE_NAME="$late_support_release" \
+    FIXTURE_FAILED_CANDIDATE_MUTATION_MARKER="$failed_candidate_mutation_marker" \
+    run_preparer "$support_a" "$provenance_a/artifacts" "$late_support_release" \
+      > "$temporary_root/late-support-failure.log" 2>&1; then
+  die "release preparer accepted a late support-state inspection failure"
+fi
+[ -e "$late_support_marker" ] ||
+  die "late support-state fixture did not reach the post-install check"
+[ -e "$failed_candidate_mutation_marker" ] ||
+  die "failed-candidate retirement fixture did not mutate after the first exact check"
+grep -Fq 'Could not re-inspect the support repository worktree state' \
+  "$temporary_root/late-support-failure.log" ||
+  die "late support-state rejection was not explicit"
+grep -Fq 'preserving changed failed release output for recovery' \
+  "$temporary_root/late-support-failure.log" ||
+  die "failed-candidate retirement mutation preservation was not explicit"
+assert_previous_output_restored "$late_support_release" true concurrent-unknown.txt
+
+previous_mutation_release=fixture-previous-output-mutation
+previous_mutation_dir="$support_a/build/release/$previous_mutation_release"
+mkdir "$previous_mutation_dir"
+printf 'previous output must survive\n' \
+  > "$previous_mutation_dir/previous-output-sentinel.txt"
+previous_mutation_marker="$temporary_root/previous-output-mutated"
+previous_mutation_support_marker="$temporary_root/previous-output-support-failed"
+if FAIL_FINAL_SUPPORT_STATE=true MUTATE_RETAINED_PREVIOUS=true \
+    FIXTURE_FINAL_OUT_DIR="$previous_mutation_dir" \
+    FIXTURE_FINAL_SUPPORT_FAILURE_MARKER="$previous_mutation_support_marker" \
+    FIXTURE_PREVIOUS_RELEASE_NAME="$previous_mutation_release" \
+    FIXTURE_PREVIOUS_MUTATION_MARKER="$previous_mutation_marker" \
+    run_preparer "$support_a" "$provenance_a/artifacts" "$previous_mutation_release" \
+      > "$temporary_root/previous-output-mutation.log" 2>&1; then
+  die "release preparer accepted mutation of privately retained previous output"
+fi
+[ -e "$previous_mutation_marker" ] ||
+  die "previous-output mutation fixture did not change the private backup"
+[ ! -e "$previous_mutation_dir" ] ||
+  die "release preparer restored a changed previous output as authoritative"
+grep -Fq 'preserving changed previous release output for recovery' \
+  "$temporary_root/previous-output-mutation.log" ||
+  die "changed previous-output preservation was not explicit"
+previous_mutation_recovery="$(find "$support_a/build/release" -mindepth 1 -maxdepth 1 \
+  -type d -name ".$previous_mutation_release.previous.*" -print | sed -n '1p')"
+[ -n "$previous_mutation_recovery" ] &&
+  [ -f "$previous_mutation_recovery/original/previous-output-sentinel.txt" ] &&
+  [ -f "$previous_mutation_recovery/original/concurrent-unknown.txt" ] ||
+  die "changed previous-output recovery did not preserve every observed byte"
+previous_candidate_recovery="$(find "$support_a/build/release" -mindepth 1 -maxdepth 1 \
+  -type d -name ".$previous_mutation_release.failed.*" -print | sed -n '1p')"
+[ -n "$previous_candidate_recovery" ] &&
+  [ -f "$previous_candidate_recovery/candidate/sp11-kernel-release-manifest.txt" ] ||
+  die "failed candidate was not preserved when previous-output restore was unsafe"
+"$real_rm" -rf -- "$previous_mutation_recovery" "$previous_candidate_recovery"
+
+cleanup_failure_release=fixture-previous-cleanup-failure
+cleanup_failure_dir="$support_a/build/release/$cleanup_failure_release"
+mkdir "$cleanup_failure_dir"
+printf 'previous output must survive\n' \
+  > "$cleanup_failure_dir/previous-output-sentinel.txt"
+cleanup_failure_marker="$temporary_root/previous-cleanup-failed"
+if FAIL_PREVIOUS_OUTPUT_CLEANUP=true \
+    FIXTURE_CLEANUP_RELEASE_NAME="$cleanup_failure_release" \
+    FIXTURE_PREVIOUS_CLEANUP_FAILURE_MARKER="$cleanup_failure_marker" \
+    run_preparer "$support_a" "$provenance_a/artifacts" "$cleanup_failure_release" \
+      > "$temporary_root/previous-cleanup-failure.log" 2>&1; then
+  die "release preparer hid a committed-candidate cleanup failure"
+fi
+[ -e "$cleanup_failure_marker" ] ||
+  die "previous-output cleanup failure fixture did not reach retirement"
+[ -f "$cleanup_failure_dir/sp11-kernel-release-manifest.txt" ] ||
+  die "cleanup failure rolled back the fully verified committed candidate"
+[ ! -e "$cleanup_failure_dir/previous-output-sentinel.txt" ] ||
+  die "cleanup failure nested the previous output inside the committed candidate"
+grep -Fq 'new release output is committed' \
+  "$temporary_root/previous-cleanup-failure.log" ||
+  die "committed-candidate cleanup failure was not explicit"
+cleanup_recovery_dir="$(find "$support_a/build/release" -mindepth 1 -maxdepth 1 \
+  -type d -name ".$cleanup_failure_release.previous.*" -print | sed -n '1p')"
+[ -n "$cleanup_recovery_dir" ] &&
+  [ -f "$cleanup_recovery_dir/original/previous-output-sentinel.txt" ] &&
+  [ -f "$cleanup_recovery_dir/tree-state.json" ] ||
+  die "cleanup failure did not preserve the previous output as recovery data"
+"$real_rm" -rf -- "$cleanup_recovery_dir"
+
+for missing_provenance_name in \
+    sp11-kernel-apt-provenance.txt \
+    sp11-kernel-build-inputs.txt; do
+  missing_provenance_work="$temporary_root/missing-${missing_provenance_name%.txt}"
+  clone_provenance_work "$provenance_a" "$missing_provenance_work"
+  rm "$missing_provenance_work/artifacts/$missing_provenance_name"
+  expect_prepare_failure "$missing_provenance_work/artifacts" \
+    "fixture-missing-${missing_provenance_name%.txt}" \
+    'regular, non-symlinked immutable provenance input'
+done
+
+tampered_sidecar_work="$temporary_root/tampered-sidecar"
+clone_provenance_work "$provenance_a" "$tampered_sidecar_work"
+sed 's/^Snapshot ID: .*/Snapshot ID: 19700101T000000Z/' \
+  "$provenance_a/artifacts/sp11-kernel-apt-provenance.txt" \
+  > "$tampered_sidecar_work/artifacts/sp11-kernel-apt-provenance.txt"
+expect_prepare_failure "$tampered_sidecar_work/artifacts" \
+  fixture-tampered-apt-sidecar \
+  'APT sidecar Snapshot ID does not match the baseline'
+
+extra_envelope_work="$temporary_root/extra-envelope"
+clone_provenance_work "$provenance_a" "$extra_envelope_work"
+printf 'Forged publication input: accepted-by-loose-parser\n' \
+  >> "$extra_envelope_work/artifacts/sp11-kernel-build-inputs.txt"
+expect_prepare_failure "$extra_envelope_work/artifacts" \
+  fixture-extra-build-envelope \
+  'build-inputs envelope field set/order mismatch'
+
+legacy_envelope_work="$temporary_root/legacy-envelope"
+clone_provenance_work "$provenance_a" "$legacy_envelope_work"
+sed 's/^Build inputs schema: .*/Build inputs schema: sp11-kernel-build-inputs-v0/' \
+  "$provenance_a/artifacts/sp11-kernel-build-inputs.txt" \
+  > "$legacy_envelope_work/artifacts/sp11-kernel-build-inputs.txt"
+expect_prepare_failure "$legacy_envelope_work/artifacts" \
+  fixture-legacy-build-envelope \
+  'unsupported build-inputs schema'
+
 nonpublic_url_index=0
 for nonpublic_url in \
     https://localhost/kernel.git \
@@ -825,12 +1294,13 @@ for nonpublic_url in \
     https://fixtures.invalid/kernel.git; do
   nonpublic_url_index=$((nonpublic_url_index + 1))
   nonpublic_artifacts="$temporary_root/nonpublic-url-$nonpublic_url_index"
-  mkdir "$nonpublic_artifacts"
+  clone_provenance_work "$provenance_a" "$nonpublic_artifacts"
   sed "s#^Source URL: .*#Source URL: $nonpublic_url#" \
-    "$manifest_a" > "$nonpublic_artifacts/sp11-kernel-build-manifest.txt"
-  expect_prepare_failure "$nonpublic_artifacts" \
+    "$manifest_a" > "$nonpublic_artifacts/artifacts/sp11-kernel-build-manifest.txt"
+  refresh_build_manifest_envelope_binding "$nonpublic_artifacts"
+  expect_prepare_failure "$nonpublic_artifacts/artifacts" \
     "fixture-nonpublic-url-$nonpublic_url_index" \
-    'kernel source URL is not public HTTPS provenance'
+    'build source URL is not credential-free public HTTPS'
 done
 
 cross_validator_artifacts="$temporary_root/cross-validator-private-url"
@@ -851,33 +1321,37 @@ grep -Fq 'build source URL is not credential-free public HTTPS' \
   die "schema-v2 cross-validator did not explain its non-public source rejection"
 
 legacy_artifacts="$temporary_root/legacy-artifacts"
-mkdir -p "$legacy_artifacts"
+clone_provenance_work "$provenance_a" "$legacy_artifacts"
 sed 's/^Provenance schema: .*/Provenance schema: sp11-kernel-build-v1/' \
-  "$manifest_a" > "$legacy_artifacts/sp11-kernel-build-manifest.txt"
-expect_prepare_failure "$legacy_artifacts" fixture-v1 'Refusing non-v2 kernel build provenance'
+  "$manifest_a" > "$legacy_artifacts/artifacts/sp11-kernel-build-manifest.txt"
+refresh_build_manifest_envelope_binding "$legacy_artifacts"
+expect_prepare_failure "$legacy_artifacts/artifacts" fixture-v1 'wrong build schema'
 
 nonrelease_artifacts="$temporary_root/nonrelease-artifacts"
-mkdir -p "$nonrelease_artifacts"
+clone_provenance_work "$provenance_a" "$nonrelease_artifacts"
 sed 's/^Release build: true$/Release build: false/' \
-  "$manifest_a" > "$nonrelease_artifacts/sp11-kernel-build-manifest.txt"
-expect_prepare_failure "$nonrelease_artifacts" fixture-nonrelease 'not marked as a release build'
+  "$manifest_a" > "$nonrelease_artifacts/artifacts/sp11-kernel-build-manifest.txt"
+refresh_build_manifest_envelope_binding "$nonrelease_artifacts"
+expect_prepare_failure "$nonrelease_artifacts/artifacts" fixture-nonrelease 'build manifest is not a release build'
 
 incomplete_artifacts="$temporary_root/incomplete-artifacts"
-mkdir -p "$incomplete_artifacts"
+clone_provenance_work "$provenance_a" "$incomplete_artifacts"
 sed '/^Build completed: true$/d' \
-  "$manifest_a" > "$incomplete_artifacts/sp11-kernel-build-manifest.txt"
-expect_prepare_failure "$incomplete_artifacts" fixture-incomplete "exactly one nonempty 'Build completed:' field"
+  "$manifest_a" > "$incomplete_artifacts/artifacts/sp11-kernel-build-manifest.txt"
+refresh_build_manifest_envelope_binding "$incomplete_artifacts"
+expect_prepare_failure "$incomplete_artifacts/artifacts" fixture-incomplete 'is missing required top-level field: Build completed'
 
 bad_patch_artifacts="$temporary_root/bad-patch-artifacts"
-mkdir -p "$bad_patch_artifacts"
+clone_provenance_work "$provenance_a" "$bad_patch_artifacts"
 sed "s/^Patch 1 SHA256: .*/Patch 1 SHA256: $(printf '0%.0s' {1..64})/" \
-  "$manifest_a" > "$bad_patch_artifacts/sp11-kernel-build-manifest.txt"
-expect_prepare_failure "$bad_patch_artifacts" fixture-bad-patch 'patch order or SHA-256 does not match'
+  "$manifest_a" > "$bad_patch_artifacts/artifacts/sp11-kernel-build-manifest.txt"
+refresh_build_manifest_envelope_binding "$bad_patch_artifacts"
+expect_prepare_failure "$bad_patch_artifacts/artifacts" fixture-bad-patch 'does not match the committed support patch'
 
 image_deb="$work_a/source/linux-image-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb"
 cp "$image_deb" "$temporary_root/image.deb.backup"
 printf 'tampered\n' >> "$image_deb"
-expect_prepare_failure "$work_a" fixture-tampered-deb 'does not match its build provenance'
+expect_prepare_failure "$provenance_a/artifacts" fixture-tampered-deb 'does not match its build provenance'
 mv "$temporary_root/image.deb.backup" "$image_deb"
 
 "$repo_dir/tests/test-source-archive-bindings.sh"

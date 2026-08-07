@@ -37,7 +37,7 @@ regular_fingerprint() {
   printf '%s:%s\n' "$(cksum < "$path")" "$(node_metadata "$path")"
 }
 
-for tool in git grep mktemp stat; do
+for tool in git grep mktemp shasum stat; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 
@@ -46,10 +46,47 @@ temporary_root="$(cd "$temporary_root" && pwd -P)"
 temporary_parent="$(dirname "$temporary_root")"
 support_dir="$temporary_root/support"
 mock_bin="$temporary_root/mock-bin"
-mkdir -p "$support_dir/scripts" "$support_dir/payload/kernel-debs" "$mock_bin"
+mkdir -p \
+  "$support_dir/scripts" \
+  "$support_dir/config/kernel-baselines" \
+  "$support_dir/patches/release" \
+  "$support_dir/payload/kernel-debs" \
+  "$mock_bin"
 cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" "$support_dir/scripts/"
 chmod +x "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh"
 printf 'build/\n' > "$support_dir/.gitignore"
+printf 'fixture patch input\n' > "$support_dir/patches/release/0001-fixture.patch"
+
+release_oci_index="$temporary_root/release-oci-index.json"
+release_child_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+printf '%s' \
+  "{\"schemaVersion\":2,\"manifests\":[{\"digest\":\"$release_child_digest\",\"platform\":{\"os\":\"linux\",\"architecture\":\"arm64\",\"variant\":\"v8\"}}]}" \
+  > "$release_oci_index"
+release_oci_sha="$(shasum -a 256 "$release_oci_index" | awk '{print $1}')"
+release_image="ubuntu:26.04@sha256:$release_oci_sha"
+release_source_commit="2222222222222222222222222222222222222222"
+cat > "$support_dir/config/kernel-baselines/7.2-rc5-jg-0.env" <<EOF_BASELINE
+SP11_KERNEL_DOCKER_IMAGE="$release_image"
+SP11_KERNEL_DOCKER_PLATFORM="linux/arm64/v8"
+SP11_KERNEL_DOCKER_PLATFORM_MANIFEST="$release_child_digest"
+SP11_KERNEL_UPSTREAM_URL="https://github.com/example/linux.git"
+SP11_KERNEL_UPSTREAM_REF="fixture/ref"
+SP11_KERNEL_UPSTREAM_COMMIT="$release_source_commit"
+SP11_KERNEL_BUILD_TARGET="binary-indep binary-qcom-x1e"
+SP11_KERNEL_PATCH_DIRS="patches/release"
+EOF_BASELINE
+cat > "$support_dir/scripts/validate-sp11-kernel-baseline.sh" <<'EOF_BASELINE_VALIDATOR'
+#!/usr/bin/env bash
+set -euo pipefail
+test -f "$1"
+EOF_BASELINE_VALIDATOR
+cat > "$support_dir/scripts/validate-sp11-oci-index.py" <<'EOF_OCI_VALIDATOR'
+#!/usr/bin/env python3
+raise SystemExit(0)
+EOF_OCI_VALIDATOR
+chmod +x \
+  "$support_dir/scripts/validate-sp11-kernel-baseline.sh" \
+  "$support_dir/scripts/validate-sp11-oci-index.py"
 
 git -C "$support_dir" init --quiet --initial-branch=fixture
 git -C "$support_dir" config user.name "SP11 path-safety fixture"
@@ -77,6 +114,13 @@ run_dry() {
 cat > "$mock_bin/docker" <<'EOF_DOCKER'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [ "${1:-}" = "buildx" ] && [ "${2:-}" = "imagetools" ] &&
+   [ "${3:-}" = "inspect" ] && [ "${4:-}" = "--raw" ]; then
+  test -f "$MOCK_OCI_INDEX"
+  /bin/cat "$MOCK_OCI_INDEX"
+  exit 0
+fi
 
 host_work=""
 previous=""
@@ -112,6 +156,11 @@ if [ "${MOCK_CREATE_DEB:-false}" = "true" ]; then
     > "$host_work/artifacts/linux-image-7.2.0-fixture-qcom-x1e_1_arm64.deb"
 fi
 printf 'installed control files verified\n' > "$host_work/mock-docker-verified"
+case "${MOCK_MUTATE_CONTROL:-}" in
+  docker-build-args.txt|docker-build-inside.sh|sp11-oci-index.json)
+    printf 'mutated by fake Docker\n' >> "$host_work/$MOCK_MUTATE_CONTROL"
+    ;;
+esac
 EOF_DOCKER
 chmod +x "$mock_bin/docker"
 
@@ -155,6 +204,44 @@ PATH="$mock_bin:/usr/bin:/bin" "$wrapper" \
 if find "$live_work" -maxdepth 1 -name '.sp11-docker-control.*' | grep -q .; then
   die "completed wrapper retained its private control directory"
 fi
+
+for mutated_control in docker-build-args.txt docker-build-inside.sh; do
+  mutation_work="$support_dir/build/mutated-$mutated_control/work"
+  if MOCK_MUTATE_CONTROL="$mutated_control" PATH="$mock_bin:/usr/bin:/bin" "$wrapper" \
+      --source apt \
+      --source-package linux-fixture \
+      --source-version 1.0 \
+      --work-dir "$mutation_work" \
+      > "$temporary_root/mutated-$mutated_control.log" 2>&1; then
+    die "wrapper accepted a fake-Docker mutation of $mutated_control"
+  fi
+  grep -Fq 'Docker control input changed after its pre-run validation' \
+    "$temporary_root/mutated-$mutated_control.log" ||
+    die "fake-Docker control mutation rejection was not explicit: $mutated_control"
+done
+
+immutable_oci_work="$support_dir/build/mutated-immutable-oci/work"
+if MOCK_OCI_INDEX="$release_oci_index" \
+    MOCK_MUTATE_CONTROL=sp11-oci-index.json \
+    PATH="$mock_bin:/usr/bin:/bin" "$wrapper" \
+      --source git \
+      --git-url https://github.com/example/linux.git \
+      --git-branch fixture/ref \
+      --expected-source-commit "$release_source_commit" \
+      --image "$release_image" \
+      --platform linux/arm64/v8 \
+      --patch-dirs patches/release \
+      --build-target "binary-indep binary-qcom-x1e" \
+      --work-dir "$immutable_oci_work" \
+      --release-build \
+      > "$temporary_root/mutated-immutable-oci.log" 2>&1; then
+  die "wrapper accepted a fake-Docker mutation of the immutable OCI index"
+fi
+grep -Fq 'Docker control input changed after its pre-run validation' \
+  "$temporary_root/mutated-immutable-oci.log" ||
+  die "fake-Docker immutable OCI mutation rejection was not explicit"
+grep -Fq 'sp11-oci-index.json' "$temporary_root/mutated-immutable-oci.log" ||
+  die "fake-Docker immutable OCI mutation rejection did not identify the control"
 
 # Both former predictable control paths are explicit tripwires. The wrapper
 # must fail before creating private controls and must never follow either link.
