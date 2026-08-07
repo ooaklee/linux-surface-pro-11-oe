@@ -9,7 +9,8 @@ description: Decision record for auditing the project's GitHub releases and tags
 
 ## Status
 
-Accepted and executed (2026-08-07).
+Accepted and executed (2026-08-07). Amended the same day to record the names
+and validation rules for the authorized experimental r1 successors.
 
 ## Context
 
@@ -180,23 +181,43 @@ Do not move a broken public tag to a corrected commit and do not reuse its
 name. A corrected artifact must receive a new immutable tag so caches, mirrors,
 and prior audit records cannot confuse the two releases.
 
+The corrective standalone kernel/module bundle is named
+`sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`, and the corrective image is named
+`sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1`. The `-r1` suffix identifies
+new immutable public artifacts; it does not change the installable
+`7.2-rc5-jg-0sp11v3-qcom-x1e` kernel ABI. Neither retired original name may be
+recreated.
+
 ### Future release gates
 
-Before publishing a new binary release:
+Before publishing any new binary release:
 
-- create it with an explicit target support commit;
+- create it with an explicit `--target <support-commit>`, including image
+  releases prepared by `prepare-sp11-image-release-assets.sh`;
 - require the manifest support commit and local and remote tag targets to
   agree;
 - generate checksums from the exact upload list rather than adding assets
   afterward;
 - validate a fresh download against exact asset membership and semantic
-  package or hardware checks;
+  package or image checks;
 - keep release notes out of `SHA256SUMS` when they are used only as the GitHub
   release body; and
 - retain a new tag only after the release validator passes.
 
+When `gh release create` creates a previously absent tag, fetch that exact tag
+locally before the post-publication validator runs. The validator compares the
+manifest support commit with both the local and remote tag targets.
+
 Touchscreen releases additionally follow the exact-ABI module, DTB,
 initramfs, and provenance gates in ADR0050.
+
+The project owner authorized the fresh r1 kernel and image as experimental
+prereleases while ADR0050's clean-install hardware matrix is outstanding. This
+is a distribution exception, not a hardware qualification. The r1 notes must
+disclose the outstanding matrix and require a known-good fallback kernel and
+recovery media. Stable or hardware-qualified promotion remains blocked until
+the matrix passes; checksum, source, support-commit, tag, asset-equality, and
+fresh-download gates are not waived.
 
 ## Execution and verification
 

@@ -70,18 +70,28 @@ sp11-qcom-x1e-7.0.0-22.22-rfkill1
 Each binary release must include, at minimum:
 
 - the installable qcom-x1e `.deb` files;
-- `SHA256SUMS` for every uploaded asset;
-- a sanitized build manifest recording source mode, upstream URL, branch,
+- `SHA256SUMS` covering every other uploaded asset exactly once; the checksum
+  file must not list itself, and a local `RELEASE-NOTES.md` used only as the
+  GitHub release body is neither uploaded nor listed;
+- a sanitized build manifest recording source mode, upstream URL, source ref,
   source commit, build target, patch list, repository commit, Docker image
   family or digest when available, and build command shape;
 - a package manifest listing package filenames, sizes, versions, and checksums
   without local workstation paths;
-- patch checksums for `patches/ubuntu-qcom-x1e-7.0/`;
+- patch checksums for every project patch directory applied to the source (the
+  original 7.0 release used `patches/ubuntu-qcom-x1e-7.0/`);
 - corresponding source sufficient for the binary release, either as source
   package artifacts, a patched source archive, or immutable instructions and
   links that retrieve the exact source commit plus the project patches used;
 - release notes that mark the artifacts as experimental, Surface Pro 11
   specific, unsigned, and optional.
+
+The checksum and exact-asset rules above were clarified by the touchscreen
+release retrospective in [ADR0050](adr-0050-sp11-touchscreen-clean-install-release-flow.md)
+and the cleanup decision in [ADR0051](adr-0051-release-and-tag-cleanup.md).
+Generated notes used as the GitHub body remain local input, while
+`SHA256SUMS` is appended to the upload list only after the other upload assets
+have been hashed.
 
 The raw local manifests under `build/.../artifacts/` are build outputs, not
 automatically public release manifests. They may contain absolute paths from
@@ -128,9 +138,10 @@ recorded inputs".
 ## Consequences
 
 Users who trust the experimental release can avoid a multi-hour kernel build by
-downloading the `.deb` assets, verifying `SHA256SUMS`, copying the packages to
-`payload/kernel-debs/`, rebuilding the USB image, and installing with the
-existing `--install-only` fallback guard.
+downloading the `.deb` assets and any required exact-ABI module bundle,
+verifying `SHA256SUMS`, copying the matched set to `payload/kernel-debs/`,
+rebuilding the USB image, and installing with the existing `--install-only`
+fallback guard.
 
 GitHub Releases are not an apt repository. Users still need explicit download,
 checksum, copy-to-payload, USB rebuild, and Surface-side install instructions.

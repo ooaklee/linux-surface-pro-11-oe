@@ -52,7 +52,7 @@ have_tool() {
 
 cleanup() {
   local path
-  for path in "${TEMP_DIRS[@]}"; do
+  for path in "${TEMP_DIRS[@]-}"; do
     if [ -n "$path" ] && [ -d "$path" ]; then
       rm -rf -- "$path"
     fi
@@ -392,6 +392,50 @@ else
   fi
   if [ -n "$dirty_value" ] && [ "$dirty_value" != "false" ]; then
     error "release manifest records a dirty support repository: $dirty_value"
+  fi
+
+  if ! grep -Fq "No source assets included." "$release_manifest"; then
+    manifest_source_mode="$(single_manifest_value "$release_manifest" "Source mode" 2>/dev/null || true)"
+    manifest_source_url="$(single_manifest_value "$release_manifest" "Source URL" 2>/dev/null || true)"
+    manifest_source_ref="$(single_manifest_value "$release_manifest" "Source branch" 2>/dev/null || true)"
+    manifest_source_head="$(single_manifest_value "$release_manifest" "Source HEAD" 2>/dev/null || true)"
+    manifest_docker_image="$(single_manifest_value "$release_manifest" "Docker image" 2>/dev/null || true)"
+    manifest_build_target="$(single_manifest_value "$release_manifest" "Build target" 2>/dev/null || true)"
+    manifest_jobs="$(single_manifest_value "$release_manifest" "Jobs" 2>/dev/null || true)"
+    manifest_rules_runner="$(single_manifest_value "$release_manifest" "Rules runner" 2>/dev/null || true)"
+
+    for provenance_value in \
+      "$manifest_source_mode" "$manifest_source_url" "$manifest_source_ref" \
+      "$manifest_docker_image" "$manifest_build_target" "$manifest_jobs" \
+      "$manifest_rules_runner"; do
+      if [ -z "$provenance_value" ] || [ "$provenance_value" = "unknown" ]; then
+        error "publishable release manifest has missing or unknown build provenance."
+        break
+      fi
+    done
+
+    case "$manifest_source_mode" in
+      git)
+        if [[ ! "$manifest_source_head" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]]; then
+          error "git release manifest Source HEAD must be an immutable 40- or 64-hex commit."
+        fi
+        ;;
+      apt)
+        manifest_apt_source_spec="$(single_manifest_value "$release_manifest" "Apt source spec" 2>/dev/null || true)"
+        if [ -z "$manifest_apt_source_spec" ] || [ "$manifest_apt_source_spec" = "unknown" ]; then
+          error "apt release manifest must record an exact Apt source spec."
+        fi
+        ;;
+      *)
+        error "release manifest Source mode must be git or apt, got '${manifest_source_mode:-missing}'."
+        ;;
+    esac
+
+    [[ "$manifest_jobs" =~ ^[1-9][0-9]*$ ]] || \
+      error "release manifest Jobs must be a positive integer."
+    grep -Eq '^- patches/.+\.patch$' "$release_manifest" || \
+      error "publishable release manifest does not record repository-relative patch assets."
+    checked
   fi
 
   for deb in "${deb_files[@]}"; do

@@ -306,6 +306,13 @@ Experimental direct-boot Ubuntu live USB raw disk image for Surface Pro 11.
 This image is an optional convenience artifact. It is not signed, is not an
 installer ISO, and should be written only to the intended removable device.
 
+## Installed-system payloads
+
+The live environment boots the concept ISO's casper kernel. A custom kernel or
+module bundle stored under `SP11DATA/payload/kernel-debs` is available only to
+the guarded installed-system flow; it does not replace the live-session kernel.
+Check `$OUTLINE_NAME` for the exact payload carried by this image.
+
 ## Verify
 
 \`\`\`bash
@@ -369,8 +376,8 @@ done
 echo "Prepared release assets in $OUT_DIR_DISPLAY"
 echo
 echo "Review $OUT_DIR_DISPLAY/RELEASE-NOTES.md, then publish with a command like:"
-printf '  (cd %q && gh release create %q --prerelease --title %q --notes-file RELEASE-NOTES.md' \
-  "$OUT_DIR_DISPLAY" "$RELEASE_NAME" "$RELEASE_NAME"
+printf '  (cd %q && gh release create %q --target %q --prerelease --title %q --notes-file RELEASE-NOTES.md' \
+  "$OUT_DIR_DISPLAY" "$RELEASE_NAME" "$repo_commit" "$RELEASE_NAME"
 for asset in "${release_assets[@]}"; do
   printf ' %q' "$asset"
 done

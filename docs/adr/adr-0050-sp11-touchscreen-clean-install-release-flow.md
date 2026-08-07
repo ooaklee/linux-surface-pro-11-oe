@@ -9,9 +9,16 @@ description: Retrospective and decision record for making the Surface Pro 11 tou
 
 ## Status
 
-Accepted (2026-08-06). The implementation and module identities are validated
-on the existing OLED X1E80100 development device. A clean-install hardware run
-remains a release gate for the next touchscreen bundle.
+Accepted (2026-08-06), amended 2026-08-07. The implementation and module
+identities are validated on the existing OLED X1E80100 development device. A
+clean-install hardware run remains the gate for stable or hardware-qualified
+promotion of a touchscreen bundle.
+
+The project owner authorized one bounded exception for the fresh r1 kernel and
+image to be published as explicitly experimental prereleases after their
+automated package, module, DTB, image, provenance, and fresh-download checks
+pass. The clean-install matrix remains outstanding; these prereleases must say
+so and must not be described as clean-install validated or hardware-qualified.
 
 ## Context
 
@@ -141,12 +148,39 @@ and classifies the main signatures:
 - Validate tag commit, package ABI/version/roles, module vermagic/source
   versions/aliases, touchscreen DTB content, checksum coverage, and exact asset
   equality before publication and again from a fresh download.
-- Publish a new immutable corrective tag rather than moving the existing
-  public v3 tag.
+- Publish new immutable corrective tags rather than recreating or moving the
+  retired originals. The standalone bundle uses
+  `sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`; the image uses
+  `sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1`. The installable kernel ABI
+  remains `7.2-rc5-jg-0sp11v3-qcom-x1e`.
+- An explicitly authorized experimental prerelease may precede the full
+  hardware matrix only when its release notes disclose the outstanding gate,
+  retain the fallback and recovery requirements, and make no stable or
+  hardware-qualified claim. All integrity and provenance gates still apply.
+
+### Automated evidence for the r1 prereleases
+
+The corrective-release rehearsal completed the non-device checks available on
+the ARM64 build host:
+
+- all 198 tests in the pinned Phase 91 touchscreen source passed with its
+  documented `python3 -m unittest discover -s tests -v` command;
+- the semantic release validator passed package role, ABI, dependency, module
+  identity, vermagic, source-version, alias, parameter, provenance, checksum,
+  and packaged touchscreen-DTB checks;
+- missing and deliberately mismatched module bundles were both rejected during
+  preflight, before package installation could begin; and
+- all four kernel packages, all three touchscreen modules, and the module
+  manifest extracted from the validated raw image matched the curated payload
+  byte for byte.
+
+These checks cover the refusal behavior in matrix item 4 and the artifact side
+of the release. Items 1–3 and 5–7 still require the physical Surface Pro 11
+transitions described below.
 
 ## Validation matrix
 
-The next release must cover:
+Stable or hardware-qualified promotion must cover:
 
 1. a clean v3 install while an older kernel is running;
 2. a deliberately stale stock-module initramfs, followed by guarded repair;
@@ -168,6 +202,10 @@ The next release must cover:
   initramfs is rebuilt and inspected.
 - The original v3 release and tag were removed on 2026-08-07. This ADR retains
   the audit evidence; a corrective successor must use a new immutable tag.
+- The authorized r1 prereleases can make corrected artifacts available for
+  community testing before the complete hardware matrix finishes, but their
+  experimental status and the remaining gate become part of the public
+  release record.
 
 ## Related
 

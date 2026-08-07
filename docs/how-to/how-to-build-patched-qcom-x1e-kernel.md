@@ -175,11 +175,15 @@ branch configures the DMIC clock at 4.8 MHz, which reintroduces microphone
 static, so the Surface Pro 11 v2 patch set restores the validated 2.4 MHz
 clock and gives the result the distinct `7.2-rc5-jg-0sp11v2` ABI:
 
+Use the immutable `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag for a release build.
+The moving `jg/ubuntu-qcom-x1e-7.2rc` branch is useful for development but is
+not durable release provenance.
+
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
   --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v2" \
   --build-target "binary-indep binary-qcom-x1e" \
@@ -208,7 +212,7 @@ the distinct `7.2-rc5-jg-0sp11v3` ABI:
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
   --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
   --build-target "binary-indep binary-qcom-x1e" \

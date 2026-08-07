@@ -3,11 +3,14 @@ set -euo pipefail
 
 KERNEL_DEBS_DIR="payload/kernel-debs"
 ARTIFACTS_DIR="build/docker-sp11-qcom-x1e-kernel/artifacts"
-PATCH_DIR="patches/ubuntu-qcom-x1e-7.0"
+PATCH_DIRS=("patches/ubuntu-qcom-x1e-7.0")
+PATCH_DIR_EXPLICIT="false"
 OUT_DIR=""
 RELEASE_NAME=""
 SOURCE_URL="https://git.launchpad.net/~ubuntu-concept/ubuntu/+source/linux/+git/resolute"
 SOURCE_BRANCH="qcom-x1e-7.0"
+SOURCE_URL_EXPLICIT="false"
+SOURCE_BRANCH_EXPLICIT="false"
 DOCKER_IMAGE=""
 ALLOW_DIRTY="false"
 ALLOW_MISSING_SOURCE="false"
@@ -36,7 +39,8 @@ Options:
                           default $KERNEL_DEBS_DIR.
   --artifacts-dir DIR     Directory containing local build manifests,
                           default $ARTIFACTS_DIR.
-  --patch-dir DIR         Patch directory, default $PATCH_DIR.
+  --patch-dir DIR         Patch directory. Repeat to record ordered patch sets;
+                          default ${PATCH_DIRS[0]}.
   --release-name NAME     Release/tag name. If omitted, derived from package
                           version when possible.
   --out-dir DIR           Output directory. If omitted, defaults to
@@ -109,7 +113,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --patch-dir)
       require_arg "$1" "${2:-}"
-      PATCH_DIR="$2"
+      if [ "$PATCH_DIR_EXPLICIT" != "true" ]; then
+        PATCH_DIRS=()
+        PATCH_DIR_EXPLICIT="true"
+      fi
+      PATCH_DIRS+=("$2")
       shift 2
       ;;
     --release-name)
@@ -125,11 +133,13 @@ while [ "$#" -gt 0 ]; do
     --source-url)
       require_arg "$1" "${2:-}"
       SOURCE_URL="$2"
+      SOURCE_URL_EXPLICIT="true"
       shift 2
       ;;
     --source-branch)
       require_arg "$1" "${2:-}"
       SOURCE_BRANCH="$2"
+      SOURCE_BRANCH_EXPLICIT="true"
       shift 2
       ;;
     --docker-image)
@@ -211,10 +221,12 @@ if [ ! -d "$KERNEL_DEBS_DIR" ]; then
   exit 1
 fi
 
-if [ ! -d "$PATCH_DIR" ]; then
-  echo "Patch directory not found: $PATCH_DIR" >&2
-  exit 1
-fi
+for patch_dir in "${PATCH_DIRS[@]}"; do
+  if [ ! -d "$patch_dir" ]; then
+    echo "Patch directory not found: $patch_dir" >&2
+    exit 1
+  fi
+done
 
 debs=()
 while IFS= read -r deb; do
@@ -510,6 +522,10 @@ OUT_DIR_DISPLAY="$release_root/$out_leaf"
 build_manifest="$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
 source_mode=""
 source_head=""
+manifest_source_url=""
+manifest_source_ref=""
+apt_source_spec=""
+manifest_patch_dirs=""
 build_target=""
 jobs=""
 rules_runner=""
@@ -517,9 +533,29 @@ rules_runner=""
 if [ -f "$build_manifest" ]; then
   source_mode="$(awk -F': ' '$1 == "Source mode" { print $2; exit }' "$build_manifest")"
   source_head="$(awk -F': ' '$1 == "Source HEAD" { print $2; exit }' "$build_manifest")"
+  manifest_source_url="$(awk -F': ' '$1 == "Source URL" { print $2; exit }' "$build_manifest")"
+  manifest_source_ref="$(awk -F': ' '$1 == "Source ref" { print $2; exit }' "$build_manifest")"
+  apt_source_spec="$(awk -F': ' '$1 == "Apt source spec" { print $2; exit }' "$build_manifest")"
+  manifest_patch_dirs="$(awk -F': ' '$1 == "Patch directories" || $1 == "Patch directory" { print $2; exit }' "$build_manifest")"
   build_target="$(awk -F': ' '$1 == "Build target" { print $2; exit }' "$build_manifest")"
   jobs="$(awk -F': ' '$1 == "Jobs" { print $2; exit }' "$build_manifest")"
   rules_runner="$(awk -F': ' '$1 == "Rules runner" { print $2; exit }' "$build_manifest")"
+fi
+
+if [ "$SOURCE_URL_EXPLICIT" != "true" ] && [ -n "$manifest_source_url" ]; then
+  SOURCE_URL="$manifest_source_url"
+fi
+if [ "$SOURCE_BRANCH_EXPLICIT" != "true" ] && [ -n "$manifest_source_ref" ]; then
+  SOURCE_BRANCH="$manifest_source_ref"
+fi
+
+if [ -n "$manifest_source_url" ] && [ "$SOURCE_URL" != "$manifest_source_url" ]; then
+  echo "--source-url does not match the URL recorded by the build manifest." >&2
+  exit 1
+fi
+if [ -n "$manifest_source_ref" ] && [ "$SOURCE_BRANCH" != "$manifest_source_ref" ]; then
+  echo "--source-branch does not match the ref recorded by the build manifest." >&2
+  exit 1
 fi
 
 repo_commit="$(git rev-parse HEAD)"
@@ -555,11 +591,73 @@ fi
 
 if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   for source_asset in "${SOURCE_ASSETS[@]}"; do
-    if [ ! -f "$source_asset" ]; then
-      echo "Source asset not found: $source_asset" >&2
+    if [ ! -f "$source_asset" ] || [ -L "$source_asset" ]; then
+      echo "Source asset must be a regular, non-symlinked file: $source_asset" >&2
       exit 1
     fi
   done
+fi
+
+if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
+  if [ ! -f "$build_manifest" ] || [ -L "$build_manifest" ]; then
+    echo "Refusing publishable assets without a kernel build manifest: $build_manifest" >&2
+    echo "Pass --artifacts-dir for the exact build being released." >&2
+    exit 1
+  fi
+
+  case "$source_mode" in
+    git)
+      if [[ ! "$source_head" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]]; then
+        echo "Git build manifest has a missing or invalid immutable Source HEAD." >&2
+        exit 1
+      fi
+      if [ -z "$manifest_source_url" ] && [ "$SOURCE_URL_EXPLICIT" != "true" ]; then
+        echo "Git build manifest has no Source URL; pass --source-url explicitly." >&2
+        exit 1
+      fi
+      if [ -z "$manifest_source_ref" ] && [ "$SOURCE_BRANCH_EXPLICIT" != "true" ]; then
+        echo "Git build manifest has no Source ref; pass --source-branch explicitly." >&2
+        exit 1
+      fi
+      ;;
+    apt)
+      if [ -z "$apt_source_spec" ]; then
+        echo "Apt build manifest has no exact Apt source spec." >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "Build manifest has a missing or unsupported Source mode: ${source_mode:-unknown}" >&2
+      exit 1
+      ;;
+  esac
+
+  for required_build_field in "$build_target" "$jobs" "$rules_runner"; do
+    if [ -z "$required_build_field" ] || [ "$required_build_field" = "unknown" ]; then
+      echo "Build manifest is missing target, jobs, or rules-runner provenance." >&2
+      exit 1
+    fi
+  done
+
+  if [ -z "$manifest_patch_dirs" ]; then
+    echo "Build manifest does not record its patch directory or directories." >&2
+    exit 1
+  fi
+
+  manifest_patch_basenames=()
+  for manifest_patch_dir in $manifest_patch_dirs; do
+    manifest_patch_basenames+=("$(basename "$manifest_patch_dir")")
+  done
+  release_patch_basenames=()
+  for patch_dir in "${PATCH_DIRS[@]}"; do
+    release_patch_basenames+=("$(basename "$patch_dir")")
+  done
+  if [ "${manifest_patch_basenames[*]}" != "${release_patch_basenames[*]}" ]; then
+    echo "Release patch directories do not match the ordered build manifest patch directories." >&2
+    echo "Build: ${manifest_patch_basenames[*]}" >&2
+    echo "Release: ${release_patch_basenames[*]}" >&2
+    exit 1
+  fi
 fi
 
 if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
@@ -697,6 +795,9 @@ fi
   echo "Source URL: ${SOURCE_URL:-unknown}"
   echo "Source branch: ${SOURCE_BRANCH:-unknown}"
   echo "Source HEAD: ${source_head:-unknown}"
+  if [ "$source_mode" = "apt" ]; then
+    echo "Apt source spec: ${apt_source_spec:-unknown}"
+  fi
   echo "Docker image: $DOCKER_IMAGE"
   echo "Build target: ${build_target:-unknown}"
   echo "Jobs: ${jobs:-unknown}"
@@ -751,11 +852,13 @@ fi
   echo
   echo "## Patches"
   echo
-  find "$PATCH_DIR" -maxdepth 1 -type f -name '*.patch' | sort | while IFS= read -r patch; do
-    base="$(basename "$patch")"
-    sha="$(shasum -a 256 "$patch" | awk '{print $1}')"
-    echo "- $base"
-    echo "  - SHA256: $sha"
+  for patch_dir in "${PATCH_DIRS[@]}"; do
+    find "$patch_dir" -maxdepth 1 -type f -name '*.patch' | sort | while IFS= read -r patch; do
+      base="$(basename "$patch")"
+      sha="$(shasum -a 256 "$patch" | awk '{print $1}')"
+      echo "- $patch_dir/$base"
+      echo "  - SHA256: $sha"
+    done
   done
 } > "$OUT_DIR/sp11-kernel-release-manifest.txt"
 
@@ -833,9 +936,17 @@ Recorded source:
 - Source URL: \`${SOURCE_URL:-unknown}\`
 - Source ref: \`${SOURCE_BRANCH:-unknown}\`
 - Source HEAD: \`${source_head:-unknown}\`
-- Docker image: \`$DOCKER_IMAGE\`
-- Patch directory: \`$PATCH_DIR\`
 EOF
+
+if [ "$source_mode" = "apt" ]; then
+  echo "- Apt source spec: \`${apt_source_spec:-unknown}\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+fi
+
+echo "- Docker image: \`$DOCKER_IMAGE\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+
+for patch_dir in "${PATCH_DIRS[@]}"; do
+  echo "- Patch directory: \`$patch_dir\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+done
 
 if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
   cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF

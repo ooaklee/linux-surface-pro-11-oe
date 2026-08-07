@@ -81,25 +81,66 @@ For git-fallback builds, use a patched source archive or another durable source
 asset that contains the exact upstream source plus the project patches used for
 the binary release.
 
-If the kernel was built with the Docker workflow, the named build volume can be
-used to create a local source archive. One draft pattern is:
+If the kernel was built with the Docker workflow, create the source archive
+from the tracked files in the patched worktree. Do not archive the whole
+post-build directory: it also contains generated objects and packaging output
+that are not corresponding source and can make the archive too large to
+publish.
+
+For the fresh `7.2-rc5-jg-0sp11v3` build, the source worktree is in the named
+Docker volume used by the build command. The following command verifies the
+immutable upstream commit and the expected patched tracked-file set, then
+archives only files known to git. The volume is mounted read-only:
 
 ```bash
 mkdir -p build/release-source
 
 docker run --rm --platform linux/arm64 \
-  -v sp11-qcom-x1e-kernel-build:/linux-work:ro \
+  -v sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v3-r1:/linux-work:ro \
   -v "$PWD/build/release-source:/out" \
-  ubuntu:25.10 \
+  ubuntu:26.04 \
   bash -lc '
-    cd /linux-work/source/git-qcom-x1e-7.0
-    tar --exclude=.git -caf /out/sp11-qcom-x1e-7.0.0-22.22-rfkill1-patched-source.tar.xz .
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    export XZ_OPT="-T0 -6"
+    apt-get update
+    apt-get install -y --no-install-recommends git tar xz-utils
+
+    source_dir=/linux-work/source/git-jg-ubuntu-qcom-x1e-7.2-rc5-jg-0
+    archive_root=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1-patched-source
+    cd "$source_dir"
+
+    test "$(git rev-parse HEAD)" = \
+      8f953dd060bc6e8fb86ca2ea8a92f258141c0169
+    git diff --check
+    test "$(git diff --name-only HEAD)" = "$(printf "%s\n" \
+      arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi \
+      debian.qcom-x1e/changelog \
+      debian.qcom-x1e/config/annotations)"
+    test "$(git -c core.abbrev=40 diff --binary --full-index HEAD | \
+      sha256sum | cut -d " " -f 1)" = \
+      96004d57880b7827537f90c8820cdd46a9687519d669342f81d39e73d4b4c02b
+
+    git ls-files -z | tar \
+      --null \
+      --verbatim-files-from \
+      --no-recursion \
+      --files-from=- \
+      --format=gnu \
+      --sort=name \
+      --mtime=@0 \
+      --owner=0 \
+      --group=0 \
+      --numeric-owner \
+      --transform="flags=r;s|^|$archive_root/|" \
+      -cJf "/out/$archive_root.tar.xz"
   '
 ```
 
-Before publishing, review that archive for the intended source state. The
-helper can enforce that a source file exists, but it cannot prove the source
-asset is legally or technically sufficient.
+Review the archive before publishing. It must have one top-level directory,
+must not contain `.git`, and must contain the patched versions of the three
+tracked files checked above. The helper can enforce that a source file exists,
+but it cannot prove the source asset is legally or technically sufficient.
 
 For an `sp11v3` release, build the touchscreen bundle against the release ABI
 and preserve the generated provenance manifest:
@@ -107,7 +148,7 @@ and preserve the generated provenance manifest:
 ```bash
 ./scripts/build-sp11-touchscreen-modules.sh \
   --release 7.2-rc5-jg-0sp11v3-qcom-x1e \
-  --out-dir build/sp11v3-touchscreen-modules
+  --out-dir build/sp11v3-touchscreen-modules-final
 ```
 
 4. Prepare release assets.
@@ -119,19 +160,31 @@ and preserve the generated provenance manifest:
 ```
 
 An `sp11v3` release must also supply the ABI-matched module directory and its
-immutable source provenance. Publish it under a new corrective tag; do not
-move the existing public v3 tag:
+immutable source provenance. The original v3 tag is retired and must not be
+reused. The fresh corrective release keeps the package ABI
+`7.2-rc5-jg-0sp11v3` but uses the new immutable release tag
+`sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`:
 
 ```bash
 ./scripts/prepare-sp11-kernel-release-assets.sh \
   --kernel-debs-dir payload/kernel-debs \
+  --artifacts-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3-r1/artifacts \
+  --patch-dir patches/jglathe-qcom-x1e-7.2-rc5 \
   --patch-dir patches/sp11-qcom-x1e-7.2-rc5-v3 \
   --release-name sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1 \
-  --source-asset build/release-source/sp11-v3-patched-source.tar.xz \
-  --touchscreen-modules-dir build/sp11v3-touchscreen-modules \
+  --source-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --source-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
+  --docker-image ubuntu:26.04 \
+  --source-asset build/release-source/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1-patched-source.tar.xz \
+  --touchscreen-modules-dir build/sp11v3-touchscreen-modules-final \
   --touchscreen-source-url https://github.com/geocausa/SP11X1e-touchscreen.git \
   --touchscreen-source-ref 6bbcf7a4759a73014047a57e819219dd7f34951a
 ```
+
+Repeat `--patch-dir` in the same order used for the kernel build. The release
+manifest must list all four applied patches: the Johan G. annotation update
+and the three Surface Pro 11 v3 patches. Supplying only the v3 directory makes
+the source provenance incomplete.
 
 The helper writes an ignored directory under:
 
@@ -145,9 +198,10 @@ local rehearsal, never for a public binary release.
 5. Review the generated release directory.
 
 ```bash
-find build/release/sp11-qcom-x1e-7.0.0-22.22-rfkill1 -maxdepth 1 -type f -print | sort
-sed -n '1,220p' build/release/sp11-qcom-x1e-7.0.0-22.22-rfkill1/sp11-kernel-release-manifest.txt
-sed -n '1,220p' build/release/sp11-qcom-x1e-7.0.0-22.22-rfkill1/RELEASE-NOTES.md
+TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1
+find "build/release/$TAG" -maxdepth 1 -type f -print | sort
+sed -n '1,220p' "build/release/$TAG/sp11-kernel-release-manifest.txt"
+sed -n '1,220p' "build/release/$TAG/RELEASE-NOTES.md"
 ```
 
 Check that the directory contains:
@@ -164,9 +218,8 @@ Check that the directory contains:
 6. Verify checksums from inside the generated release directory.
 
 ```bash
-cd build/release/sp11-qcom-x1e-7.0.0-22.22-rfkill1
-shasum -a 256 -c SHA256SUMS
-cd -
+(cd build/release/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1 && \
+  shasum -a 256 -c SHA256SUMS)
 ```
 
 Then run the semantic validator. It checks package identities, exact asset and
@@ -182,7 +235,19 @@ OLED touchscreen device tree:
 
 For a pre-tag local rehearsal, omit `--tag` and `--remote`. Run the full command
 after creating the tag and again against a fresh directory containing exactly
-the downloaded release assets.
+the downloaded release assets. If `gh release create` created a new remote tag,
+fetch that exact tag before invoking the validator, which checks both its local
+and remote targets:
+
+```bash
+TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1
+git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+
+./scripts/validate-sp11-touchscreen-release.sh \
+  --dir build/release/$TAG \
+  --tag "$TAG" \
+  --remote origin
+```
 
 7. Review the generated publish command.
 
@@ -197,19 +262,42 @@ Do not add extra assets to the command unless you also regenerate
 
 8. Publish as a prerelease.
 
-Run the generated `gh release create ... --prerelease ...` command only after
-the source, checksum, privacy, and release-note reviews pass.
+Run the generated `gh release create ... --target <support-commit>
+--prerelease ...` command only after the source, checksum, privacy, and
+release-note reviews pass. The target must be the clean support commit recorded
+in both generated manifests; never let GitHub infer the default branch tip.
+
+The project owner authorized the fresh r1 kernel and image as explicitly
+experimental prereleases while the complete clean-install hardware matrix is
+still outstanding. This exception does not make either artifact
+hardware-qualified and does not waive the clean-install gate for a stable or
+promoted release. The release notes must disclose that distinction and retain
+the fallback-kernel and recovery-media requirements.
 
 9. Verify the published release.
 
 ```bash
-gh release view sp11-qcom-x1e-7.0.0-22.22-rfkill1 --json tagName,isPrerelease,assets
+TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1
+gh release view "$TAG" \
+  --json tagName,targetCommitish,isPrerelease,assets
+
+download_dir="$(mktemp -d)"
+gh release download "$TAG" \
+  --repo ooaklee/linux-surface-pro-11-oe \
+  --dir "$download_dir"
+git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+
+./scripts/validate-sp11-touchscreen-release.sh \
+  --dir "$download_dir" \
+  --tag "$TAG" \
+  --remote origin
 ```
 
 Confirm the release is marked as a prerelease and that every uploaded binary or
-source asset is listed in `SHA256SUMS`. Download the assets into a new empty
-directory and rerun `validate-sp11-touchscreen-release.sh` with `--tag` and
-`--remote origin`.
+source asset is listed in `SHA256SUMS`. Confirm the remote tag resolves to the
+manifest support commit. Download the assets into a new empty directory, fetch
+the new tag locally, and rerun `validate-sp11-touchscreen-release.sh` with
+`--tag` and `--remote origin`.
 
 ## Expected Output
 
@@ -225,6 +313,25 @@ The local release directory should contain a flat asset set:
 - for `sp11v3`, `gpi.ko`, `spi-geni-qcom.ko`, `mshw0485_touch.ko`, and their
   provenance manifest,
 - `RELEASE-NOTES.md`.
+
+For the fresh r1 release, the exact upload set is:
+
+```text
+linux-headers-7.2-rc5-jg-0sp11v3-qcom-x1e_7.2-rc5-jg-0sp11v3_arm64.deb
+linux-image-7.2-rc5-jg-0sp11v3-qcom-x1e_7.2-rc5-jg-0sp11v3_arm64.deb
+linux-modules-7.2-rc5-jg-0sp11v3-qcom-x1e_7.2-rc5-jg-0sp11v3_arm64.deb
+linux-qcom-x1e-headers-7.2-rc5-jg-0sp11v3_7.2-rc5-jg-0sp11v3_all.deb
+gpi.ko
+spi-geni-qcom.ko
+mshw0485_touch.ko
+sp11-touchscreen-modules-manifest.txt
+sp11-kernel-release-manifest.txt
+sp11-kernel-debs.txt
+sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1-patched-source.tar.xz
+SHA256SUMS
+```
+
+`RELEASE-NOTES.md` is the GitHub release body and is not an uploaded asset.
 
 The published GitHub release should include the `.deb` packages, checksums,
 manifests, and source assets. `RELEASE-NOTES.md` should normally be used as the

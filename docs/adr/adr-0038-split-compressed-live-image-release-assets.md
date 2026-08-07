@@ -18,6 +18,13 @@ pointed to the parent of the support commit recorded by its manifest. The
 split-image design remains valid, but a future image must bind its tag to the
 exact manifest commit.
 
+Corrective-release amendment (2026-08-07): the fresh image uses the new
+immutable tag `sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1`. The project
+owner authorized it as an experimental prerelease before completion of the
+clean-install hardware matrix. It is not a hardware-qualified promotion, and
+the exception does not relax checksum, provenance, explicit-target, or
+fresh-download validation requirements.
+
 ## Context
 
 The Surface Pro 11 bring-up can produce a direct-boot Ubuntu live USB raw disk
@@ -82,7 +89,8 @@ will:
 6. write `sp11-live-image-release-manifest.txt`
 7. write `SHA256SUMS` for the uploaded parts and metadata files
 8. write `RELEASE-NOTES.md` with reconstruct, verify, and write commands
-9. print a `gh release create` command that uploads only GitHub-safe assets
+9. print a `gh release create` command with an explicit
+   `--target <support-commit>` that uploads only GitHub-safe assets
 
 The default part size is 2,000,000,000 bytes. The helper rejects any configured
 part size that is greater than or equal to 2,147,483,648 bytes.
@@ -109,6 +117,36 @@ sudo dd if=sp11-ubuntu-live-direct.img of=/dev/diskX bs=16M conv=fsync status=pr
 
 The exact hashes are generated into the release notes for each release.
 
+For an image carrying an installed-system kernel payload, the notes and image
+outline must also distinguish the two boot contexts. The live environment
+continues to use the concept ISO's casper kernel. Kernel packages and
+exact-ABI touchscreen modules under `SP11DATA/payload/kernel-debs` are consumed
+only by the guarded installed-system flow; their presence does not add
+touchscreen support to the live session.
+
+For the corrective r1 image, the generated publication command must have this
+shape:
+
+```bash
+SUPPORT_COMMIT="$(git rev-parse HEAD)"
+
+gh release create sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1 \
+  --target "$SUPPORT_COMMIT" \
+  --prerelease \
+  --title "Surface Pro 11 live USB: 7.2-rc5-jg-0sp11v3 r1" \
+  --notes-file RELEASE-NOTES.md \
+  sp11-live-image-outline.txt \
+  sp11-live-image-release-manifest.txt \
+  SHA256SUMS \
+  sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1.img.zst.part-aa \
+  sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1.img.zst.part-ab \
+  sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1.img.zst.part-ac
+```
+
+`$SUPPORT_COMMIT` must equal the clean support commit in the image manifest.
+The retired image tag must not be reused, and GitHub must not infer the target
+from the default branch.
+
 ## Consequences
 
 The image can be published entirely through GitHub Releases without relying on
@@ -122,7 +160,9 @@ The raw `.img` is intentionally not uploaded as a release asset. The uploaded
 payload is the split compressed archive plus metadata files.
 
 The release remains experimental. The raw image is unsigned, and users must
-verify checksums and choose the correct removable disk before writing.
+verify checksums and choose the correct removable disk before writing. The r1
+authorization permits experimental distribution while the hardware matrix is
+outstanding; it does not justify a stable or hardware-qualified claim.
 
 ## Alternatives Considered
 
