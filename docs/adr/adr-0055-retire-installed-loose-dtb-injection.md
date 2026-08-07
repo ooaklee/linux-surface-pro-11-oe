@@ -36,11 +36,22 @@ If `/boot/sp11-denali.dtb` exists from an earlier release, leave it
 byte-for-byte untouched as inert recovery evidence. Do not select, replace,
 rename, chmod, delete, or use it as evidence of the live FDT.
 
-Regenerate GRUB only while operating on the live root and propagate every
-`update-grub` failure. An offline `--root` installation retires the managed
-files but does not execute target binaries or modify the target `grub.cfg`.
-The installed-system preparation helper may regenerate GRUB after entering the
-target chroot, where that target is `/`.
+The retire-only operation is a transaction. Before moving any managed leaf, it
+records the three exact leaves and the historical loose-DTB identity. On the
+live root it also snapshots the prior `grub.cfg` and `grubenv` in private
+same-filesystem backup directories. It commits only after `update-grub`
+succeeds, all three leaves remain absent, generated `grub.cfg` has no
+project-managed loose-DTB line, and both the historical loose DTB and `grubenv`
+remain unchanged.
+
+Any failure restores the exact managed leaves and prior `grub.cfg`. If a path
+acquires a different occupant during the transaction, rollback does not delete
+it; the original remains in a reported mode-0700 recovery backup and the
+operator must not reboot or run `apt` or `dpkg` until the conflict is reviewed.
+An offline `--root` retirement uses the same bounded leaf transaction but does
+not execute target binaries or modify target GRUB state. The installed-system
+preparation helper may regenerate GRUB after entering the target chroot, where
+that target is `/`.
 
 A guarded kernel-package transaction runs
 `install-sp11-support.sh --retire-loose-dtb-only` before invoking `apt` or

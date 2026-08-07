@@ -51,6 +51,8 @@ RELEASE_BUILD="false"
 SUPPORT_HEAD_START=""
 CONTROL_DIR=""
 PAYLOAD_STAGE=""
+KERNEL_BASELINE=""
+IMMUTABLE_APT="false"
 
 usage() {
   cat <<EOF
@@ -138,7 +140,8 @@ cleanup_control_dir() {
       if [ -d "$CONTROL_DIR" ] && [ ! -L "$CONTROL_DIR" ]; then
         rm -f \
           "$CONTROL_DIR/docker-build-args.txt" \
-          "$CONTROL_DIR/docker-build-inside.sh"
+          "$CONTROL_DIR/docker-build-inside.sh" \
+          "$CONTROL_DIR/sp11-oci-index.json"
         rmdir "$CONTROL_DIR" 2>/dev/null || true
       else
         echo "warning: refusing to follow changed Docker control directory: $CONTROL_DIR" >&2
@@ -272,7 +275,8 @@ validate_legacy_control_paths() {
 
   for control_path in \
     "$work_abs/docker-build-args.txt" \
-    "$work_abs/docker-build-inside.sh"; do
+    "$work_abs/docker-build-inside.sh" \
+    "$work_abs/sp11-oci-index.json"; do
     if [ -L "$control_path" ]; then
       echo "Refusing symlinked Docker control-file tripwire: $control_path" >&2
       return 1
@@ -542,6 +546,7 @@ is_case_insensitive_dir() {
 }
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+KERNEL_BASELINE="$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -751,6 +756,10 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     echo "--release-build cannot copy packages into the tracked payload tree." >&2
     exit 2
   fi
+  if [ -n "$APT_SOURCES_FILE" ]; then
+    echo "--release-build cannot use mutable --apt-sources input." >&2
+    exit 2
+  fi
 fi
 
 capture_release_support_start
@@ -886,6 +895,45 @@ if ! work_abs="$(ensure_safe_work_dir "$WORK_DIR")"; then
   exit 1
 fi
 
+if [ "$RELEASE_BUILD" = "true" ] && [ "$DRY_RUN" != "true" ]; then
+  [ -f "$KERNEL_BASELINE" ] && [ ! -L "$KERNEL_BASELINE" ] || {
+    echo "Release kernel baseline is missing or unsafe: $KERNEL_BASELINE" >&2
+    exit 1
+  }
+  "$repo_dir/scripts/validate-sp11-kernel-baseline.sh" "$KERNEL_BASELINE"
+  # shellcheck disable=SC1090
+  . "$KERNEL_BASELINE"
+  [ "$IMAGE" = "$SP11_KERNEL_DOCKER_IMAGE" ] || {
+    echo "--release-build image does not match the immutable kernel baseline." >&2
+    exit 2
+  }
+  [ "$PLATFORM" = "$SP11_KERNEL_DOCKER_PLATFORM" ] || {
+    echo "--release-build platform does not match the immutable kernel baseline." >&2
+    exit 2
+  }
+  [ "$GIT_URL" = "$SP11_KERNEL_UPSTREAM_URL" ] || {
+    echo "--release-build Git URL does not match the immutable kernel baseline." >&2
+    exit 2
+  }
+  [ "$GIT_BRANCH" = "$SP11_KERNEL_UPSTREAM_REF" ] || {
+    echo "--release-build Git ref does not match the immutable kernel baseline." >&2
+    exit 2
+  }
+  [ "$EXPECTED_SOURCE_COMMIT" = "$SP11_KERNEL_UPSTREAM_COMMIT" ] || {
+    echo "--release-build source commit does not match the immutable kernel baseline." >&2
+    exit 2
+  }
+  [ "$BUILD_TARGET" = "$SP11_KERNEL_BUILD_TARGET" ] || {
+    echo "--release-build target does not match the immutable kernel baseline." >&2
+    exit 2
+  }
+  [ -z "$PATCH_DIR" ] && [ "$PATCH_DIRS" = "$SP11_KERNEL_PATCH_DIRS" ] || {
+    echo "--release-build patch directories do not match the immutable kernel baseline." >&2
+    exit 2
+  }
+  IMMUTABLE_APT="true"
+fi
+
 if [ "$COPY_TO_PAYLOAD" = "true" ]; then
   if ! validate_payload_dir "$PAYLOAD_DIR"; then
     exit 1
@@ -903,6 +951,31 @@ if [ "$DRY_RUN" != "true" ]; then
   require_tool docker
 fi
 
+if [ "$IMMUTABLE_APT" = "true" ]; then
+  require_tool python3
+  for release_dir in \
+    "$work_abs/apt-archives" \
+    "$work_abs/apt-indexes" \
+    "$work_abs/apt-lists" \
+    "$work_abs/artifacts"; do
+    if [ -L "$release_dir" ] || { [ -e "$release_dir" ] && [ ! -d "$release_dir" ]; }; then
+      echo "Refusing unsafe release-build directory: $release_dir" >&2
+      exit 1
+    fi
+    if [ ! -e "$release_dir" ]; then
+      mkdir -m 700 "$release_dir"
+    fi
+    if [ "$(cd "$release_dir" && pwd -P)" != "$release_dir" ]; then
+      echo "Release-build directory has a symlinked path component: $release_dir" >&2
+      exit 1
+    fi
+    if find "$release_dir" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+      echo "Release-build directory must start empty: $release_dir" >&2
+      exit 1
+    fi
+  done
+fi
+
 if ! validate_legacy_control_paths; then
   exit 1
 fi
@@ -916,6 +989,20 @@ trap 'cleanup_control_dir; cleanup_payload_stage' EXIT
 
 args_file="$CONTROL_DIR/docker-build-args.txt"
 run_script="$CONTROL_DIR/docker-build-inside.sh"
+oci_index_file="$CONTROL_DIR/sp11-oci-index.json"
+
+if [ "$IMMUTABLE_APT" = "true" ]; then
+  if ! docker buildx imagetools inspect --raw "$IMAGE" > "$oci_index_file"; then
+    echo "Could not capture the raw pinned OCI index." >&2
+    exit 1
+  fi
+  chmod 600 "$oci_index_file"
+  python3 "$repo_dir/scripts/validate-sp11-oci-index.py" \
+    --raw-index "$oci_index_file" \
+    --index-ref "$SP11_KERNEL_DOCKER_IMAGE" \
+    --platform "$SP11_KERNEL_DOCKER_PLATFORM" \
+    --expected-platform-manifest "$SP11_KERNEL_DOCKER_PLATFORM_MANIFEST"
+fi
 
 inner_args=(
   --source "$SOURCE_MODE"
@@ -961,9 +1048,26 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 artifact_dir=/work/artifacts
-echo "Cleaning copied artifact shuttle directory: $artifact_dir"
-rm -rf "$artifact_dir"
-mkdir -p "$artifact_dir"
+if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
+  for required_dir in /work /work/apt-archives /work/apt-indexes /work/apt-lists "$artifact_dir"; do
+    [ -d "$required_dir" ] && [ ! -L "$required_dir" ] || {
+      echo "Unsafe immutable build directory: $required_dir" >&2
+      exit 1
+    }
+    [ "$(cd "$required_dir" && pwd -P)" = "$required_dir" ] || {
+      echo "Non-canonical immutable build directory: $required_dir" >&2
+      exit 1
+    }
+  done
+  if find "$artifact_dir" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+    echo "Immutable release artifact directory must start empty." >&2
+    exit 1
+  fi
+else
+  echo "Cleaning copied artifact shuttle directory: $artifact_dir"
+  rm -rf "$artifact_dir"
+  mkdir -p "$artifact_dir"
+fi
 
 enable_deb_src() {
   local file tmp
@@ -1001,18 +1105,33 @@ enable_deb_src() {
   done
 }
 
-if [ -f /tmp/sp11-apt-sources ]; then
+if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
+  [ ! -e /tmp/sp11-apt-sources ] || {
+    echo "Immutable release build refuses a mutable APT sources mount." >&2
+    exit 1
+  }
+  /repo/scripts/sp11-immutable-apt.sh bootstrap \
+    --baseline /repo/config/kernel-baselines/7.2-rc5-jg-0.env \
+    --archives-dir /work/apt-archives \
+    --index-cache-dir /work/apt-indexes \
+    --retained-lists-dir /work/apt-lists \
+    --work-dir /work \
+    --kernel-work-dir "${SP11_CONTAINER_WORK_DIR:-/linux-work}"
+elif [ -f /tmp/sp11-apt-sources ]; then
   case "${SP11_APT_SOURCES_NAME:-sp11-qcom-x1e.sources}" in
     *.sources) install -m 0644 /tmp/sp11-apt-sources /etc/apt/sources.list.d/sp11-qcom-x1e.sources ;;
     *) install -m 0644 /tmp/sp11-apt-sources /etc/apt/sources.list.d/sp11-qcom-x1e.list ;;
   esac
 fi
 
-if [ "${SP11_ENABLE_DEB_SRC:-true}" = "true" ]; then
+if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" != "true" ] &&
+   [ "${SP11_ENABLE_DEB_SRC:-true}" = "true" ]; then
   enable_deb_src
 fi
 
-apt-get update
+if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" != "true" ]; then
+  apt-get update
+fi
 apt-get install -y --no-install-recommends ca-certificates git dpkg-dev
 
 build_args=()
@@ -1036,17 +1155,36 @@ find_qcom_kernel_debs() {
 }
 
 container_work_dir="${SP11_CONTAINER_WORK_DIR:-/linux-work}"
-if [ "$container_work_dir" != "/work" ]; then
-  while IFS= read -r deb; do
-    [ -n "$deb" ] || continue
-    cp -f "$deb" "$artifact_dir/"
-  done < <(find_qcom_kernel_debs "$container_work_dir")
+while IFS= read -r deb; do
+  [ -n "$deb" ] || continue
+  cp -f "$deb" "$artifact_dir/"
+done < <(find_qcom_kernel_debs "$container_work_dir")
 
-  for manifest in \
-    "$container_work_dir/sp11-kernel-build-manifest.txt" \
-    "$container_work_dir/sp11-kernel-debs.txt"; do
-    [ -f "$manifest" ] && cp -f "$manifest" "$artifact_dir/"
-  done
+for manifest in \
+  "$container_work_dir/sp11-kernel-build-manifest.txt" \
+  "$container_work_dir/sp11-kernel-debs.txt"; do
+  [ -f "$manifest" ] && cp -f "$manifest" "$artifact_dir/"
+done
+
+if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
+  local_build_deps=()
+  while IFS= read -r deb; do
+    [ -n "$deb" ] && local_build_deps+=("$deb")
+  done < <(find "$container_work_dir" -mindepth 1 -maxdepth 1 -type f \
+    -name '*-build-deps_*.deb' -print | LC_ALL=C sort)
+  if [ "${#local_build_deps[@]}" -ne 1 ]; then
+    echo "Immutable release build requires exactly one generated build-deps Deb; found ${#local_build_deps[@]}." >&2
+    exit 1
+  fi
+  cp -f "${local_build_deps[0]}" "$artifact_dir/"
+  /repo/scripts/sp11-immutable-apt.sh finalize \
+    --baseline /repo/config/kernel-baselines/7.2-rc5-jg-0.env \
+    --archives-dir /work/apt-archives \
+    --index-cache-dir /work/apt-indexes \
+    --retained-lists-dir /work/apt-lists \
+    --work-dir /work \
+    --kernel-work-dir "$container_work_dir" \
+    --output "$artifact_dir/sp11-kernel-apt-provenance.txt"
 fi
 EOF
 chmod 700 "$run_script"
@@ -1056,6 +1194,10 @@ if ! validate_legacy_control_paths; then
 fi
 if ! install_control_file "$args_file" "$work_abs/docker-build-args.txt" ||
    ! install_control_file "$run_script" "$work_abs/docker-build-inside.sh"; then
+  exit 1
+fi
+if [ "$IMMUTABLE_APT" = "true" ] &&
+   ! install_control_file "$oci_index_file" "$work_abs/sp11-oci-index.json"; then
   exit 1
 fi
 cleanup_control_dir
@@ -1078,6 +1220,9 @@ docker_args=(
 
 if [ "$RELEASE_BUILD" = "true" ]; then
   docker_args+=(-e "SP11_EXPECTED_SUPPORT_COMMIT=$SUPPORT_HEAD_START")
+fi
+if [ "$IMMUTABLE_APT" = "true" ]; then
+  docker_args+=(-e "SP11_IMMUTABLE_APT_REQUIRED=true")
 fi
 
 if [ "$CONTAINER_WORK_DIR" != "/work" ]; then
@@ -1121,7 +1266,7 @@ fi
 verify_release_support_stable
 
 if [ "$RELEASE_BUILD" = "true" ]; then
-  if [ "$CONTAINER_WORK_DIR" != "/work" ]; then
+  if [ "$IMMUTABLE_APT" = "true" ] || [ "$CONTAINER_WORK_DIR" != "/work" ]; then
     completed_manifest="$work_abs/artifacts/sp11-kernel-build-manifest.txt"
   else
     completed_manifest="$work_abs/sp11-kernel-build-manifest.txt"
@@ -1132,6 +1277,53 @@ if [ "$RELEASE_BUILD" = "true" ]; then
      ! grep -Fxq 'Build completed: true' "$completed_manifest"; then
     echo "Docker release build completed without a valid final schema-v2 manifest." >&2
     exit 1
+  fi
+  if [ "$IMMUTABLE_APT" = "true" ]; then
+    apt_provenance="$work_abs/artifacts/sp11-kernel-apt-provenance.txt"
+    build_inputs="$work_abs/artifacts/sp11-kernel-build-inputs.txt"
+    if [ ! -f "$apt_provenance" ] || [ -L "$apt_provenance" ]; then
+      echo "Docker release build completed without immutable APT provenance." >&2
+      exit 1
+    fi
+    python3 "$repo_dir/scripts/sp11-kernel-build-inputs.py" write \
+      --baseline "$KERNEL_BASELINE" \
+      --work-dir "$work_abs" \
+      --support-head "$SUPPORT_HEAD_START" \
+      --build-args "$work_abs/docker-build-args.txt" \
+      --entrypoint "$work_abs/docker-build-inside.sh" \
+      --oci-index "$work_abs/sp11-oci-index.json" \
+      --build-manifest "$completed_manifest" \
+      --apt-provenance "$apt_provenance" \
+      --apt-archives-dir "$work_abs/apt-archives" \
+      --apt-lists-dir "$work_abs/apt-lists" \
+      --apt-index-cache-dir "$work_abs/apt-indexes" \
+      --apt-local-build-deps-dir "$work_abs/artifacts" \
+      --apt-pre-inventory "$work_abs/sp11-apt-installed-pre.txt" \
+      --apt-post-inventory "$work_abs/sp11-apt-installed-post.txt" \
+      --output "$build_inputs"
+    python3 "$repo_dir/scripts/sp11-kernel-build-inputs.py" validate \
+      --baseline "$KERNEL_BASELINE" \
+      --work-dir "$work_abs" \
+      --support-head "$SUPPORT_HEAD_START" \
+      --build-args "$work_abs/docker-build-args.txt" \
+      --entrypoint "$work_abs/docker-build-inside.sh" \
+      --oci-index "$work_abs/sp11-oci-index.json" \
+      --build-manifest "$completed_manifest" \
+      --apt-provenance "$apt_provenance" \
+      --apt-archives-dir "$work_abs/apt-archives" \
+      --apt-lists-dir "$work_abs/apt-lists" \
+      --apt-index-cache-dir "$work_abs/apt-indexes" \
+      --apt-local-build-deps-dir "$work_abs/artifacts" \
+      --apt-pre-inventory "$work_abs/sp11-apt-installed-pre.txt" \
+      --apt-post-inventory "$work_abs/sp11-apt-installed-post.txt" \
+      --output "$build_inputs"
+    for required_artifact in "$completed_manifest" "$apt_provenance" "$build_inputs"; do
+      [ -f "$required_artifact" ] && [ ! -L "$required_artifact" ] || {
+        echo "Release build is missing a required provenance artifact: $required_artifact" >&2
+        exit 1
+      }
+    done
+    echo "Publication remains closed: schema-v3 release/image propagation is not implemented."
   fi
 fi
 
@@ -1223,3 +1415,8 @@ if [ "$COPY_TO_PAYLOAD" = "true" ]; then
   echo "Copied generated qcom-x1e .deb files to: $payload_abs"
   echo "Rebuild the live USB image so payload/kernel-debs is available on SP11DATA."
 fi
+
+# This is intentionally the final release-mode operation. The host-side APT
+# envelope and any requested payload copy cannot make a changed support tree
+# acceptable after its recorded HEAD and generated controls were validated.
+verify_release_support_stable

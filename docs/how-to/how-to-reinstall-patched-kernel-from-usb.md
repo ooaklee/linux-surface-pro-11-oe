@@ -136,8 +136,8 @@ cd "$SP11DATA/support"
   your fallback),
 - validates any required touchscreen bundle before changing the target,
 - runs `install-sp11-support.sh --retire-loose-dtb-only` before package
-  installation, removing the three project-managed loose-DTB artifacts and
-  requiring a successful live-root `update-grub`,
+  installation, transactionally removing the three project-managed loose-DTB
+  artifacts and requiring a successful, verified live-root `update-grub`,
 - installs the kernel `.deb` packages with `apt` only after that retirement
   succeeds,
 - runs the full `install-sp11-support.sh --installed-system` flow and requires
@@ -154,6 +154,14 @@ rewrite generated GRUB configuration before the new installer removes it. Any
 initial retirement or GRUB-regeneration failure aborts before package
 installation. A failure in the full installer's final GRUB pass also fails the
 transaction instead of reporting success.
+
+The retire-only transaction snapshots the three managed leaves, prior
+`grub.cfg`, `grubenv`, and historical loose-DTB identity before it changes boot
+state. If it fails, follow its stop message: do not reboot and do not run `apt`
+or `dpkg`. A complete rollback restores the prior managed leaves and
+`grub.cfg`; if a destination changed concurrently, the tool preserves that
+occupant and reports a private recovery backup containing the original. Resolve
+that conflict before continuing.
 
 On the tested installed qcom-x1e Stubble path, each kernel uses the Denali DTB
 embedded in its exact Stubble-wrapped EFI image. The support installer does

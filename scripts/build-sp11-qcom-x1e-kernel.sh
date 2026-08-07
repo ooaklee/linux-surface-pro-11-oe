@@ -709,6 +709,7 @@ install_dependencies() {
 
 install_source_build_dependencies() {
   local control_file="$source_dir/debian/control" rules_file
+  local mk_build_deps_args=(--install)
 
   [ "$INSTALL_DEPS" = "true" ] || return 0
   [ "$SOURCE_MODE" = "git" ] || return 0
@@ -728,9 +729,11 @@ install_source_build_dependencies() {
 
   (
     cd "$work_dir"
+    if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" != "true" ]; then
+      mk_build_deps_args+=(--remove)
+    fi
     as_root mk-build-deps \
-      --install \
-      --remove \
+      "${mk_build_deps_args[@]}" \
       --tool "apt-get -y --no-install-recommends" \
       "$control_file"
   )

@@ -12,14 +12,16 @@ Scope: `7.2-rc5-jg-0sp11v3-qcom-x1e`, build pair A/B
 > removed by an explicit normalization documented below or classified as a
 > relocation-immediate consequence of the compressed payload length.
 >
-> **Immutable future replay: NOT PROVEN.** The OCI index is pinned, but the APT
-> repositories used inside it were not snapshot-pinned and the legacy build
-> manifest does not record downloaded package hashes, the support-repository
-> commit, ordered patch hashes, or the signing-certificate fingerprint.
+> **Immutable future replay for the audited A/B pair: NOT PROVEN.** Those two
+> builds predate the immutable-APT implementation described below. The new
+> path is implemented and hostile-fixture tested, but has not yet completed a
+> real clean kernel build, so it cannot retroactively strengthen this pair.
 >
 > **P0.4 remains in evidence review and is blocked if interpreted bytewise.**
 > This report supports adjacent-pair semantic equivalence; it does not support
-> a bit-for-bit reproducibility claim or close the immutable-input gate.
+> a bit-for-bit reproducibility claim. The P0.4c implementation gate is ready
+> for a real-build verification run; publication schema propagation and the
+> signing decision remain open.
 
 ## Scope and method
 
@@ -291,6 +293,55 @@ the patched-source diff digest, script hashes, and the generated signing
 certificate's identity. A matching legacy manifest hash therefore does not
 fully identify the build.
 
+## Immutable-APT replay implementation after this audit
+
+The release-mode Docker wrapper now has a fail-closed P0.4c implementation for
+the next clean build. This was not used by builds A and B and is therefore not
+evidence that those historical package bytes can be replayed.
+
+The new path pins the direct dated Ubuntu snapshot
+`https://snapshot.ubuntu.com/ubuntu/20260807T000000Z/`, the Ubuntu archive
+keyring hash and signing fingerprint, and the four exact `InRelease` hashes in
+`config/kernel-baselines/7.2-rc5-jg-0.env`. It requires the reviewed suite order
+`resolute`, `resolute-updates`, `resolute-backports`, `resolute-security` and
+all 32 component/index combinations: four components times binary ARM64 and
+source indexes times four suites.
+
+The digest-pinned minimal image has no usable CA bundle at first boot. The
+bootstrap therefore permits a TLS peer-verification exception for one bounded
+bootstrap phase only: a metadata update followed by a download-only install.
+It verifies the signed `InRelease` identities before installing the four exact
+hash-pinned CA/OpenSSL packages, clears the lists, and then repeats the update
+with strict HTTPS. Every selected gzip index is fetched through its signed
+by-hash URI and retained. The acquired APT list view is cross-checked against
+those gzip bytes inside the container.
+
+Every cached `.deb` is authenticated directly from the retained signed
+`Packages.gz` records. Identical records in `-updates` and `-security` are
+accepted only when their size, hash, and archive filename agree; all matching
+signed binary-index locations are recorded. Conflicting records fail. The
+sidecar also binds the exact pre/post installed-package inventories, retained
+list targets, the complete downloaded-Deb lock, and the generated local
+build-dependencies Deb.
+
+A successful release-mode build must produce these three provenance artifacts
+under its artifact directory:
+
+- `sp11-kernel-build-manifest.txt` (`sp11-kernel-build-v2`);
+- `sp11-kernel-apt-provenance.txt` (`sp11-kernel-apt-provenance-v1`); and
+- `sp11-kernel-build-inputs.txt` (`sp11-kernel-build-inputs-v1`).
+
+The outer envelope binds the raw OCI index and unique ARM64 child, generated
+Docker argument and entrypoint files, the schema-v2 manifest, and the APT
+sidecar. Host-side validation independently re-hashes the retained snapshot
+metadata, indexes, lists, Debs, local build-dependencies package, and package
+inventories before and after envelope creation.
+
+P0.4c is therefore **implemented but not yet real-build verified**. The current
+release/image preparers do not consume this v1 envelope. Publication remains
+closed until a later schema version propagates these bindings end to end. The
+release-signing model and byte-reproducibility remediation also remain open.
+
 ## Required remediation before a byte-reproducible claim
 
 1. Set `SOURCE_DATE_EPOCH` from a reviewed immutable source timestamp and set
@@ -301,15 +352,15 @@ fully identify the build.
    certificate through a reproducible signing process or keep unsigned build
    payload production separate from release signing. Never generate an
    unrecorded ephemeral certificate while claiming byte reproducibility.
-3. Use a dated, immutable APT snapshot. Record the snapshot identity and the
-   SHA-256 of every downloaded source and binary package, not only the final
-   installed-package inventory.
-4. Extend the manifest to record the support commit and dirty state; ordered
-   patch paths, individual hashes, and aggregate; patched-source status and
-   binary-diff hashes; exact source commit; OCI index and resolved ARM64
-   platform digest; outer and inner build-script hashes; APT snapshot and
-   downloaded package hashes; signing-certificate fingerprint and serial; and
-   raw plus normalized output hashes.
+3. Run and retain a real clean-build result from the implemented dated-snapshot
+   path, then propagate its APT sidecar and build-inputs envelope through the
+   release/image schemas. Do not treat hostile-fixture coverage as build
+   evidence.
+4. Retain the schema-v2 manifest's existing support HEAD/dirty-state, ordered
+   patch, patched-tree/diff, exact source, output, and certificate bindings.
+   Propagate the v1 envelope's OCI-child, APT, and generated-control identities
+   through a later release/image schema, and add the genuinely missing raw and
+   normalized comparison hashes needed for a byte-reproducibility decision.
 5. Version the comparison and normalization specification. Preserve the raw
    artifacts and raw hashes alongside normalized evidence so later reviewers
    can reproduce every classification.
@@ -327,12 +378,15 @@ classified, and the audit found zero unclassified bytes.
 
 It also demonstrates that the current recipe is **not byte-reproducible**:
 package bytes, raw signed modules, `vmlinuz`, the raw inner Image, and classified
-zboot relocation immediates differ. The mutable APT dependency source means a
-future replay is not yet immutable even though the two adjacent installed
-inventories match.
+zboot relocation immediates differ. The mutable APT dependency source used by
+this historical pair means its future replay is not immutable even though the
+two adjacent installed inventories match. A newer immutable-input
+implementation exists, but no real build has yet verified it.
 
 P0.4 should therefore remain in evidence review. It is blocked if its required
 meaning is bit-for-bit identity, and it must not be cited as complete proof of
-immutable future replay. A reviewer may separately accept the adjacent-pair
-semantic-equivalence result for continued non-release development, provided the
-bytewise and future-input limitations remain explicit.
+immutable future replay. P0.4c remains implemented-but-unverified, and
+publication remains blocked on later schema propagation and a real clean run.
+A reviewer may separately accept the adjacent-pair semantic-equivalence result
+for continued non-release development, provided the bytewise and future-input
+limitations remain explicit.

@@ -229,6 +229,45 @@ the distinct `7.2-rc5-jg-0sp11v3` ABI:
   2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3-build-$(date +%Y%m%d-%H%M%S).log
 ```
 
+For a fresh experimental release-mode verification run, use the baseline's
+exact platform as well as its image digest, start with a clean repository, and
+choose a new work directory and Docker volume:
+
+```bash
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
+  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
+  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
+  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --platform linux/arm64/v8 \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-release-check \
+  --linux-work-volume sp11-qcom-x1e-kernel-release-check \
+  --reset-source \
+  --release-build \
+  --jobs 8
+```
+
+Release mode refuses `--apt-sources`. It uses the exact
+`20260807T000000Z` Ubuntu snapshot and retains the authenticated APT cache,
+signed indexes, acquired list targets, and pre/post installed-package
+inventories beneath the managed work directory. A successful run requires all
+three files below:
+
+```text
+artifacts/sp11-kernel-build-manifest.txt
+artifacts/sp11-kernel-apt-provenance.txt
+artifacts/sp11-kernel-build-inputs.txt
+```
+
+This P0.4c path is implemented and fixture-tested, not yet verified by a real
+kernel build. The last envelope deliberately records publication schema
+propagation as incomplete. Do not pass this output to a release or image
+publisher until a later schema consumes and validates that envelope. The
+release-signing decision is also still open.
+
 The kernel ABI carries the touchscreen device tree, but the runtime QSPI
 support ships as out-of-tree modules from the geocausa Phase 91 baseline
 (`gpi`, `spi-geni-qcom`, `mshw0485_touch`). Build them against the installed

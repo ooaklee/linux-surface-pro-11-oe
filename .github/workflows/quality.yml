@@ -51,6 +51,7 @@ jobs:
             scripts/prepare-sp11-audio-release-assets.sh \
             scripts/regenerate-qcom-x1e-annotations.sh \
             scripts/sp11-audio-topology.sh \
+            scripts/sp11-immutable-apt.sh \
             scripts/test-sp11-kernel-patches.sh \
             scripts/validate-sp11-kernel-baseline.sh \
             scripts/validate-sp11-kernel-fork-refs.sh \
@@ -71,6 +72,7 @@ jobs:
             tests/test-sp11-image-release-source-gate.sh \
             tests/test-sp11-image-binding-extractor.sh \
             tests/test-sp11-live-image-path-safety.sh \
+            tests/test-sp11-module-signature-policy.sh \
             tests/test-sp11-support-tree-binding.sh \
             tests/test-sp11-audio-topology.sh \
             tests/test-install-sp11-touchscreen-path-safety.sh \
@@ -78,7 +80,7 @@ jobs:
 
       - name: Check Python helper syntax
         run: |
-          python3 -c 'from pathlib import Path; [compile(path.read_text(), str(path), "exec") for path in (Path("scripts/sp11-support-tree-manifest.py"), Path("scripts/validate-sp11-image-build-manifest.py"), Path("scripts/validate-sp11-source-archive.py"), Path("scripts/validate-sp11-image-release-manifests.py"))]'
+          python3 -c 'from pathlib import Path; [compile(path.read_text(), str(path), "exec") for path in (Path("scripts/sp11-support-tree-manifest.py"), Path("scripts/validate-sp11-image-build-manifest.py"), Path("scripts/validate-sp11-module-signatures.py"), Path("scripts/validate-sp11-source-archive.py"), Path("scripts/validate-sp11-image-release-manifests.py"), Path("scripts/validate-sp11-oci-index.py"), Path("scripts/write-sp11-apt-provenance.py"), Path("scripts/sp11-kernel-build-inputs.py"), Path("tests/test-sp11-immutable-apt-provenance.py"))]'
 
       - name: Validate provenance ledger
         run: |
@@ -124,6 +126,9 @@ jobs:
       - name: Test kernel Docker wrapper path safety
         run: ./tests/test-kernel-docker-wrapper-path-safety.sh
 
+      - name: Test immutable APT provenance and envelope guards
+        run: python3 ./tests/test-sp11-immutable-apt-provenance.py
+
       - name: Test live-image release source gate
         run: ./tests/test-sp11-image-release-source-gate.sh
 
@@ -135,6 +140,9 @@ jobs:
 
       - name: Test raw live-image binding extractor
         run: ./tests/test-sp11-image-binding-extractor.sh
+
+      - name: Test module-signature package scanner
+        run: ./tests/test-sp11-module-signature-policy.sh
 
       - name: Test installed Stubble loose-DTB retirement
         run: sudo ./tests/test-install-sp11-support-stubble-retirement.sh

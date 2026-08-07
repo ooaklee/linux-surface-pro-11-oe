@@ -24,12 +24,24 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
 - do not publish proprietary firmware, Windows driver extracts, diagnostics,
   service reports, or hardware identifiers.
 
+> **Current publication gate:** closed for newly built artifacts. Release mode
+> now emits a schema-v2 kernel manifest plus the
+> `sp11-kernel-apt-provenance-v1` sidecar and
+> `sp11-kernel-build-inputs-v1` envelope. The release and image preparers do
+> not yet consume the envelope. Complete the build/evidence inspection below,
+> but do not prepare, upload, or publish a new prerelease until a later schema
+> propagates and validates all three artifacts. The signing policy is also
+> still open. This is not an exhaustive blocker list: P0.3 independently keeps
+> publication at **NO-PUBLISH** until the repository owner documents the
+> project-code licence boundary and resolves UCM provenance.
+
 ## Prerequisites
 
 - A clean repository checkout on the release branch.
-- Enough disk space and an ARM64 Docker environment for the fresh schema-v2
-  build performed below. Its new artifact directory, exact package set, and
-  mandatory manifest must all come from the same `--release-build` run.
+- Enough disk space and an ARM64 Docker environment for the fresh release-mode
+  build performed below. Its package set, v2 kernel manifest, v1 APT sidecar,
+  v1 build-inputs envelope, and retained APT inputs must all come from the same
+  `--release-build` run.
 - A patched source archive for the current, Git-source schema-v2 release path.
   Debian source-package artifacts remain a possible future corresponding-source
   route, but the current release-build and preparation gates do not accept an
@@ -118,6 +130,24 @@ mkdir -p "$RELEASE_SOURCE_DIR"
   --release-build \
   --jobs 8
 ```
+
+After the build, require and inspect the complete provenance trio:
+
+```bash
+test -f "$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
+test -f "$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
+test -f "$ARTIFACTS_DIR/sp11-kernel-build-inputs.txt"
+grep -Fx 'APT provenance complete: true' \
+  "$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
+grep -Fx 'Publication schema propagation: incomplete' \
+  "$ARTIFACTS_DIR/sp11-kernel-build-inputs.txt"
+```
+
+The final `grep` is an intentional publication stop condition, not a waiver.
+Preserve the work directory and complete only the evidence/source inspection
+in the remainder of step 3. Steps 4 onward describe the intended flow after
+release/image schema propagation is implemented; they are not authorized for
+the current v1 envelope.
 
 Do not reuse either path from a prior build. The release gate rejects stale
 package output, and the source archive must come from this same volume.
@@ -254,13 +284,16 @@ Inspect the archive and confirm it contains no objects, modules,
 kernel source archive because the out-of-tree modules require the exact kernel
 headers and configuration.
 
-4. Prepare release assets.
+4. Blocked future step: prepare release assets after schema propagation.
 
-The current helper accepts only a fresh schema-v2 `--release-build` manifest.
-Legacy r1 build artifacts cannot be passed back through this gate. An
-`sp11vN` release must also supply the ABI-matched module directory and both
-validated source archives. This future-candidate example deliberately uses a
-new tag and build directory:
+The current preparer's older gate accepts a fresh schema-v2 `--release-build`
+manifest, but that is no longer sufficient: it does not consume the new APT
+sidecar or build-inputs envelope. Do not run it for a new publication until the
+schema-propagation work above is complete. Legacy r1 build artifacts also
+cannot be passed back through this gate. After that future update, an `sp11vN`
+release must supply the ABI-matched module directory and both validated source
+archives. This future-candidate example deliberately uses a new tag and build
+directory:
 
 ```bash
 TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2

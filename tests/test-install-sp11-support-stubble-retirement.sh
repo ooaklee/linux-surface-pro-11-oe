@@ -52,6 +52,32 @@ file_fingerprint() {
   printf '%s:%s\n' "$(sha256_file "$path")" "$metadata"
 }
 
+file_preservation_fingerprint() {
+  local path="$1" metadata
+
+  if metadata="$(stat -c '%a:%u:%g:%s:%Y' -- "$path" 2>/dev/null)"; then
+    :
+  elif metadata="$(stat -f '%Lp:%u:%g:%z:%m' "$path" 2>/dev/null)"; then
+    :
+  else
+    fail "could not stat $path"
+  fi
+  printf '%s:%s\n' "$(sha256_file "$path")" "$metadata"
+}
+
+file_mode() {
+  local mode
+
+  if mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then
+    :
+  elif mode="$(stat -f '%Lp' "$1" 2>/dev/null)"; then
+    :
+  else
+    fail "could not stat mode for $1"
+  fi
+  printf '%s\n' "$mode"
+}
+
 node_fingerprint() {
   local path="$1" metadata
 
@@ -118,6 +144,54 @@ assert_present() {
   fi
 }
 
+assert_no_retirement_backups() {
+  local root="$1"
+
+  if find "$root" -type d \
+    -name '.sp11-loose-dtb-retirement-backup.*' -print -quit | grep -q .; then
+    fail "successful or complete rollback left a retirement backup in $root"
+  fi
+}
+
+assert_single_recovery_backup() {
+  local root="$1" expected_parent="$2" expected_fingerprint="$3"
+  local originals backup original_count
+
+  originals="$(find "$root" -type f \
+    -path '*/.sp11-loose-dtb-retirement-backup.*/original' -print)"
+  original_count="$(printf '%s\n' "$originals" | awk 'NF { count++ } END { print count + 0 }')"
+  [ "$original_count" -eq 1 ] ||
+    fail "expected exactly one recoverable retirement original in $root"
+  backup="$(dirname "$originals")"
+  [ "$(dirname "$backup")" = "$expected_parent" ] ||
+    fail "recovery backup was not kept beside its original destination"
+  [ "$(file_mode "$backup")" = "700" ] ||
+    fail "recovery backup is not mode 0700: $backup"
+  [ "$(file_preservation_fingerprint "$backup/original")" = \
+    "$expected_fingerprint" ] ||
+    fail "recovery backup did not preserve original bytes and metadata"
+}
+
+assert_single_recovery_occupant() {
+  local root="$1" expected_parent="$2" expected_text="$3"
+  local occupants recovery backup occupant_count
+
+  occupants="$(find "$root" -type f \
+    -path '*/.sp11-loose-dtb-retirement-backup.*/rollback-current' -print)"
+  occupant_count="$(printf '%s\n' "$occupants" |
+    awk 'NF { count++ } END { print count + 0 }')"
+  [ "$occupant_count" -eq 1 ] ||
+    fail "expected exactly one preserved rollback occupant in $root"
+  recovery="$occupants"
+  backup="$(dirname "$recovery")"
+  [ "$(dirname "$backup")" = "$expected_parent" ] ||
+    fail "rollback occupant was not preserved beside its destination"
+  [ "$(file_mode "$backup")" = "700" ] ||
+    fail "rollback occupant backup is not mode 0700: $backup"
+  grep -F "$expected_text" "$recovery" >/dev/null ||
+    fail "preserved rollback occupant has unexpected bytes"
+}
+
 mock_bin="$test_parent/mock-bin"
 tripwire="$test_parent/update-grub.called"
 mkdir -p "$mock_bin"
@@ -148,6 +222,340 @@ expect_offline_installer_failure() {
   grep -F 'Unsafe offline target path ' "$output" >/dev/null ||
     fail "unsafe offline target failure did not identify the path guard"
   [ ! -e "$tripwire" ] || fail "unsafe offline target invoked update-grub"
+}
+
+live_repo="$test_parent/live-repo"
+live_installer="$live_repo/scripts/install-sp11-support.sh"
+live_mock_bin="$test_parent/live-mock-bin"
+mkdir -p "$(dirname "$live_installer")" "$live_mock_bin"
+
+live_override_count="$(grep -c '^LIVE_ROOT="false"$' "$installer")"
+[ "$live_override_count" -eq 1 ] ||
+  fail "could not identify the single live-root decision for the fixture copy"
+awk '
+  !replaced && $0 == "LIVE_ROOT=\"false\"" {
+    print "LIVE_ROOT=\"true\""
+    replaced = 1
+    next
+  }
+  { print }
+  END { if (!replaced) exit 1 }
+' "$installer" > "$live_installer"
+chmod 0755 "$live_installer"
+
+cat > "$live_mock_bin/update-grub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+fixture_root="${SP11_RETIREMENT_FIXTURE_ROOT:?}"
+mode="${SP11_RETIREMENT_FIXTURE_MODE:?}"
+grub_cfg="$fixture_root/boot/grub/grub.cfg"
+
+write_clean_grub() {
+  printf '%s\n' \
+    "menuentry 'generated embedded-DTB kernel' {" \
+    '  linux /vmlinuz-generated' \
+    '}' > "$grub_cfg"
+}
+
+case "$mode" in
+  success)
+    write_clean_grub
+    ;;
+  update-grub-failure)
+    printf '%s\n' 'partial generated grub.cfg' > "$grub_cfg"
+    exit 41
+    ;;
+  postcheck-failure)
+    printf '%s\n' \
+      "menuentry 'stale loose DTB' {" \
+      '  linux /vmlinuz-generated' \
+      '  devicetree /sp11-denali.dtb' \
+      '}' > "$grub_cfg"
+    ;;
+  trailing-space-postcheck-failure)
+    printf '%s\n' \
+      "menuentry 'stale loose DTB with padding' {" \
+      '  linux /vmlinuz-generated' \
+      '  devicetree /sp11-denali.dtb   ' \
+      '}' > "$grub_cfg"
+    ;;
+  rollback-replace-generated-grub)
+    printf '%s\n' \
+      "menuentry 'generated cfg awaiting rollback replacement' {" \
+      '  linux /vmlinuz-generated' \
+      '  devicetree /sp11-denali.dtb' \
+      '}' > "$grub_cfg"
+    ;;
+  historical-dtb-mutation)
+    write_clean_grub
+    printf '%s\n' 'mutated loose DTB occupant' > \
+      "$fixture_root/boot/sp11-denali.dtb"
+    ;;
+  grubenv-mutation)
+    write_clean_grub
+    printf '%s\n' 'saved_entry=changed-by-update-grub' > \
+      "$fixture_root/boot/grub/grubenv"
+    ;;
+  occupied-destination)
+    write_clean_grub
+    printf '%s\n' 'concurrent managed-leaf occupant' > \
+      "$fixture_root/usr/local/sbin/sp11-grub-inject-dtb"
+    chmod 0703 "$fixture_root/usr/local/sbin/sp11-grub-inject-dtb"
+    touch -t 202202030405.06 \
+      "$fixture_root/usr/local/sbin/sp11-grub-inject-dtb"
+    ;;
+  *)
+    echo "unknown retirement fixture mode: $mode" >&2
+    exit 99
+    ;;
+esac
+EOF
+chmod 0755 "$live_mock_bin/update-grub"
+
+cat > "$live_mock_bin/fault-command" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+command_name="${0##*/}"
+fixture_root="${SP11_RETIREMENT_FIXTURE_ROOT:?}"
+mode="${SP11_RETIREMENT_FIXTURE_MODE:?}"
+fault_state="${SP11_RETIREMENT_FAULT_STATE:?}"
+helper="$fixture_root/usr/local/sbin/sp11-grub-inject-dtb"
+grub_cfg="$fixture_root/boot/grub/grub.cfg"
+
+case "$command_name" in
+  stat) real_command="${SP11_REAL_STAT:?}" ;;
+  mktemp) real_command="${SP11_REAL_MKTEMP:?}" ;;
+  chmod) real_command="${SP11_REAL_CHMOD:?}" ;;
+  cp) real_command="${SP11_REAL_CP:?}" ;;
+  mv) real_command="${SP11_REAL_MV:?}" ;;
+  *) exit 98 ;;
+esac
+
+case "$mode:$command_name" in
+  prepare-stat-failure:stat)
+    for argument in "$@"; do
+      if [ "$argument" = "$helper" ]; then
+        exit 71
+      fi
+    done
+    ;;
+  prepare-mktemp-failure:mktemp)
+    case "${1:-}" in
+      */.sp11-loose-dtb-retirement-backup.XXXXXX) exit 72 ;;
+    esac
+    ;;
+  prepare-chmod-failure:chmod)
+    if [ "${1:-}" = "0700" ]; then
+      case "${2:-}" in
+        */.sp11-loose-dtb-retirement-backup.*) exit 73 ;;
+      esac
+    fi
+    ;;
+  pre-stage-concurrent-replacement:cp)
+    if [ "${3:-}" = "$fixture_root/boot/grub/grubenv" ]; then
+      "$real_command" "$@"
+      replacement="$fixture_root/usr/local/sbin/.sp11-concurrent-replacement"
+      printf '%s\n' 'pre-stage concurrent managed-leaf occupant' > "$replacement"
+      "${SP11_REAL_CHMOD:?}" 0705 "$replacement"
+      "${SP11_REAL_MV:?}" "$replacement" "$helper"
+      exit 0
+    fi
+    ;;
+  grub-cfg-pre-stage-replacement:cp)
+    if [ "${3:-}" = "$fixture_root/boot/grub/grubenv" ]; then
+      "$real_command" "$@"
+      replacement="$fixture_root/boot/grub/.sp11-concurrent-grub-cfg"
+      printf '%s\n' 'pre-stage concurrent grub.cfg occupant' > "$replacement"
+      "${SP11_REAL_CHMOD:?}" 0604 "$replacement"
+      "${SP11_REAL_MV:?}" "$replacement" "$grub_cfg"
+      exit 0
+    fi
+    ;;
+  rollback-replace-original-grub:cp|rollback-replace-managed-current:cp|rollback-replace-monitored-current:cp)
+    if [ "${3:-}" = "$fixture_root/boot/grub/grubenv" ]; then
+      "$real_command" "$@"
+      exit 76
+    fi
+    ;;
+  move-then-fail:mv|signal-after-move:mv)
+    if [ "${1:-}" = "$helper" ]; then
+      case "${2:-}" in
+        */.sp11-loose-dtb-retirement-backup.*/retired)
+          if [ ! -e "$fault_state" ]; then
+            "$real_command" "$@"
+            : > "$fault_state"
+            if [ "$mode" = "signal-after-move" ]; then
+              kill -TERM "$PPID"
+              exit 0
+            fi
+            exit 74
+          fi
+          ;;
+      esac
+    fi
+    ;;
+  grub-cfg-move-then-fail:mv|grub-cfg-signal-after-move:mv)
+    if [ "${1:-}" = "$grub_cfg" ]; then
+      case "${2:-}" in
+        */.sp11-loose-dtb-retirement-backup.*/retired)
+          if [ ! -e "$fault_state" ]; then
+            "$real_command" "$@"
+            : > "$fault_state"
+            if [ "$mode" = "grub-cfg-signal-after-move" ]; then
+              kill -TERM "$PPID"
+              exit 0
+            fi
+            exit 75
+          fi
+          ;;
+      esac
+    fi
+    ;;
+  rollback-replace-original-grub:mv|rollback-replace-generated-grub:mv)
+    if [ "${1:-}" = "$grub_cfg" ]; then
+      case "${2:-}" in
+        */.sp11-loose-dtb-retirement-backup.*/rollback-current)
+          replacement="$fixture_root/boot/grub/.sp11-rollback-cfg-replacement"
+          printf '%s\n' "rollback-time concurrent grub.cfg occupant: $mode" > \
+            "$replacement"
+          "${SP11_REAL_CHMOD:?}" 0606 "$replacement"
+          "${SP11_REAL_MV:?}" "$replacement" "$grub_cfg"
+          "$real_command" "$@"
+          exit 0
+          ;;
+      esac
+    fi
+    ;;
+  rollback-replace-managed-current:mv)
+    if [ "${1:-}" = "$helper" ]; then
+      case "${2:-}" in
+        */.sp11-loose-dtb-retirement-backup.*/rollback-current)
+          replacement="$fixture_root/usr/local/sbin/.sp11-rollback-helper-replacement"
+          printf '%s\n' 'rollback-time concurrent managed-leaf occupant' > \
+            "$replacement"
+          "${SP11_REAL_CHMOD:?}" 0706 "$replacement"
+          "${SP11_REAL_MV:?}" "$replacement" "$helper"
+          "$real_command" "$@"
+          exit 0
+          ;;
+      esac
+    fi
+    ;;
+  rollback-replace-monitored-current:mv)
+    if [ "${1:-}" = "$fixture_root/boot/grub/grubenv" ]; then
+      case "${2:-}" in
+        */.sp11-loose-dtb-retirement-backup.*/rollback-current)
+          replacement="$fixture_root/boot/grub/.sp11-rollback-grubenv-replacement"
+          printf '%s\n' 'rollback-time concurrent grubenv occupant' > \
+            "$replacement"
+          "${SP11_REAL_CHMOD:?}" 0606 "$replacement"
+          "${SP11_REAL_MV:?}" "$replacement" \
+            "$fixture_root/boot/grub/grubenv"
+          "$real_command" "$@"
+          exit 0
+          ;;
+      esac
+    fi
+    ;;
+esac
+
+exec "$real_command" "$@"
+EOF
+chmod 0755 "$live_mock_bin/fault-command"
+for fault_command in stat mktemp chmod cp mv; do
+  ln -s fault-command "$live_mock_bin/$fault_command"
+done
+
+prepare_live_retirement_root() {
+  local root="$1"
+
+  mkdir -p \
+    "$root/usr/local/sbin" \
+    "$root/etc/kernel/postinst.d" \
+    "$root/etc/kernel/postrm.d" \
+    "$root/boot/grub"
+  printf '%s\n' 'managed helper original' > \
+    "$root/usr/local/sbin/sp11-grub-inject-dtb"
+  printf '%s\n' 'managed postinst original' > \
+    "$root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb"
+  printf '%s\n' 'managed postrm original' > \
+    "$root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb"
+  printf '%s\n' 'historical loose DTB original' > \
+    "$root/boot/sp11-denali.dtb"
+  printf '%s\n' \
+    "menuentry 'known-good historical fallback' {" \
+    '  linux /vmlinuz-known-good' \
+    '  devicetree /sp11-denali.dtb' \
+    '}' > "$root/boot/grub/grub.cfg"
+  printf '%s\n' 'saved_entry=known-good' > "$root/boot/grub/grubenv"
+  chmod 0751 "$root/usr/local/sbin/sp11-grub-inject-dtb"
+  chmod 0752 "$root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb"
+  chmod 0754 "$root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb"
+  chmod 0600 "$root/boot/sp11-denali.dtb"
+  chmod 0640 "$root/boot/grub/grub.cfg"
+  chmod 0600 "$root/boot/grub/grubenv"
+  touch -t 202001020301.02 \
+    "$root/usr/local/sbin/sp11-grub-inject-dtb"
+  touch -t 202001020302.03 \
+    "$root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb"
+  touch -t 202001020303.04 \
+    "$root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb"
+  touch -t 202001020304.05 "$root/boot/sp11-denali.dtb"
+  touch -t 202001020305.06 "$root/boot/grub/grub.cfg"
+  touch -t 202001020306.07 "$root/boot/grub/grubenv"
+}
+
+live_retirement_state_fingerprint() {
+  local root="$1" rel
+
+  for rel in \
+    usr/local/sbin/sp11-grub-inject-dtb \
+    etc/kernel/postinst.d/zzzz-surface-pro-11-dtb \
+    etc/kernel/postrm.d/zzzz-surface-pro-11-dtb \
+    boot/sp11-denali.dtb \
+    boot/grub/grub.cfg \
+    boot/grub/grubenv; do
+    printf '%s:%s\n' "$rel" "$(file_fingerprint "$root/$rel")"
+  done
+}
+
+run_live_retirement() {
+  local root="$1" mode="$2" output="$3"
+
+  SP11_RETIREMENT_FIXTURE_ROOT="$root" \
+  SP11_RETIREMENT_FIXTURE_MODE="$mode" \
+  SP11_RETIREMENT_FAULT_STATE="$root/.retirement-fault-fired" \
+  SP11_REAL_STAT="$(command -v stat)" \
+  SP11_REAL_MKTEMP="$(command -v mktemp)" \
+  SP11_REAL_CHMOD="$(command -v chmod)" \
+  SP11_REAL_CP="$(command -v cp)" \
+  SP11_REAL_MV="$(command -v mv)" \
+  PATH="$live_mock_bin:$PATH" \
+    "$live_installer" --root "$root" --retire-loose-dtb-only > \
+      "$output" 2>&1
+}
+
+expect_live_retirement_failure() {
+  local root="$1" mode="$2" output="$3"
+
+  if run_live_retirement "$root" "$mode" "$output"; then
+    fail "live retirement fixture unexpectedly succeeded: $mode"
+  fi
+  grep -F 'DO NOT REBOOT. DO NOT RUN apt OR dpkg' "$output" >/dev/null ||
+    fail "live retirement failure omitted the stop warning: $mode"
+}
+
+assert_no_false_complete_rollback() {
+  local output="$1"
+
+  if grep -F 'The prior managed leaves and GRUB state were restored.' \
+    "$output" >/dev/null; then
+    fail "obstructed rollback falsely claimed complete restoration"
+  fi
+  grep -F 'Rollback was obstructed;' "$output" >/dev/null ||
+    fail "obstructed rollback omitted its incomplete-recovery message"
 }
 
 usr_escape_root="$test_parent/usr-parent-symlink-root"
@@ -435,6 +843,474 @@ if grep -F 'Installed Surface Pro 11 support helpers into ' \
   "$test_parent/retire-only.out" >/dev/null; then
   fail "retire-only mode continued into full support installation"
 fi
+
+empty_retire_root="$test_parent/empty-retire-only-root"
+mkdir -p "$empty_retire_root"
+run_offline_installer "$empty_retire_root" --retire-loose-dtb-only > \
+  "$test_parent/empty-retire-only.out"
+assert_absent "$empty_retire_root/usr/local/sbin/sp11-grub-inject-dtb"
+assert_absent \
+  "$empty_retire_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb"
+assert_absent \
+  "$empty_retire_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb"
+assert_absent "$empty_retire_root/boot/sp11-denali.dtb"
+assert_no_retirement_backups "$empty_retire_root"
+[ ! -e "$tripwire" ] ||
+  fail "artifact-free offline retirement invoked update-grub"
+
+live_success_root="$test_parent/live-success-root"
+prepare_live_retirement_root "$live_success_root"
+live_success_dtb_before="$(
+  file_fingerprint "$live_success_root/boot/sp11-denali.dtb"
+)"
+live_success_grubenv_before="$(
+  file_fingerprint "$live_success_root/boot/grub/grubenv"
+)"
+run_live_retirement \
+  "$live_success_root" success "$test_parent/live-success.out"
+assert_absent "$live_success_root/usr/local/sbin/sp11-grub-inject-dtb"
+assert_absent \
+  "$live_success_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb"
+assert_absent \
+  "$live_success_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb"
+[ "$(file_fingerprint "$live_success_root/boot/sp11-denali.dtb")" = \
+  "$live_success_dtb_before" ] ||
+  fail "successful retirement changed historical loose-DTB identity"
+[ "$(file_fingerprint "$live_success_root/boot/grub/grubenv")" = \
+  "$live_success_grubenv_before" ] ||
+  fail "successful retirement changed grubenv identity"
+grep -F 'generated embedded-DTB kernel' \
+  "$live_success_root/boot/grub/grub.cfg" >/dev/null ||
+  fail "successful retirement did not retain generated grub.cfg"
+if grep -E '^[[:space:]]*devicetree[[:space:]]+.*/sp11-denali\.dtb' \
+  "$live_success_root/boot/grub/grub.cfg" >/dev/null; then
+  fail "successful retirement retained the loose-DTB GRUB reference"
+fi
+assert_no_retirement_backups "$live_success_root"
+grep -F 'Retired installed loose-DTB integration in ' \
+  "$test_parent/live-success.out" >/dev/null ||
+  fail "successful live retirement omitted its completion message"
+
+for prepare_failure_mode in \
+  prepare-stat-failure \
+  prepare-mktemp-failure \
+  prepare-chmod-failure; do
+  prepare_failure_root="$test_parent/$prepare_failure_mode-root"
+  prepare_live_retirement_root "$prepare_failure_root"
+  prepare_failure_before="$(
+    live_retirement_state_fingerprint "$prepare_failure_root"
+  )"
+  expect_live_retirement_failure \
+    "$prepare_failure_root" "$prepare_failure_mode" \
+    "$test_parent/$prepare_failure_mode.out"
+  [ "$(live_retirement_state_fingerprint "$prepare_failure_root")" = \
+    "$prepare_failure_before" ] ||
+    fail "$prepare_failure_mode changed the pre-transaction files"
+  assert_no_retirement_backups "$prepare_failure_root"
+  if [ "$prepare_failure_mode" = "prepare-stat-failure" ]; then
+    assert_no_false_complete_rollback \
+      "$test_parent/$prepare_failure_mode.out"
+  else
+    grep -F 'The prior managed leaves and GRUB state were restored.' \
+      "$test_parent/$prepare_failure_mode.out" >/dev/null ||
+      fail "$prepare_failure_mode did not report its unchanged state"
+  fi
+done
+
+live_pre_stage_root="$test_parent/live-pre-stage-replacement-root"
+prepare_live_retirement_root "$live_pre_stage_root"
+live_pre_stage_helper_original="$(file_preservation_fingerprint \
+  "$live_pre_stage_root/usr/local/sbin/sp11-grub-inject-dtb")"
+live_pre_stage_postinst_before="$(file_fingerprint \
+  "$live_pre_stage_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")"
+live_pre_stage_postrm_before="$(file_fingerprint \
+  "$live_pre_stage_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")"
+live_pre_stage_cfg_before="$(file_fingerprint \
+  "$live_pre_stage_root/boot/grub/grub.cfg")"
+live_pre_stage_dtb_before="$(file_fingerprint \
+  "$live_pre_stage_root/boot/sp11-denali.dtb")"
+live_pre_stage_grubenv_before="$(file_fingerprint \
+  "$live_pre_stage_root/boot/grub/grubenv")"
+expect_live_retirement_failure \
+  "$live_pre_stage_root" pre-stage-concurrent-replacement \
+  "$test_parent/live-pre-stage-replacement.out"
+[ "$(file_preservation_fingerprint \
+  "$live_pre_stage_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$live_pre_stage_helper_original" ] ||
+  fail "pre-stage rollback did not restore the original managed helper"
+[ "$(file_fingerprint \
+  "$live_pre_stage_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_pre_stage_postinst_before" ] ||
+  fail "pre-stage rollback changed the postinst hook"
+[ "$(file_fingerprint \
+  "$live_pre_stage_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_pre_stage_postrm_before" ] ||
+  fail "pre-stage rollback changed the postrm hook"
+[ "$(file_fingerprint "$live_pre_stage_root/boot/grub/grub.cfg")" = \
+  "$live_pre_stage_cfg_before" ] ||
+  fail "pre-stage rollback changed grub.cfg"
+[ "$(file_fingerprint "$live_pre_stage_root/boot/sp11-denali.dtb")" = \
+  "$live_pre_stage_dtb_before" ] ||
+  fail "pre-stage rollback changed the historical loose DTB"
+[ "$(file_fingerprint "$live_pre_stage_root/boot/grub/grubenv")" = \
+  "$live_pre_stage_grubenv_before" ] ||
+  fail "pre-stage rollback changed grubenv"
+assert_single_recovery_backup \
+  "$live_pre_stage_root" "$live_pre_stage_root/usr/local/sbin" \
+  "$live_pre_stage_helper_original"
+assert_single_recovery_occupant \
+  "$live_pre_stage_root" "$live_pre_stage_root/usr/local/sbin" \
+  'pre-stage concurrent managed-leaf occupant'
+assert_no_false_complete_rollback \
+  "$test_parent/live-pre-stage-replacement.out"
+
+live_grub_pre_stage_root="$test_parent/live-grub-pre-stage-replacement-root"
+prepare_live_retirement_root "$live_grub_pre_stage_root"
+live_grub_pre_stage_cfg_original="$(file_preservation_fingerprint \
+  "$live_grub_pre_stage_root/boot/grub/grub.cfg")"
+live_grub_pre_stage_helper_before="$(file_fingerprint \
+  "$live_grub_pre_stage_root/usr/local/sbin/sp11-grub-inject-dtb")"
+live_grub_pre_stage_postinst_before="$(file_fingerprint \
+  "$live_grub_pre_stage_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")"
+live_grub_pre_stage_postrm_before="$(file_fingerprint \
+  "$live_grub_pre_stage_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")"
+live_grub_pre_stage_dtb_before="$(file_fingerprint \
+  "$live_grub_pre_stage_root/boot/sp11-denali.dtb")"
+live_grub_pre_stage_grubenv_before="$(file_fingerprint \
+  "$live_grub_pre_stage_root/boot/grub/grubenv")"
+expect_live_retirement_failure \
+  "$live_grub_pre_stage_root" grub-cfg-pre-stage-replacement \
+  "$test_parent/live-grub-pre-stage-replacement.out"
+[ "$(file_preservation_fingerprint \
+  "$live_grub_pre_stage_root/boot/grub/grub.cfg")" = \
+  "$live_grub_pre_stage_cfg_original" ] ||
+  fail "grub.cfg pre-stage rollback did not restore the original grub.cfg"
+[ "$(file_fingerprint \
+  "$live_grub_pre_stage_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$live_grub_pre_stage_helper_before" ] ||
+  fail "grub.cfg pre-stage rollback changed the managed helper"
+[ "$(file_fingerprint \
+  "$live_grub_pre_stage_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_grub_pre_stage_postinst_before" ] ||
+  fail "grub.cfg pre-stage rollback changed the postinst hook"
+[ "$(file_fingerprint \
+  "$live_grub_pre_stage_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_grub_pre_stage_postrm_before" ] ||
+  fail "grub.cfg pre-stage rollback changed the postrm hook"
+[ "$(file_fingerprint \
+  "$live_grub_pre_stage_root/boot/sp11-denali.dtb")" = \
+  "$live_grub_pre_stage_dtb_before" ] ||
+  fail "grub.cfg pre-stage rollback changed the historical loose DTB"
+[ "$(file_fingerprint \
+  "$live_grub_pre_stage_root/boot/grub/grubenv")" = \
+  "$live_grub_pre_stage_grubenv_before" ] ||
+  fail "grub.cfg pre-stage rollback changed grubenv"
+assert_single_recovery_backup \
+  "$live_grub_pre_stage_root" "$live_grub_pre_stage_root/boot/grub" \
+  "$live_grub_pre_stage_cfg_original"
+assert_single_recovery_occupant \
+  "$live_grub_pre_stage_root" "$live_grub_pre_stage_root/boot/grub" \
+  'pre-stage concurrent grub.cfg occupant'
+assert_no_false_complete_rollback \
+  "$test_parent/live-grub-pre-stage-replacement.out"
+
+for move_failure_mode in move-then-fail signal-after-move; do
+  move_failure_root="$test_parent/$move_failure_mode-root"
+  prepare_live_retirement_root "$move_failure_root"
+  move_failure_before="$(
+    live_retirement_state_fingerprint "$move_failure_root"
+  )"
+  expect_live_retirement_failure \
+    "$move_failure_root" "$move_failure_mode" \
+    "$test_parent/$move_failure_mode.out"
+  [ "$(live_retirement_state_fingerprint "$move_failure_root")" = \
+    "$move_failure_before" ] ||
+    fail "$move_failure_mode did not restore exact pre-transaction state"
+  assert_no_retirement_backups "$move_failure_root"
+  grep -F 'The prior managed leaves and GRUB state were restored.' \
+    "$test_parent/$move_failure_mode.out" >/dev/null ||
+    fail "$move_failure_mode did not report complete rollback"
+done
+
+for grub_move_failure_mode in \
+  grub-cfg-move-then-fail \
+  grub-cfg-signal-after-move; do
+  grub_move_failure_root="$test_parent/$grub_move_failure_mode-root"
+  prepare_live_retirement_root "$grub_move_failure_root"
+  grub_move_failure_before="$(
+    live_retirement_state_fingerprint "$grub_move_failure_root"
+  )"
+  expect_live_retirement_failure \
+    "$grub_move_failure_root" "$grub_move_failure_mode" \
+    "$test_parent/$grub_move_failure_mode.out"
+  [ "$(live_retirement_state_fingerprint "$grub_move_failure_root")" = \
+    "$grub_move_failure_before" ] ||
+    fail "$grub_move_failure_mode did not restore exact pre-transaction state"
+  assert_no_retirement_backups "$grub_move_failure_root"
+  grep -F 'The prior managed leaves and GRUB state were restored.' \
+    "$test_parent/$grub_move_failure_mode.out" >/dev/null ||
+      fail "$grub_move_failure_mode did not report complete rollback"
+done
+
+for rollback_cfg_race_mode in \
+  rollback-replace-original-grub \
+  rollback-replace-generated-grub; do
+  rollback_cfg_race_root="$test_parent/$rollback_cfg_race_mode-root"
+  prepare_live_retirement_root "$rollback_cfg_race_root"
+  rollback_cfg_race_original="$(file_preservation_fingerprint \
+    "$rollback_cfg_race_root/boot/grub/grub.cfg")"
+  expect_live_retirement_failure \
+    "$rollback_cfg_race_root" "$rollback_cfg_race_mode" \
+    "$test_parent/$rollback_cfg_race_mode.out"
+  [ "$(file_preservation_fingerprint \
+    "$rollback_cfg_race_root/boot/grub/grub.cfg")" = \
+    "$rollback_cfg_race_original" ] ||
+    fail "$rollback_cfg_race_mode did not restore the original grub.cfg"
+  assert_single_recovery_backup \
+    "$rollback_cfg_race_root" "$rollback_cfg_race_root/boot/grub" \
+    "$rollback_cfg_race_original"
+  assert_single_recovery_occupant \
+    "$rollback_cfg_race_root" "$rollback_cfg_race_root/boot/grub" \
+    "rollback-time concurrent grub.cfg occupant: $rollback_cfg_race_mode"
+  assert_no_false_complete_rollback \
+    "$test_parent/$rollback_cfg_race_mode.out"
+done
+
+rollback_managed_race_root="$test_parent/rollback-managed-current-root"
+prepare_live_retirement_root "$rollback_managed_race_root"
+rollback_managed_race_original="$(file_preservation_fingerprint \
+  "$rollback_managed_race_root/usr/local/sbin/sp11-grub-inject-dtb")"
+expect_live_retirement_failure \
+  "$rollback_managed_race_root" rollback-replace-managed-current \
+  "$test_parent/rollback-managed-current.out"
+[ "$(file_preservation_fingerprint \
+  "$rollback_managed_race_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$rollback_managed_race_original" ] ||
+  fail "rollback-time managed replacement did not restore the original helper"
+assert_single_recovery_backup \
+  "$rollback_managed_race_root" \
+  "$rollback_managed_race_root/usr/local/sbin" \
+  "$rollback_managed_race_original"
+assert_single_recovery_occupant \
+  "$rollback_managed_race_root" \
+  "$rollback_managed_race_root/usr/local/sbin" \
+  'rollback-time concurrent managed-leaf occupant'
+assert_no_false_complete_rollback \
+  "$test_parent/rollback-managed-current.out"
+
+rollback_monitored_race_root="$test_parent/rollback-monitored-current-root"
+prepare_live_retirement_root "$rollback_monitored_race_root"
+rollback_monitored_race_original="$(file_preservation_fingerprint \
+  "$rollback_monitored_race_root/boot/grub/grubenv")"
+expect_live_retirement_failure \
+  "$rollback_monitored_race_root" rollback-replace-monitored-current \
+  "$test_parent/rollback-monitored-current.out"
+[ "$(file_preservation_fingerprint \
+  "$rollback_monitored_race_root/boot/grub/grubenv")" = \
+  "$rollback_monitored_race_original" ] ||
+  fail "rollback-time grubenv replacement did not restore original grubenv"
+assert_single_recovery_backup \
+  "$rollback_monitored_race_root" \
+  "$rollback_monitored_race_root/boot/grub" \
+  "$rollback_monitored_race_original"
+assert_single_recovery_occupant \
+  "$rollback_monitored_race_root" \
+  "$rollback_monitored_race_root/boot/grub" \
+  'rollback-time concurrent grubenv occupant'
+assert_no_false_complete_rollback \
+  "$test_parent/rollback-monitored-current.out"
+
+live_update_failure_root="$test_parent/live-update-failure-root"
+prepare_live_retirement_root "$live_update_failure_root"
+live_update_helper_before="$(file_fingerprint \
+  "$live_update_failure_root/usr/local/sbin/sp11-grub-inject-dtb")"
+live_update_postinst_before="$(file_fingerprint \
+  "$live_update_failure_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")"
+live_update_postrm_before="$(file_fingerprint \
+  "$live_update_failure_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")"
+live_update_cfg_before="$(file_fingerprint \
+  "$live_update_failure_root/boot/grub/grub.cfg")"
+live_update_dtb_before="$(file_fingerprint \
+  "$live_update_failure_root/boot/sp11-denali.dtb")"
+live_update_grubenv_before="$(file_fingerprint \
+  "$live_update_failure_root/boot/grub/grubenv")"
+expect_live_retirement_failure \
+  "$live_update_failure_root" update-grub-failure \
+  "$test_parent/live-update-failure.out"
+[ "$(file_fingerprint \
+  "$live_update_failure_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$live_update_helper_before" ] ||
+  fail "update-grub failure did not restore the exact managed helper"
+[ "$(file_fingerprint \
+  "$live_update_failure_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_update_postinst_before" ] ||
+  fail "update-grub failure did not restore the exact postinst hook"
+[ "$(file_fingerprint \
+  "$live_update_failure_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_update_postrm_before" ] ||
+  fail "update-grub failure did not restore the exact postrm hook"
+[ "$(file_fingerprint \
+  "$live_update_failure_root/boot/grub/grub.cfg")" = \
+  "$live_update_cfg_before" ] ||
+  fail "update-grub failure did not restore exact prior grub.cfg"
+[ "$(file_fingerprint "$live_update_failure_root/boot/sp11-denali.dtb")" = \
+  "$live_update_dtb_before" ] ||
+  fail "update-grub failure changed the historical loose DTB"
+[ "$(file_fingerprint "$live_update_failure_root/boot/grub/grubenv")" = \
+  "$live_update_grubenv_before" ] ||
+  fail "update-grub failure changed grubenv"
+assert_no_retirement_backups "$live_update_failure_root"
+
+live_postcheck_root="$test_parent/live-postcheck-failure-root"
+prepare_live_retirement_root "$live_postcheck_root"
+live_postcheck_helper_before="$(file_fingerprint \
+  "$live_postcheck_root/usr/local/sbin/sp11-grub-inject-dtb")"
+live_postcheck_postinst_before="$(file_fingerprint \
+  "$live_postcheck_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")"
+live_postcheck_postrm_before="$(file_fingerprint \
+  "$live_postcheck_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")"
+live_postcheck_cfg_before="$(file_fingerprint \
+  "$live_postcheck_root/boot/grub/grub.cfg")"
+expect_live_retirement_failure \
+  "$live_postcheck_root" postcheck-failure \
+  "$test_parent/live-postcheck-failure.out"
+[ "$(file_fingerprint \
+  "$live_postcheck_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$live_postcheck_helper_before" ] ||
+  fail "postcheck failure did not restore the exact managed helper"
+[ "$(file_fingerprint \
+  "$live_postcheck_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_postcheck_postinst_before" ] ||
+  fail "postcheck failure did not restore the exact postinst hook"
+[ "$(file_fingerprint \
+  "$live_postcheck_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_postcheck_postrm_before" ] ||
+  fail "postcheck failure did not restore the exact postrm hook"
+[ "$(file_fingerprint "$live_postcheck_root/boot/grub/grub.cfg")" = \
+  "$live_postcheck_cfg_before" ] ||
+  fail "postcheck failure did not restore exact prior grub.cfg"
+assert_no_retirement_backups "$live_postcheck_root"
+
+live_trailing_postcheck_root="$test_parent/live-trailing-postcheck-root"
+prepare_live_retirement_root "$live_trailing_postcheck_root"
+live_trailing_postcheck_before="$(
+  live_retirement_state_fingerprint "$live_trailing_postcheck_root"
+)"
+expect_live_retirement_failure \
+  "$live_trailing_postcheck_root" trailing-space-postcheck-failure \
+  "$test_parent/live-trailing-postcheck.out"
+[ "$(live_retirement_state_fingerprint "$live_trailing_postcheck_root")" = \
+  "$live_trailing_postcheck_before" ] ||
+  fail "trailing-space GRUB postcheck did not restore exact prior state"
+assert_no_retirement_backups "$live_trailing_postcheck_root"
+grep -F 'Generated grub.cfg still contains the project-managed loose-DTB reference.' \
+  "$test_parent/live-trailing-postcheck.out" >/dev/null ||
+  fail "trailing-space loose-DTB line evaded the generated GRUB postcheck"
+
+live_dtb_mutation_root="$test_parent/live-dtb-mutation-root"
+prepare_live_retirement_root "$live_dtb_mutation_root"
+live_dtb_mutation_original="$(file_preservation_fingerprint \
+  "$live_dtb_mutation_root/boot/sp11-denali.dtb")"
+live_dtb_mutation_helper_before="$(file_fingerprint \
+  "$live_dtb_mutation_root/usr/local/sbin/sp11-grub-inject-dtb")"
+live_dtb_mutation_postinst_before="$(file_fingerprint \
+  "$live_dtb_mutation_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")"
+live_dtb_mutation_postrm_before="$(file_fingerprint \
+  "$live_dtb_mutation_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")"
+live_dtb_mutation_cfg_before="$(file_fingerprint \
+  "$live_dtb_mutation_root/boot/grub/grub.cfg")"
+expect_live_retirement_failure \
+  "$live_dtb_mutation_root" historical-dtb-mutation \
+  "$test_parent/live-dtb-mutation.out"
+[ "$(file_preservation_fingerprint \
+  "$live_dtb_mutation_root/boot/sp11-denali.dtb")" = \
+  "$live_dtb_mutation_original" ] ||
+  fail "historical-DTB mutation did not restore the original loose DTB"
+[ "$(file_fingerprint \
+  "$live_dtb_mutation_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$live_dtb_mutation_helper_before" ] ||
+  fail "historical-DTB mutation did not restore the exact managed helper"
+[ "$(file_fingerprint \
+  "$live_dtb_mutation_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_dtb_mutation_postinst_before" ] ||
+  fail "historical-DTB mutation did not restore the exact postinst hook"
+[ "$(file_fingerprint \
+  "$live_dtb_mutation_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_dtb_mutation_postrm_before" ] ||
+  fail "historical-DTB mutation did not restore the exact postrm hook"
+[ "$(file_fingerprint "$live_dtb_mutation_root/boot/grub/grub.cfg")" = \
+  "$live_dtb_mutation_cfg_before" ] ||
+  fail "historical-DTB mutation did not restore exact prior grub.cfg"
+assert_single_recovery_backup \
+  "$live_dtb_mutation_root" "$live_dtb_mutation_root/boot" \
+  "$live_dtb_mutation_original"
+assert_single_recovery_occupant \
+  "$live_dtb_mutation_root" "$live_dtb_mutation_root/boot" \
+  'mutated loose DTB occupant'
+
+live_grubenv_mutation_root="$test_parent/live-grubenv-mutation-root"
+prepare_live_retirement_root "$live_grubenv_mutation_root"
+live_grubenv_mutation_original="$(file_preservation_fingerprint \
+  "$live_grubenv_mutation_root/boot/grub/grubenv")"
+live_grubenv_mutation_helper_before="$(file_fingerprint \
+  "$live_grubenv_mutation_root/usr/local/sbin/sp11-grub-inject-dtb")"
+live_grubenv_mutation_cfg_before="$(file_fingerprint \
+  "$live_grubenv_mutation_root/boot/grub/grub.cfg")"
+expect_live_retirement_failure \
+  "$live_grubenv_mutation_root" grubenv-mutation \
+  "$test_parent/live-grubenv-mutation.out"
+[ "$(file_preservation_fingerprint \
+  "$live_grubenv_mutation_root/boot/grub/grubenv")" = \
+  "$live_grubenv_mutation_original" ] ||
+  fail "grubenv mutation did not restore the original grubenv"
+[ "$(file_fingerprint \
+  "$live_grubenv_mutation_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$live_grubenv_mutation_helper_before" ] ||
+  fail "grubenv mutation did not restore the exact managed helper"
+[ "$(file_fingerprint "$live_grubenv_mutation_root/boot/grub/grub.cfg")" = \
+  "$live_grubenv_mutation_cfg_before" ] ||
+  fail "grubenv mutation did not restore exact prior grub.cfg"
+assert_single_recovery_backup \
+  "$live_grubenv_mutation_root" "$live_grubenv_mutation_root/boot/grub" \
+  "$live_grubenv_mutation_original"
+assert_single_recovery_occupant \
+  "$live_grubenv_mutation_root" "$live_grubenv_mutation_root/boot/grub" \
+  'saved_entry=changed-by-update-grub'
+
+live_occupied_root="$test_parent/live-occupied-root"
+prepare_live_retirement_root "$live_occupied_root"
+live_occupied_helper_original="$(file_preservation_fingerprint \
+  "$live_occupied_root/usr/local/sbin/sp11-grub-inject-dtb")"
+live_occupied_postinst_before="$(file_fingerprint \
+  "$live_occupied_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")"
+live_occupied_postrm_before="$(file_fingerprint \
+  "$live_occupied_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")"
+live_occupied_cfg_before="$(file_fingerprint \
+  "$live_occupied_root/boot/grub/grub.cfg")"
+expect_live_retirement_failure \
+  "$live_occupied_root" occupied-destination \
+  "$test_parent/live-occupied.out"
+[ "$(file_preservation_fingerprint \
+  "$live_occupied_root/usr/local/sbin/sp11-grub-inject-dtb")" = \
+  "$live_occupied_helper_original" ] ||
+  fail "occupied-destination rollback did not restore the original helper"
+[ "$(file_fingerprint \
+  "$live_occupied_root/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_occupied_postinst_before" ] ||
+  fail "occupied-destination rollback did not restore exact postinst hook"
+[ "$(file_fingerprint \
+  "$live_occupied_root/etc/kernel/postrm.d/zzzz-surface-pro-11-dtb")" = \
+  "$live_occupied_postrm_before" ] ||
+  fail "occupied-destination rollback did not restore exact postrm hook"
+[ "$(file_fingerprint "$live_occupied_root/boot/grub/grub.cfg")" = \
+  "$live_occupied_cfg_before" ] ||
+  fail "occupied-destination rollback did not restore exact prior grub.cfg"
+assert_single_recovery_backup \
+  "$live_occupied_root" "$live_occupied_root/usr/local/sbin" \
+  "$live_occupied_helper_original"
+assert_single_recovery_occupant \
+  "$live_occupied_root" "$live_occupied_root/usr/local/sbin" \
+  'concurrent managed-leaf occupant'
 
 offline_root="$test_parent/root-with-dtb"
 managed_helper="$offline_root/usr/local/sbin/sp11-grub-inject-dtb"
