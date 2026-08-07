@@ -72,7 +72,7 @@ clean-install-capable flow.
 
 The same retrospective found two packaging defects in the original release:
 
-1. The public tag `sp11-qcom-x1e-7.2-rc5-jg-0sp11v3` points to commit
+1. The now-removed public tag `sp11-qcom-x1e-7.2-rc5-jg-0sp11v3` pointed to commit
    `1fe13d2` (the v2 tree), while the v3 support changes are in `25bd39c` and
    merge commit `0a3fbdd`. The release command allowed GitHub to create a tag
    at the then-current default branch instead of naming the manifest commit.
@@ -81,8 +81,9 @@ The same retrospective found two packaging defects in the original release:
    names `RELEASE-NOTES.md`, which was used as the release body rather than
    uploaded. Full verification therefore cannot pass.
 
-The kernel and module asset hashes remain individually inspectable, but the
-old tag and bundle must not be used as the template for another release.
+The audit captured the manifest and checksum defects before the release and
+tag were removed on 2026-08-07. They must not be used as the template for
+another release.
 
 ## Decision
 
@@ -165,13 +166,14 @@ The next release must cover:
 - Building modules for experimental ABIs now requires an explicit override.
 - Installation does more validation and may take longer because the exact
   initramfs is rebuilt and inspected.
-- The original v3 release remains useful historical evidence but needs a
-  corrective successor before being recommended as a reproducible bundle.
+- The original v3 release and tag were removed on 2026-08-07. This ADR retains
+  the audit evidence; a corrective successor must use a new immutable tag.
 
 ## Related
 
 - [ADR0041: Surface Pro 11 Touchscreen Kernel Patch Set](adr-0041-sp11-touchscreen-patches.md)
 - [ADR0042: Surface Pro 11 Touchscreen Integration Troubleshooting](adr-0042-sp11-touchscreen-troubleshooting.md)
 - [ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Kernel Build](adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
+- [ADR0051: Remove Broken or Incorrect Releases and Tags](adr-0051-release-and-tag-cleanup.md)
 - [geocausa Phase 91 controller source](https://github.com/geocausa/SP11X1e-touchscreen/blob/6bbcf7a4759a73014047a57e819219dd7f34951a/phase55/modules/spi-geni-qcom.c)
-- [Original v3 GitHub release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3)
+- Removed original v3 release and tag: `sp11-qcom-x1e-7.2-rc5-jg-0sp11v3`

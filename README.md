@@ -463,6 +463,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0048: JG 7.2-rc5-jg-0sp11v2 Kernel Build](docs/adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
 - [ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Build](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
 - [ADR0050: Touchscreen Clean-Install and Release Flow](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
+- [ADR0051: Remove Broken or Incorrect Releases and Tags](docs/adr/adr-0051-release-and-tag-cleanup.md)
 
 ## Windows Firmware
 

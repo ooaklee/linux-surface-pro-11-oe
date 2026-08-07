@@ -12,6 +12,12 @@ description: Architecture Decision Record (ADR) for publishing Surface Pro 11 li
 Accepted — required for publishing the Surface Pro 11 direct-boot live USB
 image through GitHub Releases (2026-06-27).
 
+Release amendment (2026-08-07): the historical
+`sp11-ubuntu-live-direct-jg-7.1.1` release and tag were removed because the tag
+pointed to the parent of the support commit recorded by its manifest. The
+split-image design remains valid, but a future image must bind its tag to the
+exact manifest commit.
+
 ## Context
 
 The Surface Pro 11 bring-up can produce a direct-boot Ubuntu live USB raw disk
