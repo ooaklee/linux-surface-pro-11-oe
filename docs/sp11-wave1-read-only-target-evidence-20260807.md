@@ -163,6 +163,10 @@ Review that output manually. Do not commit raw inventories or access details.
 
 - P0.6 remains complete; the new run agrees with the recorded recovery and
   privacy boundary.
+- P0.10 is complete; public issues
+  [#22](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/22) through
+  [#31](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/31) record the
+  required tracking and rollback metadata without changing any feature gate.
 - P2.1, P4A.2, P6.1, and P7.1 advance to `evidence-review`, not `complete`.
   The associated desk/source gates P2.2, P4A.1, and P4A.3 are complete.
 - P4A.4 is explicitly blocked on secure SISP resource partitioning as well as

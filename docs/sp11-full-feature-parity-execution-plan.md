@@ -234,10 +234,9 @@ identifiers. The resulting public conclusions are recorded in the
 [2026-08-07 Wave 1 evidence report](sp11-wave1-read-only-target-evidence-20260807.md).
 Raw output and access details remain unpublished.
 
-P0.10 is `in-progress`. The public issue index exists, but every issue must be
-retrofitted with the complete branch, owner, dependency, upstream destination,
-immutable evidence, and exercised/unexercised rollback status before this gate
-can be marked complete:
+P0.10 is `complete`. Every issue in the public index records its branch,
+owner, dependencies, upstream destination, immutable evidence, and
+exercised/unexercised rollback status:
 
 | Scope | Issue |
 |---|---|
