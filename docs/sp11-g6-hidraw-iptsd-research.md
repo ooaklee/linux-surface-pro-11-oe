@@ -37,10 +37,29 @@ At that revision, the client:
 - registers a separate `BUS_SPI`, ten-slot, finger-only multitouch input
   device.
 
-The source is a Phase 91 pin, but the installed module receives no client
-profile parameters. Its compiled defaults select the Phase 75 runtime profile.
-The collector therefore records `behavior_stats`'s `profile` value instead of
-inferring runtime behavior from the repository phase name.
+The Phase 91 release wrapper packages the client from the repository's
+`phase55/modules` build directory; neither label is a runtime profile. The
+installed module receives no client profile parameters, so its compiled
+defaults select the Phase 75 runtime profile. The controller-only
+`sp11_windows_se_init` option does not change that client selection. The
+collector therefore records `behavior_stats`'s `profile` value instead of
+inferring runtime behavior from a repository or release name.
+
+The sanitized
+[Wave 1 read-only target report](sp11-wave1-read-only-target-evidence-20260807.md)
+confirms that distinction and the present ownership boundary: the G6 SPI
+client exposes the existing touch-oriented `BUS_SPI` input device directly,
+with no G6 HID child, G6 HIDRAW node, or IPTSD installation. That observation
+partially satisfies P2.1; descriptor retention and report diagnostics remain
+absent.
+
+The device descriptor, report descriptor, synchronous replies, and
+spontaneous DATA pass through a shared response buffer in the current client.
+The bridge must therefore copy the validated report descriptor into owned
+storage before a later transaction overwrites it. Classification remains at
+the response-ingress boundary: only the spontaneous DATA class may reach HID
+core, even when a synchronous feature exchange encounters and skips DATA
+while waiting for its own reply.
 
 The public source's descriptor analysis describes Pen report ID `0x01`, but
 that is a candidate to verify from Linux, not proof that the target emits a
@@ -48,9 +67,35 @@ complete pen report. The first hardware gate records only the live descriptor
 hash and report ID/size histograms; it does not publish personal strokes or raw
 payloads.
 
+### Exact JG HID baseline
+
+The kernel contract was reviewed at the exact JG baseline,
+[`8f953dd060bc6e8fb86ca2ea8a92f258141c0169`](https://github.com/jglathe/linux_ms_dev_kit/tree/8f953dd060bc6e8fb86ca2ea8a92f258141c0169).
+At that revision, a transport must provide a synchronous `raw_request`
+callback before `hid_add_device()` will accept its child. HID core calls the
+transport's descriptor parser during `hid_add_device()` and may use its
+callbacks after registration begins; after `hid_destroy_device()` returns, it
+will no longer use them. These are the exact baseline's published Linux
+[HID transport rules](https://github.com/jglathe/linux_ms_dev_kit/blob/8f953dd060bc6e8fb86ca2ea8a92f258141c0169/Documentation/hid/hid-transport.rst).
+
+Allowing `hid-generic` to bind is unsafe for the diagnostic bridge because its
+default connect mask includes both HID input and HIDRAW. A G6-specific upper
+HID driver must therefore bind the child, parse the retained descriptor, start
+it with `HID_CONNECT_HIDRAW`, and call `hid_hw_stop()` on removal. Its
+low-level `start`, `stop`, `open`, `close`, and power callbacks must not change
+transport or controller state. `raw_request` and `output_report` must reject
+all operations without touching QSPI; leaving the higher-level request
+callback unset routes requests to the same rejecting raw callback.
+
+This baseline supports `BUS_SPI`, but its HID log-name switch and device-ID
+helpers do not yet name that bus. Patch 02 of HID-over-SPI v4 adds only those
+generic definitions and can be evaluated independently; the child can also
+match with the baseline's existing generic HID device-ID helper. Neither
+choice supplies a transport.
+
 ### IPTSD v3.1.0
 
-The candidate userspace baseline is linux-surface IPTSD commit
+The evidence-only userspace research pin is linux-surface IPTSD commit
 [`a83bc1232f7096f8b33b50fdbda249cd640de670`](https://github.com/linux-surface/iptsd/tree/a83bc1232f7096f8b33b50fdbda249cd640de670),
 tagged v3.1.0 and licensed `GPL-2.0-or-later`.
 
@@ -73,36 +118,107 @@ obtained through a separately reviewed read-only path.
 ### Generic HID-over-SPI
 
 Jingyuan Liang's public
-[HID-over-SPI v4 series](https://patchew.org/linux/20260609-send-upstream-v4-0-b843d5e6ced3%40chromium.org/)
+[HID-over-SPI v4 series](https://lore.kernel.org/all/20260609-send-upstream-v4-0-b843d5e6ced3%40chromium.org/)
 is the preferred long-term upstream architecture. It registers a Linux HID
 device, parses the report descriptor, implements control requests, and feeds
 spontaneous data into HID core.
 
-It is not a drop-in replacement for the current SP11 transport. The reviewed
-v4 ACPI and device-tree paths explicitly leave multi-lane SPI unsupported,
-while the SP11 depends on the existing QSPI/GPI controller and its validated
-lifecycle. Before any patch reuse, archive and hash the reviewed public mbox,
-preserve authorship and SPDX tags, and record it in the source ledger.
+The reviewed public thread is based on Linux commit
+`05f7e89ab9731565d8a62e3b5d1ec206485eeb0b`; that commit is an ancestor of the
+exact JG baseline. The ledgered, decompressed thread has SHA-256
+`3b26ce90730b9bb4d1ff8394db65fcf5f999c94329973fa673dca582ff13f0ca`.
+All eleven tracked patches apply textually to the exact JG baseline without a
+context reject. This proves mechanical applicability only, not a successful
+build, protocol correctness, or maintainer acceptance.
+
+It is not a drop-in replacement for the current SP11 transport. The v4 ACPI
+and device-tree paths force `hid-over-spi-flags` to zero because multi-SPI is
+unsupported. The series uses ordinary SPI transfers and does not select the
+quad transmit/receive mode used by the current SP11 client. It also rejects
+multi-fragment input reports. Separately, it owns reset, power, IRQ,
+descriptor, and control-request lifecycle itself, so it cannot be layered as
+a child while the custom client owns the same SPI device. The QSPI/GPI port
+must deliberately merge those responsibilities rather than add a competing
+binding.
+
+The archived thread also contains unresolved automated-review reports about
+bounds, shared response state, and late-response synchronization. Those are
+tool findings, not maintainer conclusions, but they require an independent
+audit and tests before any code is reused. Patch reuse must preserve original
+authorship and per-file SPDX tags; the mbox remains evidence-only until that
+review is complete.
 
 ## Architecture decision
 
-The first implementation has four ownership boundaries:
+The first implementation has five ownership boundaries:
 
 1. The current custom driver continues to own reset, enumeration, synchronous
    GET/SET responses, controller mode, GPI/QSPI operation, recovery, and the
    existing finger input device.
-2. A G6-specific `BUS_SPI` HID child receives the observed vendor, product,
-   version, and retained report descriptor.
-3. The child connects with `HID_CONNECT_HIDRAW` only. Generic HID input and
-   HID multitouch remain disconnected to prevent duplicate touch events.
-4. Spontaneous DATA reports alone are delivered as report ID plus payload.
+2. After a successful enumeration, the client copies and retains the report
+   descriptor response only after its response class, ID, and declared length
+   are checked, then creates a G6-specific `BUS_SPI` HID child with the device
+   descriptor's vendor, product, and version. The G6-specific upper HID driver
+   must be registered before `hid_add_device()`, HID core must parse the copied
+   descriptor successfully, and that driver must win the binding before the
+   child is published; `hid-generic` binding is a test failure.
+3. The upper driver connects with `HID_CONNECT_HIDRAW` only. Generic HID input
+   and HID multitouch remain disconnected to prevent duplicate touch events.
+4. Low-level lifecycle callbacks are local no-ops, while `raw_request` and
+   `output_report` return `-EOPNOTSUPP`. They never acquire the transport lock,
+   change mode or power, or send QSPI traffic.
+5. Spontaneous DATA reports alone are delivered as report ID plus payload.
    Synchronous control replies are never injected as input. Initial raw
    callbacks reject every transport-backed GET, SET, OUTPUT, and unknown
-   request. HID core may serve only the locally retained descriptor.
+   request. HIDRAW reads receive only admitted spontaneous DATA; its local
+   information ioctls may serve retained identity and descriptor data.
+
+The child lifetime follows one copied, HID-core-parsed descriptor generation.
+Registration failure destroys the unclaimed child and leaves no published
+pointer. Normal ingress and detachment must be serialized so teardown first
+blocks new input and drains an in-flight `hid_input_report()` before clearing
+the pointer;
+`hid_destroy_device()` then runs outside that serialization lock, before the
+parent transport's resources are released. Suspend gates report delivery
+before IRQ and power quiescence but keeps the child registered. Resume enables
+delivery only after transport recovery and descriptor revalidation; any
+descriptor drift leaves delivery disabled and forces a controlled child
+destroy/recreate decision rather than mutating a registered descriptor.
 
 The HIDRAW node is root-only during research. Collection opens it read-only,
 is time-bounded, stores raw material outside git, and publishes only hashes,
 counts, lengths, and independently derived field descriptions.
+
+### Smallest pre-P0 synthetic test seam
+
+The first patch is testable without a device and without copying a G6 report
+descriptor. A small, invented vendor-page descriptor and synthetic IDs are
+sufficient for these tests:
+
+1. Extract a bounded response classifier that receives response class,
+   report ID, declared length, and available length. A table test admits only
+   well-formed spontaneous DATA, preserves the exact report ID plus payload,
+   and drops descriptor/control/reset replies, unknown classes, truncation,
+   oversize, zero-length, and off-by-one cases.
+2. Register a synthetic child with the G6-specific upper driver. Its retained
+   descriptor must parse, `HID_CLAIMED_HIDRAW` must be set,
+   `HID_CLAIMED_INPUT` must remain clear, and its HID input list must stay
+   empty. A feed spy receives one admitted spontaneous report and no
+   synchronous reply.
+3. Replace every QSPI/control operation with a fail-on-call counter. Exercise
+   GET and SET raw requests, output reports, malformed lengths, open/close,
+   start/stop, and power hints. Control and output calls must return the
+   documented rejection, all transport counters must remain zero, and input
+   buffers must remain unchanged.
+4. Exercise parser and registration failures, repeated create/destroy,
+   detach during ingress, suspend gating, resume with the same descriptor,
+   and resume with descriptor drift. No failure may leave a published child,
+   feed after detach, call a freed callback, or change parent mode/power state.
+
+Run this KUnit seam against the exact JG tree, compile the production module
+for the exact arm64 ABI, and run the existing static checks before P0 permits a
+one-shot hardware build. Captured report bytes, the real descriptor, and
+hardware access are not required for this stage.
 
 ## Execution branches and gates
 

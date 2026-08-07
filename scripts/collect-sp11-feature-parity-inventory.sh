@@ -132,6 +132,7 @@ filter_g6_behavior_stats() {
 
 sanitize_kernel_material() {
   sed -E \
+    -e 's/(bytes[[:space:]]*=[[:space:]]*)[[:xdigit:]][[:xdigit:]]([[:space:]]+[[:xdigit:]][[:xdigit:]])*/\1<redacted-binary>/g' \
     -e 's/[[:xdigit:]]{2}([[:space:]:,-]+[[:xdigit:]]{2}){3,}/<redacted-binary>/g' \
     -e 's/((^|[^[:alnum:]_])(x|y|pressure|tilt|contact)[[:space:]_-]*=[[:space:]]*)-?[0-9]+/\1<redacted-input-value>/g'
 }

@@ -63,11 +63,11 @@ The starting state is intentionally conservative:
 | Thin fork | The immutable base remains at `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; CI foundation commit `971b5af85ed0c7283ffb33430badeac9b5575057` is merged to the protected integration branch | Base and integration rules are active and thin-fork CI is green; no parity feature is accepted by branch presence |
 | Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is running and named by the effective static `GRUB_DEFAULT`, while `grubenv`'s stale `saved_entry` still names v2 | ADR0053 deliberately rejects mixed static/saved semantics; one-shot apply is blocked until `GRUB_DEFAULT=saved` and `saved_entry` both resolve to known-good v3, then P0 must capture the no-op canary and physical-recovery evidence |
 | Installed DTB path | Repository support retires its loose-DTB helper and kernel hooks under ADR0055; the exact Stubble image is authoritative | Target migration, successful normal GRUB regeneration, absence of project-managed loose-DTB lines, and packaged/embedded/active-FDT pairing remain pending P0 evidence |
-| Evidence tooling | The schema-3 collector ran read-only on the target; its sanitized inventory and a separately filtered bounded kernel-log extract passed manual privacy review | P0.6 is complete for this target observation; raw output and access details are not published, and later hardware evidence remains gated |
+| Evidence tooling | The schema-3 collector ran read-only on the target; its sanitized inventory and a separately filtered bounded kernel-log extract passed manual privacy review | P0.6 is complete for this target observation; the [2026-08-07 Wave 1 evidence report](sp11-wave1-read-only-target-evidence-20260807.md) records only reviewed conclusions, while raw output and access details remain unpublished |
 | Input | Repository evidence records current touchscreen results but no raw-pen service and no qualified native volume-rocker mapping | Touch is a regression gate; P1-P3 remain open |
-| Cameras | The recorded target inventory exposes no qualified media graph or video node | P4 remains open |
+| Cameras | The recorded target inventory exposes no qualified media graph or video node; pinned ACPI also assigns secure SISP the MMIO and interrupts used by two generic CAMSS instances | P4A.1 and P4A.3 are complete research gates, P4A.2 is in evidence review, and an unmodified CAMSS probe is blocked |
 | Audio | Repository evidence records a 2.4 MHz microphone baseline and stereo output that still needs routing/distortion closure | P5 remains open |
-| Power/platform | s2idle resume and platform profiles are unqualified | P6-P7 remain open |
+| Power/platform | `deep` was selected during the passive sample; no suspend occurred. The live SSAM `f02` client is the registry-defined thermal sensor, while the profile driver's `f01` client is absent | P6.1 and P7.1 are in evidence review; suspend, active profile discovery, and every write remain blocked |
 
 At drafting on 2026-08-07, P0 is `in-progress` and P1-P9 are `blocked` on P0.
 Update this table as gates close; branch presence alone never changes status.
@@ -217,7 +217,7 @@ state.
 | P0.7 | P0.4, P0.6 | Migrate the target with the current support installer; require successful live-root GRUB regeneration and no project-managed loose-DTB lines; verify the exact recovery ABI from `config/kernel-baselines/7.2-rc5-jg-0.env` is installed, running, boot-tested, and has matching image/initramfs/modules plus packaged, embedded, and active-FDT evidence | Migration transcript, recovery checklist, and checksums; any old loose DTB remains byte-for-byte unchanged and inert |
 | P0.8 | P0.7 | Build a distinct no-op canary ABI from the same source, config, DTB, and feature patches; verify its packaged and Stubble-embedded DTB pairing; dry-run then apply the ADR-0053 helper; verify the canary boots once with the intended active FDT and the following boot returns to the unchanged persistent fallback | Two-boot transcript, DTB pairing evidence, GRUB environment before/after, and post-return `uname -r` |
 | P0.9 | P0.7 | Boot-test recovery media and document the physical GRUB/power-cycle path; require a hardware operator for the first boot of every boot-critical track | Recovery-media checksum and observed boot result |
-| P0.10 | P0.1-P0.9 | Create one public issue per task group with branch, owner, dependency, upstream destination, evidence link, and rollback status | Issue index; no issue may say “works” without evidence |
+| P0.10 | P0.5, P0.6 | Create one public issue per task group with branch, owner, dependency, upstream destination, evidence link, and rollback status | Issue index; no issue may say “works” without evidence |
 
 P0.4's first adjacent-build audit is complete and recorded in the
 [2026-08-07 reproducibility report](sp11-kernel-reproducibility-report-20260807.md).
@@ -230,7 +230,30 @@ failed, and the immutable-input gate remains open.
 P0.6 is complete for the current target observation. The schema-3 inventory
 collector ran read-only, and both its sanitized result and a separately
 filtered bounded kernel-log extract passed manual review without private
-identifiers. Raw output and access details remain unpublished.
+identifiers. The resulting public conclusions are recorded in the
+[2026-08-07 Wave 1 evidence report](sp11-wave1-read-only-target-evidence-20260807.md).
+Raw output and access details remain unpublished.
+
+P0.10 is `in-progress`. The public issue index exists, but every issue must be
+retrofitted with the complete branch, owner, dependency, upstream destination,
+immutable evidence, and exercised/unexercised rollback status before this gate
+can be marked complete:
+
+| Scope | Issue |
+|---|---|
+| Programme epic | [#22](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/22) |
+| P0 foundation and recovery | [#23](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/23) |
+| P1 volume rocker | [#24](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/24) |
+| P2-P3 G6 HID and pen | [#25](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/25) |
+| P4 CAMSS and cameras | [#26](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/26) |
+| P5 speakers and DMIC | [#27](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/27) |
+| P6 suspend and cpuidle | [#28](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/28) |
+| P7 platform profiles | [#29](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/29) |
+| P8 integration | [#30](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/30) |
+| P9 upstream, rebase, and prereleases | [#31](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/31) |
+
+Each issue remains open until its own evidence and rollback gate closes; issue
+creation does not change a feature's state.
 
 P0.8's off-target artifact sub-gate passed as recorded in the
 [2026-08-07 no-op canary report](sp11-p0-canary-build-report-20260807.md), but
@@ -339,11 +362,20 @@ Identity is observed, not spoofed. See
 
 | ID | Bounded task | Required output |
 |---|---|---|
-| P2.1 | Inventory the bound MSHW0485/QSPI/GPI devices, modaliases, device-descriptor identity, runtime profile, IRQ rate, DMA channels, and current event nodes without changing the driver | Sanitized topology and scalar-counter report; Phase 91 source and Phase 75 runtime profile are recorded separately |
-| P2.2 | Compare public HID-over-SPI v4, Linux HID, the pinned G6 source, and IPTSD at immutable identities; record v4's missing multi-lane support and hash a reviewed mbox before reuse | Interface decision record: custom HIDRAW bridge first, generic QSPI HID port later, or explicit blocker |
-| P2.3 | Retain the live report descriptor and add a G6-specific `BUS_SPI` HID child connected to HIDRAW only; reject every transport-backed GET/SET/OUTPUT/unknown raw request and preserve the existing finger input device | Reviewable transport commit with synthetic/KUnit lifecycle, malformed-length, no-QSPI-control, and synchronous-reply isolation tests; no duplicate hid-input node |
-| P2.4 | Add bounded diagnostics for descriptor length/hash, per-report-ID count and min/max/last size, unknown IDs, framing/length/protocol failures, IRQs, DMA timeouts, and reset recovery without logging user content | Versioned debug schema and privacy review; no payload bytes or provider arrays |
+| P2.1 | Inventory the bound MSHW0485/QSPI/GPI devices, modaliases, observed device-descriptor identity, runtime profile, IRQ rate, DMA channels, and current event nodes without changing the driver | Sanitized topology and scalar-counter report; Phase 91 source, `phase55/modules` build directory, and Phase 75 runtime profile are recorded separately |
+| P2.2 | Compare public HID-over-SPI v4, Linux HID, the pinned G6 source, and IPTSD at immutable identities; record v4's missing QSPI/multi-fragment support, textual application result, and hashed reviewed mbox | Interface decision record: custom HIDRAW bridge first, generic QSPI HID port later, or explicit blocker |
+| P2.3 | Copy and retain the response-class/ID/length-checked live report descriptor; require HID-core parse success and a G6-specific upper-driver bind before publishing a `BUS_SPI` child connected to HIDRAW only; reject every transport-backed GET/SET/OUTPUT/unknown request; serialize feed, suspend, descriptor drift, and teardown; preserve the existing finger input device | Reviewable transport commit with the documented synthetic/KUnit classifier, HID-claim, zero-QSPI-control, lifecycle, malformed-length, synchronous-reply isolation, suspend, and descriptor-drift tests; `hid-generic` must not bind and no duplicate hid-input node may appear |
+| P2.4 | Add bounded diagnostics for descriptor length/hash, child add/destroy failures, admitted feeds, synchronous/malformed drops, rejected controls, per-report-ID count and min/max/last size, unknown IDs, framing/length/protocol failures, IRQs, DMA timeouts, and reset recovery without logging user content | Versioned debug schema and privacy review; no payload bytes or provider arrays |
 | P2.5 | In a one-shot boot, hash the live descriptor and collect ID/size histograms across idle, finger, pen hover, and pen contact before installing pen userspace | P2 evidence pack and regression comparison against v3 |
+
+As of the 2026-08-07 Wave 1 review, P2.1 is `evidence-review`: topology and
+the source/build/runtime-profile distinction are recorded, while live
+descriptor identity, IRQ-rate/DMA evidence, descriptor retention, and report
+diagnostics remain open. P2.2 is `complete` at the research gate, backed by
+[ADR-0054](adr/adr-0054-sp11-g6-hid-ownership.md), the
+[G6 HIDRAW and IPTSD research note](sp11-g6-hidraw-iptsd-research.md), and the
+ledgered mbox. P2.5 remains blocked on P0 and the P2.3-P2.4 implementation
+gates.
 
 ### P2 acceptance
 
@@ -402,6 +434,10 @@ path and do not add IPTSD.
 | P3.4 | Package a restricted service with explicit device permissions, restart bounds, log redaction, and clean uninstall/disable behaviour | Co-installable experimental package and service-hardening report |
 | P3.5 | Add libinput/libwacom metadata only after event semantics are verified | Userspace integration commit and desktop test matrix |
 
+The stock-IPTSD safety portion of P3.1 is complete. Parser selection remains
+blocked on the P2 live descriptor, report-schema, and physical-geometry gate;
+no stock discovery or runner trial is permitted.
+
 ### P3 acceptance
 
 - One hundred approach/withdraw cycles emit hover without false contact.
@@ -445,7 +481,7 @@ research and driver work can run independently; target mutation and integration
 are serial. **Branches:** `lsp11-x-camera-foundation-7.2-rc5`, followed by one
 of `lsp11-x-camera-ov13858-7.2-rc5`,
 `lsp11-x-camera-front-id-7.2-rc5`, or
-`lsp11-x-camera-vd55g0-7.2-rc5` per sensor. **Illumination:** hard-disabled
+`lsp11-x-camera-vd55g0-id-7.2-rc5` per sensor. **Illumination:** hard-disabled
 through P4D.
 
 The ACPI names `OVTID858`, `OVTI02C1`, and `SMO55F1` are hypotheses recorded in
@@ -473,14 +509,22 @@ The pinned resource analysis and front-sensor correction are recorded in
 |---|---|---|
 | P4A.1 | At the pinned ACPI commit, catalogue camera-related device paths, `_HID`/`_CID`, `_DEP`, `_CRS`, GPIO, interrupt, I2C/CCI, clock, regulator/power-resource, and method references with exact file/line citations | Resource worksheet with `observed`, `inferred`, and `unknown` columns |
 | P4A.2 | Correlate the worksheet with read-only live firmware/DT, regulator, clock, GPIO-owner, IOMMU, CAMSS, and media-controller inventory | Per-resource mapping; no guessed phandle is allowed |
-| P4A.3 | Inspect the exact baseline's X1E80100 CAMSS driver, binding, Johan G. camera patches, clocks, interconnects, IOMMUs, CCI blocks, CSIPHYs, and VFE capacity | Gap analysis tied to exact kernel files/commits |
-| P4A.4 | First enable only the CAMSS core and TPG foundation; keep both CCI controllers, every CSIPHY, all sensor nodes, and the illuminator disabled until their board resources are verified | `dtbs_check`, binding checks, boot log, and sensor-free media graph with no power-sequence error |
+| P4A.3 | Inspect the exact baseline's X1E80100 CAMSS driver, binding, Johan G. camera patches, clocks, interconnects, IOMMUs, CCI blocks, CSIPHYs, VFE capacity, and secure-resource ownership | Gap analysis tied to exact kernel files/commits, including the SISP overlap |
+| P4A.4 | Design and review an upstreamable non-secure CAMSS resource subset that excludes every secure SISP range and interrupt; prove live ownership before enabling only that CAMSS/TPG foundation, while both CCI controllers, every external CSIPHY, all sensors, and the illuminator remain disabled | Binding/driver design review, exact secure/non-secure resource map, `dtbs_check`, boot log, and sensor-free media graph with no secure-access, IOMMU, power, or clock fault |
 | P4A.5 | Define a reusable raw-frame evidence procedure using `media-ctl` and V4L2: graph, negotiated bus format, frame dimensions, timestamps, timeout/drop counts, hashes, and sanitized sample policy | Reviewed camera test procedure |
 
-P4A passes when every enabled CAMSS resource has a public/target evidence
-reference, the system boots five times without a CAMSS/IOMMU/regulator fault,
-and no camera rail or illuminator is unexpectedly enabled while all sensor
-nodes remain disabled.
+P4A.1 and P4A.3 are `complete` at the research gate. P4A.2 is
+`evidence-review`: the non-privileged target baseline is recorded, while
+regulator consumers, clocks, GPIO and IOMMU ownership, and power sequencing
+remain unknown. P4A.4 is `blocked` before any probe because generic
+`csid_lite1`/`vfe_lite1` resources overlap secure, non-handoff SISP. Disabling
+external PHYs does not remove that conflict.
+
+P4A passes only when every enabled CAMSS resource has a public/target evidence
+reference, the non-secure subset demonstrably excludes every SISP-owned MMIO
+range and interrupt, the system boots five times without a secure-access,
+CAMSS, IOMMU, regulator, or clock fault, and no camera rail or illuminator is
+unexpectedly enabled while all sensor nodes remain disabled.
 
 ### P4B — Rear OV13858 candidate
 
@@ -671,9 +715,9 @@ or userspace failure.
 
 | ID | Bounded task | Required output |
 |---|---|---|
-| P6.1 | On the fallback, inventory `/sys/power/mem_sleep`, cpuidle driver/governor/states, residency/usage, wakeup sources, PSCI DT data, device suspend failures, firmware logs, and resume traces | Sanitized baseline with every state name/latency/residency recorded |
-| P6.2 | Run five instrumented 60-second fallback s2idle attempts with no kernel change; classify failure phase and last successful trace event | Failure signature and candidate list; no state is disabled from the video claim alone |
-| P6.3 | Create one exact ABI per candidate: change only one idle state or one implicated device policy; retain WFI unless evidence specifically disproves it | One-commit branches and range-diffs |
+| P6.1 | On the fallback, inventory `/sys/power/mem_sleep`, cpuidle driver/governor/states, residency/usage, wakeup sources, PSCI DT data, device suspend failures, firmware logs, resume-trace availability, and active DT/domain topology; record that the baseline already detaches Hamoa `cl5` | Sanitized baseline with every state name/latency/residency recorded; source history remains distinct from target causality and tracefs is not enabled or cleared |
+| P6.2 | After P0, record the pre-test selection, explicitly select `s2idle`, and run five instrumented 60-second fallback attempts with no kernel change; classify failure phase and last successful trace event | Failure signature and candidate list; no state is disabled from the video claim or the existing `cl5` source change alone |
+| P6.3 | Only after P6.2 identifies a defensible candidate, create one exact ABI per candidate: change one idle state or one implicated device policy; retain WFI unless evidence specifically disproves it | One-commit branches and range-diffs; no redundant `cl5` detachment patch |
 | P6.4 | Use one-shot boots to run short cycles, then long cycles, recording entry/resume times, wake source, failed device, idle residency, kernel errors, network recovery, and normalized energy use | Per-candidate comparison |
 | P6.5 | Minimize the successful change and verify that re-enabling it restores the failure signature before accepting causality | A/B/A causal report |
 
@@ -694,6 +738,12 @@ or userspace failure.
   least two of five controlled attempts, unless doing so is judged unsafe after
   a hard lockup. The safety exception and weaker causal confidence are recorded.
 - “Deep” sleep is not declared supported; this phase qualifies s2idle only.
+
+P6.1 is `evidence-review`: the passive state/source baseline and a bounded
+no-write follow-up protocol are recorded in
+[power and SAM research](sp11-power-sam-research.md). The observed selection
+was `deep`, suspend counters were zero, and no cycle occurred. P6.2 remains
+blocked on P0; P6.3 has no defensible candidate yet.
 
 ### P6 rollback
 
@@ -724,9 +774,9 @@ description.
 
 | ID | Bounded task | Required output |
 |---|---|---|
-| P7.1 | Review the candidate Surface Aggregator Module commit and licence before reuse; inventory the target's existing SSH/SSAM ACPI paths, services, thermal zones, SCMI policies, and firmware interfaces read-only | Approved ledger pin and sanitized platform topology |
-| P7.2 | Locate public protocol definitions for safe capability/profile queries and commands; map request, response, failure, and rollback semantics | Protocol record with provenance for every command byte/field; unknown write commands remain blocked |
-| P7.3 | Implement read-only capability discovery first, then a `platform_profile` driver with explicit device matching, strict response validation, serialized transitions, and safe fallback | Generic driver commits separated from Denali match/data |
+| P7.1 | Review the candidate Surface Aggregator Module sources and licences; inventory modern `/sys/class/platform-profile`, target SSH/SSAM paths, services, thermal zones, SCMI policies, and firmware interfaces read-only; classify live `f02` as the registry-defined thermal sensor | Approved ledger pins and sanitized topology; no `f02` profile alias or raw request |
+| P7.2 | Record the public typed `f01` GET/SET protocol, response length/value validation, retry and no-response semantics; locate an exact SP11 `f01` match and target-specific capability basis before any active GET | Protocol record with provenance for every command byte/field; absent capability or match evidence keeps active discovery and writes blocked |
+| P7.3 | Only after P7.2, implement target-derived read-only discovery and then a `platform_profile` driver with exact device matching, strict response validation, serialized transitions, SET readback, explicit TMP/FAN partial-failure handling, and safe fallback | Generic driver commits separated from Denali match/data; fixed unconditional choices alone are insufficient |
 | P7.4 | Define conservative qualified frequency ceilings from firmware and thermal evidence; if Linux applies a 2.515 GHz cap, document why it is safe and which layer owns it | Policy record; no copied magic value |
 | P7.5 | Test profiles, failures, thermal behaviour, all three SCMI policies, s2idle, and coexistence with speakers/cameras | P7 evidence pack |
 
@@ -747,6 +797,15 @@ description.
   and valid policy limits.
 - A rejected/failed command leaves the previous acknowledged mode and limits
   intact.
+
+P7.1 is `evidence-review`, and the generic portion of P7.2 is mapped in
+[power and SAM research](sp11-power-sam-research.md). The exact profile
+protocol matches `f01`, while the pinned SP11 registry and live topology expose
+only thermal-sensor `f02`. No licensed SP11-specific capability query was
+found. Active GET, alias expansion, module probing, raw SSAM discovery, and
+every write remain blocked until an exact SP11 `f01` basis exists. Acceptance
+also requires target-derived choices, post-SET GET verification, and explicit
+rollback for a successful TMP transition followed by a failed FAN transition.
 
 ### P7 rollback
 
