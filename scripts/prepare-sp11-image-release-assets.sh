@@ -309,9 +309,9 @@ installer ISO, and should be written only to the intended removable device.
 ## Installed-system payloads
 
 The live environment boots the concept ISO's casper kernel. A custom kernel or
-module bundle stored under `SP11DATA/payload/kernel-debs` is available only to
+module bundle stored under \`SP11DATA/payload/kernel-debs\` is available only to
 the guarded installed-system flow; it does not replace the live-session kernel.
-Check `$OUTLINE_NAME` for the exact payload carried by this image.
+Check \`$OUTLINE_NAME\` for the exact payload carried by this image.
 
 ## Verify
 
