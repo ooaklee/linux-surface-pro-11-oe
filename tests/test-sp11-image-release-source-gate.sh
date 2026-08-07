@@ -670,7 +670,14 @@ real_git="$(command -v git)"
 cat > "$mock_bin/git" <<'EOF_GIT'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${FIXTURE_CLEAN_GIT:-false}" = "true" ]; then
+if [ "${FIXTURE_DIRTY_GIT:-false}" = "true" ]; then
+  case " $* " in
+    *' status --porcelain --untracked-files=all '*)
+      printf ' M README.md\n'
+      exit 0
+      ;;
+  esac
+elif [ "${FIXTURE_CLEAN_GIT:-false}" = "true" ]; then
   case " $* " in
     *' status --porcelain --untracked-files=all '*) exit 0 ;;
     *' show-ref --verify --quiet refs/tags/'*)
@@ -1175,7 +1182,7 @@ printf '%s\n' "$support_tamper_output" |
   grep -F 'embedded support identity differs' >/dev/null
 [ ! -e "$repo_dir/build/release/$release_prefix-support-tamper" ]
 
-bound_output="$(env "${fixture_binding_env[@]}" "$helper" \
+bound_output="$(env "${fixture_binding_env[@]}" FIXTURE_DIRTY_GIT=true "$helper" \
     --image "${image#"$repo_dir"/}" \
     --release-name "$release_prefix-bound" \
     --allow-dirty \
