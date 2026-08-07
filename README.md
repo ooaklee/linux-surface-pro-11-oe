@@ -92,7 +92,7 @@ mkdir -p build
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
   --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v2" \
   --build-target "binary-indep binary-qcom-x1e" \
@@ -106,7 +106,7 @@ mkdir -p build
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
   --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
   --build-target "binary-indep binary-qcom-x1e" \
@@ -116,6 +116,11 @@ mkdir -p build
   --reset-source \
   --jobs 8
 ```
+
+The release examples use the immutable
+`jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag. The moving
+`jg/ubuntu-qcom-x1e-7.2rc` branch resolved to the same source commit when this
+baseline was validated, but should not be used as release provenance.
 
 The v3 build enables the MSHW0485 OLED touchscreen in the device tree, but the
 runtime QSPI support ships as an exact-ABI out-of-tree module bundle. After the
@@ -241,10 +246,11 @@ bundle before invoking `apt`. `--skip-touchscreen-modules` is available for a
 deliberate kernel-development install, but touch will remain unavailable until
 `install-sp11-touchscreen.sh` completes.
 
-For a direct local installation instead of the USB payload flow, place all
-four matching `.deb` packages in one directory and run the same helper against
-that directory. For example, with the 2.4 MHz DMIC packages downloaded to
-`$HOME/Downloads`:
+For a direct local installation instead of the USB payload flow, place all four
+matching `.deb` packages in one directory and run the same helper against that
+directory. An `sp11v3` directory must also contain the release's matching
+`gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files. For example, with
+the verified release assets downloaded to `$HOME/Downloads`:
 
 ```bash
 cd /path/to/linux-surface-pro-11-oe
@@ -254,11 +260,10 @@ cd /path/to/linux-surface-pro-11-oe
 sudo reboot
 ```
 
-For the standard v2 build, the directory must contain the matching image,
-modules, flavour-header, and common-header packages for
-`7.1.3-jg-1sp11v2` (or `7.2-rc5-jg-0sp11v2` for the current 7.2-rc5 v2
-kernel). After reboot, verify the running kernel and authoritative DMIC
-clock:
+The current v3 bundle contains matching image, modules, flavour-header, and
+common-header packages for `7.2-rc5-jg-0sp11v3`, plus the three touchscreen
+modules. The older `7.1.3-jg-1sp11v2` package set remains a kernel-only rollback
+option. After reboot, verify the running kernel and authoritative DMIC clock:
 
 ```bash
 uname -r
@@ -266,8 +271,8 @@ od -An -tu4 -N4 --endian=big \
   /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
 ```
 
-Expected values are `7.2-rc5-jg-0sp11v2-qcom-x1e` (or
-`7.1.3-jg-1sp11v2-qcom-x1e`) and `2400000`.
+Expected values are `7.2-rc5-jg-0sp11v3-qcom-x1e` (or
+`7.1.3-jg-1sp11v2-qcom-x1e` after selecting the rollback kernel) and `2400000`.
 
 ## Post-Install Bring-Up
 
@@ -342,10 +347,10 @@ sudo reboot
 
 Alternatively, download the
 [audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
-The corrected v2 UCM should be paired with the
-[7.2-rc5-jg-0sp11v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v2),
+The corrected v2 UCM should be paired with the experimental
+[7.2-rc5-jg-0sp11v3 r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
 which carries the 2.4 MHz DMIC clock required to eliminate the static observed
-with the earlier 4.8 MHz kernel. The previous
+with the earlier 4.8 MHz kernel. The existing
 [7.1.3-jg-1 v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2)
 remains available as a rollback option.
 

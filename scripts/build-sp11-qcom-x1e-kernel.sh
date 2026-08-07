@@ -632,6 +632,9 @@ write_manifest() {
       echo "Resolved source package: $RESOLVED_SOURCE_PACKAGE"
       echo "Source version mode: $SOURCE_VERSION"
       echo "Apt source spec: $SOURCE_SPEC"
+    else
+      echo "Source URL: $GIT_URL"
+      echo "Source ref: $GIT_BRANCH"
     fi
     echo "Source directory: $source_dir"
     if [ -d "$source_dir/.git" ]; then

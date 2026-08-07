@@ -2,23 +2,24 @@
 id: how-to-reinstall-patched-kernel-from-usb
 title: "Reinstall the Patched Kernel from USB or GitHub Releases"
 # prettier-ignore
-description: How-to guide for reinstalling the patched qcom-x1e kernel over a stock Ubuntu kernel that lacks ath12k disable-rfkill support, using either the live-USB payload or the GitHub release .deb packages.
+description: How-to guide for installing or reinstalling a Surface Pro 11 qcom-x1e kernel bundle from the live-USB payload or verified GitHub Release assets.
 ---
 
 # How To: Reinstall the Patched Kernel from USB or GitHub Releases
 
 Use this procedure after Ubuntu `apt` or an official kernel package has
-overwritten the patched qcom-x1e kernel. The patched kernel carries two
-patches (`0001` and `0002` from `patches/ubuntu-qcom-x1e-7.0/`) that skip
-ath12k rfkill configuration on Denali, resolving the intermittent WCN7850
-Wi-Fi hard-block.
+displaced a Surface Pro 11-specific qcom-x1e kernel, or when installing a
+downloaded kernel bundle for the first time. Release families differ: the
+historical 7.0 build applied two local ath12k rfkill patches, while the current
+`sp11v3` build starts from an immutable Johan G. kernel tag and adds the SP11
+build-policy, 2.4 MHz DMIC, touchscreen device-tree, and exact-ABI module work.
 
 ## Purpose
 
-Ubuntu ships a stock `linux-image-*-qcom-x1e` kernel that does not include
-`disable-rfkill` support for the Denali WCN7850 devicetree node. When a kernel
-update or reinstall replaces the patched kernel, Wi-Fi may reappear
-hard-blocked (`rfkill list` shows `Hard blocked: yes` for `phy0`).
+Replacing an SP11-specific kernel can regress the Denali Wi-Fi, DMIC-clock, or
+touchscreen path, depending on the stock kernel version. For `sp11v3`, the four
+kernel packages and three touchscreen modules form one exact-ABI transaction;
+installing only the `.deb` files does not provide a working touchscreen.
 
 This procedure gets the pre-built patched kernel `.deb` files onto the Surface
 and reinstalls them — no Docker build required. The packages can come from the
@@ -29,8 +30,9 @@ same way.
 
 - Root access on the Surface Pro 11.
 - The patched kernel `.deb` packages, from one of the sources below.
-- For an `sp11v3` touchscreen kernel, the release's matching `gpi.ko`,
-  `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files in the same directory.
+- For an `sp11v3` touchscreen kernel, the complete release asset set, including
+  its matching `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files,
+  provenance manifest, and `SHA256SUMS`.
 - A checkout of this repository on the Surface — either the live USB
   `SP11DATA/support` directory, or a `git clone` — so the guarded installer and
   its post-install support helper are available.
@@ -66,61 +68,50 @@ ls "$DEBS"/linux-*.deb
 
 **Option B — from GitHub releases (Surface has Wi-Fi, Ethernet, or tethering):**
 
-Browse the releases page and pick the newest patched-kernel tag:
+Browse the releases page and select the intended patched-kernel tag:
 
 ```
 https://github.com/ooaklee/linux-surface-pro-11-oe/releases
 ```
 
-At the time of writing the current tag is
-`sp11-qcom-x1e-7.0.0-22.22-rfkill1`. Download the kernel `.deb` packages plus
-the `SHA256SUMS` file into a working directory. With the GitHub CLI:
+The corrective v3 prerelease is
+[`sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
+(experimental). The removed unsuffixed v3 tag is retired and must not be
+reused.
+
+For `sp11v3`, download the complete published asset set into a new directory,
+fetch the release tag into the local repository, and run the semantic release
+validator before installation:
 
 ```bash
-DEBS=~/sp11-kernel-debs
-TAG=sp11-qcom-x1e-7.0.0-22.22-rfkill1
+TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1
+DEBS="$HOME/sp11-kernel-debs-$TAG"
+mkdir -p "$DEBS"
 
 gh release download "$TAG" \
   --repo ooaklee/linux-surface-pro-11-oe \
-  --pattern 'linux-*.deb' \
-  --pattern 'SHA256SUMS' \
   --dir "$DEBS"
-```
 
-Or, without `gh`, download each asset with `wget` (replace the tag if newer):
-
-```bash
-DEBS=~/sp11-kernel-debs
-mkdir -p "$DEBS" && cd "$DEBS"
-BASE=https://github.com/ooaklee/linux-surface-pro-11-oe/releases/download/sp11-qcom-x1e-7.0.0-22.22-rfkill1
-wget "$BASE/linux-headers-7.0.0-22-qcom-x1e_7.0.0-22.22_arm64.deb"
-wget "$BASE/linux-image-7.0.0-22-qcom-x1e_7.0.0-22.22_arm64.deb"
-wget "$BASE/linux-modules-7.0.0-22-qcom-x1e_7.0.0-22.22_arm64.deb"
-wget "$BASE/SHA256SUMS"
-```
-
-Verify the downloads before installing:
-
-```bash
-cd "$DEBS"
-sha256sum -c SHA256SUMS --ignore-missing
-# Expect: each linux-*.deb line printed as "OK"
-```
-
-For an `sp11v3` release, download the entire published asset set rather than
-only `linux-*.deb`; the kernel and three touchscreen modules are one matched
-transaction. Validate that fresh directory before installation:
-
-```bash
-gh release download "$TAG" \
-  --repo ooaklee/linux-surface-pro-11-oe \
-  --dir "$DEBS"
+cd /path/to/linux-surface-pro-11-oe
+git fetch https://github.com/ooaklee/linux-surface-pro-11-oe.git \
+  "refs/tags/$TAG:refs/tags/$TAG"
 
 ./scripts/validate-sp11-touchscreen-release.sh \
   --dir "$DEBS" \
   --tag "$TAG" \
   --remote https://github.com/ooaklee/linux-surface-pro-11-oe.git
 ```
+
+The validator checks exact checksum and asset membership, package roles and
+ABI, module provenance and vermagic, the touchscreen device tree, and both the
+local and remote tag targets. Without `gh`, download every asset listed on the
+release page into one empty directory, fetch the tag as above, and run the same
+validator.
+
+For an older non-touchscreen release, downloading only its `.deb` files and
+`SHA256SUMS` is sufficient for installation. In that narrower case,
+`sha256sum -c SHA256SUMS --ignore-missing` verifies the downloaded packages but
+does not validate the release's complete asset set.
 
 ## 2. Install the patched kernel
 
@@ -213,7 +204,7 @@ Verify the running kernel:
 
 ```bash
 uname -r
-# 7.0.0-22-qcom-x1e
+# 7.2-rc5-jg-0sp11v3-qcom-x1e
 ```
 
 For an `sp11v3` kernel, also verify the complete touchscreen boot path:
@@ -224,11 +215,14 @@ sudo ./scripts/troubleshoot-sp11-touchscreen.sh
 
 ## Privacy and Safety
 
-The GitHub release ships the standard Ubuntu kernel binaries with two small
-open-source patches applied; no device-specific data is included. The release
-is **experimental and unsigned** — verify each package against the published
-`SHA256SUMS` before installing (section 1), and keep a known-good qcom-x1e
-fallback kernel installed so the GRUB fallback guard can protect the boot path.
+The release manifest records the source family, immutable source commit,
+applied project patches, and module provenance for that specific bundle. The
+v3 release is built from the Johan G. 7.2-rc5 tag with the SP11 DMIC and
+touchscreen changes; it is not the historical Ubuntu 7.0 two-patch build. No
+device-specific data is included. Every kernel release is **experimental and
+unsigned** — validate the published asset set before installing, and keep a
+known-good qcom-x1e fallback kernel installed so the GRUB fallback guard can
+protect the boot path.
 
 ## Related
 

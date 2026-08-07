@@ -262,21 +262,23 @@ Partition does not change the live tree. See
 build and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md) for the
 default-setting decision and device-side evidence.
 
-For normal installation, use the
-[`7.2-rc5-jg-0sp11v2` kernel release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v2)
+For a new installation, use the experimental
+[`7.2-rc5-jg-0sp11v3` r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
 with the
 [`sp11-audio-topology-v2` assets](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
 The v2 topology binary is unchanged from v1; v2 updates the UCM capture path to
 match the single WSA macro, use two microphone channels, and apply unity
 decoder gain. The kernel remains necessary because UCM changes alone do not
-alter the Denali DMIC clock. See
-[ADR-0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md).
+alter the Denali DMIC clock. The v3 kernel retains the v2 build's validated
+2.4 MHz clock and adds the separately packaged, exact-ABI touchscreen module
+set. See [ADR-0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
+and [ADR-0049](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md).
 
-The 7.2-rc5 v2 kernel boots with the 2.4 MHz clock through the GRUB-injected
-`/boot/sp11-denali.dtb` (unlike the 7.1.3 v2 kernel, which carried the device
-tree embedded in the packaged Stubble image). The installer selects the v2
-build's DTB and injects it into every GRUB kernel entry, so the live
-device-tree value reflects the injected file:
+The 7.2-rc5 SP11 v2 and v3 kernels boot with the 2.4 MHz clock through the
+GRUB-injected `/boot/sp11-denali.dtb` (unlike the 7.1.3 v2 kernel, which carried
+the device tree embedded in the packaged Stubble image). The installer prefers
+the newest numeric `sp11vN` build's DTB and injects it into every GRUB kernel
+entry, so the live device-tree value reflects the injected file:
 
 ```bash
 uname -r
@@ -284,7 +286,8 @@ od -An -tu4 -N4 --endian=big \
   /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
 ```
 
-Expected output is `7.2-rc5-jg-0sp11v2-qcom-x1e` and `2400000`.
+Expected output for the current bundle is
+`7.2-rc5-jg-0sp11v3-qcom-x1e` and `2400000`.
 
 ## References
 
@@ -295,6 +298,7 @@ Expected output is `7.2-rc5-jg-0sp11v2-qcom-x1e` and `2400000`.
 - ADR: [adr-0044-sp11-ucm-single-wsa-macro-microphone.md](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
 - ADR: [adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
 - ADR: [adr-0046-sp11-default-2p4mhz-dmic-clock.md](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md)
+- ADR: [adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
 - Script: [sp11-audio-topology.sh](../../scripts/sp11-audio-topology.sh)
 - Script: [sp11-pipewire-speaker-sink.sh](../../scripts/sp11-pipewire-speaker-sink.sh)
 - Script: [sp11-enable-wsa-routing.sh](../../scripts/sp11-enable-wsa-routing.sh)
