@@ -18,6 +18,16 @@ controller initializes over `spi@a88000`, the input device reports as
 `Microsoft Surface G6 Touch`, and multi-touch works. The 2.4 MHz DMIC clock
 fix and the audio capture path from the v2 build remain intact.
 
+Deployment amendment (2026-08-06): the original module helper stopped after
+`depmod` and left the required initramfs rebuild as a separate documentation
+step. A community clean install consequently booted the stock SPI controller
+and logged `Invalid proto 9`. The guarded flow now pins the Phase 91 source,
+targets the exact v3 ABI, installs all three modules, forces them into the
+initramfs, and verifies their source versions. The reported
+`sp11_windows_se_init=1` setting is not the general fix and remains opt-in; the
+validated development device works with it disabled. See
+[ADR-0050](adr-0050-sp11-touchscreen-clean-install-release-flow.md).
+
 ## Context
 
 [ADR-0048](adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md) established the
@@ -101,7 +111,8 @@ The Docker kernel build:
   --jobs 8
 ```
 
-The touchscreen module build, against the installed v3 headers:
+The touchscreen module build and guarded install, against the installed v3
+headers:
 
 ```bash
 ./scripts/build-sp11-touchscreen-modules.sh --install
@@ -114,12 +125,10 @@ at the same relative paths as the in-tree counterparts:
 - `drivers/spi/spi-geni-qcom.ko`
 - `drivers/input/touchscreen/mshw0485_touch.ko`
 
-After installing the modules, the initramfs must be regenerated so early boot
-loads the geocausa versions instead of the stock ones:
-
-```bash
-dracut -f /boot/initrd.img-$(uname -r) $(uname -r)
-```
+The installer writes explicit initramfs-tools and dracut inclusion
+configuration, regenerates the exact target ABI, then checks that module
+selection and the initramfs use the geocausa source versions. No separate
+`dracut` or `update-initramfs` command is required.
 
 The installer DTB selection (`pick_dtb` in `scripts/install-sp11-support.sh`)
 now extracts the numeric suffix after `sp11v` and prefers the newest one:

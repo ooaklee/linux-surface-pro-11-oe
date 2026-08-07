@@ -67,6 +67,8 @@ install -m 0755 "$repo_dir/scripts/sp11-bluetooth-mac.sh" "$(target /usr/local/s
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-audio.sh" "$(target /usr/local/sbin/troubleshoot-sp11-audio)"
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-bluetooth.sh" "$(target /usr/local/sbin/troubleshoot-sp11-bluetooth)"
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-wifi-rfkill.sh" "$(target /usr/local/sbin/troubleshoot-sp11-wifi-rfkill)"
+install -m 0755 "$repo_dir/scripts/install-sp11-touchscreen.sh" "$(target /usr/local/sbin/install-sp11-touchscreen)"
+install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-touchscreen.sh" "$(target /usr/local/sbin/troubleshoot-sp11-touchscreen)"
 install -m 0755 "$repo_dir/scripts/sp11-pipewire-speaker-sink.sh" "$(target /usr/local/sbin/sp11-pipewire-speaker-sink)"
 install -m 0755 "$repo_dir/scripts/sp11-audio-topology.sh" "$(target /usr/local/sbin/sp11-audio-topology)"
 install -m 0755 "$repo_dir/scripts/sp11-enable-wsa-routing.sh" "$(target /usr/local/sbin/sp11-enable-wsa-routing)"

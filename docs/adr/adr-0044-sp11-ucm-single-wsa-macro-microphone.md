@@ -11,6 +11,10 @@ description: Architecture Decision Record (ADR) for matching the Surface Pro 11 
 
 Accepted (2026-07-18).
 
+Release amendment (2026-08-07): `sp11-audio-topology-v1` was removed because
+its Surface UCM profile referenced nonexistent `WSA2` controls and aborted the
+complete `HiFi` verb. The corrected v2 release remains available.
+
 Validated on a Surface Pro 11 running `7.1.3-jg-1-qcom-x1e`. The corrected
 UCM profile opens its `HiFi` verb, lists `Speaker` and `Mic`, and records a
 two-channel, 48 kHz, 16-bit sample from `hw:0,3` with signal on both channels.

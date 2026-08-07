@@ -18,7 +18,11 @@ QSPI data pins GPIO 49/50 (`qup1_se2`), and attaches the touchscreen child
 with GPIO 48 reset, GPIO 51 interrupt, and GPIO 64 power. Runtime QSPI
 support is provided by the paired out-of-tree `gpi`, `spi-geni-qcom`, and
 `mshw0485_touch` modules from the geocausa phase 91 baseline, installed as
-higher-priority `/lib/modules/<release>/updates/` overrides.
+higher-priority `/lib/modules/<release>/updates/` overrides. Use
+`scripts/build-sp11-touchscreen-modules.sh --install`; it pins the Phase 91
+source, targets the exact v3 ABI, rebuilds the initramfs, and verifies that the
+three overrides—not the stock SPI/GPI modules—are embedded. See ADR-0050 for
+the clean-install failure retrospective.
 
 Apply it after `patches/jglathe-qcom-x1e-7.2-rc5` so the annotations
 compatibility fix is established before the Surface Pro 11 version signature

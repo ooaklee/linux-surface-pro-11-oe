@@ -17,11 +17,12 @@ ADR-0041 documents the patch set (spi-hid, QSPI mode, GPI DMA, DTS).
 This ADR tracks the **attempts to get those patches working at runtime**
 on a Surface Pro 11 (Microsoft Denali OLED, Snapdragon X Elite).
 
-The release kernel from
-<https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-0-touch>
-was installed but the touchscreen did not work. Local kernel rebuilds with
-config changes were attempted interactively on the device to diagnose and
-fix the problem.
+The kernel from the former `sp11-qcom-x1e-7.1.3-jg-0-touch` release was
+installed but the touchscreen did not work. The release and tag were removed
+on 2026-08-07: the packages omitted the touchscreen patches, and the tag
+predated and disagreed with the release manifest. Local kernel rebuilds with
+config changes were attempted interactively on the device to diagnose and fix
+the problem.
 
 ### Hardware
 

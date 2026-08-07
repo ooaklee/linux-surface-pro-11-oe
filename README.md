@@ -52,7 +52,7 @@ list for the upstream Arch status.
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
 | Audio — speakers | ⚠️ Partially | Sound card instantiates with generated topology from the CRD template. Both stereo speaker endpoints produce audio through a PipeWire manual sink with reordered `audio.position` labels. The 4-channel PCM is a transport layout, not four independently routable speakers. Music playback showed no audible regression with the 2.4 MHz DMIC kernel, but the manual sink is still required and speakers can sound distorted. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
 | Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
-| Touchscreen | ✅ Working | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, on the 7.2-rc5 v3 build (`7.2-rc5-jg-0sp11v3`) with the v3 touchscreen DTS patch and the out-of-tree geocausa `gpi`, `spi-geni-qcom`, and `mshw0485_touch` modules installed as `updates/` overrides. Multi-touch, pinch/zoom, and three-finger gestures work. See [ADR-0049](docs/adr/adr-0049-sp11-7.2-rc5-jg-0sp11v3-touchscreen-build.md) and [ADR-0041](docs/adr/adr-0041-sp11-touchscreen-patches.md). |
+| Touchscreen | ✅ Working on installed v3 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, on the 7.2-rc5 v3 build (`7.2-rc5-jg-0sp11v3`) with an exact-ABI set of the geocausa `gpi`, `spi-geni-qcom`, and `mshw0485_touch` modules. The guarded installer forces those overrides into the target initramfs and verifies them before reboot. Multi-touch, pinch/zoom, and three-finger gestures work. The live USB still boots the concept ISO's casper kernel and does not gain touch from a payload-only v3 bundle. See [ADR-0050](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
 | Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
@@ -118,19 +118,23 @@ mkdir -p build
 ```
 
 The v3 build enables the MSHW0485 OLED touchscreen in the device tree, but the
-runtime QSPI support ships as out-of-tree modules. After installing the v3
-kernel packages, build the geocausa `gpi`, `spi-geni-qcom`, and
-`mshw0485_touch` modules against the v3 headers, install them as `updates/`
-overrides, and regenerate the initramfs:
+runtime QSPI support ships as an exact-ABI out-of-tree module bundle. After the
+v3 kernel and headers are installed, the pinned build helper selects the v3
+headers (even when an older kernel is still running), builds all three modules,
+and delegates installation, initramfs regeneration, and verification to the
+guarded installer:
 
 ```bash
 ./scripts/build-sp11-touchscreen-modules.sh --install
-sudo dracut -f /boot/initrd.img-$(uname -r) $(uname -r)
 ```
 
-See [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
-for the touchscreen decision and [ADR-0041](docs/adr/adr-0041-sp11-touchscreen-patches.md)
-for the patch-set structure.
+The validated controller profile leaves the experimental
+`sp11_windows_se_init` parameter off. Do not add it merely because a boot logs
+`Invalid proto 9`; that signature means the stock controller was loaded. Run
+`sudo ./scripts/troubleshoot-sp11-touchscreen.sh` to classify the boot first.
+See [ADR-0050](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
+for the clean-install retrospective and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
+for the kernel decision.
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
 applied in order. The `binary-indep` target is required because the ABI-specific
@@ -218,7 +222,10 @@ sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
 If networking is unavailable, mount the Windows partition and use Windows
 firmware instead: `--windows-root "$WINROOT"` (see the script `--help`).
 
-Then install the patched kernel payload from the USB:
+Then install the patched kernel payload from the USB. For an `sp11v3` payload,
+keep `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` beside the `.deb`
+files; the same command installs the exact-ABI module set and verifies the
+rebuilt initramfs:
 
 ```bash
 cd "$SP11DATA/support"
@@ -228,6 +235,11 @@ sudo reboot
 
 Keep the previous qcom-x1e kernel as a GRUB fallback until the patched kernel
 has booted and Wi-Fi rfkill state has been validated.
+
+The installer refuses an `sp11v3` kernel with a missing or mismatched module
+bundle before invoking `apt`. `--skip-touchscreen-modules` is available for a
+deliberate kernel-development install, but touch will remain unavailable until
+`install-sp11-touchscreen.sh` completes.
 
 For a direct local installation instead of the USB payload flow, place all
 four matching `.deb` packages in one directory and run the same helper against
@@ -258,6 +270,27 @@ Expected values are `7.2-rc5-jg-0sp11v2-qcom-x1e` (or
 `7.1.3-jg-1sp11v2-qcom-x1e`) and `2400000`.
 
 ## Post-Install Bring-Up
+
+### Touchscreen
+
+After rebooting the v3 kernel, run the read-only diagnostic:
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/troubleshoot-sp11-touchscreen.sh
+```
+
+Success requires the v3 device tree, all three loaded module source versions
+to match their selected `updates/` files, and the `Microsoft Surface G6 Touch`
+input device. `Invalid proto 9` indicates a stale stock SPI controller in the
+boot path; `CH START completion timeout` points to a stale or mismatched GPI
+DMA module. The diagnostic reports the corresponding repair command.
+
+The captured Windows controller initialization is intentionally not the
+default. If the diagnostic proves that the correct modules are loaded and the
+Linux-integrated path still fails on a cold boot, reinstall explicitly with
+`--windows-se-init` as an A/B recovery test and retain the known-good kernel
+fallback.
 
 ### Wi-Fi
 
@@ -371,6 +404,7 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
 - [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
+- [Touchscreen Clean-Install and Release Retrospective](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [Troubleshoot Docker Overlay Mount Failures on Linux Build Hosts](docs/how-to/how-to-troubleshoot-linux-docker-overlay.md)
 - [Troubleshoot Docker `exec format error` on x86_64 Linux Build Hosts](docs/how-to/how-to-troubleshoot-docker-exec-format-error.md)
 - [Troubleshoot Kernel Git Clone `fetch-pack` Failures](docs/how-to/how-to-troubleshoot-kernel-git-clone-failures.md)
@@ -425,6 +459,11 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0044: Surface Pro 11 UCM Uses One WSA Macro and Two Microphone Channels](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
 - [ADR0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel](docs/adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
 - [ADR0046: Default the Surface Pro 11 DMIC Clock to 2.4 MHz](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md)
+- [ADR0047: JG 7.2-rc5-jg-0 Kernel Build](docs/adr/adr-0047-jglathe-qcom-7-2-rc5-jg-0-build.md)
+- [ADR0048: JG 7.2-rc5-jg-0sp11v2 Kernel Build](docs/adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
+- [ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Build](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
+- [ADR0050: Touchscreen Clean-Install and Release Flow](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
+- [ADR0051: Remove Broken or Incorrect Releases and Tags](docs/adr/adr-0051-release-and-tag-cleanup.md)
 
 ## Windows Firmware
 

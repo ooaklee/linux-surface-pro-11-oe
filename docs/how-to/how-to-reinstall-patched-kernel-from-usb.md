@@ -29,6 +29,8 @@ same way.
 
 - Root access on the Surface Pro 11.
 - The patched kernel `.deb` packages, from one of the sources below.
+- For an `sp11v3` touchscreen kernel, the release's matching `gpi.ko`,
+  `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files in the same directory.
 - A checkout of this repository on the Surface — either the live USB
   `SP11DATA/support` directory, or a `git clone` — so the guarded installer and
   its post-install support helper are available.
@@ -105,6 +107,21 @@ sha256sum -c SHA256SUMS --ignore-missing
 # Expect: each linux-*.deb line printed as "OK"
 ```
 
+For an `sp11v3` release, download the entire published asset set rather than
+only `linux-*.deb`; the kernel and three touchscreen modules are one matched
+transaction. Validate that fresh directory before installation:
+
+```bash
+gh release download "$TAG" \
+  --repo ooaklee/linux-surface-pro-11-oe \
+  --dir "$DEBS"
+
+./scripts/validate-sp11-touchscreen-release.sh \
+  --dir "$DEBS" \
+  --tag "$TAG" \
+  --remote https://github.com/ooaklee/linux-surface-pro-11-oe.git
+```
+
 ## 2. Install the patched kernel
 
 Run the guarded installer from your repository checkout, pointing `--work-dir`
@@ -128,7 +145,10 @@ cd "$SP11DATA/support"
   your fallback),
 - installs the kernel `.deb` packages with `apt`, then
 - runs `install-sp11-support.sh --installed-system`, which re-selects the
-  rfkill-capable Denali OLED DTB and re-injects it into GRUB and initramfs.
+  rfkill-capable Denali OLED DTB and re-injects it into GRUB and initramfs, and
+- for `sp11v3`, refuses a missing or mismatched three-module touchscreen bundle
+  before package installation, then installs and verifies it in the exact
+  target initramfs.
 
 It elevates with `sudo` as needed. If `--work-dir` points to a directory under
 your home (e.g. `~/Downloads`), you may see a harmless `_apt` sandbox warning:
@@ -148,9 +168,13 @@ Installed Surface Pro 11 support helpers into /
 
 ### Minimal fallback (no repository checkout)
 
+Do not use this fallback for an `sp11v3` touchscreen release: direct `dpkg`
+does not install or verify the required out-of-tree module bundle. Obtain the
+repository checkout and use the guarded flow above.
+
 If you only have the `.deb` files and not a checkout of this repo, install them
-directly. This skips the fallback-kernel guard, so make sure a known-good
-qcom-x1e kernel is still installed first:
+directly only for a kernel-only release. This skips the fallback-kernel guard,
+so make sure a known-good qcom-x1e kernel is still installed first:
 
 ```bash
 sudo dpkg -i "$DEBS"/linux-*.deb
@@ -190,6 +214,12 @@ Verify the running kernel:
 ```bash
 uname -r
 # 7.0.0-22-qcom-x1e
+```
+
+For an `sp11v3` kernel, also verify the complete touchscreen boot path:
+
+```bash
+sudo ./scripts/troubleshoot-sp11-touchscreen.sh
 ```
 
 ## Privacy and Safety
