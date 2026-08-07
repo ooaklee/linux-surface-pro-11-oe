@@ -101,7 +101,8 @@ The Docker kernel build:
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --image ubuntu:26.04 \
+  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
+  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \

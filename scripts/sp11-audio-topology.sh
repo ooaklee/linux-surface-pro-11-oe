@@ -4,8 +4,9 @@ set -euo pipefail
 DRY_RUN="false"
 INSTALL="false"
 WORK_DIR="${HOME}/sp11-audio-topology-build"
+SOURCE_DIR=""
 REPO_URL="https://github.com/linux-msm/audioreach-topology.git"
-REPO_REF="d7a5e9d"
+REPO_REF="d7a5e9d80ad18a7a6844eeb32cacbdeea0e7e677"
 INPUT_TEMPLATE="X1E80100-CRD.m4"
 OUTPUT_NAME="X1E80100-Microsoft-Surface-Pro-11"
 FW_PATH="/lib/firmware/qcom/x1e80100"
@@ -33,6 +34,9 @@ Output files (in work dir):
   - build/qcom/x1e80100/${OUTPUT_NAME}-tplg.bin   (topology binary)
   - build/ucm/                                     (UCM config files)
 
+The immutable upstream checkout is managed separately under source/ in the
+work directory. Generated files are never used as m4 include inputs.
+
 When installed:
   - ${FW_PATH}/${OUTPUT_NAME}-tplg.bin
   - ${UCM_QUALCOMM_DIR}/MICROSOFT-Surface-Pro-11.conf
@@ -43,6 +47,16 @@ EOF
 }
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+die() {
+	log "ERROR: $*"
+	exit 1
+}
+
+canonical_git_url() {
+	local url="${1%/}"
+	printf '%s\n' "${url%.git}"
+}
 
 check_deps() {
 	local deps=(git m4 alsatplg)
@@ -59,27 +73,59 @@ check_deps() {
 	fi
 }
 
+verify_source_checkout() {
+	local actual_head actual_origin expected_origin status
+
+	[ "$(git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ] ||
+		die "source directory is not an audioreach-topology Git checkout: $SOURCE_DIR"
+
+	actual_origin="$(git -C "$SOURCE_DIR" remote get-url origin 2>/dev/null)" ||
+		die "cannot read the origin URL from $SOURCE_DIR"
+	expected_origin="$(canonical_git_url "$REPO_URL")"
+	if [ "$(canonical_git_url "$actual_origin")" != "$expected_origin" ]; then
+		die "source origin mismatch in $SOURCE_DIR (expected $REPO_URL, found $actual_origin)"
+	fi
+
+	actual_head="$(git -C "$SOURCE_DIR" rev-parse --verify HEAD 2>/dev/null)" ||
+		die "cannot resolve HEAD in $SOURCE_DIR"
+	if [ "$actual_head" != "$REPO_REF" ]; then
+		die "source revision mismatch in $SOURCE_DIR (expected $REPO_REF, found $actual_head)"
+	fi
+
+	status="$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all --ignored=matching)" ||
+		die "cannot inspect source changes in $SOURCE_DIR"
+	if [ -n "$status" ]; then
+		die "source checkout contains modified, untracked, or ignored files in $SOURCE_DIR; use a clean checkout at $REPO_REF"
+	fi
+}
+
+prepare_source_checkout() {
+	if [ ! -e "$SOURCE_DIR" ]; then
+		log "Cloning audioreach-topology repo at immutable revision $REPO_REF..."
+		mkdir -p "$WORK_DIR"
+		git clone --no-checkout "$REPO_URL" "$SOURCE_DIR"
+		git -C "$SOURCE_DIR" checkout --detach "$REPO_REF"
+	elif [ "$(git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+		die "source directory already exists but is not a Git checkout: $SOURCE_DIR"
+	fi
+
+	verify_source_checkout
+	[ -f "${SOURCE_DIR}/${INPUT_TEMPLATE}" ] ||
+		die "pinned source checkout does not contain ${INPUT_TEMPLATE}: $SOURCE_DIR"
+}
+
 build_topology() {
-	local src="${WORK_DIR}/${INPUT_TEMPLATE}"
+	local src="${SOURCE_DIR}/${INPUT_TEMPLATE}"
 	local out_dir="${WORK_DIR}/build/qcom/x1e80100"
 	local conf="${out_dir}/${OUTPUT_NAME}.conf"
 	local tplg="${out_dir}/${OUTPUT_NAME}-tplg.bin"
 
-	if [ ! -f "$src" ]; then
-		log "Cloning audioreach-topology repo (ref $REPO_REF)..."
-		rm -rf "$WORK_DIR"
-		git clone --branch "$REPO_REF" "$REPO_URL" "$WORK_DIR" 2>/dev/null ||
-			git clone "$REPO_URL" "$WORK_DIR"
-		if [ -d "$WORK_DIR" ]; then
-			git -C "$WORK_DIR" checkout "$REPO_REF" 2>/dev/null || \
-				log "WARNING: Could not checkout $REPO_REF, using HEAD=$(git -C "$WORK_DIR" rev-parse --short HEAD)"
-		fi
-	fi
+	prepare_source_checkout
 
 	mkdir -p "$out_dir"
 
 	log "Running m4 to expand topology template..."
-	m4 -I "${WORK_DIR}/build" -I "$WORK_DIR" "$src" > "$conf"
+	m4 -I "${SOURCE_DIR}/build" -I "$SOURCE_DIR" "$src" > "$conf"
 
 	log "Compiling topology with alsatplg..."
 	alsatplg -c "$conf" -o "$tplg"
@@ -239,6 +285,12 @@ while [ $# -gt 0 ]; do
 		*) log "Unknown option: $1"; usage; exit 1 ;;
 	esac
 done
+
+if [ "$DRY_RUN" = "true" ] && [ "$INSTALL" = "true" ]; then
+	die "--dry-run and --install cannot be used together"
+fi
+
+SOURCE_DIR="${WORK_DIR%/}/source"
 
 check_deps
 build_topology

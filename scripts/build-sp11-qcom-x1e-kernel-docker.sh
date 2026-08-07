@@ -12,6 +12,7 @@ SOURCE_PACKAGE=""
 SOURCE_VERSION=""
 GIT_URL=""
 GIT_BRANCH=""
+EXPECTED_SOURCE_COMMIT=""
 BUILD_TARGET=""
 PATCH_DIR=""
 PATCH_DIRS=""
@@ -45,6 +46,9 @@ Options:
   --source-version VER   apt source version. Usually comes from --metadata.
   --git-url URL          Kernel git URL for git mode.
   --git-branch BRANCH    Kernel git branch or tag for git mode.
+  --expected-source-commit SHA
+                        Require git mode to resolve to this exact 40-hex commit
+                        before any patches are applied or a build is started.
   --image IMAGE          Docker image. Defaults to ubuntu:26.04 for apt mode
                          and ubuntu:25.10 for git mode.
   --platform PLATFORM    Docker platform, default $PLATFORM.
@@ -187,6 +191,11 @@ while [ "$#" -gt 0 ]; do
       GIT_BRANCH="$2"
       shift 2
       ;;
+    --expected-source-commit)
+      require_arg "$1" "${2:-}"
+      EXPECTED_SOURCE_COMMIT="$2"
+      shift 2
+      ;;
     --image)
       require_arg "$1" "${2:-}"
       IMAGE="$2"
@@ -288,6 +297,18 @@ case "$SOURCE_MODE" in
     exit 2
     ;;
 esac
+
+if [ -n "$EXPECTED_SOURCE_COMMIT" ]; then
+  if [ "$SOURCE_MODE" != "git" ]; then
+    echo "--expected-source-commit requires --source git." >&2
+    exit 2
+  fi
+  if ! [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "--expected-source-commit must be an exact 40-hex commit." >&2
+    exit 2
+  fi
+  EXPECTED_SOURCE_COMMIT="$(printf '%s' "$EXPECTED_SOURCE_COMMIT" | tr '[:upper:]' '[:lower:]')"
+fi
 
 if [ -z "$IMAGE" ]; then
   case "$SOURCE_MODE" in
@@ -424,6 +445,7 @@ case "$SOURCE_MODE" in
   git)
     [ -n "$GIT_URL" ] && inner_args+=(--git-url "$GIT_URL")
     [ -n "$GIT_BRANCH" ] && inner_args+=(--git-branch "$GIT_BRANCH")
+    [ -n "$EXPECTED_SOURCE_COMMIT" ] && inner_args+=(--expected-source-commit "$EXPECTED_SOURCE_COMMIT")
     ;;
 esac
 
@@ -544,6 +566,7 @@ docker_args=(
   --platform "$PLATFORM"
   -e "SP11_ENABLE_DEB_SRC=$ENABLE_DEB_SRC"
   -e "SP11_APT_SOURCES_NAME=$(basename "${APT_SOURCES_FILE:-sp11-qcom-x1e.sources}")"
+  -e "SP11_BUILD_CONTAINER_IMAGE=$IMAGE"
   -e "SP11_CONTAINER_WORK_DIR=$CONTAINER_WORK_DIR"
   -v "$repo_dir:/repo:ro"
   -v "$work_abs:/work"

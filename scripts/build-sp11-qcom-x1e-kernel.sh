@@ -6,6 +6,7 @@ SOURCE_PACKAGE="installed"
 SOURCE_VERSION="installed"
 GIT_URL="https://git.launchpad.net/~ubuntu-concept/ubuntu/+source/linux/+git/resolute"
 GIT_BRANCH="qcom-x1e-7.0"
+EXPECTED_SOURCE_COMMIT=""
 BUILD_TARGET="binary-qcom-x1e"
 WORK_DIR="${HOME}/sp11-qcom-x1e-kernel-build"
 PATCH_DIR=""
@@ -43,6 +44,9 @@ Options:
                          Default $SOURCE_VERSION.
   --git-url URL          Kernel git URL for git mode, default $GIT_URL.
   --git-branch BRANCH    Kernel git branch or tag for git mode, default $GIT_BRANCH.
+  --expected-source-commit SHA
+                        Require git mode to resolve to this exact 40-hex commit
+                        before any patches are applied or a build is started.
   --patch-dir DIR        Patch directory, default repo patches/ubuntu-qcom-x1e-7.0.
   --patch-dirs "DIR1 DIR2 ..."
                         Space-separated list of patch directories. Patches from
@@ -131,6 +135,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --git-branch)
       GIT_BRANCH="$2"
+      shift 2
+      ;;
+    --expected-source-commit)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for $1." >&2
+        usage >&2
+        exit 2
+      fi
+      EXPECTED_SOURCE_COMMIT="$2"
       shift 2
       ;;
     --patch-dir)
@@ -231,6 +244,18 @@ case "$SOURCE_MODE" in
     exit 2
     ;;
 esac
+
+if [ -n "$EXPECTED_SOURCE_COMMIT" ]; then
+  if [ "$SOURCE_MODE" != "git" ]; then
+    echo "--expected-source-commit requires --source git." >&2
+    exit 2
+  fi
+  if ! [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "--expected-source-commit must be an exact 40-hex commit." >&2
+    exit 2
+  fi
+  EXPECTED_SOURCE_COMMIT="$(printf '%s' "$EXPECTED_SOURCE_COMMIT" | tr '[:upper:]' '[:lower:]')"
+fi
 
 if ! [[ "$JOBS" =~ ^[0-9]+$ ]] || [ "$JOBS" -lt 1 ]; then
   echo "--jobs must be a positive integer." >&2
@@ -484,6 +509,24 @@ prepare_git_source() {
   source_dir="$dir"
 }
 
+verify_expected_source_commit() {
+  local actual_source_commit
+
+  [ -n "$EXPECTED_SOURCE_COMMIT" ] || return 0
+
+  actual_source_commit="$(git -C "$source_dir" rev-parse --verify "HEAD^{commit}")"
+  actual_source_commit="$(printf '%s' "$actual_source_commit" | tr '[:upper:]' '[:lower:]')"
+  if [ "$actual_source_commit" != "$EXPECTED_SOURCE_COMMIT" ]; then
+    echo "Resolved kernel source does not match --expected-source-commit." >&2
+    echo "Expected: $EXPECTED_SOURCE_COMMIT" >&2
+    echo "Resolved: $actual_source_commit" >&2
+    echo "Refusing to apply patches or start a build from an unexpected source commit." >&2
+    exit 1
+  fi
+
+  echo "Verified expected source commit: $actual_source_commit"
+}
+
 prepare_apt_source() {
   require_tool apt-get
   require_tool apt-cache
@@ -635,6 +678,7 @@ write_manifest() {
     else
       echo "Source URL: $GIT_URL"
       echo "Source ref: $GIT_BRANCH"
+      echo "Expected source commit: ${EXPECTED_SOURCE_COMMIT:-not specified}"
     fi
     echo "Source directory: $source_dir"
     if [ -d "$source_dir/.git" ]; then
@@ -657,12 +701,26 @@ write_manifest() {
     fi
     echo "Build target: $BUILD_TARGET"
     echo "Jobs: $JOBS"
+    echo "Build container image: ${SP11_BUILD_CONTAINER_IMAGE:-not specified}"
+    if command -v dpkg >/dev/null 2>&1; then
+      echo "Build architecture: $(dpkg --print-architecture 2>/dev/null || echo unknown)"
+    else
+      echo "Build architecture: unknown"
+    fi
     if [ "$(id -u)" -eq 0 ]; then
       echo "Rules runner: direct-root"
     elif [ "$NO_FAKEROOT" = "true" ]; then
       echo "Rules runner: no-fakeroot-requested-non-root"
     else
       echo "Rules runner: fakeroot"
+    fi
+    if command -v dpkg-query >/dev/null 2>&1; then
+      echo "Installed package inventory:"
+      dpkg-query -W -f='${binary:Package}=${Version}\n' 2>/dev/null |
+        LC_ALL=C sort |
+        sed 's/^/  - /'
+    else
+      echo "Installed package inventory: unavailable"
     fi
   } > "$manifest"
 
@@ -1024,6 +1082,7 @@ case "$SOURCE_MODE" in
   git) prepare_git_source ;;
 esac
 
+verify_expected_source_commit
 echo "Using source tree: $source_dir"
 apply_patches
 install_source_build_dependencies

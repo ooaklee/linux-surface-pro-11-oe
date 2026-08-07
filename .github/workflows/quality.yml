@@ -1,0 +1,93 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "lsp11-x-**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install static-analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+
+      - name: Check shell syntax
+        run: git ls-files -z '*.sh' | xargs -0 -n1 bash -n
+
+      - name: Check safety-critical shell scripts
+        run: |
+          shellcheck --severity=error \
+            scripts/boot-sp11-kernel-once.sh \
+            scripts/build-sp11-qcom-x1e-kernel.sh \
+            scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+            scripts/collect-sp11-feature-parity-inventory.sh \
+            scripts/sp11-audio-topology.sh \
+            scripts/test-sp11-kernel-patches.sh \
+            scripts/validate-sp11-kernel-baseline.sh \
+            scripts/validate-sp11-kernel-fork-refs.sh \
+            scripts/validate-sp11-public-content.sh \
+            scripts/validate-sp11-source-ledger.sh \
+            tests/test-boot-sp11-kernel-once.sh \
+            tests/test-inventory-redaction.sh \
+            tests/test-kernel-source-commit-guard.sh \
+            tests/test-sp11-audio-topology.sh
+
+      - name: Validate provenance ledger
+        run: |
+          ./scripts/validate-sp11-source-ledger.sh
+          ./scripts/validate-sp11-kernel-baseline.sh
+
+      - name: Validate public thin-fork refs
+        run: ./scripts/validate-sp11-kernel-fork-refs.sh
+
+      - name: Validate public-content boundaries
+        run: ./scripts/validate-sp11-public-content.sh
+
+      - name: Test inventory redaction
+        run: ./tests/test-inventory-redaction.sh
+
+      - name: Test one-shot kernel boot guard
+        run: ./tests/test-boot-sp11-kernel-once.sh
+
+      - name: Test kernel source-commit guard
+        run: ./tests/test-kernel-source-commit-guard.sh
+
+      - name: Test pinned audio topology source guard
+        run: ./tests/test-sp11-audio-topology.sh
+
+      - name: Check tracked whitespace
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD --
+
+      - name: Smoke-test patches against pinned kernel source
+        run: ./scripts/test-sp11-kernel-patches.sh
+
+      - name: Exercise pinned kernel build command
+        run: |
+          . config/kernel-baselines/7.2-rc5-jg-0.env
+          ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+            --source git \
+            --git-url "$SP11_KERNEL_UPSTREAM_URL" \
+            --git-branch "$SP11_KERNEL_UPSTREAM_REF" \
+            --expected-source-commit "$SP11_KERNEL_UPSTREAM_COMMIT" \
+            --image "$SP11_KERNEL_DOCKER_IMAGE" \
+            --platform "$SP11_KERNEL_DOCKER_PLATFORM" \
+            --patch-dirs "$SP11_KERNEL_PATCH_DIRS" \
+            --build-target "$SP11_KERNEL_BUILD_TARGET" \
+            --dry-run

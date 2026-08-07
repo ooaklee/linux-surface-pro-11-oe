@@ -114,10 +114,11 @@ The following seven releases were retained:
 | `sp11-qcom-x1e-7.1.3-jg-1-v2` | Tag and manifest match `c67df67` | Device-validated 2.4 MHz DMIC default kernel |
 | `sp11-audio-topology-v2` | Tag and manifest identify `c67df67` | Corrected single-WSA UCM and validated microphone route |
 
-The local-only `sp11-qcom-x1e-7.2-rc5-jg-0` tag at `ca379d2` was also retained.
-It never had a GitHub release and accurately marks the accepted, validated
-7.2-rc5 build-support change documented by ADR0047. An unpublished source tag
-is not incorrect merely because it has no binary release.
+The local-only `sp11-qcom-x1e-7.2-rc5-jg-0` tag at `ca379d2` was retained
+during the original cleanup. A later 2026-08-07 audit found that marker absent
+from the active checkout. It never had a GitHub release or remote tag, and it
+is not required for release provenance because the upstream source tag and
+full source commit are now recorded explicitly.
 
 The two retained dirty-manifest releases are legacy artifacts, not templates
 for future publication. Their tags correctly identify the commits recorded by
@@ -187,6 +188,11 @@ The corrective standalone kernel/module bundle is named
 new immutable public artifacts; it does not change the installable
 `7.2-rc5-jg-0sp11v3-qcom-x1e` kernel ABI. Neither retired original name may be
 recreated.
+
+Both corrective releases were published on 2026-08-07 as experimental
+prereleases. Their remote tags resolve to support commit
+`acdc959ca7a32318e321c2c11e96bae6b9980f53`. This publication does not promote
+either artifact to hardware-qualified or stable status.
 
 ### Future release gates
 

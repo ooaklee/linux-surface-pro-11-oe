@@ -98,7 +98,7 @@ mkdir -p build/release-source
 docker run --rm --platform linux/arm64 \
   -v sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v3-r1:/linux-work:ro \
   -v "$PWD/build/release-source:/out" \
-  ubuntu:26.04 \
+  ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
   bash -lc '
     set -euo pipefail
     export DEBIAN_FRONTEND=noninteractive
@@ -174,7 +174,7 @@ reused. The fresh corrective release keeps the package ABI
   --release-name sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1 \
   --source-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --source-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --docker-image ubuntu:26.04 \
+  --docker-image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
   --source-asset build/release-source/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1-patched-source.tar.xz \
   --touchscreen-modules-dir build/sp11v3-touchscreen-modules-final \
   --touchscreen-source-url https://github.com/geocausa/SP11X1e-touchscreen.git \
