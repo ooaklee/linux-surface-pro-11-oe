@@ -8,7 +8,7 @@ sanitize_git_environment() {
   unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
   unset GIT_CONFIG_GLOBAL GIT_DIR GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_EXEC_PATH
   unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX
-  unset GIT_SHALLOW_FILE GIT_WORK_TREE
+  unset GIT_SHALLOW_FILE GIT_TEMPLATE_DIR GIT_WORK_TREE
   for variable_name in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
     unset "$variable_name"
   done
@@ -21,12 +21,21 @@ sanitize_git_environment() {
 
 sanitize_git_environment
 
+# Host/container ambient identity must never influence package bytes.  Explicit
+# deterministic arguments are validated and exported only after the exact
+# source commit and its timestamp have both been verified.
+unset SOURCE_DATE_EPOCH KBUILD_BUILD_USER KBUILD_BUILD_HOST KBUILD_BUILD_TIMESTAMP
+
 SOURCE_MODE="apt"
 SOURCE_PACKAGE="installed"
 SOURCE_VERSION="installed"
 GIT_URL="https://git.launchpad.net/~ubuntu-concept/ubuntu/+source/linux/+git/resolute"
 GIT_BRANCH="qcom-x1e-7.0"
 EXPECTED_SOURCE_COMMIT=""
+SOURCE_DATE_EPOCH=""
+KBUILD_BUILD_USER=""
+KBUILD_BUILD_HOST=""
+KBUILD_BUILD_TIMESTAMP=""
 BUILD_TARGET="binary-qcom-x1e"
 WORK_DIR="${HOME}/sp11-qcom-x1e-kernel-build"
 PATCH_DIR=""
@@ -48,6 +57,29 @@ JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
 SOURCE_SPEC=""
 RESOLVED_SOURCE_PACKAGE=""
 SUPPORT_HEAD_START=""
+KERNEL_BASELINE_REL="config/kernel-baselines/7.2-rc5-jg-0.env"
+KERNEL_BASELINE_VALIDATOR_REL="scripts/validate-sp11-kernel-baseline.sh"
+BASELINE_CONTROL_DIR=""
+BASELINE_CONTROL_PARENT=""
+BASELINE_CONTROL_IDENTITY=""
+BASELINE_CONTROL_STATE=""
+KERNEL_BASELINE=""
+KERNEL_BASELINE_VALIDATOR=""
+KERNEL_BASELINE_STATE=""
+KERNEL_BASELINE_VALIDATOR_STATE=""
+BASELINE_DOCKER_IMAGE=""
+BASELINE_ID=""
+BASELINE_DOCKER_PLATFORM=""
+BASELINE_DOCKER_PLATFORM_MANIFEST=""
+BASELINE_UPSTREAM_URL=""
+BASELINE_UPSTREAM_REF=""
+BASELINE_UPSTREAM_COMMIT=""
+BASELINE_SOURCE_DATE_EPOCH=""
+BASELINE_KBUILD_BUILD_USER=""
+BASELINE_KBUILD_BUILD_HOST=""
+BASELINE_KBUILD_BUILD_TIMESTAMP=""
+BASELINE_BUILD_TARGET=""
+BASELINE_PATCH_DIRS=""
 PATCHED_DIFF_FORMAT="git-diff-full-index-binary-v1"
 PATCHED_DIFF_GIT_VERSION=""
 PATCHED_DIFF_SHA256=""
@@ -79,7 +111,174 @@ cleanup_release_source_snapshot() {
     *) echo "Warning: refusing to remove unexpected release source snapshot." >&2 ;;
   esac
 }
-trap cleanup_release_source_snapshot EXIT
+
+baseline_control_identity() {
+  local path="$1"
+
+  case "$(uname -s)" in
+    Darwin) stat -f '%d:%i:%Lp:%u:%g' "$path" ;;
+    *) stat -c '%d:%i:%a:%u:%g' -- "$path" ;;
+  esac
+}
+
+baseline_control_file_state() {
+  local path="$1" before after digest
+
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  case "$(uname -s)" in
+    Darwin) before="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) before="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  digest="$(sha256_file "$path")"
+  case "$(uname -s)" in
+    Darwin) after="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) after="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  [ "$before" = "$after" ] && [ "${before##*:}" = "1" ] &&
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s:%s\n' "$before" "$digest"
+}
+
+baseline_control_directory_state() {
+  local path="$1" before after
+
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  case "$(uname -s)" in
+    Darwin) before="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) before="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  case "$(uname -s)" in
+    Darwin) after="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) after="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  [ "$before" = "$after" ] || return 1
+  printf '%s\n' "$before"
+}
+
+verify_baseline_control_membership() {
+  local path name count=0 seen_baseline=false seen_validator=false
+
+  while IFS= read -r -d '' path; do
+    count=$((count + 1))
+    name="${path##*/}"
+    case "$name" in
+      7.2-rc5-jg-0.env)
+        [ "$seen_baseline" = false ] || return 1
+        seen_baseline=true
+        ;;
+      validate-sp11-kernel-baseline.sh)
+        [ "$seen_validator" = false ] || return 1
+        seen_validator=true
+        ;;
+      *) return 1 ;;
+    esac
+  done < <(find "$BASELINE_CONTROL_DIR" -mindepth 1 -maxdepth 1 -print0)
+  [ "$count" -eq 2 ] && [ "$seen_baseline" = true ] &&
+    [ "$seen_validator" = true ]
+}
+
+verify_kernel_baseline_control_state() {
+  local current current_directory_state
+
+  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || return 1
+  if [ -z "$BASELINE_CONTROL_STATE" ] ||
+     [ "$current_directory_state" != "$BASELINE_CONTROL_STATE" ] ||
+     ! verify_baseline_control_membership; then
+    echo "Committed kernel baseline control directory changed after materialization." >&2
+    return 1
+  fi
+
+  current="$(baseline_control_file_state "$KERNEL_BASELINE")" || {
+    echo "Committed kernel baseline snapshot is missing, unsafe, or unstable." >&2
+    return 1
+  }
+  if [ "$current" != "$KERNEL_BASELINE_STATE" ]; then
+    echo "Committed kernel baseline snapshot changed after materialization." >&2
+    return 1
+  fi
+  current="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")" || {
+    echo "Committed kernel baseline validator snapshot is missing, unsafe, or unstable." >&2
+    return 1
+  }
+  if [ "$current" != "$KERNEL_BASELINE_VALIDATOR_STATE" ]; then
+    echo "Committed kernel baseline validator snapshot changed after materialization." >&2
+    return 1
+  fi
+  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || return 1
+  if [ "$current_directory_state" != "$BASELINE_CONTROL_STATE" ] ||
+     ! verify_baseline_control_membership; then
+    echo "Committed kernel baseline control directory changed during validation." >&2
+    return 1
+  fi
+}
+
+cleanup_baseline_control_dir() {
+  local current_identity baseline_control_file
+  local expected_baseline_control_state current_baseline_control_state
+  local current_directory_state
+
+  [ -n "$BASELINE_CONTROL_DIR" ] || return 0
+  case "$BASELINE_CONTROL_DIR" in
+    "$BASELINE_CONTROL_PARENT"/sp11-kernel-baseline.*) ;;
+    *)
+      echo "Warning: refusing to clean unexpected kernel baseline control directory." >&2
+      return 0
+      ;;
+  esac
+  if [ "$(dirname "$BASELINE_CONTROL_DIR")" != "$BASELINE_CONTROL_PARENT" ] ||
+     [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ]; then
+    echo "Warning: refusing to follow changed kernel baseline control directory." >&2
+    return 0
+  fi
+  if ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
+     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ]; then
+    echo "Warning: refusing to clean replaced kernel baseline control directory." >&2
+    return 0
+  fi
+  if [ -z "$BASELINE_CONTROL_STATE" ] ||
+     ! current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" ||
+     [ "$current_directory_state" != "$BASELINE_CONTROL_STATE" ] ||
+     ! verify_baseline_control_membership ||
+     ! verify_kernel_baseline_control_state; then
+    echo "Warning: preserving changed kernel baseline control directory." >&2
+    return 0
+  fi
+  for baseline_control_file in \
+    "$BASELINE_CONTROL_DIR/7.2-rc5-jg-0.env" \
+    "$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh"; do
+    if [ "$baseline_control_file" = "$KERNEL_BASELINE" ]; then
+      expected_baseline_control_state="$KERNEL_BASELINE_STATE"
+    else
+      expected_baseline_control_state="$KERNEL_BASELINE_VALIDATOR_STATE"
+    fi
+    if current_baseline_control_state="$(baseline_control_file_state "$baseline_control_file" 2>/dev/null)" &&
+       [ "$current_baseline_control_state" = "$expected_baseline_control_state" ]; then
+      if ! rm -f -- "$baseline_control_file"; then
+        echo "Warning: preserving remainder after kernel baseline cleanup failed." >&2
+        return 0
+      fi
+    else
+      echo "Warning: preserving changed kernel baseline control file." >&2
+      return 0
+    fi
+  done
+  if [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ] ||
+     ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
+     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ] ||
+     find "$BASELINE_CONTROL_DIR" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+    echo "Warning: preserving changed kernel baseline control directory after file cleanup." >&2
+    return 0
+  fi
+  if ! rmdir "$BASELINE_CONTROL_DIR"; then
+    echo "Warning: could not remove emptied kernel baseline control directory." >&2
+  fi
+}
+
+cleanup_private_release_state() {
+  cleanup_release_source_snapshot
+  cleanup_baseline_control_dir
+}
+trap cleanup_private_release_state EXIT
 
 usage() {
   cat <<EOF
@@ -101,6 +300,12 @@ Options:
   --expected-source-commit SHA
                         Require git mode to resolve to this exact 40-hex commit
                         before any patches are applied or a build is started.
+  --source-date-epoch EPOCH
+                        Deterministic source-commit epoch for a release build.
+  --kbuild-build-user USER
+  --kbuild-build-host HOST
+  --kbuild-build-timestamp TIMESTAMP
+                        Stable Kbuild identity values for a release build.
   --patch-dir DIR        Patch directory, default repo patches/ubuntu-qcom-x1e-7.0.
   --patch-dirs "DIR1 DIR2 ..."
                         Space-separated list of patch directories. Patches from
@@ -115,9 +320,8 @@ Options:
   --install-only        Install existing generated qcom-x1e debs and exit.
   --prepare-only        Clone/download and apply patches, then stop.
   --release-build       Opt in to fail-closed schema-v2 release provenance.
-                        Requires exact Git source, a clean stable support HEAD,
-                        a digest-pinned container image and explicit platform,
-                        and a complete successful package build.
+                        Wrapper-only: requires the private read-only /repo
+                        snapshot and baseline supplied by the Docker wrapper.
   --reset-source        Remove existing source directory before preparing.
   --skip-clean          Skip debian/rules clean before building.
   --no-fakeroot         Run debian/rules directly when running as root.
@@ -170,7 +374,209 @@ file_size() {
 }
 
 support_git() {
-  git -c "safe.directory=$repo_dir" -C "$repo_dir" "$@"
+  GIT_OPTIONAL_LOCKS=0 git \
+    -c "safe.directory=$repo_dir" \
+    -c core.fsmonitor=false \
+    -c core.untrackedCache=false \
+    -C "$repo_dir" "$@"
+}
+
+snapshot_support_blob() {
+  local relative_path="$1" expected_mode="$2" destination="$3"
+  local entry metadata listed_path mode object_type object_id remainder actual_id hash_path
+
+  [ ! -e "$destination" ] && [ ! -L "$destination" ] || {
+    echo "Refusing an existing committed-support snapshot path: $destination" >&2
+    return 1
+  }
+  if ! entry="$(support_git ls-tree "$SUPPORT_HEAD_START" -- "$relative_path")"; then
+    echo "Could not resolve committed support input: $relative_path" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r metadata listed_path remainder <<< "$entry"
+  read -r mode object_type object_id remainder <<< "$metadata"
+  if [ -n "$remainder" ] || [ "$listed_path" != "$relative_path" ] ||
+     [ "$mode" != "$expected_mode" ] || [ "$object_type" != "blob" ] ||
+     ! [[ "$object_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+    echo "Committed support input has an unexpected Git tree identity: $relative_path" >&2
+    return 1
+  fi
+  if ! (
+    set -o noclobber
+    umask 077
+    support_git cat-file blob "$object_id" > "$destination" || exit 1
+  ); then
+    echo "Could not materialize committed support input: $relative_path" >&2
+    return 1
+  fi
+  if [ ! -f "$destination" ] || [ -L "$destination" ]; then
+    echo "Committed support snapshot is not a private regular file: $destination" >&2
+    return 1
+  fi
+  hash_path="$destination"
+  case "$hash_path" in
+    /*) ;;
+    *) hash_path="$(cd "$(dirname "$hash_path")" && pwd -P)/$(basename "$hash_path")" ;;
+  esac
+  actual_id="$(support_git hash-object --no-filters -- "$hash_path")"
+  if [ "$actual_id" != "$object_id" ]; then
+    echo "Committed support snapshot does not match its Git blob: $relative_path" >&2
+    return 1
+  fi
+}
+
+create_release_baseline_control() {
+  local created_dir root_mode
+
+  BASELINE_CONTROL_PARENT="$(cd /tmp && pwd -P)"
+  created_dir="$(umask 077 && mktemp -d "$BASELINE_CONTROL_PARENT/sp11-kernel-baseline.XXXXXX")"
+  BASELINE_CONTROL_DIR="$created_dir"
+  case "$BASELINE_CONTROL_DIR" in
+    "$BASELINE_CONTROL_PARENT"/sp11-kernel-baseline.*) ;;
+    *)
+      echo "Private committed-baseline control path is not canonical." >&2
+      exit 1
+      ;;
+  esac
+  if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ]; then
+    echo "Could not create a private committed-baseline control directory." >&2
+    exit 1
+  fi
+  if ! BASELINE_CONTROL_IDENTITY="$(
+    cd "$BASELINE_CONTROL_DIR"
+    pinned_identity="$(baseline_control_identity .)" || exit 1
+    [ -d "$BASELINE_CONTROL_DIR" ] && [ ! -L "$BASELINE_CONTROL_DIR" ] &&
+      [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" = "$pinned_identity" ] ||
+      exit 1
+    printf '%s\n' "$pinned_identity"
+  )"; then
+    echo "Could not capture the pinned committed-baseline root identity." >&2
+    exit 1
+  fi
+  KERNEL_BASELINE="$BASELINE_CONTROL_DIR/7.2-rc5-jg-0.env"
+  KERNEL_BASELINE_VALIDATOR="$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh"
+  (
+    cd "$BASELINE_CONTROL_DIR"
+    if [ ! -d . ] || [ -L . ] ||
+       [ "$(baseline_control_identity .)" != "$BASELINE_CONTROL_IDENTITY" ]; then
+      echo "Could not pin the private committed-baseline control root." >&2
+      exit 1
+    fi
+    case "$(uname -s)" in
+      Darwin) root_mode="$(stat -f '%Lp' .)" ;;
+      *) root_mode="$(stat -c '%a' -- .)" ;;
+    esac
+    [ "$root_mode" = 700 ] || {
+      echo "Private committed-baseline root was not created with mode 0700." >&2
+      exit 1
+    }
+    snapshot_support_blob "$KERNEL_BASELINE_REL" 100644 ./7.2-rc5-jg-0.env
+    snapshot_support_blob \
+      "$KERNEL_BASELINE_VALIDATOR_REL" 100755 \
+      ./validate-sp11-kernel-baseline.sh
+    if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ] ||
+       [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" != \
+         "$BASELINE_CONTROL_IDENTITY" ]; then
+      echo "Private committed-baseline root changed before sealing." >&2
+      exit 1
+    fi
+  )
+  if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ] ||
+     [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" != \
+       "$BASELINE_CONTROL_IDENTITY" ]; then
+    echo "Private committed-baseline root changed after pinned creation." >&2
+    exit 1
+  fi
+  KERNEL_BASELINE_STATE="$(baseline_control_file_state "$KERNEL_BASELINE")"
+  KERNEL_BASELINE_VALIDATOR_STATE="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")"
+  BASELINE_CONTROL_STATE="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")"
+  if ! verify_baseline_control_membership; then
+    echo "Private committed-baseline control directory has unexpected contents." >&2
+    exit 1
+  fi
+}
+
+load_release_baseline_values() {
+  local emitted key value remainder emitted_keys="" expected_keys
+
+  verify_kernel_baseline_control_state || exit 1
+  if ! emitted="$(
+    bash "$KERNEL_BASELINE_VALIDATOR" \
+      --repo-dir "$repo_dir" \
+      --emit-release-values \
+      "$KERNEL_BASELINE"
+  )"; then
+    echo "Committed release kernel baseline validation failed." >&2
+    exit 1
+  fi
+  while IFS=$'\t' read -r key value remainder; do
+    [ -n "$key" ] && [ -n "$value" ] && [ -z "$remainder" ] || {
+      echo "Committed kernel baseline validator emitted malformed data." >&2
+      exit 1
+    }
+    emitted_keys="${emitted_keys}${emitted_keys:+$'\n'}$key"
+    case "$key" in
+      SP11_KERNEL_BASELINE_ID) BASELINE_ID="$value" ;;
+      SP11_KERNEL_DOCKER_IMAGE) BASELINE_DOCKER_IMAGE="$value" ;;
+      SP11_KERNEL_DOCKER_PLATFORM) BASELINE_DOCKER_PLATFORM="$value" ;;
+      SP11_KERNEL_DOCKER_PLATFORM_MANIFEST) BASELINE_DOCKER_PLATFORM_MANIFEST="$value" ;;
+      SP11_KERNEL_UPSTREAM_URL) BASELINE_UPSTREAM_URL="$value" ;;
+      SP11_KERNEL_UPSTREAM_REF) BASELINE_UPSTREAM_REF="$value" ;;
+      SP11_KERNEL_UPSTREAM_COMMIT) BASELINE_UPSTREAM_COMMIT="$value" ;;
+      SP11_KERNEL_SOURCE_DATE_EPOCH) BASELINE_SOURCE_DATE_EPOCH="$value" ;;
+      SP11_KERNEL_KBUILD_BUILD_USER) BASELINE_KBUILD_BUILD_USER="$value" ;;
+      SP11_KERNEL_KBUILD_BUILD_HOST) BASELINE_KBUILD_BUILD_HOST="$value" ;;
+      SP11_KERNEL_KBUILD_BUILD_TIMESTAMP) BASELINE_KBUILD_BUILD_TIMESTAMP="$value" ;;
+      SP11_KERNEL_BUILD_TARGET) BASELINE_BUILD_TARGET="$value" ;;
+      SP11_KERNEL_PATCH_DIRS) BASELINE_PATCH_DIRS="$value" ;;
+      *)
+        echo "Committed kernel baseline validator emitted an unexpected key: $key" >&2
+        exit 1
+        ;;
+    esac
+  done <<< "$emitted"
+  expected_keys=$'SP11_KERNEL_BASELINE_ID\nSP11_KERNEL_DOCKER_IMAGE\nSP11_KERNEL_DOCKER_PLATFORM\nSP11_KERNEL_DOCKER_PLATFORM_MANIFEST\nSP11_KERNEL_UPSTREAM_URL\nSP11_KERNEL_UPSTREAM_REF\nSP11_KERNEL_UPSTREAM_COMMIT\nSP11_KERNEL_SOURCE_DATE_EPOCH\nSP11_KERNEL_KBUILD_BUILD_USER\nSP11_KERNEL_KBUILD_BUILD_HOST\nSP11_KERNEL_KBUILD_BUILD_TIMESTAMP\nSP11_KERNEL_BUILD_TARGET\nSP11_KERNEL_PATCH_DIRS'
+  if [ "$emitted_keys" != "$expected_keys" ]; then
+    echo "Committed kernel baseline validator field set/order is not exact." >&2
+    exit 1
+  fi
+  verify_kernel_baseline_control_state || exit 1
+}
+
+normalized_release_patch_dirs() {
+  local patch_dir_list pd canonical_dir repo_real relative_dir normalized=""
+
+  repo_real="$(cd "$repo_dir" && pwd -P)"
+  if [ -n "$PATCH_DIRS" ]; then
+    patch_dir_list="$PATCH_DIRS"
+  elif [ -n "$PATCH_DIR" ]; then
+    patch_dir_list="$PATCH_DIR"
+  else
+    patch_dir_list="$repo_dir/patches/ubuntu-qcom-x1e-7.0"
+  fi
+  for pd in $patch_dir_list; do
+    if [ ! -d "$pd" ] || [ -L "$pd" ]; then
+      echo "Release patch directory is missing or symlinked: $pd" >&2
+      return 1
+    fi
+    canonical_dir="$(cd "$pd" && pwd -P)"
+    case "$canonical_dir" in
+      "$repo_real"/*) relative_dir="${canonical_dir#"$repo_real"/}" ;;
+      *)
+        echo "Release patches must resolve inside the support repository: $pd" >&2
+        return 1
+        ;;
+    esac
+    case "/$relative_dir/" in
+      */../*|*/./*|*//*|*$'\n'*|*$'\r'*|*$'\t'*)
+        echo "Release patch directory is not canonical: $pd" >&2
+        return 1
+        ;;
+    esac
+    normalized="${normalized}${normalized:+ }$relative_dir"
+  done
+  [ -n "$normalized" ] || return 1
+  printf '%s\n' "$normalized"
 }
 
 support_dirty_value() {
@@ -232,6 +638,11 @@ require_release_build_contract() {
   fi
   if [ -z "$EXPECTED_SOURCE_COMMIT" ]; then
     echo "--release-build requires --expected-source-commit with an exact commit." >&2
+    exit 2
+  fi
+  if [ -z "$SOURCE_DATE_EPOCH" ] || [ -z "$KBUILD_BUILD_USER" ] ||
+     [ -z "$KBUILD_BUILD_HOST" ] || [ -z "$KBUILD_BUILD_TIMESTAMP" ]; then
+    echo "--release-build requires the complete deterministic build-identity argument set." >&2
     exit 2
   fi
   if ! public_https_url "$GIT_URL"; then
@@ -298,6 +709,147 @@ require_release_build_contract() {
     echo "--release-build requires a clean support repository at start." >&2
     exit 1
   fi
+
+  require_release_build_identity_baseline
+}
+
+require_release_build_identity_baseline() {
+  local normalized_patch_dirs
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  create_release_baseline_control
+  load_release_baseline_values
+  require_wrapper_release_context
+
+  if [ "$SOURCE_DATE_EPOCH" != "$BASELINE_SOURCE_DATE_EPOCH" ] ||
+     [ "$KBUILD_BUILD_USER" != "$BASELINE_KBUILD_BUILD_USER" ] ||
+     [ "$KBUILD_BUILD_HOST" != "$BASELINE_KBUILD_BUILD_HOST" ] ||
+     [ "$KBUILD_BUILD_TIMESTAMP" != "$BASELINE_KBUILD_BUILD_TIMESTAMP" ]; then
+    echo "Release build identity arguments do not match the trusted kernel baseline." >&2
+    exit 2
+  fi
+  if [ "$GIT_URL" != "$BASELINE_UPSTREAM_URL" ] ||
+     [ "$GIT_BRANCH" != "$BASELINE_UPSTREAM_REF" ] ||
+     [ "$EXPECTED_SOURCE_COMMIT" != "$BASELINE_UPSTREAM_COMMIT" ]; then
+    echo "Release build source arguments do not match the trusted kernel baseline." >&2
+    exit 2
+  fi
+  if [ "${SP11_BUILD_CONTAINER_IMAGE:-}" != "$BASELINE_DOCKER_IMAGE" ] ||
+     [ "${SP11_BUILD_CONTAINER_PLATFORM:-}" != "$BASELINE_DOCKER_PLATFORM" ]; then
+    echo "Release build container identity does not match the trusted kernel baseline." >&2
+    exit 2
+  fi
+  if [ "$BUILD_TARGET" != "$BASELINE_BUILD_TARGET" ]; then
+    echo "Release build target does not match the trusted kernel baseline." >&2
+    exit 2
+  fi
+  if ! normalized_patch_dirs="$(normalized_release_patch_dirs)" ||
+     [ "$normalized_patch_dirs" != "$BASELINE_PATCH_DIRS" ]; then
+    echo "Release build patch directories do not match the trusted kernel baseline." >&2
+    exit 2
+  fi
+}
+
+require_wrapper_release_context() {
+  local fixture_context="false"
+  local release_control_expected release_control_path release_control_variable
+
+  if [ "${SP11_KERNEL_RELEASE_TEST_FIXTURE:-}" = \
+       "sp11-kernel-release-provenance-v1" ] &&
+     [ "$BASELINE_ID" = "fixture" ] &&
+     [ "$BASELINE_UPSTREAM_URL" = "https://github.com/example/linux.git" ] &&
+     [ "$BASELINE_UPSTREAM_REF" = "fixture" ] &&
+    [ "$BASELINE_DOCKER_PLATFORM" = "linux/arm64/v8" ]; then
+    case "$repo_dir" in
+      */sp11-apt-fixture.release-provenance.*/support-*)
+        fixture_context="true"
+        ;;
+    esac
+  fi
+  [ "$fixture_context" = "true" ] && return 0
+
+  if [ "$repo_dir" != "/repo" ] ||
+     [ "${SP11_PRIVATE_SUPPORT_SNAPSHOT:-}" != "true" ] ||
+     [ -z "${SP11_EXPECTED_SUPPORT_COMMIT:-}" ] ||
+     [ "$SP11_EXPECTED_SUPPORT_COMMIT" != "$SUPPORT_HEAD_START" ]; then
+    echo "--release-build is wrapper-only and requires its exact private /repo support snapshot." >&2
+    exit 1
+  fi
+  if [ ! -r /proc/self/mountinfo ] || [ -L /proc/self/mountinfo ] ||
+     [ ! -d /sp11-control ] || [ -L /sp11-control ] ||
+     [ ! -f /sp11-control/kernel-baseline.env ] ||
+     [ -L /sp11-control/kernel-baseline.env ] ||
+     [ ! -f /sp11-control/docker-build-args.txt ] ||
+     [ -L /sp11-control/docker-build-args.txt ] ||
+     [ ! -f /sp11-control/docker-build-inside.sh ] ||
+     [ -L /sp11-control/docker-build-inside.sh ] ||
+     [ ! -f /sp11-control/sp11-oci-index.json ] ||
+     [ -L /sp11-control/sp11-oci-index.json ]; then
+    echo "--release-build could not verify its private read-only support mounts." >&2
+    exit 1
+  fi
+  if ! awk '
+    function has_ro(options, count, item) {
+      count = split(options, item, ",")
+      for (slot = 1; slot <= count; slot++) {
+        if (item[slot] == "ro") return 1
+      }
+      return 0
+    }
+    $5 == "/repo" {
+      repo_count++
+      if (has_ro($6)) repo_ro++
+      next
+    }
+    index($5, "/repo/") == 1 { repo_nested++ }
+    $5 == "/sp11-control" {
+      control_count++
+      if (has_ro($6)) control_ro++
+      next
+    }
+    index($5, "/sp11-control/") == 1 { control_nested++ }
+    END {
+      exit !(repo_count == 1 && repo_ro == 1 && repo_nested == 0 &&
+             control_count == 1 && control_ro == 1 && control_nested == 0)
+    }
+  ' /proc/self/mountinfo; then
+    echo "--release-build requires unshadowed read-only /repo and /sp11-control mounts." >&2
+    exit 1
+  fi
+  for release_control_variable in \
+    SP11_EXPECTED_BUILD_ARGS_SHA256 \
+    SP11_EXPECTED_ENTRYPOINT_SHA256 \
+    SP11_EXPECTED_OCI_INDEX_SHA256 \
+    SP11_EXPECTED_BASELINE_SHA256; do
+    case "$release_control_variable" in
+      SP11_EXPECTED_BUILD_ARGS_SHA256)
+        release_control_expected="${SP11_EXPECTED_BUILD_ARGS_SHA256:-}"
+        release_control_path=/sp11-control/docker-build-args.txt
+        ;;
+      SP11_EXPECTED_ENTRYPOINT_SHA256)
+        release_control_expected="${SP11_EXPECTED_ENTRYPOINT_SHA256:-}"
+        release_control_path=/sp11-control/docker-build-inside.sh
+        ;;
+      SP11_EXPECTED_OCI_INDEX_SHA256)
+        release_control_expected="${SP11_EXPECTED_OCI_INDEX_SHA256:-}"
+        release_control_path=/sp11-control/sp11-oci-index.json
+        ;;
+      SP11_EXPECTED_BASELINE_SHA256)
+        release_control_expected="${SP11_EXPECTED_BASELINE_SHA256:-}"
+        release_control_path=/sp11-control/kernel-baseline.env
+        ;;
+    esac
+    if ! [[ "$release_control_expected" =~ ^[0-9a-f]{64}$ ]] ||
+       [ "$(sha256_file "$release_control_path")" != "$release_control_expected" ]; then
+      echo "--release-build private control digest mismatch: $release_control_variable" >&2
+      exit 1
+    fi
+  done
+  if [ "$(sha256_file /sp11-control/kernel-baseline.env)" != \
+       "$(sha256_file "$KERNEL_BASELINE")" ]; then
+    echo "--release-build mounted baseline differs from its exact support baseline." >&2
+    exit 1
+  fi
 }
 
 verify_release_support_stable() {
@@ -325,6 +877,19 @@ as_root() {
   else
     require_tool sudo
     sudo "$@"
+  fi
+}
+
+as_root_with_build_identity() {
+  if [ -z "$SOURCE_DATE_EPOCH" ]; then
+    as_root "$@"
+  elif [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    require_tool sudo
+    sudo \
+      --preserve-env=SOURCE_DATE_EPOCH,KBUILD_BUILD_USER,KBUILD_BUILD_HOST,KBUILD_BUILD_TIMESTAMP \
+      -- "$@"
   fi
 }
 
@@ -376,6 +941,42 @@ while [ "$#" -gt 0 ]; do
         exit 2
       fi
       EXPECTED_SOURCE_COMMIT="$2"
+      shift 2
+      ;;
+    --source-date-epoch)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for $1." >&2
+        usage >&2
+        exit 2
+      fi
+      SOURCE_DATE_EPOCH="$2"
+      shift 2
+      ;;
+    --kbuild-build-user)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for $1." >&2
+        usage >&2
+        exit 2
+      fi
+      KBUILD_BUILD_USER="$2"
+      shift 2
+      ;;
+    --kbuild-build-host)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for $1." >&2
+        usage >&2
+        exit 2
+      fi
+      KBUILD_BUILD_HOST="$2"
+      shift 2
+      ;;
+    --kbuild-build-timestamp)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for $1." >&2
+        usage >&2
+        exit 2
+      fi
+      KBUILD_BUILD_TIMESTAMP="$2"
       shift 2
       ;;
     --patch-dir)
@@ -491,6 +1092,42 @@ if [ -n "$EXPECTED_SOURCE_COMMIT" ]; then
     exit 2
   fi
   EXPECTED_SOURCE_COMMIT="$(printf '%s' "$EXPECTED_SOURCE_COMMIT" | tr '[:upper:]' '[:lower:]')"
+fi
+
+identity_value_count=0
+for identity_value in \
+  "$SOURCE_DATE_EPOCH" \
+  "$KBUILD_BUILD_USER" \
+  "$KBUILD_BUILD_HOST" \
+  "$KBUILD_BUILD_TIMESTAMP"; do
+  [ -z "$identity_value" ] || identity_value_count=$((identity_value_count + 1))
+done
+if [ "$identity_value_count" -ne 0 ] && [ "$identity_value_count" -ne 4 ]; then
+  echo "Deterministic build identity must provide all four identity arguments together." >&2
+  exit 2
+fi
+if [ "$identity_value_count" -ne 0 ]; then
+  if [ "$SOURCE_MODE" != "git" ] || [ -z "$EXPECTED_SOURCE_COMMIT" ]; then
+    echo "Deterministic build identity requires Git source and --expected-source-commit." >&2
+    exit 2
+  fi
+  if ! [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]{0,9}$ ]] ||
+     [ "$SOURCE_DATE_EPOCH" -gt 4102444799 ]; then
+    echo "--source-date-epoch must be a canonical Unix epoch earlier than 2100-01-01 UTC." >&2
+    exit 2
+  fi
+  if ! [[ "$KBUILD_BUILD_USER" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo "--kbuild-build-user must be a bounded portable identity." >&2
+    exit 2
+  fi
+  if ! [[ "$KBUILD_BUILD_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo "--kbuild-build-host must be a bounded portable identity." >&2
+    exit 2
+  fi
+  if ! [[ "$KBUILD_BUILD_TIMESTAMP" =~ ^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[[:space:]](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[[:space:]]([[:space:]][1-9]|[12][0-9]|3[01])[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]UTC[[:space:]][0-9]{4}$ ]]; then
+    echo "--kbuild-build-timestamp must use the canonical bounded Kbuild UTC form." >&2
+    exit 2
+  fi
 fi
 
 if ! [[ "$JOBS" =~ ^[0-9]+$ ]] || [ "$JOBS" -lt 1 ]; then
@@ -737,7 +1374,7 @@ install_source_build_dependencies() {
     if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" != "true" ]; then
       mk_build_deps_args+=(--remove)
     fi
-    as_root mk-build-deps \
+    as_root_with_build_identity mk-build-deps \
       "${mk_build_deps_args[@]}" \
       --tool "apt-get -y --no-install-recommends" \
       "$control_file"
@@ -954,6 +1591,55 @@ verify_expected_source_commit() {
   echo "Verified expected source commit: $actual_source_commit"
 }
 
+canonical_utc_timestamp() {
+  local epoch="$1" rendered=""
+
+  if rendered="$(LC_ALL=C TZ=UTC0 date -u -d "@$epoch" \
+      '+%a %b %e %H:%M:%S UTC %Y' 2>/dev/null)"; then
+    printf '%s\n' "$rendered"
+    return 0
+  fi
+  if rendered="$(LC_ALL=C TZ=UTC0 date -u -r "$epoch" \
+      '+%a %b %e %H:%M:%S UTC %Y' 2>/dev/null)"; then
+    printf '%s\n' "$rendered"
+    return 0
+  fi
+  return 1
+}
+
+verify_and_export_build_identity() {
+  local actual_epoch expected_timestamp
+
+  [ -n "$SOURCE_DATE_EPOCH" ] || return 0
+
+  if ! actual_epoch="$(git -C "$source_dir" show -s --format=%ct "$EXPECTED_SOURCE_COMMIT")" ||
+     ! [[ "$actual_epoch" =~ ^[1-9][0-9]{0,9}$ ]]; then
+    echo "Could not resolve the exact source commit epoch for deterministic packaging." >&2
+    exit 1
+  fi
+  if [ "$actual_epoch" != "$SOURCE_DATE_EPOCH" ]; then
+    echo "--source-date-epoch does not match the exact source commit timestamp." >&2
+    echo "Expected from source: $actual_epoch" >&2
+    echo "Requested:            $SOURCE_DATE_EPOCH" >&2
+    echo "Refusing to apply patches, generate build-deps, or start a build." >&2
+    exit 1
+  fi
+  if ! expected_timestamp="$(canonical_utc_timestamp "$SOURCE_DATE_EPOCH")"; then
+    echo "Could not render --source-date-epoch as a canonical UTC Kbuild timestamp." >&2
+    exit 1
+  fi
+  if [ "$KBUILD_BUILD_TIMESTAMP" != "$expected_timestamp" ]; then
+    echo "--kbuild-build-timestamp does not match --source-date-epoch." >&2
+    echo "Expected: $expected_timestamp" >&2
+    echo "Requested: $KBUILD_BUILD_TIMESTAMP" >&2
+    echo "Refusing to apply patches, generate build-deps, or start a build." >&2
+    exit 1
+  fi
+
+  export SOURCE_DATE_EPOCH KBUILD_BUILD_USER KBUILD_BUILD_HOST KBUILD_BUILD_TIMESTAMP
+  echo "Verified deterministic source/build identity at epoch: $SOURCE_DATE_EPOCH"
+}
+
 prepare_apt_source() {
   require_tool apt-get
   require_tool apt-cache
@@ -1001,8 +1687,8 @@ prepare_apt_source() {
 
   find "$source_parent" -mindepth 1 -maxdepth 1 -type d -print | sort > "$before"
   if ! (
-    cd "$source_parent"
-    apt-get source "$source_spec"
+    cd "$source_parent" || exit 1
+    apt-get source "$source_spec" || exit 1
   ); then
     rm -f "$before" "$after"
     echo "apt source failed for $source_spec." >&2
@@ -1950,6 +2636,7 @@ case "$SOURCE_MODE" in
 esac
 
 verify_expected_source_commit
+verify_and_export_build_identity
 echo "Using source tree: $source_dir"
 assert_release_package_output_pristine
 apply_patches

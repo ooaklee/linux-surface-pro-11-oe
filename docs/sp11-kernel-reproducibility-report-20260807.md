@@ -416,12 +416,38 @@ the release-signing model, independent licence/UCM gates, recovery/hardware
 evidence, corresponding-source/release-candidate review, and explicit release
 authorization remain open.
 
+## Deterministic identity and raw matched-pair gate
+
+After the P0.4c build above, the release path gained a deterministic,
+signing-independent kernel/Deb build identity. The committed baseline now fixes
+`SOURCE_DATE_EPOCH`, `KBUILD_BUILD_USER`, `KBUILD_BUILD_HOST`, and
+`KBUILD_BUILD_TIMESTAMP`; release mode validates them against the exact source
+commit and propagates them through build-dependency generation and both Debian
+kernel-package targets. This implementation is fixture-tested. It neither
+selects a release-signing model nor claims that generated signing material is
+reproducible.
+
+The separate `sp11-kernel-raw-matched-pair-v1` comparator is implemented,
+reviewed, and wired into CI with hostile synthetic fixtures. It validates that
+both retained builds bind the same immutable inputs before applying
+`sp11-kernel-zero-normalization-v1`, which performs no normalization. It then
+compares all kernel Debs as raw bytes and all seven manifest outputs by their
+raw size and SHA-256 identity. Its deterministic report records a pass only
+when both sets match and always records publication as unauthorized.
+
+No fresh clean C/D pair has yet exercised that foundation. Fixture success is
+tooling evidence, not a new build result: P0.4b remains failed/open, P0.4
+remains open overall, and P0.4c still consists of the single 2026-08-08 real
+immutable-input build. The signing model awaits an owner decision, and
+corresponding-source `git archive` normalization remains open. Licence/UCM,
+recovery/hardware evidence, corresponding-source/release-candidate review, and
+explicit release authorization remain **NO-PUBLISH** gates.
+
 ## Required remediation before a byte-reproducible claim
 
-1. Set `SOURCE_DATE_EPOCH` from a reviewed immutable source timestamp and set
-   stable `KBUILD_BUILD_USER`, `KBUILD_BUILD_HOST`, and
-   `KBUILD_BUILD_TIMESTAMP` values. Normalize Debian and embedded archive
-   mtimes from the same epoch.
+1. Preserve the implemented baseline-bound `SOURCE_DATE_EPOCH`,
+   `KBUILD_BUILD_USER`, `KBUILD_BUILD_HOST`, and `KBUILD_BUILD_TIMESTAMP`
+   contract, and verify its effect with two new clean builds.
 2. Adopt an explicit release-signing model. Either use a controlled release
    certificate through a reproducible signing process or keep unsigned build
    payload production separate from release signing. Never generate an
@@ -432,15 +458,16 @@ authorization remain open.
 4. Retain the schema-v2 manifest's existing support HEAD/dirty-state, ordered
    patch, patched-tree/diff, exact source, output, and certificate bindings.
    Retain the current outer-schema propagation of the v1 envelope's OCI-child,
-   APT, and generated-control identities, and add the genuinely missing raw and
-   normalized comparison hashes needed for a byte-reproducibility decision.
-5. Version the comparison and normalization specification. Preserve the raw
-   artifacts and raw hashes alongside normalized evidence so later reviewers
-   can reproduce every classification.
-6. Repeat two clean builds after those changes. Require identical raw package
-   hashes for a byte-reproducible pass, and retain the semantic audit as an
-   independent defense against accidentally identical packaging of incorrect
-   content.
+   APT, and generated-control identities, and retain the new raw matched-pair
+   report beside the compared artifacts.
+5. Use the versioned zero-normalization comparator for the raw decision, and
+   preserve the historical semantic comparator as an independent defense
+   against accidentally identical packaging of incorrect content.
+6. Repeat two clean builds after the signing decision. Require identical raw
+   package hashes and all seven manifest output identities for a
+   byte-reproducible pass.
+7. Normalize and validate corresponding-source `git archive` generation
+   separately before making a release-candidate source claim.
 
 ## Gate conclusion
 
@@ -465,5 +492,6 @@ licence/UCM gates, corresponding-source and release-candidate review,
 recovery/hardware evidence, and explicit release authorization even though
 outer-schema propagation is implemented. The historical semantic result and
 the later immutable-input result support continued non-release development
-only; neither is release authorization or proof that the historical A/B pair
-can be replayed immutably.
+only. The deterministic identity and raw comparator are fixture-tested but
+have not yet produced a fresh C/D result; none of these facts is release
+authorization or proof that the historical A/B pair can be replayed immutably.

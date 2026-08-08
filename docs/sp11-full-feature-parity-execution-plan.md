@@ -59,7 +59,7 @@ The starting state is intentionally conservative:
 
 | Area | Recorded starting point | Programme state |
 |---|---|---|
-| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Two historical builds have a reviewed semantic comparison, and one later real clean build verified the immutable-APT/provenance path; byte reproducibility, signing, licensing, recovery, and release authorization remain open |
+| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Deterministic signing-independent kernel/Deb identity and the raw matched-pair gate are implemented and fixture-tested, but no fresh C/D pair exists; one earlier real clean build verified the immutable-APT/provenance path, while byte reproducibility, signing, licensing, recovery, and release authorization remain open |
 | Thin fork | The immutable base remains at `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; CI foundation commit `971b5af85ed0c7283ffb33430badeac9b5575057` is merged to the protected integration branch | Base and integration rules are active and thin-fork CI is green; no parity feature is accepted by branch presence |
 | Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is running and named by the effective static `GRUB_DEFAULT`, while `grubenv`'s stale `saved_entry` still names v2 | ADR0053 deliberately rejects mixed static/saved semantics; one-shot apply is blocked until `GRUB_DEFAULT=saved` and `saved_entry` both resolve to known-good v3, then P0 must capture the no-op canary and physical-recovery evidence |
 | Installed DTB path | Repository support retires its loose-DTB helper and kernel hooks under ADR0055; the exact Stubble image is authoritative | Target migration, successful normal GRUB regeneration, absence of project-managed loose-DTB lines, and packaged/embedded/active-FDT pairing remain pending P0 evidence |
@@ -228,11 +228,19 @@ differed, so the P0.4b byte-reproducibility facet remains failed/open; and the
 [2026-08-08 real-build evidence](sp11-kernel-immutable-build-evidence-20260808.md)
 closes P0.4c's one-real-build immutable-input verification scope. That later
 run does not retroactively make the historical pair replayable, and it is not a
-second build for a raw-byte comparison. CI exercises the comparator's hostile
-synthetic fixtures but does not carry the retained Debs. P0.4 remains open
-overall. Neither completed facet satisfies the byte-reproducibility, signing,
-licence/UCM, recovery/hardware, corresponding-source/release-candidate, or
-release-authorization gates; publication remains blocked.
+second build for a raw-byte comparison.
+
+Release mode now has a fixture-tested deterministic, signing-independent
+kernel/Deb identity bound to the pinned source commit. The new reviewed
+`sp11-kernel-raw-matched-pair-v1` comparator is CI-wired through hostile
+synthetic fixtures and applies `sp11-kernel-zero-normalization-v1`: it validates
+matched immutable inputs, compares every raw kernel Deb and all seven manifest
+outputs, and never authorizes publication. No fresh C/D pair has yet used this
+foundation, so fixture success does not change the P0.4b result. The signing
+model still awaits an owner decision, and corresponding-source `git archive`
+normalization remains open. P0.4 remains open overall; licence/UCM,
+recovery/hardware, corresponding-source/release-candidate review, and explicit
+release authorization remain **NO-PUBLISH** gates.
 
 P0.6 is complete for the current target observation. The schema-3 inventory
 collector ran read-only, and both its sanitized result and a separately

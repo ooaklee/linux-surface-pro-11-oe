@@ -282,6 +282,45 @@ blocked. Preserve all three files byte-for-byte. Byte reproducibility, the
 release-signing decision, licence/UCM gates, recovery/hardware evidence, and
 explicit release authorization remain open.
 
+#### Deterministic identity and the next raw comparison
+
+The deterministic, signing-independent kernel/Deb build identity is
+implemented and fixture-tested. Release mode takes the fixed
+`SOURCE_DATE_EPOCH`, `KBUILD_BUILD_USER`, `KBUILD_BUILD_HOST`, and
+`KBUILD_BUILD_TIMESTAMP` values from the committed baseline, checks the epoch
+against the pinned source commit, and propagates them through build-dependency
+generation and both Debian kernel-package targets. This foundation does not
+choose a module-signing model or make generated signing material reproducible.
+
+After two new clean builds from the same committed support HEAD, compare their
+retained work directories without normalization:
+
+```bash
+REPO_ROOT="$(pwd -P)"
+SUPPORT_HEAD="$(git rev-parse --verify HEAD)"
+python3 ./scripts/compare-sp11-kernel-raw-builds.py \
+  --baseline "$REPO_ROOT/config/kernel-baselines/7.2-rc5-jg-0.env" \
+  --support-repo "$REPO_ROOT" \
+  --support-head "$SUPPORT_HEAD" \
+  --build-a "$REPO_ROOT/build/sp11-kernel-clean-c" \
+  --build-b "$REPO_ROOT/build/sp11-kernel-clean-d"
+```
+
+The fail-closed `sp11-kernel-raw-matched-pair-v1` comparator is implemented,
+reviewed, and wired into CI through hostile synthetic fixtures. It accepts a
+pair only after matching the immutable retained inputs, then compares every
+kernel Deb and the seven manifest outputs as raw bytes or raw identities under
+`sp11-kernel-zero-normalization-v1`. A validated mismatch exits `1`; unsafe or
+inconsistent input exits `2`. Its report always records publication as
+unauthorized.
+
+No fresh C/D pair has been built or compared since the deterministic identity
+was added. P0.4b and P0.4 overall therefore remain open, while P0.4c remains
+the single earlier real immutable-input build. The signing model still awaits
+an owner decision, and corresponding-source `git archive` normalization is a
+separate open requirement. Licence/UCM, recovery/hardware evidence, and
+explicit authorization remain **NO-PUBLISH** gates.
+
 The kernel ABI carries the touchscreen device tree, but the runtime QSPI
 support ships as out-of-tree modules from the geocausa Phase 91 baseline
 (`gpi`, `spi-geni-qcom`, `mshw0485_touch`). Build them against the installed

@@ -34,6 +34,20 @@ SUPPORT_HEAD = subprocess.run(
     text=True,
 ).stdout.strip()
 SOURCE_HEAD = "b" * 40
+SOURCE_DATE_EPOCH = "1785567085"
+KBUILD_BUILD_USER = "sp11-builder"
+KBUILD_BUILD_HOST = "sp11-build"
+KBUILD_BUILD_TIMESTAMP = "Sat Aug  1 06:51:25 UTC 2026"
+BUILD_IDENTITY_ARGUMENTS = (
+    "--source-date-epoch",
+    SOURCE_DATE_EPOCH,
+    "--kbuild-build-user",
+    KBUILD_BUILD_USER,
+    "--kbuild-build-host",
+    KBUILD_BUILD_HOST,
+    "--kbuild-build-timestamp",
+    KBUILD_BUILD_TIMESTAMP,
+)
 CHILD_DIGEST = "sha256:" + "c" * 64
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 EMPTY_INDEX_PATHS = (
@@ -55,6 +69,10 @@ CREATED_FIXTURES: list[Path] = []
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def build_argument_text() -> str:
+    return "\n".join(("--release-build", *BUILD_IDENTITY_ARGUMENTS)) + "\n"
 
 
 def fixture_gzip(data: bytes) -> bytes:
@@ -392,10 +410,15 @@ class Fixture:
             'SP11_KERNEL_UPSTREAM_URL="https://github.com/example/linux.git"',
             'SP11_KERNEL_UPSTREAM_REF="fixture/ref"',
             f'SP11_KERNEL_UPSTREAM_COMMIT="{SOURCE_HEAD}"',
+            f'SP11_KERNEL_SOURCE_DATE_EPOCH="{SOURCE_DATE_EPOCH}"',
+            f'SP11_KERNEL_KBUILD_BUILD_USER="{KBUILD_BUILD_USER}"',
+            f'SP11_KERNEL_KBUILD_BUILD_HOST="{KBUILD_BUILD_HOST}"',
+            f'SP11_KERNEL_KBUILD_BUILD_TIMESTAMP="{KBUILD_BUILD_TIMESTAMP}"',
             f'SP11_KERNEL_DOCKER_IMAGE="ubuntu:26.04@{image_digest}"',
             'SP11_KERNEL_DOCKER_PLATFORM="linux/arm64/v8"',
             f'SP11_KERNEL_DOCKER_PLATFORM_MANIFEST="{CHILD_DIGEST}"',
             'SP11_KERNEL_BUILD_TARGET="binary-indep binary-qcom-x1e"',
+            'SP11_KERNEL_PATCH_DIRS="patches/release"',
             'SP11_APT_SNAPSHOT_ID="20260807T000000Z"',
             'SP11_APT_SNAPSHOT_URI="https://snapshot.ubuntu.com/ubuntu/20260807T000000Z/"',
             'SP11_APT_SNAPSHOT_SUITES="resolute resolute-updates resolute-backports resolute-security"',
@@ -709,11 +732,17 @@ def assert_wrapper_contract() -> None:
         assert required_text in wrapper
     assert 'mk_build_deps_args+=(--remove)' in inner
     assert 'if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" != "true" ]' in inner
+    assert wrapper.count('--baseline-sha256 "$KERNEL_BASELINE_SHA256"') == 2
+    assert wrapper.count('--build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256"') == 2
+    assert wrapper.count('--entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256"') == 2
+    assert wrapper.count('--oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256"') == 2
+    assert 'done < "$control_dir/docker-build-args.txt"' in wrapper
+    assert '("$IMAGE" bash /sp11-control/docker-build-inside.sh)' in wrapper
     envelope_write = wrapper.index(
-        'python3 "$repo_dir/scripts/sp11-kernel-build-inputs.py" write'
+        'python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" write'
     )
     envelope_validate = wrapper.index(
-        'python3 "$repo_dir/scripts/sp11-kernel-build-inputs.py" validate',
+        'python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" validate',
         envelope_write,
     )
     required_artifacts = wrapper.index(
@@ -769,6 +798,30 @@ def assert_production_baseline_is_exact(temp_root: Path) -> None:
             encoding="utf-8",
         )
         run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
+        for old, new in (
+            (
+                f'SP11_KERNEL_SOURCE_DATE_EPOCH="{SOURCE_DATE_EPOCH}"',
+                'SP11_KERNEL_SOURCE_DATE_EPOCH="1785567086"',
+            ),
+            (
+                f'SP11_KERNEL_KBUILD_BUILD_USER="{KBUILD_BUILD_USER}"',
+                'SP11_KERNEL_KBUILD_BUILD_USER="alternate-builder"',
+            ),
+            (
+                f'SP11_KERNEL_KBUILD_BUILD_HOST="{KBUILD_BUILD_HOST}"',
+                'SP11_KERNEL_KBUILD_BUILD_HOST="alternate-host"',
+            ),
+            (
+                f'SP11_KERNEL_KBUILD_BUILD_TIMESTAMP="{KBUILD_BUILD_TIMESTAMP}"',
+                'SP11_KERNEL_KBUILD_BUILD_TIMESTAMP="Sat Aug  1 06:51:26 UTC 2026"',
+            ),
+        ):
+            tampered.write_text(original.replace(old, new), encoding="utf-8")
+            run(
+                ["bash", str(BASELINE_VALIDATOR), str(tampered)],
+                dict(os.environ),
+                expect=False,
+            )
         tampered.write_text(
             original.replace(
                 'SP11_APT_PYTHON_PACKAGE_SPEC="python3=3.14.3-0ubuntu2"',
@@ -806,6 +859,29 @@ def assert_production_baseline_is_exact(temp_root: Path) -> None:
             + 'SP11_APT_DECOMPRESSED_EMPTY_INDEX_7_PATH="resolute/main/source/Sources.gz"\n',
             encoding="utf-8",
         )
+        run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
+
+        side_effect = temp_root / "sp11-baseline-must-not-execute"
+        side_effect.unlink(missing_ok=True)
+        tampered.write_text(
+            original + f'touch "{side_effect}"\n',
+            encoding="utf-8",
+        )
+        run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
+        assert not side_effect.exists(), "baseline validator executed untrusted input"
+
+        missing_user = original.replace(
+            f'SP11_KERNEL_KBUILD_BUILD_USER="{KBUILD_BUILD_USER}"\n', ""
+        )
+        assert missing_user != original
+        tampered.write_text(missing_user, encoding="utf-8")
+        ambient = dict(os.environ)
+        ambient["SP11_KERNEL_KBUILD_BUILD_USER"] = KBUILD_BUILD_USER
+        run(["bash", str(BASELINE_VALIDATOR), str(tampered)], ambient, expect=False)
+
+        tampered.write_bytes(original.encode("utf-8").rstrip(b"\n"))
+        run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
+        tampered.write_bytes(original.encode("utf-8")[:-1] + b"\x00\n")
         run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
     finally:
         tampered.unlink(missing_ok=True)
@@ -1470,7 +1546,7 @@ def envelope_cases(fixture: Fixture) -> None:
     oci.write_bytes(fixture.oci_raw)
     build_args = fixture.work / "docker-build-args.txt"
     entrypoint = fixture.work / "docker-build-inside.sh"
-    build_args.write_text("--release-build\n", encoding="utf-8")
+    build_args.write_text(build_argument_text(), encoding="utf-8")
     entrypoint.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     manifest = fixture.artifacts / "sp11-kernel-build-manifest.txt"
     write_exact_build_manifest(fixture, manifest)
@@ -1513,6 +1589,86 @@ def envelope_cases(fixture: Fixture) -> None:
     run(base_command, fixture.env())
     validate_command = base_command.copy()
     validate_command[2] = "validate"
+    run(validate_command, fixture.env())
+    baseline_sha256 = digest(fixture.baseline.read_bytes())
+    run(
+        validate_command + ["--baseline-sha256", baseline_sha256],
+        fixture.env(),
+    )
+    wrong_baseline = run(
+        validate_command + ["--baseline-sha256", "0" * 64],
+        fixture.env(),
+        expect=False,
+    )
+    assert (
+        "baseline bytes do not match the committed snapshot SHA256"
+        in wrong_baseline.stderr
+    )
+    control_hash_options = [
+        "--build-args-sha256",
+        digest(build_args.read_bytes()),
+        "--entrypoint-sha256",
+        digest(entrypoint.read_bytes()),
+        "--oci-index-sha256",
+        digest(oci.read_bytes()),
+    ]
+    run(validate_command + control_hash_options, fixture.env())
+    wrong_control_hashes = control_hash_options.copy()
+    wrong_control_hashes[1] = "0" * 64
+    wrong_control = run(
+        validate_command + wrong_control_hashes,
+        fixture.env(),
+        expect=False,
+    )
+    assert (
+        "Docker build arguments bytes do not match the private release control SHA256"
+        in wrong_control.stderr
+    )
+
+    canonical_build_arguments = build_args.read_bytes()
+
+    def reject_build_arguments(payload: bytes, expected_error: str) -> None:
+        build_args.write_bytes(payload)
+        result = run(validate_command, fixture.env(), expect=False)
+        assert expected_error in result.stderr
+        build_args.write_bytes(canonical_build_arguments)
+
+    canonical_lines = canonical_build_arguments.decode("utf-8").splitlines()
+    epoch_index = canonical_lines.index("--source-date-epoch")
+    user_index = canonical_lines.index("--kbuild-build-user")
+    host_index = canonical_lines.index("--kbuild-build-host")
+    reject_build_arguments(
+        ("\n".join(canonical_lines[:epoch_index] + canonical_lines[epoch_index + 2 :]) + "\n").encode(),
+        "must contain exactly one --source-date-epoch flag",
+    )
+    reject_build_arguments(
+        canonical_build_arguments
+        + f"--kbuild-build-user\n{KBUILD_BUILD_USER}\n".encode(),
+        "must contain exactly one --kbuild-build-user flag",
+    )
+    tampered_lines = canonical_lines.copy()
+    tampered_lines[user_index + 1] = "alternate-safe-builder"
+    reject_build_arguments(
+        ("\n".join(tampered_lines) + "\n").encode(),
+        "exact ordered deterministic identity block",
+    )
+    reordered_lines = canonical_lines.copy()
+    reordered_lines[user_index : user_index + 2], reordered_lines[host_index : host_index + 2] = (
+        reordered_lines[host_index : host_index + 2],
+        reordered_lines[user_index : user_index + 2],
+    )
+    reject_build_arguments(
+        ("\n".join(reordered_lines) + "\n").encode(),
+        "exact ordered deterministic identity block",
+    )
+    reject_build_arguments(
+        canonical_build_arguments.replace(b"--kbuild-build-host", b"--kbuild-build-host\r"),
+        "contain a NUL or CR byte",
+    )
+    reject_build_arguments(
+        canonical_build_arguments + b"unsafe\x00argument\n",
+        "contain a NUL or CR byte",
+    )
     run(validate_command, fixture.env())
     production_identity_baseline = fixture.root / "production-identity-baseline.env"
     production_identity_baseline.write_text(
@@ -1893,7 +2049,7 @@ def emit_release_template(
     sidecar = fixture.artifacts / "sp11-kernel-apt-provenance.txt"
     run(fixture.writer_command(sidecar), fixture.env())
     (fixture.work / "docker-build-args.txt").write_text(
-        "--release-build\n", encoding="utf-8"
+        build_argument_text(), encoding="utf-8"
     )
     (fixture.work / "docker-build-inside.sh").write_text(
         "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"

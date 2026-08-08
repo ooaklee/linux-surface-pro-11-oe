@@ -1,25 +1,57 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-baseline="${1:-$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env}"
-ledger="$repo_dir/config/source-ledger.tsv"
+repo_dir=""
+baseline=""
+emit_release_values="false"
 
 die() {
   echo "error: $*" >&2
   exit 1
 }
 
-[ -f "$baseline" ] || die "kernel baseline not found: $baseline"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo-dir)
+      [ "$#" -ge 2 ] || die "--repo-dir requires a value"
+      repo_dir="$2"
+      shift 2
+      ;;
+    --emit-release-values)
+      emit_release_values="true"
+      shift
+      ;;
+    --*) die "unknown option: $1" ;;
+    *)
+      [ -z "$baseline" ] || die "only one kernel baseline path may be provided"
+      baseline="$1"
+      shift
+      ;;
+  esac
+done
 
-# shellcheck disable=SC1090
-. "$baseline"
+if [ -z "$repo_dir" ]; then
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+else
+  [ -d "$repo_dir" ] && [ ! -L "$repo_dir" ] ||
+    die "validator repository root is missing or unsafe: $repo_dir"
+  repo_dir="$(cd "$repo_dir" && pwd -P)"
+fi
+baseline="${baseline:-$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env}"
+ledger="$repo_dir/config/source-ledger.tsv"
+
+[ -f "$baseline" ] && [ ! -L "$baseline" ] ||
+  die "kernel baseline is missing, non-regular, or symlinked: $baseline"
 
 required_variables="
 SP11_KERNEL_BASELINE_ID
 SP11_KERNEL_UPSTREAM_URL
 SP11_KERNEL_UPSTREAM_REF
 SP11_KERNEL_UPSTREAM_COMMIT
+SP11_KERNEL_SOURCE_DATE_EPOCH
+SP11_KERNEL_KBUILD_BUILD_USER
+SP11_KERNEL_KBUILD_BUILD_HOST
+SP11_KERNEL_KBUILD_BUILD_TIMESTAMP
 SP11_KERNEL_FORK_URL
 SP11_KERNEL_FORK_BASE_REF
 SP11_KERNEL_FORK_BASE_COMMIT
@@ -64,8 +96,161 @@ SP11_KERNEL_PATCH_DIRS
 SP11_KERNEL_RECOVERY_ABI
 "
 for variable in $required_variables; do
+  unset "$variable"
+done
+required_words="${required_variables//$'\n'/ }"
+
+byte_summary="$(
+  LC_ALL=C od -An -v -tu1 "$baseline" | awk '
+    {
+      for (field = 1; field <= NF; field++) {
+        byte = $field + 0
+        count++
+        last = byte
+        if ((byte < 32 && byte != 10) || byte > 126) bad = 1
+      }
+    }
+    END { printf "%d:%d:%d\n", count, last, bad }
+  '
+)"
+IFS=: read -r baseline_size last_byte bad_byte remainder <<< "$byte_summary"
+[[ "$baseline_size" =~ ^[0-9]+$ ]] && [ -z "$remainder" ] ||
+  die "could not determine kernel baseline byte identity"
+[ "$baseline_size" -gt 0 ] && [ "$baseline_size" -le 65536 ] ||
+  die "kernel baseline must contain between 1 and 65536 bytes"
+[ "$last_byte" = "10" ] || die "kernel baseline must be LF-terminated"
+[ "$bad_byte" = "0" ] ||
+  die "kernel baseline contains a control or non-ASCII byte"
+
+# Parse the file as data in one awk process.  In particular, never source an
+# unvalidated path: a baseline is allowed to contain only the reviewed,
+# double-quoted assignment grammar and printable ASCII comments/blank lines.
+if ! parsed_variables="$(
+  LC_ALL=C awk -v required="$required_words" '
+    function reject(message) {
+      print "error: " message > "/dev/stderr"
+      failed = 1
+      exit 1
+    }
+    BEGIN {
+      required_count = split(required, required_name)
+      for (slot = 1; slot <= required_count; slot++) {
+        if (required_name[slot] != "") {
+          allowed[required_name[slot]] = 1
+        }
+      }
+    }
+    {
+      if ($0 ~ /[^ -~]/) {
+        reject("kernel baseline contains a non-printable or non-ASCII byte")
+      }
+      if ($0 == "" || $0 ~ /^#/) {
+        next
+      }
+      equals = index($0, "=")
+      name = substr($0, 1, equals - 1)
+      encoded = substr($0, equals + 1)
+      if (equals < 2 || name !~ /^SP11_[A-Z0-9_]+$/ ||
+          substr(encoded, 1, 1) != "\"" ||
+          substr(encoded, length(encoded), 1) != "\"") {
+        reject("kernel baseline contains a noncanonical line")
+      }
+      value = substr(encoded, 2, length(encoded) - 2)
+      if (value ~ /["\\]/) {
+        reject("kernel baseline assignment contains quoting or escaping")
+      }
+      if (!(name in allowed)) {
+        reject("unexpected kernel baseline variable: " name)
+      }
+      if (name in seen) {
+        reject("duplicate kernel baseline variable: " name)
+      }
+      seen[name] = 1
+      values[name] = value
+      order[++assignment_count] = name
+    }
+    END {
+      if (failed) {
+        exit 1
+      }
+      for (slot = 1; slot <= required_count; slot++) {
+        name = required_name[slot]
+        if (name == "") {
+          continue
+        }
+        if (!(name in seen) || values[name] == "") {
+          reject("baseline variable is empty or missing: " name)
+        }
+      }
+      for (slot = 1; slot <= assignment_count; slot++) {
+        name = order[slot]
+        printf "%s\t%s\n", name, values[name]
+      }
+    }
+  ' "$baseline"
+)"; then
+  die "kernel baseline parsing failed"
+fi
+
+identity_variables=""
+empty_path_variables=""
+parsed_variable_count=0
+while IFS=$'\t' read -r variable value remainder; do
+  [ -n "$variable" ] && [ -z "$remainder" ] ||
+    die "kernel baseline parser emitted malformed data"
+  case $'\n'"$required_variables"$'\n' in
+    *$'\n'"$variable"$'\n'*) ;;
+    *) die "kernel baseline parser emitted an unexpected variable: $variable" ;;
+  esac
+  printf -v "$variable" '%s' "$value"
+  parsed_variable_count=$((parsed_variable_count + 1))
+  case "$variable" in
+    SP11_KERNEL_SOURCE_DATE_EPOCH|SP11_KERNEL_KBUILD_BUILD_USER|\
+    SP11_KERNEL_KBUILD_BUILD_HOST|SP11_KERNEL_KBUILD_BUILD_TIMESTAMP)
+      identity_variables="${identity_variables}${identity_variables:+$'\n'}$variable"
+      ;;
+    SP11_APT_DECOMPRESSED_EMPTY_INDEX_[0-9]_PATH)
+      empty_path_variables="${empty_path_variables}${empty_path_variables:+$'\n'}$variable"
+      ;;
+  esac
+done <<< "$parsed_variables"
+
+required_variable_count=0
+for variable in $required_variables; do
+  required_variable_count=$((required_variable_count + 1))
   [ -n "${!variable:-}" ] || die "baseline variable is empty or missing: $variable"
 done
+[ "$parsed_variable_count" -eq "$required_variable_count" ] ||
+  die "kernel baseline field set is not exact"
+
+expected_identity_variables="$(cat <<'EOF'
+SP11_KERNEL_SOURCE_DATE_EPOCH
+SP11_KERNEL_KBUILD_BUILD_USER
+SP11_KERNEL_KBUILD_BUILD_HOST
+SP11_KERNEL_KBUILD_BUILD_TIMESTAMP
+EOF
+)"
+[ "$identity_variables" = "$expected_identity_variables" ] ||
+  die "deterministic kernel build-identity baseline field set/order is not exact"
+
+[[ "$SP11_KERNEL_SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]{0,9}$ ]] ||
+  die "SP11_KERNEL_SOURCE_DATE_EPOCH must be a canonical bounded Unix epoch"
+[ "$SP11_KERNEL_SOURCE_DATE_EPOCH" -le 4102444799 ] ||
+  die "SP11_KERNEL_SOURCE_DATE_EPOCH must be earlier than 2100-01-01 UTC"
+[[ "$SP11_KERNEL_KBUILD_BUILD_USER" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+  die "SP11_KERNEL_KBUILD_BUILD_USER must be a bounded portable identity"
+[[ "$SP11_KERNEL_KBUILD_BUILD_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+  die "SP11_KERNEL_KBUILD_BUILD_HOST must be a bounded portable identity"
+[[ "$SP11_KERNEL_KBUILD_BUILD_TIMESTAMP" =~ ^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[[:space:]](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[[:space:]]([[:space:]][1-9]|[12][0-9]|3[01])[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]UTC[[:space:]][0-9]{4}$ ]] ||
+  die "SP11_KERNEL_KBUILD_BUILD_TIMESTAMP must use the canonical Kbuild UTC form"
+
+[ "$SP11_KERNEL_SOURCE_DATE_EPOCH:$SP11_KERNEL_KBUILD_BUILD_TIMESTAMP" = \
+  "1785567085:Sat Aug  1 06:51:25 UTC 2026" ] ||
+  die "deterministic timestamp identity does not match the reviewed source commit epoch"
+[ "$SP11_KERNEL_KBUILD_BUILD_USER" = "sp11-builder" ] ||
+  die "SP11_KERNEL_KBUILD_BUILD_USER does not match the reviewed release identity"
+[ "$SP11_KERNEL_KBUILD_BUILD_HOST" = "sp11-build" ] ||
+  die "SP11_KERNEL_KBUILD_BUILD_HOST does not match the reviewed release identity"
 
 [[ "$SP11_KERNEL_DOCKER_IMAGE" =~ ^[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]] ||
   die "SP11_KERNEL_DOCKER_IMAGE must include an immutable sha256 digest"
@@ -137,9 +322,6 @@ for empty_index in "${!reviewed_empty_index_paths[@]}"; do
   [ "${!variable}" = "${reviewed_empty_index_paths[$empty_index]}" ] ||
     die "$variable does not match the reviewed empty-index sequence"
 done
-empty_path_variables="$(
-  awk -F '=' '/^SP11_APT_DECOMPRESSED_EMPTY_INDEX_[0-9]+_PATH=/ { print $1 }' "$baseline"
-)"
 expected_empty_path_variables="$(
   for empty_index in 1 2 3 4 5 6; do
     printf 'SP11_APT_DECOMPRESSED_EMPTY_INDEX_%s_PATH\n' "$empty_index"
@@ -219,5 +401,24 @@ expected_fork_integration="${SP11_KERNEL_FORK_URL}"$'\t'"${SP11_KERNEL_FORK_INTE
 [ "$fork_integration_row" = "$expected_fork_integration" ] ||
   die "sp11-kernel-integration ledger row does not match the kernel baseline"
 
-printf 'Validated kernel baseline %s at %s\n' \
-  "$SP11_KERNEL_BASELINE_ID" "$SP11_KERNEL_UPSTREAM_COMMIT"
+if [ "$emit_release_values" = "true" ]; then
+  for variable in \
+    SP11_KERNEL_BASELINE_ID \
+    SP11_KERNEL_DOCKER_IMAGE \
+    SP11_KERNEL_DOCKER_PLATFORM \
+    SP11_KERNEL_DOCKER_PLATFORM_MANIFEST \
+    SP11_KERNEL_UPSTREAM_URL \
+    SP11_KERNEL_UPSTREAM_REF \
+    SP11_KERNEL_UPSTREAM_COMMIT \
+    SP11_KERNEL_SOURCE_DATE_EPOCH \
+    SP11_KERNEL_KBUILD_BUILD_USER \
+    SP11_KERNEL_KBUILD_BUILD_HOST \
+    SP11_KERNEL_KBUILD_BUILD_TIMESTAMP \
+    SP11_KERNEL_BUILD_TARGET \
+    SP11_KERNEL_PATCH_DIRS; do
+    printf '%s\t%s\n' "$variable" "${!variable}"
+  done
+else
+  printf 'Validated kernel baseline %s at %s\n' \
+    "$SP11_KERNEL_BASELINE_ID" "$SP11_KERNEL_UPSTREAM_COMMIT"
+fi

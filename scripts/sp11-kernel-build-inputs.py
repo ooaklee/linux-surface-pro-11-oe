@@ -39,6 +39,12 @@ INPUT_ROLES = (
     "kernel-build-manifest-v2",
     "apt-provenance-v1",
 )
+BUILD_IDENTITY_ARGUMENTS = (
+    ("--source-date-epoch", "SP11_KERNEL_SOURCE_DATE_EPOCH"),
+    ("--kbuild-build-user", "SP11_KERNEL_KBUILD_BUILD_USER"),
+    ("--kbuild-build-host", "SP11_KERNEL_KBUILD_BUILD_HOST"),
+    ("--kbuild-build-timestamp", "SP11_KERNEL_KBUILD_BUILD_TIMESTAMP"),
+)
 SUITES = (
     "resolute",
     "resolute-updates",
@@ -133,6 +139,77 @@ def stable_file_snapshot(path: Path, label: str) -> tuple[int, int, int, int, in
     return (*identity_before, digest.hexdigest())
 
 
+def stable_file_bytes(
+    path: Path, label: str, *, maximum_size: int
+) -> tuple[bytes, tuple[int, int, int, int, int, str]]:
+    """Read bounded bytes through one no-follow descriptor and bind its inode."""
+
+    try:
+        path_before = path.lstat()
+    except OSError as exc:
+        fail(f"could not inspect {label}: {exc}")
+    if not stat.S_ISREG(path_before.st_mode):
+        fail(f"{label} must be a regular non-symlinked file")
+    if path_before.st_size > maximum_size:
+        fail(f"{label} exceeds its maximum size")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        fail(f"could not open {label} without following links: {exc}")
+    chunks: list[bytes] = []
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        descriptor_before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(descriptor_before.st_mode)
+            or (descriptor_before.st_dev, descriptor_before.st_ino)
+            != (path_before.st_dev, path_before.st_ino)
+        ):
+            fail(f"{label} changed before its no-follow descriptor was opened")
+        while True:
+            chunk = os.read(descriptor, min(64 * 1024, maximum_size + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > maximum_size:
+                fail(f"{label} exceeds its maximum size")
+            chunks.append(chunk)
+            digest.update(chunk)
+        descriptor_after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        path_after = path.lstat()
+    except OSError as exc:
+        fail(f"could not re-inspect {label}: {exc}")
+    identity_before = (
+        descriptor_before.st_dev,
+        descriptor_before.st_ino,
+        descriptor_before.st_size,
+        descriptor_before.st_mtime_ns,
+        descriptor_before.st_ctime_ns,
+    )
+    identity_after = (
+        descriptor_after.st_dev,
+        descriptor_after.st_ino,
+        descriptor_after.st_size,
+        descriptor_after.st_mtime_ns,
+        descriptor_after.st_ctime_ns,
+    )
+    path_identity_after = (
+        path_after.st_dev,
+        path_after.st_ino,
+        path_after.st_size,
+        path_after.st_mtime_ns,
+        path_after.st_ctime_ns,
+    )
+    if identity_before != identity_after or identity_before != path_identity_after:
+        fail(f"{label} changed while it was read")
+    return b"".join(chunks), (*identity_before, digest.hexdigest())
+
+
 def regular_file(path: Path, label: str) -> os.stat_result:
     try:
         metadata = path.lstat()
@@ -163,10 +240,23 @@ def parse_unique_lines(path: Path) -> dict[str, str]:
     return fields
 
 
-def read_baseline(path: Path) -> dict[str, str]:
-    regular_file(path, "baseline")
+def read_baseline(path: Path, expected_sha256: str | None = None) -> dict[str, str]:
+    raw, _snapshot = stable_file_bytes(path, "baseline", maximum_size=256 * 1024)
+    if expected_sha256 is not None:
+        if not SHA256_RE.fullmatch(expected_sha256):
+            fail("expected baseline SHA256 is not canonical")
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            fail("baseline bytes do not match the committed snapshot SHA256")
+    if not raw or not raw.endswith(b"\n"):
+        fail("baseline must be non-empty and LF-terminated")
+    if b"\x00" in raw or b"\r" in raw:
+        fail("baseline contains a NUL or CR byte")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        fail(f"baseline is not UTF-8: {exc}")
     values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         match = BASELINE_RE.fullmatch(line)
         if match:
             if match.group(1) in values:
@@ -180,6 +270,66 @@ def required(fields: dict[str, str], key: str) -> str:
     if not value:
         fail(f"required field is empty or missing: {key}")
     return value
+
+
+def require_expected_digest(
+    snapshot: tuple[int, int, int, int, int, str],
+    expected_sha256: str | None,
+    label: str,
+) -> None:
+    if expected_sha256 is None:
+        return
+    if not SHA256_RE.fullmatch(expected_sha256):
+        fail(f"expected {label} SHA256 is not canonical")
+    if snapshot[5] != expected_sha256:
+        fail(f"{label} bytes do not match the private release control SHA256")
+
+
+def validate_build_arguments(
+    path: Path,
+    baseline: dict[str, str],
+    expected_sha256: str | None = None,
+) -> tuple[int, int, int, int, int, str]:
+    """Require the retained release identity block in its one canonical order."""
+
+    raw, snapshot = stable_file_bytes(
+        path, "Docker build arguments", maximum_size=64 * 1024
+    )
+    require_expected_digest(snapshot, expected_sha256, "Docker build arguments")
+    if not raw or not raw.endswith(b"\n"):
+        fail("Docker build arguments must be non-empty and LF-terminated")
+    if b"\x00" in raw or b"\r" in raw:
+        fail("Docker build arguments contain a NUL or CR byte")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        fail(f"Docker build arguments are not UTF-8: {exc}")
+    if any(
+        ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
+        for character in text
+        if character != "\n"
+    ):
+        fail("Docker build arguments contain a control character")
+
+    arguments = text[:-1].split("\n")
+    if any(not argument for argument in arguments):
+        fail("Docker build arguments contain an empty argument")
+    if arguments.count("--release-build") != 1:
+        fail("Docker build arguments must contain exactly one --release-build flag")
+
+    expected_block: list[str] = []
+    for flag, baseline_field in BUILD_IDENTITY_ARGUMENTS:
+        if arguments.count(flag) != 1:
+            fail(f"Docker build arguments must contain exactly one {flag} flag")
+        expected_block.extend((flag, required(baseline, baseline_field)))
+    release_index = arguments.index("--release-build")
+    actual_block = arguments[release_index + 1 : release_index + 1 + len(expected_block)]
+    if actual_block != expected_block:
+        fail(
+            "Docker build arguments do not contain the exact ordered deterministic "
+            "identity block immediately after --release-build"
+        )
+    return snapshot
 
 
 def exact_keys(fields: dict[str, str], expected: list[str], label: str) -> None:
@@ -254,7 +404,12 @@ def positive_count(fields: dict[str, str], key: str, maximum: int = 100000) -> i
     return int(value)
 
 
-def safe_input(work_dir: Path, path: Path, label: str) -> tuple[str, int, str]:
+def safe_input(
+    work_dir: Path,
+    path: Path,
+    label: str,
+    expected_sha256: str | None = None,
+) -> tuple[str, int, str]:
     regular_file(path, label)
     work_real = work_dir.resolve(strict=True)
     path_real = path.resolve(strict=True)
@@ -267,6 +422,7 @@ def safe_input(work_dir: Path, path: Path, label: str) -> tuple[str, int, str]:
     relative_text = relative.as_posix()
     safe_relative(relative_text, f"{label} envelope path")
     snapshot = stable_file_snapshot(path, label)
+    require_expected_digest(snapshot, expected_sha256, label)
     return relative_text, snapshot[2], snapshot[5]
 
 
@@ -983,6 +1139,14 @@ def validate_retained_apt(
         fail("retained local build-deps Deb differs from sidecar")
 
 
+def control_expected_sha256(args: argparse.Namespace, label: str) -> str | None:
+    return {
+        "build-arguments": args.build_args_sha256,
+        "entrypoint": args.entrypoint_sha256,
+        "oci-index": args.oci_index_sha256,
+    }.get(label)
+
+
 def retained_snapshot(args: argparse.Namespace) -> tuple[tuple[object, ...], ...]:
     rows: list[tuple[object, ...]] = []
     for label, root in (
@@ -1013,7 +1177,16 @@ def retained_snapshot(args: argparse.Namespace) -> tuple[tuple[object, ...], ...
         stable_files.append(("build-inputs", args.output))
     for label, path in stable_files:
         assert path is not None
-        rows.append((label, path.name, *stable_file_snapshot(path, label)))
+        snapshot = stable_file_snapshot(path, label)
+        digest_label = {
+            "build-arguments": "Docker build arguments",
+            "entrypoint": "Docker entrypoint",
+            "oci-index": "OCI index",
+        }.get(label, label)
+        require_expected_digest(
+            snapshot, control_expected_sha256(args, label), digest_label
+        )
+        rows.append((label, path.name, *snapshot))
     for path in sorted(args.apt_local_build_deps_dir.glob("*-build-deps_*.deb")):
         rows.append(
             (
@@ -1025,8 +1198,11 @@ def retained_snapshot(args: argparse.Namespace) -> tuple[tuple[object, ...], ...
     return tuple(rows)
 
 
-def validate_oci_index(path: Path, baseline: dict[str, str]) -> None:
-    raw = path.read_bytes()
+def validate_oci_index(
+    path: Path, baseline: dict[str, str], expected_sha256: str | None = None
+) -> None:
+    raw, snapshot = stable_file_bytes(path, "OCI index", maximum_size=64 * 1024 * 1024)
+    require_expected_digest(snapshot, expected_sha256, "OCI index")
     expected_index = required(baseline, "SP11_KERNEL_DOCKER_IMAGE").rsplit("@", 1)[1]
     if "sha256:" + hashlib.sha256(raw).hexdigest() != expected_index:
         fail("bound OCI index bytes do not match the pinned image digest")
@@ -1090,6 +1266,10 @@ def parse_args() -> argparse.Namespace:
         choices=("write", "validate", "validate-attached", "validate-release-snapshot"),
     )
     parser.add_argument("--baseline", required=True, type=Path)
+    parser.add_argument("--baseline-sha256")
+    parser.add_argument("--build-args-sha256")
+    parser.add_argument("--entrypoint-sha256")
+    parser.add_argument("--oci-index-sha256")
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--support-head", required=True)
     parser.add_argument("--build-args", type=Path)
@@ -1105,6 +1285,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--apt-post-inventory", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+    expected_control_hashes = (
+        args.build_args_sha256,
+        args.entrypoint_sha256,
+        args.oci_index_sha256,
+    )
+    if any(value is not None for value in expected_control_hashes) and not all(
+        value is not None for value in expected_control_hashes
+    ):
+        parser.error(
+            "private control SHA256 options must be supplied together: "
+            "--build-args-sha256 --entrypoint-sha256 --oci-index-sha256"
+        )
+    for value in expected_control_hashes:
+        if value is not None and not SHA256_RE.fullmatch(value):
+            parser.error("private control SHA256 options must be canonical lowercase SHA-256")
     if args.mode != "validate-attached":
         required = (
             "work_dir",
@@ -1191,8 +1386,19 @@ def validate_envelope(args: argparse.Namespace, baseline: dict[str, str]) -> Non
         args.build_manifest,
         args.apt_provenance,
     )
-    for index, (role, path) in enumerate(zip(INPUT_ROLES, inputs), 1):
-        relative, size, digest = safe_input(args.work_dir, path, role)
+    expected_digests = (
+        args.build_args_sha256,
+        args.entrypoint_sha256,
+        args.oci_index_sha256,
+        None,
+        None,
+    )
+    for index, (role, path, expected_digest) in enumerate(
+        zip(INPUT_ROLES, inputs, expected_digests), 1
+    ):
+        relative, size, digest = safe_input(
+            args.work_dir, path, role, expected_digest
+        )
         if required(fields, f"Input {index} role") != role:
             fail(f"build-inputs role mismatch at input {index}")
         if required(fields, f"Input {index} path") != relative:
@@ -1331,10 +1537,19 @@ def validate_release_snapshot(
     assert args.oci_index is not None
     before = retained_snapshot(args)
 
+    build_arguments_snapshot = validate_build_arguments(
+        args.build_args, baseline, args.build_args_sha256
+    )
+    if (
+        "build-arguments",
+        args.build_args.name,
+        *build_arguments_snapshot,
+    ) not in before:
+        fail("Docker build arguments changed before semantic validation")
     validate_attached(args, baseline)
     apt_fields = validate_apt_sidecar(args.apt_provenance, baseline)
     validate_retained_apt(args, apt_fields, baseline)
-    validate_oci_index(args.oci_index, baseline)
+    validate_oci_index(args.oci_index, baseline, args.oci_index_sha256)
 
     envelope = parse_unique_lines(args.output)
     live_inputs = (args.build_args, args.entrypoint, args.oci_index)
@@ -1343,10 +1558,17 @@ def validate_release_snapshot(
         "docker-build-inside.sh",
         "sp11-oci-index.json",
     )
-    for index, (role, path, expected_path) in enumerate(
-        zip(INPUT_ROLES[:3], live_inputs, expected_paths), 1
+    expected_digests = (
+        args.build_args_sha256,
+        args.entrypoint_sha256,
+        args.oci_index_sha256,
+    )
+    for index, (role, path, expected_path, expected_digest) in enumerate(
+        zip(INPUT_ROLES[:3], live_inputs, expected_paths, expected_digests), 1
     ):
-        relative, size, digest = safe_input(args.work_dir, path, role)
+        relative, size, digest = safe_input(
+            args.work_dir, path, role, expected_digest
+        )
         if relative != expected_path:
             fail(f"live release input path changed at row {index}")
         if required(envelope, f"Input {index} role") != role:
@@ -1366,7 +1588,7 @@ def main() -> None:
     args = parse_args()
     if not COMMIT_RE.fullmatch(args.support_head):
         fail("support HEAD must be a full lowercase commit")
-    baseline = read_baseline(args.baseline)
+    baseline = read_baseline(args.baseline, args.baseline_sha256)
     if tuple(required(baseline, "SP11_APT_SNAPSHOT_SUITES").split()) != SUITES:
         fail("baseline suite order changed")
     if tuple(required(baseline, "SP11_APT_SNAPSHOT_COMPONENTS").split()) != COMPONENTS:
@@ -1439,11 +1661,20 @@ def main() -> None:
             fail(f"{label} path is not the exact managed work path")
     before = retained_snapshot(args)
     written_output_snapshot: tuple[int, int, int, int, int, str] | None = None
+    build_arguments_snapshot = validate_build_arguments(
+        args.build_args, baseline, args.build_args_sha256
+    )
+    if (
+        "build-arguments",
+        args.build_args.name,
+        *build_arguments_snapshot,
+    ) not in before:
+        fail("Docker build arguments changed before semantic validation")
     validate_exact_build_manifest(args.build_manifest, args.support_head)
     validate_manifest(args.build_manifest, baseline, args.support_head)
     apt_fields = validate_apt_sidecar(args.apt_provenance, baseline)
     validate_retained_apt(args, apt_fields, baseline)
-    validate_oci_index(args.oci_index, baseline)
+    validate_oci_index(args.oci_index, baseline, args.oci_index_sha256)
     if retained_snapshot(args) != before:
         fail("retained APT inputs changed during pre-envelope validation")
 
@@ -1455,9 +1686,18 @@ def main() -> None:
             args.build_manifest,
             args.apt_provenance,
         )
+        expected_digests = (
+            args.build_args_sha256,
+            args.entrypoint_sha256,
+            args.oci_index_sha256,
+            None,
+            None,
+        )
         rows = [
-            safe_input(args.work_dir, path, role)
-            for role, path in zip(INPUT_ROLES, inputs)
+            safe_input(args.work_dir, path, role, expected_digest)
+            for role, path, expected_digest in zip(
+                INPUT_ROLES, inputs, expected_digests
+            )
         ]
         lines = [
             "Build inputs schema: sp11-kernel-build-inputs-v1",

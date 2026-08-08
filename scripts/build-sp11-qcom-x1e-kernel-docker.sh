@@ -8,7 +8,7 @@ sanitize_git_environment() {
   unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
   unset GIT_CONFIG_GLOBAL GIT_DIR GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_EXEC_PATH
   unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX
-  unset GIT_SHALLOW_FILE GIT_WORK_TREE
+  unset GIT_SHALLOW_FILE GIT_TEMPLATE_DIR GIT_WORK_TREE
   for variable_name in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
     unset "$variable_name"
   done
@@ -26,6 +26,9 @@ IMAGE_EXPLICIT="false"
 PLATFORM="linux/arm64"
 PLATFORM_EXPLICIT="false"
 WORK_DIR="build/docker-sp11-qcom-x1e-kernel"
+WORK_ROOT_IDENTITY=""
+RELEASE_WORK_DIR_NAMES=()
+RELEASE_WORK_DIR_IDENTITIES=()
 CONTAINER_WORK_DIR="/linux-work"
 LINUX_WORK_VOLUME="sp11-qcom-x1e-kernel-build"
 METADATA=""
@@ -52,7 +55,50 @@ SUPPORT_HEAD_START=""
 CONTROL_DIR=""
 PAYLOAD_STAGE=""
 KERNEL_BASELINE=""
+KERNEL_BASELINE_REL="config/kernel-baselines/7.2-rc5-jg-0.env"
+KERNEL_BASELINE_VALIDATOR_REL="scripts/validate-sp11-kernel-baseline.sh"
+BASELINE_CONTROL_DIR=""
+BASELINE_CONTROL_PARENT=""
+BASELINE_CONTROL_IDENTITY=""
+BASELINE_CONTROL_INITIAL_STATE=""
+BASELINE_CONTROL_FINAL_STATE=""
+KERNEL_BASELINE_VALIDATOR=""
+KERNEL_BASELINE_STATE=""
+KERNEL_BASELINE_VALIDATOR_STATE=""
+KERNEL_BASELINE_SHA256=""
+RELEASE_BUILD_ARGS_STATE=""
+RELEASE_BUILD_ARGS_SHA256=""
+EXPECTED_RELEASE_BUILD_ARGS_SHA256=""
+RELEASE_ENTRYPOINT_STATE=""
+RELEASE_ENTRYPOINT_SHA256=""
+EXPECTED_RELEASE_ENTRYPOINT_SHA256=""
+RELEASE_OCI_INDEX_STATE=""
+RELEASE_OCI_INDEX_SHA256=""
+EXPECTED_RELEASE_OCI_INDEX_SHA256=""
+SUPPORT_SNAPSHOT_ROOT=""
+SUPPORT_SNAPSHOT_PARENT=""
+SUPPORT_SNAPSHOT_ROOT_IDENTITY=""
+SUPPORT_SNAPSHOT_ROOT_STATE=""
+COMMITTED_SUPPORT_DIR=""
+SUPPORT_SNAPSHOT_TREE=""
+SUPPORT_SNAPSHOT_PATHS=()
+SUPPORT_SNAPSHOT_TYPES=()
+SUPPORT_SNAPSHOT_STATES=()
+SUPPORT_SNAPSHOT_NODE_IDENTITIES=()
 IMMUTABLE_APT="false"
+RELEASE_BASELINE_ID=""
+RELEASE_BASELINE_DOCKER_IMAGE=""
+RELEASE_BASELINE_DOCKER_PLATFORM=""
+RELEASE_BASELINE_DOCKER_PLATFORM_MANIFEST=""
+RELEASE_BASELINE_UPSTREAM_URL=""
+RELEASE_BASELINE_UPSTREAM_REF=""
+RELEASE_BASELINE_UPSTREAM_COMMIT=""
+RELEASE_SOURCE_DATE_EPOCH=""
+RELEASE_KBUILD_BUILD_USER=""
+RELEASE_KBUILD_BUILD_HOST=""
+RELEASE_KBUILD_BUILD_TIMESTAMP=""
+RELEASE_BASELINE_BUILD_TARGET=""
+RELEASE_BASELINE_PATCH_DIRS=""
 CONTROL_SNAPSHOT_FILES=()
 CONTROL_SNAPSHOT_VALUES=()
 
@@ -185,6 +231,468 @@ cleanup_payload_stage() {
   esac
 }
 
+baseline_control_identity() {
+  local path="$1"
+
+  case "$(uname -s)" in
+    Darwin) stat -f '%d:%i:%Lp:%u:%g' "$path" ;;
+    *) stat -c '%d:%i:%a:%u:%g' -- "$path" ;;
+  esac
+}
+
+baseline_control_file_state() {
+  local path="$1" expected_links="${2:-1}" before after digest
+
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  case "$(uname -s)" in
+    Darwin) before="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) before="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  digest="$(shasum -a 256 "$path" | awk '{print $1}')"
+  case "$(uname -s)" in
+    Darwin) after="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) after="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  [ "$before" = "$after" ] && [ "${before##*:}" = "$expected_links" ] &&
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s:%s\n' "$before" "$digest"
+}
+
+baseline_control_directory_state() {
+  local path="$1" before after
+
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  case "$(uname -s)" in
+    Darwin) before="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) before="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  case "$(uname -s)" in
+    Darwin) after="$(stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g:%l' "$path")" ;;
+    *) after="$(stat -c '%d:%i:%s:%y:%z:%a:%u:%g:%h' -- "$path")" ;;
+  esac
+  [ "$before" = "$after" ] || return 1
+  printf '%s\n' "$before"
+}
+
+verify_baseline_control_membership() {
+  local phase="$1" path name count=0
+  local seen_baseline=false seen_validator=false seen_args=false
+  local seen_entrypoint=false seen_oci=false
+
+  while IFS= read -r -d '' path; do
+    count=$((count + 1))
+    name="${path##*/}"
+    case "$name" in
+      kernel-baseline.env)
+        [ "$seen_baseline" = false ] || return 1
+        seen_baseline=true
+        ;;
+      validate-sp11-kernel-baseline.sh)
+        [ "$seen_validator" = false ] || return 1
+        seen_validator=true
+        ;;
+      docker-build-args.txt)
+        [ "$phase" = final ] && [ "$seen_args" = false ] || return 1
+        seen_args=true
+        ;;
+      docker-build-inside.sh)
+        [ "$phase" = final ] && [ "$seen_entrypoint" = false ] || return 1
+        seen_entrypoint=true
+        ;;
+      sp11-oci-index.json)
+        [ "$phase" = final ] && [ -n "$RELEASE_OCI_INDEX_STATE" ] &&
+          [ "$seen_oci" = false ] || return 1
+        seen_oci=true
+        ;;
+      *) return 1 ;;
+    esac
+  done < <(find "$BASELINE_CONTROL_DIR" -mindepth 1 -maxdepth 1 -print0)
+  [ "$seen_baseline" = true ] && [ "$seen_validator" = true ] || return 1
+  if [ "$phase" = initial ]; then
+    [ "$count" -eq 2 ]
+  elif [ -n "$RELEASE_OCI_INDEX_STATE" ]; then
+    [ "$count" -eq 5 ] && [ "$seen_args" = true ] &&
+      [ "$seen_entrypoint" = true ] && [ "$seen_oci" = true ]
+  else
+    [ "$count" -eq 4 ] && [ "$seen_args" = true ] &&
+      [ "$seen_entrypoint" = true ] && [ "$seen_oci" = false ]
+  fi
+}
+
+verify_kernel_baseline_state() {
+  local current
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  current="$(baseline_control_file_state "$KERNEL_BASELINE")" || {
+    echo "Committed kernel baseline snapshot is missing, unsafe, or unstable." >&2
+    return 1
+  }
+  if [ "$current" != "$KERNEL_BASELINE_STATE" ]; then
+    echo "Committed kernel baseline snapshot changed after materialization." >&2
+    return 1
+  fi
+}
+
+verify_kernel_baseline_control_state() {
+  local current
+
+  verify_kernel_baseline_state || return 1
+  current="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")" || {
+    echo "Committed kernel baseline validator snapshot is missing, unsafe, or unstable." >&2
+    return 1
+  }
+  if [ "$current" != "$KERNEL_BASELINE_VALIDATOR_STATE" ]; then
+    echo "Committed kernel baseline validator snapshot changed after materialization." >&2
+    return 1
+  fi
+}
+
+verify_initial_baseline_control_state() {
+  local current_directory_state
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || {
+    echo "Private committed-baseline control directory is missing, unsafe, or unstable." >&2
+    return 1
+  }
+  if [ -z "$BASELINE_CONTROL_INITIAL_STATE" ] ||
+     [ "$current_directory_state" != "$BASELINE_CONTROL_INITIAL_STATE" ] ||
+     ! verify_baseline_control_membership initial; then
+    echo "Private committed-baseline control directory changed before finalization." >&2
+    return 1
+  fi
+  verify_kernel_baseline_control_state || return 1
+  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || return 1
+  if [ "$current_directory_state" != "$BASELINE_CONTROL_INITIAL_STATE" ] ||
+     ! verify_baseline_control_membership initial; then
+    echo "Private committed-baseline control directory changed during validation." >&2
+    return 1
+  fi
+}
+
+verify_pinned_baseline_control_cwd() {
+  [ -d . ] && [ ! -L . ] &&
+    [ "$(baseline_control_identity .)" = "$BASELINE_CONTROL_IDENTITY" ] &&
+    [ -d "$BASELINE_CONTROL_DIR" ] && [ ! -L "$BASELINE_CONTROL_DIR" ] &&
+    [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" = \
+      "$BASELINE_CONTROL_IDENTITY" ]
+}
+
+verify_release_control_state() {
+  local path expected_state current_state current_directory_state
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ -n "$BASELINE_CONTROL_FINAL_STATE" ] || {
+    echo "Private release control directory was not finalized." >&2
+    return 1
+  }
+  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || {
+    echo "Private release control directory is missing, unsafe, or unstable." >&2
+    return 1
+  }
+  if [ "$current_directory_state" != "$BASELINE_CONTROL_FINAL_STATE" ] ||
+     ! verify_baseline_control_membership final; then
+    echo "Private release control directory state or membership changed." >&2
+    return 1
+  fi
+  verify_kernel_baseline_control_state || return 1
+  for path in \
+    "$BASELINE_CONTROL_DIR/docker-build-args.txt" \
+    "$BASELINE_CONTROL_DIR/docker-build-inside.sh" \
+    "$BASELINE_CONTROL_DIR/sp11-oci-index.json"; do
+    case "$path" in
+      */docker-build-args.txt) expected_state="$RELEASE_BUILD_ARGS_STATE" ;;
+      */docker-build-inside.sh) expected_state="$RELEASE_ENTRYPOINT_STATE" ;;
+      *) expected_state="$RELEASE_OCI_INDEX_STATE" ;;
+    esac
+    [ -n "$expected_state" ] || continue
+    current_state="$(baseline_control_file_state "$path")" || {
+      echo "Private release control input is missing, unsafe, or unstable: $path" >&2
+      return 1
+    }
+    if [ "$current_state" != "$expected_state" ]; then
+      echo "Private release control input changed after materialization: $path" >&2
+      return 1
+    fi
+  done
+  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || return 1
+  if [ "$current_directory_state" != "$BASELINE_CONTROL_FINAL_STATE" ] ||
+     ! verify_baseline_control_membership final; then
+    echo "Private release control directory changed during verification." >&2
+    return 1
+  fi
+}
+
+cleanup_baseline_control_dir() {
+  local current_identity baseline_control_file
+  local expected_baseline_control_state current_baseline_control_state
+  local expected_directory_state current_directory_state membership_phase
+
+  [ -n "$BASELINE_CONTROL_DIR" ] || return 0
+  case "$BASELINE_CONTROL_DIR" in
+    "$BASELINE_CONTROL_PARENT"/sp11-kernel-baseline.*) ;;
+    *)
+      echo "warning: refusing to clean unexpected kernel baseline control directory: $BASELINE_CONTROL_DIR" >&2
+      return 0
+      ;;
+  esac
+  if [ "$(dirname "$BASELINE_CONTROL_DIR")" != "$BASELINE_CONTROL_PARENT" ] ||
+     [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ]; then
+    echo "warning: refusing to follow changed kernel baseline control directory: $BASELINE_CONTROL_DIR" >&2
+    return 0
+  fi
+  if ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
+     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ]; then
+    echo "warning: refusing to clean replaced kernel baseline control directory: $BASELINE_CONTROL_DIR" >&2
+    return 0
+  fi
+  if [ -n "$BASELINE_CONTROL_FINAL_STATE" ]; then
+    expected_directory_state="$BASELINE_CONTROL_FINAL_STATE"
+    membership_phase=final
+  else
+    expected_directory_state="$BASELINE_CONTROL_INITIAL_STATE"
+    membership_phase=initial
+  fi
+  if [ -z "$expected_directory_state" ] ||
+     ! current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" ||
+     [ "$current_directory_state" != "$expected_directory_state" ] ||
+     ! verify_baseline_control_membership "$membership_phase"; then
+    echo "warning: preserving changed private release control directory: $BASELINE_CONTROL_DIR" >&2
+    return 0
+  fi
+  if [ "$membership_phase" = final ] && ! verify_release_control_state; then
+    echo "warning: preserving drifted private release control directory: $BASELINE_CONTROL_DIR" >&2
+    return 0
+  fi
+  for baseline_control_file in \
+    "$BASELINE_CONTROL_DIR/kernel-baseline.env" \
+    "$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh" \
+    "$BASELINE_CONTROL_DIR/docker-build-args.txt" \
+    "$BASELINE_CONTROL_DIR/docker-build-inside.sh" \
+    "$BASELINE_CONTROL_DIR/sp11-oci-index.json"; do
+    case "$baseline_control_file" in
+      "$KERNEL_BASELINE") expected_baseline_control_state="$KERNEL_BASELINE_STATE" ;;
+      "$KERNEL_BASELINE_VALIDATOR") expected_baseline_control_state="$KERNEL_BASELINE_VALIDATOR_STATE" ;;
+      */docker-build-args.txt) expected_baseline_control_state="$RELEASE_BUILD_ARGS_STATE" ;;
+      */docker-build-inside.sh) expected_baseline_control_state="$RELEASE_ENTRYPOINT_STATE" ;;
+      */sp11-oci-index.json) expected_baseline_control_state="$RELEASE_OCI_INDEX_STATE" ;;
+    esac
+    [ -n "$expected_baseline_control_state" ] || continue
+    if current_baseline_control_state="$(baseline_control_file_state "$baseline_control_file" 2>/dev/null)" &&
+       [ "$current_baseline_control_state" = "$expected_baseline_control_state" ]; then
+      if ! rm -f -- "$baseline_control_file"; then
+        echo "warning: preserving remainder after private control cleanup failed: $baseline_control_file" >&2
+        return 0
+      fi
+    else
+      echo "warning: preserving changed kernel baseline control file: $baseline_control_file" >&2
+      return 0
+    fi
+  done
+  if [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ] ||
+     ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
+     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ] ||
+     find "$BASELINE_CONTROL_DIR" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+    echo "warning: preserving changed private control directory after file cleanup: $BASELINE_CONTROL_DIR" >&2
+    return 0
+  fi
+  if ! rmdir "$BASELINE_CONTROL_DIR"; then
+    echo "warning: could not remove emptied private release control directory: $BASELINE_CONTROL_DIR" >&2
+  fi
+}
+
+support_snapshot_directory_state() {
+  local path="$1"
+
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  case "$(uname -s)" in
+    Darwin) stat -f '%d:%i:%z:%Fm:%Fc:%Lp:%u:%g' "$path" ;;
+    *) stat -c '%d:%i:%s:%y:%z:%a:%u:%g' -- "$path" ;;
+  esac
+}
+
+committed_support_git() {
+  local safe_support_dir
+
+  safe_support_dir="$(cd "$COMMITTED_SUPPORT_DIR" && pwd -P)" || return 1
+  GIT_OPTIONAL_LOCKS=0 git \
+    -c "safe.directory=$safe_support_dir" \
+    -c core.fsmonitor=false \
+    -c core.untrackedCache=false \
+    -C "$COMMITTED_SUPPORT_DIR" "$@"
+}
+
+capture_support_snapshot_inventory() {
+  local path relative state node_identity
+
+  SUPPORT_SNAPSHOT_PATHS=()
+  SUPPORT_SNAPSHOT_TYPES=()
+  SUPPORT_SNAPSHOT_STATES=()
+  SUPPORT_SNAPSHOT_NODE_IDENTITIES=()
+  while IFS= read -r -d '' path; do
+    [ -n "$path" ] || continue
+    relative="${path#"$SUPPORT_SNAPSHOT_ROOT"/}"
+    case "$relative" in
+      ""|/*|*//*|../*|*/../*|*/..|*$'\n'*|*$'\r'*|*$'\t'*)
+        echo "Private support snapshot contains an unsafe path." >&2
+        return 1
+        ;;
+    esac
+    if [ -f "$path" ] && [ ! -L "$path" ]; then
+      state="$(baseline_control_file_state "$path")" || return 1
+      SUPPORT_SNAPSHOT_TYPES+=(file)
+    elif [ -d "$path" ] && [ ! -L "$path" ]; then
+      state="$(support_snapshot_directory_state "$path")" || return 1
+      SUPPORT_SNAPSHOT_TYPES+=(directory)
+    else
+      echo "Private support snapshot contains a symlink or special node: $relative" >&2
+      return 1
+    fi
+    SUPPORT_SNAPSHOT_PATHS+=("$relative")
+    SUPPORT_SNAPSHOT_STATES+=("$state")
+    node_identity="$(baseline_control_identity "$path")" || return 1
+    SUPPORT_SNAPSHOT_NODE_IDENTITIES+=("$node_identity")
+  done < <(find "$SUPPORT_SNAPSHOT_ROOT" -mindepth 1 -print0)
+  [ "${#SUPPORT_SNAPSHOT_PATHS[@]}" -gt 0 ] || return 1
+}
+
+verify_support_snapshot_inventory() {
+  local path relative state type node_identity index=0
+
+  while IFS= read -r -d '' path; do
+    [ -n "$path" ] || continue
+    if [ "$index" -ge "${#SUPPORT_SNAPSHOT_PATHS[@]}" ]; then
+      echo "Private support snapshot gained an unexpected path." >&2
+      return 1
+    fi
+    relative="${path#"$SUPPORT_SNAPSHOT_ROOT"/}"
+    [ "$relative" = "${SUPPORT_SNAPSHOT_PATHS[$index]}" ] || {
+      echo "Private support snapshot path inventory changed." >&2
+      return 1
+    }
+    if [ -f "$path" ] && [ ! -L "$path" ]; then
+      type="file"
+      state="$(baseline_control_file_state "$path")" || return 1
+    elif [ -d "$path" ] && [ ! -L "$path" ]; then
+      type="directory"
+      state="$(support_snapshot_directory_state "$path")" || return 1
+    else
+      echo "Private support snapshot path became a symlink or special node: $relative" >&2
+      return 1
+    fi
+    if [ "$type" != "${SUPPORT_SNAPSHOT_TYPES[$index]}" ] ||
+       [ "$state" != "${SUPPORT_SNAPSHOT_STATES[$index]}" ]; then
+      echo "Private support snapshot node changed: $relative" >&2
+      return 1
+    fi
+    node_identity="$(baseline_control_identity "$path")" || return 1
+    [ "$node_identity" = "${SUPPORT_SNAPSHOT_NODE_IDENTITIES[$index]}" ] || {
+      echo "Private support snapshot node identity changed: $relative" >&2
+      return 1
+    }
+    index=$((index + 1))
+  done < <(find "$SUPPORT_SNAPSHOT_ROOT" -mindepth 1 -print0)
+  if [ "$index" -ne "${#SUPPORT_SNAPSHOT_PATHS[@]}" ]; then
+    echo "Private support snapshot lost a path." >&2
+    return 1
+  fi
+}
+
+verify_release_support_checkout() {
+  local current_root_identity current_root_state head tree status
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  if [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ] || [ -L "$SUPPORT_SNAPSHOT_ROOT" ] ||
+     ! current_root_identity="$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" ||
+     [ "$current_root_identity" != "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
+    echo "Private committed support snapshot root changed." >&2
+    return 1
+  fi
+  current_root_state="$(support_snapshot_directory_state "$SUPPORT_SNAPSHOT_ROOT")" || return 1
+  if [ "$current_root_state" != "$SUPPORT_SNAPSHOT_ROOT_STATE" ]; then
+    echo "Private committed support snapshot root state changed." >&2
+    return 1
+  fi
+  verify_support_snapshot_inventory || return 1
+  head="$(committed_support_git rev-parse --verify 'HEAD^{commit}')" || return 1
+  tree="$(committed_support_git rev-parse --verify 'HEAD^{tree}')" || return 1
+  status="$(committed_support_git status --porcelain=v1 --untracked-files=all --ignored)" || return 1
+  if [ "$head" != "$SUPPORT_HEAD_START" ] || [ "$tree" != "$SUPPORT_SNAPSHOT_TREE" ] ||
+     [ -n "$status" ] ||
+     ! committed_support_git diff-files --quiet --ignore-submodules=none ||
+     ! committed_support_git diff-index --quiet --cached "$SUPPORT_HEAD_START" --; then
+    echo "Private committed support checkout changed." >&2
+    return 1
+  fi
+  verify_support_snapshot_inventory || return 1
+  current_root_state="$(support_snapshot_directory_state "$SUPPORT_SNAPSHOT_ROOT")" || return 1
+  if [ "$current_root_state" != "$SUPPORT_SNAPSHOT_ROOT_STATE" ]; then
+    echo "Private committed support snapshot root changed during verification." >&2
+    return 1
+  fi
+}
+
+cleanup_release_support_checkout() {
+  local index path current_state current_identity
+
+  [ -n "$SUPPORT_SNAPSHOT_ROOT" ] || return 0
+  case "$SUPPORT_SNAPSHOT_ROOT" in
+    "$SUPPORT_SNAPSHOT_PARENT"/sp11-kernel-support.*) ;;
+    *)
+      echo "warning: preserving unexpected private support snapshot path: $SUPPORT_SNAPSHOT_ROOT" >&2
+      return 0
+      ;;
+  esac
+  if ! verify_release_support_checkout; then
+    echo "warning: preserving changed private committed support snapshot: $SUPPORT_SNAPSHOT_ROOT" >&2
+    return 0
+  fi
+  index=$((${#SUPPORT_SNAPSHOT_PATHS[@]} - 1))
+  while [ "$index" -ge 0 ]; do
+    path="$SUPPORT_SNAPSHOT_ROOT/${SUPPORT_SNAPSHOT_PATHS[$index]}"
+    case "${SUPPORT_SNAPSHOT_TYPES[$index]}" in
+      file)
+        if ! current_state="$(baseline_control_file_state "$path")" ||
+           [ "$current_state" != "${SUPPORT_SNAPSHOT_STATES[$index]}" ] ||
+           ! current_identity="$(baseline_control_identity "$path")" ||
+           [ "$current_identity" != "${SUPPORT_SNAPSHOT_NODE_IDENTITIES[$index]}" ]; then
+          echo "warning: preserving private support snapshot after file drift at cleanup: $path" >&2
+          return 0
+        fi
+        if ! rm -f -- "$path"; then
+          echo "warning: preserving remainder after private support file cleanup failed: $path" >&2
+          return 0
+        fi
+        ;;
+      directory)
+        if [ ! -d "$path" ] || [ -L "$path" ] ||
+           ! current_identity="$(baseline_control_identity "$path")" ||
+           [ "$current_identity" != "${SUPPORT_SNAPSHOT_NODE_IDENTITIES[$index]}" ]; then
+          echo "warning: preserving private support snapshot after directory drift at cleanup: $path" >&2
+          return 0
+        fi
+        if ! rmdir "$path"; then
+          echo "warning: preserving remainder after private support directory cleanup failed: $path" >&2
+          return 0
+        fi
+        ;;
+    esac
+    index=$((index - 1))
+  done
+  if [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ] || [ -L "$SUPPORT_SNAPSHOT_ROOT" ] ||
+     ! current_identity="$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" ||
+     [ "$current_identity" != "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ] ||
+     find "$SUPPORT_SNAPSHOT_ROOT" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+    echo "warning: preserving changed private support snapshot root after child cleanup: $SUPPORT_SNAPSHOT_ROOT" >&2
+    return 0
+  fi
+  if ! rmdir "$SUPPORT_SNAPSHOT_ROOT"; then
+    echo "warning: could not remove emptied private support snapshot root: $SUPPORT_SNAPSHOT_ROOT" >&2
+  fi
+}
+
+trap 'cleanup_baseline_control_dir; cleanup_release_support_checkout; cleanup_control_dir; cleanup_payload_stage' EXIT
+
 normalize_absolute_path() {
   local input="$1" component normalized=""
   local -a components=()
@@ -281,6 +789,75 @@ ensure_safe_work_dir() {
   printf '%s\n' "$normalized"
 }
 
+verify_pinned_work_root_cwd() {
+  local current_identity
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ -n "$WORK_ROOT_IDENTITY" ] || {
+    echo "Release work root has no captured identity." >&2
+    return 1
+  }
+  current_identity="$(baseline_control_identity .)" || return 1
+  if [ "$current_identity" != "$WORK_ROOT_IDENTITY" ] ||
+     [ ! -d "$work_abs" ] || [ -L "$work_abs" ] ||
+     [ "$(baseline_control_identity "$work_abs")" != "$WORK_ROOT_IDENTITY" ]; then
+    echo "Release work root changed from its pinned directory." >&2
+    return 1
+  fi
+}
+
+capture_release_work_root_identity() {
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  if ! WORK_ROOT_IDENTITY="$(
+    cd "$work_abs" || exit 1
+    pinned_identity="$(baseline_control_identity .)" || exit 1
+    [ -d "$work_abs" ] && [ ! -L "$work_abs" ] &&
+      [ "$(baseline_control_identity "$work_abs")" = "$pinned_identity" ] ||
+      exit 1
+    printf '%s\n' "$pinned_identity"
+  )"; then
+    echo "Could not capture the release work-root identity." >&2
+    return 1
+  fi
+  (
+    cd "$work_abs" || exit 1
+    verify_pinned_work_root_cwd || exit 1
+  )
+}
+
+verify_release_work_root_binding() {
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  (
+    cd "$work_abs" || exit 1
+    verify_pinned_work_root_cwd || exit 1
+    verify_release_work_dirs_cwd
+  )
+}
+
+verify_release_work_dirs_cwd() {
+  local index name current_identity
+
+  index=0
+  while [ "$index" -lt "${#RELEASE_WORK_DIR_NAMES[@]}" ]; do
+    name="${RELEASE_WORK_DIR_NAMES[$index]}"
+    case "$name" in
+      apt-archives|apt-indexes|apt-lists|artifacts) ;;
+      *)
+        echo "Release work-directory identity set contains an unsafe name." >&2
+        return 1
+        ;;
+    esac
+    if [ ! -d "./$name" ] || [ -L "./$name" ] ||
+       ! current_identity="$(baseline_control_identity "./$name")" ||
+       [ "$current_identity" != "${RELEASE_WORK_DIR_IDENTITIES[$index]}" ]; then
+      echo "Release work directory changed from its pinned identity: $work_abs/$name" >&2
+      return 1
+    fi
+    index=$((index + 1))
+  done
+}
+
 validate_legacy_control_paths() {
   local control_path
 
@@ -314,6 +891,66 @@ install_control_file() {
     echo "Docker control file is not a regular file after install: $target" >&2
     return 1
   fi
+}
+
+install_control_evidence_copy() {
+  local source="$1" target="$2"
+  local source_state installed_state target_name display_target
+
+  case "$target" in
+    "$work_abs"/docker-build-args.txt) target_name="docker-build-args.txt" ;;
+    "$work_abs"/docker-build-inside.sh) target_name="docker-build-inside.sh" ;;
+    "$work_abs"/sp11-oci-index.json) target_name="sp11-oci-index.json" ;;
+    *)
+      echo "Release Docker evidence path is outside its pinned work root: $target" >&2
+      return 1
+      ;;
+  esac
+  display_target="$work_abs/$target_name"
+
+  (
+    cd "$work_abs" || exit 1
+    verify_pinned_work_root_cwd || exit 1
+    target="./$target_name"
+
+    if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+      echo "Release Docker evidence path is unsafe: $display_target" >&2
+      exit 1
+    fi
+    source_state="$(baseline_control_file_state "$source")" || {
+      echo "Private Docker control input is unsafe before evidence copy: $source" >&2
+      exit 1
+    }
+    if [ -e "$target" ]; then
+      installed_state="$(baseline_control_file_state "$target")" || exit 1
+      if [ "${installed_state##*:}" != "${source_state##*:}" ]; then
+        echo "Existing release Docker evidence differs from its private authority: $display_target" >&2
+        exit 1
+      fi
+    else
+      if ! (
+        set -o noclobber
+        umask 077
+        cat "$source" > "$target" || exit 1
+      ); then
+        echo "Could not exclusively create retained Docker evidence: $display_target" >&2
+        exit 1
+      fi
+      installed_state="$(baseline_control_file_state "$target")" || {
+        echo "Retained Docker evidence is unsafe after creation: $display_target" >&2
+        exit 1
+      }
+      if [ "${installed_state##*:}" != "${source_state##*:}" ]; then
+        echo "Retained Docker evidence bytes differ from private control input: $display_target" >&2
+        exit 1
+      fi
+    fi
+    if [ "$(baseline_control_file_state "$source")" != "$source_state" ]; then
+      echo "Private Docker control input changed during evidence copy: $source" >&2
+      exit 1
+    fi
+    verify_pinned_work_root_cwd || exit 1
+  )
 }
 
 validate_payload_dir() {
@@ -405,7 +1042,389 @@ create_validated_payload_dir() {
 }
 
 support_git() {
-  git -c "safe.directory=$repo_dir" -C "$repo_dir" "$@"
+  GIT_OPTIONAL_LOCKS=0 git \
+    -c "safe.directory=$repo_dir" \
+    -c core.fsmonitor=false \
+    -c core.untrackedCache=false \
+    -C "$repo_dir" "$@"
+}
+
+validate_committed_support_tree() {
+  local entry metadata relative_path mode object_type object_id remainder
+  local actual_id filesystem_mode entry_count=0
+
+  while IFS= read -r -d '' entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      *$'\n'*|*$'\r'*)
+        echo "Committed support tree contains a control character in a path." >&2
+        return 1
+        ;;
+    esac
+    case "$entry" in
+      *$'\t'*) ;;
+      *)
+        echo "Committed support tree record is malformed." >&2
+        return 1
+        ;;
+    esac
+    metadata="${entry%%$'\t'*}"
+    relative_path="${entry#*$'\t'}"
+    case "$relative_path" in
+      *$'\t'*)
+        echo "Committed support tree contains a tab in a path." >&2
+        return 1
+        ;;
+    esac
+    read -r mode object_type object_id remainder <<< "$metadata"
+    if [ -n "$remainder" ] || [ "$object_type" != "blob" ] ||
+       { [ "$mode" != "100644" ] && [ "$mode" != "100755" ]; } ||
+       ! [[ "$object_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+      echo "Committed support tree contains a symlink, submodule, or unsupported entry." >&2
+      return 1
+    fi
+    case "$relative_path" in
+      ""|/*|*//*|../*|*/../*|*/..|*$'\n'*|*$'\r'*|*$'\t'*)
+        echo "Committed support tree contains an unsafe path." >&2
+        return 1
+        ;;
+    esac
+    if [ ! -f "$COMMITTED_SUPPORT_DIR/$relative_path" ] ||
+       [ -L "$COMMITTED_SUPPORT_DIR/$relative_path" ]; then
+      echo "Committed support checkout did not materialize a regular file: $relative_path" >&2
+      return 1
+    fi
+    actual_id="$(committed_support_git hash-object --no-filters -- "$relative_path")"
+    [ "$actual_id" = "$object_id" ] || {
+      echo "Committed support checkout raw bytes differ from Git: $relative_path" >&2
+      return 1
+    }
+    case "$(uname -s)" in
+      Darwin) filesystem_mode="$(stat -f '%Lp' "$COMMITTED_SUPPORT_DIR/$relative_path")" ;;
+      *) filesystem_mode="$(stat -c '%a' -- "$COMMITTED_SUPPORT_DIR/$relative_path")" ;;
+    esac
+    if { [ "$mode" = "100644" ] && [ "$filesystem_mode" != "644" ]; } ||
+       { [ "$mode" = "100755" ] && [ "$filesystem_mode" != "755" ]; }; then
+      echo "Committed support checkout mode differs from Git: $relative_path" >&2
+      return 1
+    fi
+    entry_count=$((entry_count + 1))
+  done < <(committed_support_git -c core.quotePath=false \
+    ls-tree -r -z --full-tree "$SUPPORT_HEAD_START")
+  [ "$entry_count" -gt 0 ] || {
+    echo "Committed support tree is empty." >&2
+    return 1
+  }
+}
+
+create_release_support_checkout() {
+  local created_root expected_tree head tree status root_mode support_child_identity
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  expected_tree="$(support_git rev-parse --verify "$SUPPORT_HEAD_START^{tree}")"
+  SUPPORT_SNAPSHOT_PARENT="$(cd /tmp && pwd -P)"
+  created_root="$(umask 077 && mktemp -d "$SUPPORT_SNAPSHOT_PARENT/sp11-kernel-support.XXXXXX")"
+  SUPPORT_SNAPSHOT_ROOT="$created_root"
+  case "$SUPPORT_SNAPSHOT_ROOT" in
+    "$SUPPORT_SNAPSHOT_PARENT"/sp11-kernel-support.*) ;;
+    *)
+      echo "Private committed-support snapshot path is not canonical." >&2
+      exit 1
+      ;;
+  esac
+  if [ -L "$SUPPORT_SNAPSHOT_ROOT" ] || [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ]; then
+    echo "Could not create a private committed-support snapshot root." >&2
+    exit 1
+  fi
+  if ! SUPPORT_SNAPSHOT_ROOT_IDENTITY="$(
+    cd "$SUPPORT_SNAPSHOT_ROOT"
+    pinned_identity="$(baseline_control_identity .)" || exit 1
+    [ -d "$SUPPORT_SNAPSHOT_ROOT" ] && [ ! -L "$SUPPORT_SNAPSHOT_ROOT" ] &&
+      [ "$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" = "$pinned_identity" ] ||
+      exit 1
+    printf '%s\n' "$pinned_identity"
+  )"; then
+    echo "Could not capture the pinned committed-support root identity." >&2
+    exit 1
+  fi
+  (
+    cd "$SUPPORT_SNAPSHOT_ROOT"
+    if [ ! -d . ] || [ -L . ] ||
+       [ "$(baseline_control_identity .)" != "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
+      echo "Could not pin the private committed-support snapshot root." >&2
+      exit 1
+    fi
+    case "$(uname -s)" in
+      Darwin) root_mode="$(stat -f '%Lp' .)" ;;
+      *) root_mode="$(stat -c '%a' -- .)" ;;
+    esac
+    [ "$root_mode" = 700 ] || {
+      echo "Private committed-support root was not created with mode 0700." >&2
+      exit 1
+    }
+    mkdir -m 700 ./support
+    support_child_identity="$(baseline_control_identity ./support)" || {
+      echo "Could not capture the private committed-support checkout identity." >&2
+      exit 1
+    }
+    (
+      cd ./support
+      if [ ! -d . ] || [ -L . ] ||
+         [ "$(baseline_control_identity .)" != "$support_child_identity" ] ||
+         [ ! -d "$SUPPORT_SNAPSHOT_ROOT/support" ] ||
+         [ -L "$SUPPORT_SNAPSHOT_ROOT/support" ] ||
+         [ "$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT/support")" != \
+           "$support_child_identity" ]; then
+        echo "Could not pin the private committed-support checkout directory." >&2
+        exit 1
+      fi
+      COMMITTED_SUPPORT_DIR=.
+      if ! GIT_ALLOW_PROTOCOL=file git \
+          -c protocol.file.allow=always \
+          clone --template= \
+          --no-local --no-hardlinks --no-checkout --quiet -- \
+          "$repo_dir" .; then
+        echo "Could not make a standalone local-only committed-support checkout." >&2
+        exit 1
+      fi
+      if [ "$(baseline_control_identity .)" != "$support_child_identity" ] ||
+         [ ! -d "$SUPPORT_SNAPSHOT_ROOT/support" ] ||
+         [ -L "$SUPPORT_SNAPSHOT_ROOT/support" ] ||
+         [ "$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT/support")" != \
+           "$support_child_identity" ]; then
+        echo "Private committed-support checkout path changed during clone." >&2
+        exit 1
+      fi
+      committed_support_git config core.hooksPath /dev/null
+      committed_support_git config core.fsmonitor false
+      committed_support_git config core.untrackedCache false
+      committed_support_git checkout --detach --force --quiet "$SUPPORT_HEAD_START"
+      committed_support_git remote remove origin
+      if [ -e ./.git/objects/info/alternates ] ||
+         { [ -d ./.git/hooks ] &&
+           find ./.git/hooks -mindepth 1 -print | grep -q .; }; then
+        echo "Private support checkout retained shared objects, alternates, or hooks." >&2
+        exit 1
+      fi
+      committed_support_git fsck --strict --no-dangling >/dev/null
+      head="$(committed_support_git rev-parse --verify 'HEAD^{commit}')"
+      tree="$(committed_support_git rev-parse --verify 'HEAD^{tree}')"
+      status="$(committed_support_git status --porcelain=v1 --untracked-files=all --ignored)"
+      if [ "$head" != "$SUPPORT_HEAD_START" ] || [ "$tree" != "$expected_tree" ] ||
+         [ -n "$status" ]; then
+        echo "Private committed-support checkout identity is not exact." >&2
+        exit 1
+      fi
+      validate_committed_support_tree
+      if find . -path ./.git -prune -o -type d -empty -print | grep -q .; then
+        echo "Private support checkout contains an untracked empty directory." >&2
+        exit 1
+      fi
+      if [ "$(baseline_control_identity .)" != "$support_child_identity" ] ||
+         [ ! -d "$SUPPORT_SNAPSHOT_ROOT/support" ] ||
+         [ -L "$SUPPORT_SNAPSHOT_ROOT/support" ] ||
+         [ "$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT/support")" != \
+           "$support_child_identity" ]; then
+        echo "Private committed-support checkout path changed before sealing." >&2
+        exit 1
+      fi
+    )
+    COMMITTED_SUPPORT_DIR=./support
+    if [ -L "$SUPPORT_SNAPSHOT_ROOT" ] || [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ] ||
+       [ "$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" != \
+         "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
+      echo "Private committed-support snapshot root changed before sealing." >&2
+      exit 1
+    fi
+  )
+  COMMITTED_SUPPORT_DIR="$SUPPORT_SNAPSHOT_ROOT/support"
+  if [ -L "$SUPPORT_SNAPSHOT_ROOT" ] || [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ] ||
+     [ "$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" != \
+       "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
+    echo "Private committed-support snapshot root changed after pinned creation." >&2
+    exit 1
+  fi
+  head="$(committed_support_git rev-parse --verify 'HEAD^{commit}')"
+  tree="$(committed_support_git rev-parse --verify 'HEAD^{tree}')"
+  status="$(committed_support_git status --porcelain=v1 --untracked-files=all --ignored)"
+  if [ "$head" != "$SUPPORT_HEAD_START" ] || [ "$tree" != "$expected_tree" ] ||
+     [ -n "$status" ]; then
+    echo "Private committed-support checkout changed before sealing." >&2
+    exit 1
+  fi
+  SUPPORT_SNAPSHOT_TREE="$tree"
+  validate_committed_support_tree
+  capture_support_snapshot_inventory
+  SUPPORT_SNAPSHOT_ROOT_STATE="$(support_snapshot_directory_state "$SUPPORT_SNAPSHOT_ROOT")"
+  verify_release_support_checkout
+}
+
+snapshot_support_blob() {
+  local relative_path="$1" expected_mode="$2" destination="$3"
+  local entry metadata listed_path mode object_type object_id remainder actual_id hash_path
+
+  [ ! -e "$destination" ] && [ ! -L "$destination" ] || {
+    echo "Refusing an existing committed-support snapshot path: $destination" >&2
+    return 1
+  }
+  if ! entry="$(committed_support_git ls-tree "$SUPPORT_HEAD_START" -- "$relative_path")"; then
+    echo "Could not resolve committed support input: $relative_path" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r metadata listed_path remainder <<< "$entry"
+  read -r mode object_type object_id remainder <<< "$metadata"
+  if [ -n "$remainder" ] || [ "$listed_path" != "$relative_path" ] ||
+     [ "$mode" != "$expected_mode" ] || [ "$object_type" != "blob" ] ||
+     ! [[ "$object_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+    echo "Committed support input has an unexpected Git tree identity: $relative_path" >&2
+    return 1
+  fi
+  if ! (
+    set -o noclobber
+    umask 077
+    committed_support_git cat-file blob "$object_id" > "$destination" || exit 1
+  ); then
+    echo "Could not materialize committed support input: $relative_path" >&2
+    return 1
+  fi
+  if [ ! -f "$destination" ] || [ -L "$destination" ]; then
+    echo "Committed support snapshot is not a private regular file: $destination" >&2
+    return 1
+  fi
+  hash_path="$destination"
+  case "$hash_path" in
+    /*) ;;
+    *) hash_path="$(cd "$(dirname "$hash_path")" && pwd -P)/$(basename "$hash_path")" ;;
+  esac
+  actual_id="$(committed_support_git hash-object --no-filters -- "$hash_path")"
+  if [ "$actual_id" != "$object_id" ]; then
+    echo "Committed support snapshot does not match its Git blob: $relative_path" >&2
+    return 1
+  fi
+}
+
+create_release_baseline_control() {
+  local created_dir root_mode
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  require_tool shasum
+  require_tool stat
+  BASELINE_CONTROL_PARENT="$(cd /tmp && pwd -P)"
+  created_dir="$(umask 077 && mktemp -d "$BASELINE_CONTROL_PARENT/sp11-kernel-baseline.XXXXXX")"
+  BASELINE_CONTROL_DIR="$created_dir"
+  case "$BASELINE_CONTROL_DIR" in
+    "$BASELINE_CONTROL_PARENT"/sp11-kernel-baseline.*) ;;
+    *)
+      echo "Private committed-baseline control path is not canonical." >&2
+      exit 1
+      ;;
+  esac
+  if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ]; then
+    echo "Could not create a private committed-baseline control directory." >&2
+    exit 1
+  fi
+  if ! BASELINE_CONTROL_IDENTITY="$(
+    cd "$BASELINE_CONTROL_DIR"
+    pinned_identity="$(baseline_control_identity .)" || exit 1
+    [ -d "$BASELINE_CONTROL_DIR" ] && [ ! -L "$BASELINE_CONTROL_DIR" ] &&
+      [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" = "$pinned_identity" ] ||
+      exit 1
+    printf '%s\n' "$pinned_identity"
+  )"; then
+    echo "Could not capture the pinned committed-baseline root identity." >&2
+    exit 1
+  fi
+  KERNEL_BASELINE="$BASELINE_CONTROL_DIR/kernel-baseline.env"
+  KERNEL_BASELINE_VALIDATOR="$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh"
+  (
+    cd "$BASELINE_CONTROL_DIR"
+    if [ ! -d . ] || [ -L . ] ||
+       [ "$(baseline_control_identity .)" != "$BASELINE_CONTROL_IDENTITY" ]; then
+      echo "Could not pin the private committed-baseline control root." >&2
+      exit 1
+    fi
+    case "$(uname -s)" in
+      Darwin) root_mode="$(stat -f '%Lp' .)" ;;
+      *) root_mode="$(stat -c '%a' -- .)" ;;
+    esac
+    [ "$root_mode" = 700 ] || {
+      echo "Private committed-baseline root was not created with mode 0700." >&2
+      exit 1
+    }
+    snapshot_support_blob "$KERNEL_BASELINE_REL" 100644 ./kernel-baseline.env
+    snapshot_support_blob \
+      "$KERNEL_BASELINE_VALIDATOR_REL" 100755 \
+      ./validate-sp11-kernel-baseline.sh
+    if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ] ||
+       [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" != \
+         "$BASELINE_CONTROL_IDENTITY" ]; then
+      echo "Private committed-baseline root changed before initial sealing." >&2
+      exit 1
+    fi
+  )
+  if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ] ||
+     [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" != \
+       "$BASELINE_CONTROL_IDENTITY" ]; then
+    echo "Private committed-baseline root changed after pinned creation." >&2
+    exit 1
+  fi
+  KERNEL_BASELINE_STATE="$(baseline_control_file_state "$KERNEL_BASELINE")"
+  KERNEL_BASELINE_VALIDATOR_STATE="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")"
+  KERNEL_BASELINE_SHA256="${KERNEL_BASELINE_STATE##*:}"
+  BASELINE_CONTROL_INITIAL_STATE="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")"
+  if ! verify_baseline_control_membership initial; then
+    echo "Private committed-baseline control directory has unexpected contents." >&2
+    exit 1
+  fi
+}
+
+load_release_baseline_values() {
+  local emitted key value remainder emitted_keys="" expected_keys
+
+  verify_release_support_checkout || exit 1
+  verify_initial_baseline_control_state || exit 1
+  if ! emitted="$(
+    bash "$KERNEL_BASELINE_VALIDATOR" \
+      --repo-dir "$COMMITTED_SUPPORT_DIR" \
+      --emit-release-values \
+      "$KERNEL_BASELINE"
+  )"; then
+    echo "Committed release kernel baseline validation failed." >&2
+    exit 1
+  fi
+  while IFS=$'\t' read -r key value remainder; do
+    [ -n "$key" ] && [ -n "$value" ] && [ -z "$remainder" ] || {
+      echo "Committed kernel baseline validator emitted malformed data." >&2
+      exit 1
+    }
+    emitted_keys="${emitted_keys}${emitted_keys:+$'\n'}$key"
+    case "$key" in
+      SP11_KERNEL_BASELINE_ID) RELEASE_BASELINE_ID="$value" ;;
+      SP11_KERNEL_DOCKER_IMAGE) RELEASE_BASELINE_DOCKER_IMAGE="$value" ;;
+      SP11_KERNEL_DOCKER_PLATFORM) RELEASE_BASELINE_DOCKER_PLATFORM="$value" ;;
+      SP11_KERNEL_DOCKER_PLATFORM_MANIFEST) RELEASE_BASELINE_DOCKER_PLATFORM_MANIFEST="$value" ;;
+      SP11_KERNEL_UPSTREAM_URL) RELEASE_BASELINE_UPSTREAM_URL="$value" ;;
+      SP11_KERNEL_UPSTREAM_REF) RELEASE_BASELINE_UPSTREAM_REF="$value" ;;
+      SP11_KERNEL_UPSTREAM_COMMIT) RELEASE_BASELINE_UPSTREAM_COMMIT="$value" ;;
+      SP11_KERNEL_SOURCE_DATE_EPOCH) RELEASE_SOURCE_DATE_EPOCH="$value" ;;
+      SP11_KERNEL_KBUILD_BUILD_USER) RELEASE_KBUILD_BUILD_USER="$value" ;;
+      SP11_KERNEL_KBUILD_BUILD_HOST) RELEASE_KBUILD_BUILD_HOST="$value" ;;
+      SP11_KERNEL_KBUILD_BUILD_TIMESTAMP) RELEASE_KBUILD_BUILD_TIMESTAMP="$value" ;;
+      SP11_KERNEL_BUILD_TARGET) RELEASE_BASELINE_BUILD_TARGET="$value" ;;
+      SP11_KERNEL_PATCH_DIRS) RELEASE_BASELINE_PATCH_DIRS="$value" ;;
+      *)
+        echo "Committed kernel baseline validator emitted an unexpected key: $key" >&2
+        exit 1
+        ;;
+    esac
+  done <<< "$emitted"
+  expected_keys=$'SP11_KERNEL_BASELINE_ID\nSP11_KERNEL_DOCKER_IMAGE\nSP11_KERNEL_DOCKER_PLATFORM\nSP11_KERNEL_DOCKER_PLATFORM_MANIFEST\nSP11_KERNEL_UPSTREAM_URL\nSP11_KERNEL_UPSTREAM_REF\nSP11_KERNEL_UPSTREAM_COMMIT\nSP11_KERNEL_SOURCE_DATE_EPOCH\nSP11_KERNEL_KBUILD_BUILD_USER\nSP11_KERNEL_KBUILD_BUILD_HOST\nSP11_KERNEL_KBUILD_BUILD_TIMESTAMP\nSP11_KERNEL_BUILD_TARGET\nSP11_KERNEL_PATCH_DIRS'
+  if [ "$emitted_keys" != "$expected_keys" ]; then
+    echo "Committed kernel baseline validator field set/order is not exact." >&2
+    exit 1
+  fi
+  verify_initial_baseline_control_state || exit 1
+  verify_release_support_checkout || exit 1
 }
 
 support_dirty_value() {
@@ -500,26 +1519,13 @@ verify_release_support_stable() {
 }
 
 docker_control_file_state() {
-  local path="$1" before after digest
+  local path="$1" state
 
-  [ -f "$path" ] && [ ! -L "$path" ] || {
+  state="$(baseline_control_file_state "$path")" || {
     echo "Docker control input is not a regular non-symlinked file: $path" >&2
     return 1
   }
-  case "$(uname -s)" in
-    Darwin) before="$(stat -f '%d:%i:%z:%m:%c:%Lp' "$path")" ;;
-    *) before="$(stat -c '%d:%i:%s:%Y:%Z:%a' -- "$path")" ;;
-  esac
-  digest="$(shasum -a 256 "$path" | awk '{print $1}')"
-  case "$(uname -s)" in
-    Darwin) after="$(stat -f '%d:%i:%z:%m:%c:%Lp' "$path")" ;;
-    *) after="$(stat -c '%d:%i:%s:%Y:%Z:%a' -- "$path")" ;;
-  esac
-  if [ "$before" != "$after" ] || ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "Docker control input changed while its identity was captured: $path" >&2
-    return 1
-  fi
-  printf '%s:%s\n' "$before" "$digest"
+  printf '%s\n' "$state"
 }
 
 capture_docker_control_state() {
@@ -584,8 +1590,39 @@ repo_abs_path() {
   esac
 }
 
+committed_repo_abs_path() {
+  local requested="$1" relative
+
+  case "$requested" in
+    "$repo_dir"/*) relative="${requested#"$repo_dir"/}" ;;
+    /*)
+      echo "Release support path must be repository-relative: $requested" >&2
+      return 1
+      ;;
+    *) relative="$requested" ;;
+  esac
+  case "/$relative/" in
+    */../*|*/./*|*//*|*$'\n'*|*$'\r'*|*$'\t'*)
+      echo "Release support path is not canonical: $requested" >&2
+      return 1
+      ;;
+  esac
+  [ -n "$relative" ] || return 1
+  printf '%s/%s\n' "$COMMITTED_SUPPORT_DIR" "$relative"
+}
+
 repo_container_path() {
   local abs rel
+  if [ "$RELEASE_BUILD" = "true" ]; then
+    abs="$(committed_repo_abs_path "$1")" || exit 1
+    [ -d "$abs" ] && [ ! -L "$abs" ] || {
+      echo "Committed release support path is missing or unsafe: $1" >&2
+      exit 1
+    }
+    rel="${abs#"$COMMITTED_SUPPORT_DIR"/}"
+    printf '/repo/%s\n' "$rel"
+    return 0
+  fi
   abs="$(repo_abs_path "$1")"
   case "$abs" in
     "$repo_dir"/*)
@@ -612,7 +1649,7 @@ is_case_insensitive_dir() {
 }
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-KERNEL_BASELINE="$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env"
+KERNEL_BASELINE="$repo_dir/$KERNEL_BASELINE_REL"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -859,7 +1896,7 @@ case "$CONTAINER_WORK_DIR" in
 esac
 
 case "$CONTAINER_WORK_DIR" in
-  /repo|/repo/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/etc|/etc/*|\
+  /repo|/repo/*|/sp11-control|/sp11-control/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/etc|/etc/*|\
   /usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|\
   /run|/run/*|/tmp|/tmp/*|/var|/var/*|/)
     echo "--container-work-dir must not overlap a container control or support-repository mount: $CONTAINER_WORK_DIR" >&2
@@ -941,16 +1978,27 @@ if [ -n "$APT_SOURCES_FILE" ]; then
   fi
 fi
 
+create_release_support_checkout
+create_release_baseline_control
+
 if [ -n "$PATCH_DIRS" ]; then
   for pd in $PATCH_DIRS; do
-    patch_dir_abs="$(repo_abs_path "$pd")"
+    if [ "$RELEASE_BUILD" = "true" ]; then
+      patch_dir_abs="$(committed_repo_abs_path "$pd")" || exit 1
+    else
+      patch_dir_abs="$(repo_abs_path "$pd")"
+    fi
     if [ ! -d "$patch_dir_abs" ]; then
       echo "Patch directory not found: $patch_dir_abs" >&2
       exit 1
     fi
   done
 elif [ -n "$PATCH_DIR" ]; then
-  patch_dir_abs="$(repo_abs_path "$PATCH_DIR")"
+  if [ "$RELEASE_BUILD" = "true" ]; then
+    patch_dir_abs="$(committed_repo_abs_path "$PATCH_DIR")" || exit 1
+  else
+    patch_dir_abs="$(repo_abs_path "$PATCH_DIR")"
+  fi
   if [ ! -d "$patch_dir_abs" ]; then
     echo "Patch directory not found: $patch_dir_abs" >&2
     exit 1
@@ -960,40 +2008,42 @@ fi
 if ! work_abs="$(ensure_safe_work_dir "$WORK_DIR")"; then
   exit 1
 fi
+if ! capture_release_work_root_identity; then
+  exit 1
+fi
 
-if [ "$RELEASE_BUILD" = "true" ] && [ "$DRY_RUN" != "true" ]; then
-  [ -f "$KERNEL_BASELINE" ] && [ ! -L "$KERNEL_BASELINE" ] || {
-    echo "Release kernel baseline is missing or unsafe: $KERNEL_BASELINE" >&2
+if [ "$RELEASE_BUILD" = "true" ]; then
+  load_release_baseline_values
+  if [ -z "$RELEASE_SOURCE_DATE_EPOCH" ] || [ -z "$RELEASE_KBUILD_BUILD_USER" ] ||
+     [ -z "$RELEASE_KBUILD_BUILD_HOST" ] || [ -z "$RELEASE_KBUILD_BUILD_TIMESTAMP" ]; then
+    echo "Release kernel baseline is missing the deterministic build-identity values." >&2
     exit 1
-  }
-  "$repo_dir/scripts/validate-sp11-kernel-baseline.sh" "$KERNEL_BASELINE"
-  # shellcheck disable=SC1090
-  . "$KERNEL_BASELINE"
-  [ "$IMAGE" = "$SP11_KERNEL_DOCKER_IMAGE" ] || {
+  fi
+  [ "$IMAGE" = "$RELEASE_BASELINE_DOCKER_IMAGE" ] || {
     echo "--release-build image does not match the immutable kernel baseline." >&2
     exit 2
   }
-  [ "$PLATFORM" = "$SP11_KERNEL_DOCKER_PLATFORM" ] || {
+  [ "$PLATFORM" = "$RELEASE_BASELINE_DOCKER_PLATFORM" ] || {
     echo "--release-build platform does not match the immutable kernel baseline." >&2
     exit 2
   }
-  [ "$GIT_URL" = "$SP11_KERNEL_UPSTREAM_URL" ] || {
+  [ "$GIT_URL" = "$RELEASE_BASELINE_UPSTREAM_URL" ] || {
     echo "--release-build Git URL does not match the immutable kernel baseline." >&2
     exit 2
   }
-  [ "$GIT_BRANCH" = "$SP11_KERNEL_UPSTREAM_REF" ] || {
+  [ "$GIT_BRANCH" = "$RELEASE_BASELINE_UPSTREAM_REF" ] || {
     echo "--release-build Git ref does not match the immutable kernel baseline." >&2
     exit 2
   }
-  [ "$EXPECTED_SOURCE_COMMIT" = "$SP11_KERNEL_UPSTREAM_COMMIT" ] || {
+  [ "$EXPECTED_SOURCE_COMMIT" = "$RELEASE_BASELINE_UPSTREAM_COMMIT" ] || {
     echo "--release-build source commit does not match the immutable kernel baseline." >&2
     exit 2
   }
-  [ "$BUILD_TARGET" = "$SP11_KERNEL_BUILD_TARGET" ] || {
+  [ "$BUILD_TARGET" = "$RELEASE_BASELINE_BUILD_TARGET" ] || {
     echo "--release-build target does not match the immutable kernel baseline." >&2
     exit 2
   }
-  [ -z "$PATCH_DIR" ] && [ "$PATCH_DIRS" = "$SP11_KERNEL_PATCH_DIRS" ] || {
+  [ -z "$PATCH_DIR" ] && [ "$PATCH_DIRS" = "$RELEASE_BASELINE_PATCH_DIRS" ] || {
     echo "--release-build patch directories do not match the immutable kernel baseline." >&2
     exit 2
   }
@@ -1022,56 +2072,109 @@ if [ "$DRY_RUN" != "true" ]; then
   require_tool docker
 fi
 
-if [ "$IMMUTABLE_APT" = "true" ]; then
-  for release_dir in \
-    "$work_abs/apt-archives" \
-    "$work_abs/apt-indexes" \
-    "$work_abs/apt-lists" \
-    "$work_abs/artifacts"; do
-    if [ -L "$release_dir" ] || { [ -e "$release_dir" ] && [ ! -d "$release_dir" ]; }; then
-      echo "Refusing unsafe release-build directory: $release_dir" >&2
+if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
+  if ! release_dir_records="$(
+    cd "$work_abs" || exit 1
+    verify_pinned_work_root_cwd || exit 1
+    for release_name in apt-archives apt-indexes apt-lists artifacts; do
+      release_dir="./$release_name"
+      display_release_dir="$work_abs/$release_name"
+      if [ -L "$release_dir" ] ||
+         { [ -e "$release_dir" ] && [ ! -d "$release_dir" ]; }; then
+        echo "Refusing unsafe release-build directory: $display_release_dir" >&2
+        exit 1
+      fi
+      if [ ! -e "$release_dir" ]; then
+        mkdir -m 700 "$release_dir" || exit 1
+      fi
+      if [ ! -d "$release_dir" ] || [ -L "$release_dir" ]; then
+        echo "Release-build directory is not a real directory: $display_release_dir" >&2
+        exit 1
+      fi
+      if find "$release_dir" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+        echo "Release-build directory must start empty: $display_release_dir" >&2
+        exit 1
+      fi
+      release_dir_identity="$(baseline_control_identity "$release_dir")" || exit 1
+      printf '%s\t%s\n' "$release_name" "$release_dir_identity"
+    done
+    verify_pinned_work_root_cwd || exit 1
+  )"; then
+    exit 1
+  fi
+  RELEASE_WORK_DIR_NAMES=()
+  RELEASE_WORK_DIR_IDENTITIES=()
+  while IFS=$'\t' read -r release_name release_dir_identity remainder; do
+    [ -n "$release_name" ] && [ -n "$release_dir_identity" ] && [ -z "$remainder" ] || {
+      echo "Release work-directory identity capture was malformed." >&2
       exit 1
-    fi
-    if [ ! -e "$release_dir" ]; then
-      mkdir -m 700 "$release_dir"
-    fi
-    if [ "$(cd "$release_dir" && pwd -P)" != "$release_dir" ]; then
-      echo "Release-build directory has a symlinked path component: $release_dir" >&2
-      exit 1
-    fi
-    if find "$release_dir" -mindepth 1 -maxdepth 1 -print | grep -q .; then
-      echo "Release-build directory must start empty: $release_dir" >&2
-      exit 1
-    fi
-  done
+    }
+    RELEASE_WORK_DIR_NAMES+=("$release_name")
+    RELEASE_WORK_DIR_IDENTITIES+=("$release_dir_identity")
+  done <<< "$release_dir_records"
+  [ "${#RELEASE_WORK_DIR_NAMES[@]}" -eq 4 ] || {
+    echo "Release work-directory identity set is not exact." >&2
+    exit 1
+  }
+  verify_release_work_root_binding || exit 1
 fi
 
 if ! validate_legacy_control_paths; then
   exit 1
 fi
-CONTROL_DIR="$(mktemp -d "$work_abs/.sp11-docker-control.XXXXXX")"
-chmod 700 "$CONTROL_DIR"
-if [ -L "$CONTROL_DIR" ] || [ ! -d "$CONTROL_DIR" ]; then
-  echo "Could not create a private Docker control directory safely." >&2
-  exit 1
+if [ "$RELEASE_BUILD" = "true" ]; then
+  args_file="$BASELINE_CONTROL_DIR/docker-build-args.txt"
+  run_script="$BASELINE_CONTROL_DIR/docker-build-inside.sh"
+  oci_index_file="$BASELINE_CONTROL_DIR/sp11-oci-index.json"
+else
+  CONTROL_DIR="$(mktemp -d "$work_abs/.sp11-docker-control.XXXXXX")"
+  chmod 700 "$CONTROL_DIR"
+  if [ -L "$CONTROL_DIR" ] || [ ! -d "$CONTROL_DIR" ]; then
+    echo "Could not create a private Docker control directory safely." >&2
+    exit 1
+  fi
+  args_file="$CONTROL_DIR/docker-build-args.txt"
+  run_script="$CONTROL_DIR/docker-build-inside.sh"
+  oci_index_file="$CONTROL_DIR/sp11-oci-index.json"
 fi
-trap 'cleanup_control_dir; cleanup_payload_stage' EXIT
+if [ "$RELEASE_BUILD" = "true" ]; then
+  verify_initial_baseline_control_state || exit 1
+fi
 
-args_file="$CONTROL_DIR/docker-build-args.txt"
-run_script="$CONTROL_DIR/docker-build-inside.sh"
-oci_index_file="$CONTROL_DIR/sp11-oci-index.json"
-
-if [ "$IMMUTABLE_APT" = "true" ]; then
-  if ! docker buildx imagetools inspect --raw "$IMAGE" > "$oci_index_file"; then
+if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
+  EXPECTED_RELEASE_OCI_INDEX_SHA256="${IMAGE##*@sha256:}"
+  if ! [[ "$EXPECTED_RELEASE_OCI_INDEX_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Pinned release OCI index digest is not canonical." >&2
+    exit 1
+  fi
+  if ! (
+    cd "$BASELINE_CONTROL_DIR"
+    verify_pinned_baseline_control_cwd || exit 1
+    set -o noclobber
+    umask 077
+    docker buildx imagetools inspect --raw "$IMAGE" > ./sp11-oci-index.json || exit 1
+    verify_pinned_baseline_control_cwd || exit 1
+  ); then
     echo "Could not capture the raw pinned OCI index." >&2
     exit 1
   fi
-  chmod 600 "$oci_index_file"
-  python3 "$repo_dir/scripts/validate-sp11-oci-index.py" \
+  RELEASE_OCI_INDEX_STATE="$(baseline_control_file_state "$oci_index_file")" || exit 1
+  RELEASE_OCI_INDEX_SHA256="${RELEASE_OCI_INDEX_STATE##*:}"
+  if [ "$RELEASE_OCI_INDEX_SHA256" != "$EXPECTED_RELEASE_OCI_INDEX_SHA256" ]; then
+    echo "Private OCI index bytes differ from the pinned index digest." >&2
+    exit 1
+  fi
+  verify_release_support_checkout
+  python3 "$COMMITTED_SUPPORT_DIR/scripts/validate-sp11-oci-index.py" \
     --raw-index "$oci_index_file" \
-    --index-ref "$SP11_KERNEL_DOCKER_IMAGE" \
-    --platform "$SP11_KERNEL_DOCKER_PLATFORM" \
-    --expected-platform-manifest "$SP11_KERNEL_DOCKER_PLATFORM_MANIFEST"
+    --index-ref "$RELEASE_BASELINE_DOCKER_IMAGE" \
+    --platform "$RELEASE_BASELINE_DOCKER_PLATFORM" \
+    --expected-platform-manifest "$RELEASE_BASELINE_DOCKER_PLATFORM_MANIFEST"
+  if [ "$(baseline_control_file_state "$oci_index_file")" != "$RELEASE_OCI_INDEX_STATE" ]; then
+    echo "Private OCI index changed during semantic validation." >&2
+    exit 1
+  fi
+  verify_release_support_checkout
 fi
 
 inner_args=(
@@ -1080,7 +2183,15 @@ inner_args=(
   --install-deps
   --no-fakeroot
 )
-[ "$RELEASE_BUILD" = "true" ] && inner_args+=(--release-build)
+if [ "$RELEASE_BUILD" = "true" ]; then
+  inner_args+=(
+    --release-build
+    --source-date-epoch "$RELEASE_SOURCE_DATE_EPOCH"
+    --kbuild-build-user "$RELEASE_KBUILD_BUILD_USER"
+    --kbuild-build-host "$RELEASE_KBUILD_BUILD_HOST"
+    --kbuild-build-timestamp "$RELEASE_KBUILD_BUILD_TIMESTAMP"
+  )
+fi
 
 case "$SOURCE_MODE" in
   apt)
@@ -1108,17 +2219,76 @@ fi
 [ "$RESET_SOURCE" = "true" ] && inner_args+=(--reset-source)
 [ "$SKIP_CLEAN" = "true" ] && inner_args+=(--skip-clean)
 
-printf '%s\n' "${inner_args[@]}" > "$args_file"
-chmod 600 "$args_file"
+if [ "$RELEASE_BUILD" = "true" ]; then
+  release_build_args_text="$(printf '%s\n' "${inner_args[@]}")"
+  EXPECTED_RELEASE_BUILD_ARGS_SHA256="$(
+    printf '%s\n' "$release_build_args_text" | shasum -a 256 | awk '{print $1}'
+  )"
+  [[ "$EXPECTED_RELEASE_BUILD_ARGS_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Could not derive the in-memory release build-argument digest." >&2
+    exit 1
+  }
+  if ! (
+    cd "$BASELINE_CONTROL_DIR"
+    verify_pinned_baseline_control_cwd || exit 1
+    set -o noclobber
+    umask 077
+    printf '%s\n' "$release_build_args_text" > ./docker-build-args.txt || exit 1
+    verify_pinned_baseline_control_cwd || exit 1
+  ); then
+    echo "Could not exclusively create private release build arguments." >&2
+    exit 1
+  fi
+else
+  printf '%s\n' "${inner_args[@]}" > "$args_file"
+  chmod 600 "$args_file"
+fi
 
-cat > "$run_script" <<'EOF'
+emit_docker_entrypoint() {
+  cat <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
 artifact_dir=/work/artifacts
+control_dir=/work
+if [ "${SP11_PRIVATE_SUPPORT_SNAPSHOT:-false}" = "true" ] &&
+   [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" != "true" ]; then
+  echo "Private release support requires the immutable release control path." >&2
+  exit 1
+fi
 if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
+  control_dir=/sp11-control
+  if [ ! -r /proc/self/mountinfo ] || [ -L /proc/self/mountinfo ] ||
+     ! awk '
+       function has_ro(options, count, item) {
+         count = split(options, item, ",")
+         for (slot = 1; slot <= count; slot++) {
+           if (item[slot] == "ro") return 1
+         }
+         return 0
+       }
+       $5 == "/repo" {
+         repo_count++
+         if (has_ro($6)) repo_ro++
+         next
+       }
+       index($5, "/repo/") == 1 { repo_nested++ }
+       $5 == "/sp11-control" {
+         control_count++
+         if (has_ro($6)) control_ro++
+         next
+       }
+       index($5, "/sp11-control/") == 1 { control_nested++ }
+       END {
+         exit !(repo_count == 1 && repo_ro == 1 && repo_nested == 0 &&
+                control_count == 1 && control_ro == 1 && control_nested == 0)
+       }
+     ' /proc/self/mountinfo; then
+    echo "Immutable release build requires exact unshadowed read-only /repo and /sp11-control mounts." >&2
+    exit 1
+  fi
   for required_dir in /work /work/apt-archives /work/apt-indexes /work/apt-lists "$artifact_dir"; do
     [ -d "$required_dir" ] && [ ! -L "$required_dir" ] || {
       echo "Unsafe immutable build directory: $required_dir" >&2
@@ -1133,6 +2303,36 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
     echo "Immutable release artifact directory must start empty." >&2
     exit 1
   fi
+  verify_private_control_digest() {
+    local path="$1" expected="$2" label="$3" actual
+
+    if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]] ||
+       [ ! -f "$path" ] || [ -L "$path" ]; then
+      echo "Invalid or missing private release control input: $label" >&2
+      exit 1
+    fi
+    actual="$(sha256sum "$path" | awk '{print $1}')"
+    if [ "$actual" != "$expected" ]; then
+      echo "Private release control input does not match its expected digest: $label" >&2
+      exit 1
+    fi
+  }
+  verify_private_control_digest \
+    /sp11-control/docker-build-args.txt \
+    "${SP11_EXPECTED_BUILD_ARGS_SHA256:-}" \
+    "Docker build arguments"
+  verify_private_control_digest \
+    /sp11-control/docker-build-inside.sh \
+    "${SP11_EXPECTED_ENTRYPOINT_SHA256:-}" \
+    "Docker entrypoint"
+  verify_private_control_digest \
+    /sp11-control/kernel-baseline.env \
+    "${SP11_EXPECTED_BASELINE_SHA256:-}" \
+    "kernel baseline"
+  verify_private_control_digest \
+    /sp11-control/sp11-oci-index.json \
+    "${SP11_EXPECTED_OCI_INDEX_SHA256:-}" \
+    "OCI index"
 else
   echo "Cleaning copied artifact shuttle directory: $artifact_dir"
   rm -rf "$artifact_dir"
@@ -1181,7 +2381,7 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
     exit 1
   }
   /repo/scripts/sp11-immutable-apt.sh bootstrap \
-    --baseline /repo/config/kernel-baselines/7.2-rc5-jg-0.env \
+    --baseline /sp11-control/kernel-baseline.env \
     --archives-dir /work/apt-archives \
     --index-cache-dir /work/apt-indexes \
     --retained-lists-dir /work/apt-lists \
@@ -1207,7 +2407,7 @@ apt-get install -y --no-install-recommends ca-certificates git dpkg-dev
 build_args=()
 while IFS= read -r build_arg; do
   build_args+=("$build_arg")
-done < /work/docker-build-args.txt
+done < "$control_dir/docker-build-args.txt"
 /repo/scripts/build-sp11-qcom-x1e-kernel.sh "${build_args[@]}"
 
 find_qcom_kernel_debs() {
@@ -1248,7 +2448,7 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
   fi
   cp -f "${local_build_deps[0]}" "$artifact_dir/"
   /repo/scripts/sp11-immutable-apt.sh finalize \
-    --baseline /repo/config/kernel-baselines/7.2-rc5-jg-0.env \
+    --baseline /sp11-control/kernel-baseline.env \
     --archives-dir /work/apt-archives \
     --index-cache-dir /work/apt-indexes \
     --retained-lists-dir /work/apt-lists \
@@ -1257,23 +2457,90 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
     --output "$artifact_dir/sp11-kernel-apt-provenance.txt"
 fi
 EOF
-chmod 700 "$run_script"
+}
+docker_entrypoint_text="$(emit_docker_entrypoint)"
+if [ "$RELEASE_BUILD" = "true" ]; then
+  EXPECTED_RELEASE_ENTRYPOINT_SHA256="$(
+    printf '%s\n' "$docker_entrypoint_text" | shasum -a 256 | awk '{print $1}'
+  )"
+  [[ "$EXPECTED_RELEASE_ENTRYPOINT_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Could not derive the in-memory release entrypoint digest." >&2
+    exit 1
+  }
+fi
+if [ "$RELEASE_BUILD" = "true" ]; then
+  if ! (
+    cd "$BASELINE_CONTROL_DIR"
+    verify_pinned_baseline_control_cwd || exit 1
+    set -o noclobber
+    umask 077
+    printf '%s\n' "$docker_entrypoint_text" > ./docker-build-inside.sh || exit 1
+    verify_pinned_baseline_control_cwd || exit 1
+  ); then
+    echo "Could not exclusively create the private release entrypoint." >&2
+    exit 1
+  fi
+else
+  printf '%s\n' "$docker_entrypoint_text" > "$run_script"
+  chmod 700 "$run_script"
+fi
+unset -f emit_docker_entrypoint
+
+if [ "$RELEASE_BUILD" = "true" ]; then
+  RELEASE_BUILD_ARGS_STATE="$(baseline_control_file_state "$args_file")" || {
+    echo "Private release build arguments were unsafe or unstable at first capture." >&2
+    exit 1
+  }
+  RELEASE_BUILD_ARGS_SHA256="${RELEASE_BUILD_ARGS_STATE##*:}"
+  if [ "$RELEASE_BUILD_ARGS_SHA256" != "$EXPECTED_RELEASE_BUILD_ARGS_SHA256" ]; then
+    echo "Private release build arguments differ from their in-memory authority." >&2
+    exit 1
+  fi
+  RELEASE_ENTRYPOINT_STATE="$(baseline_control_file_state "$run_script")" || {
+    echo "Private release entrypoint was unsafe or unstable at first capture." >&2
+    exit 1
+  }
+  RELEASE_ENTRYPOINT_SHA256="${RELEASE_ENTRYPOINT_STATE##*:}"
+  if [ "$RELEASE_ENTRYPOINT_SHA256" != "$EXPECTED_RELEASE_ENTRYPOINT_SHA256" ]; then
+    echo "Private release entrypoint differs from its in-memory authority." >&2
+    exit 1
+  fi
+  if [ -f "$oci_index_file" ] && [ ! -L "$oci_index_file" ]; then
+    if [ "$(baseline_control_file_state "$oci_index_file")" != "$RELEASE_OCI_INDEX_STATE" ] ||
+       [ "$RELEASE_OCI_INDEX_SHA256" != "$EXPECTED_RELEASE_OCI_INDEX_SHA256" ]; then
+      echo "Private OCI index changed after its pinned semantic validation." >&2
+      exit 1
+    fi
+  fi
+  BASELINE_CONTROL_FINAL_STATE="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || exit 1
+  verify_release_control_state || exit 1
+fi
 
 if ! validate_legacy_control_paths; then
   exit 1
 fi
-if ! install_control_file "$args_file" "$work_abs/docker-build-args.txt" ||
-   ! install_control_file "$run_script" "$work_abs/docker-build-inside.sh"; then
-  exit 1
+if [ "$RELEASE_BUILD" = "true" ]; then
+  if ! install_control_evidence_copy "$args_file" "$work_abs/docker-build-args.txt" ||
+     ! install_control_evidence_copy "$run_script" "$work_abs/docker-build-inside.sh"; then
+    exit 1
+  fi
+  if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ] &&
+     ! install_control_evidence_copy "$oci_index_file" "$work_abs/sp11-oci-index.json"; then
+    exit 1
+  fi
+  verify_release_control_state || exit 1
+else
+  if ! install_control_file "$args_file" "$work_abs/docker-build-args.txt" ||
+     ! install_control_file "$run_script" "$work_abs/docker-build-inside.sh"; then
+    exit 1
+  fi
+  if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ] &&
+     ! install_control_file "$oci_index_file" "$work_abs/sp11-oci-index.json"; then
+    exit 1
+  fi
+  cleanup_control_dir
+  CONTROL_DIR=""
 fi
-if [ "$IMMUTABLE_APT" = "true" ] &&
-   ! install_control_file "$oci_index_file" "$work_abs/sp11-oci-index.json"; then
-  exit 1
-fi
-cleanup_control_dir
-CONTROL_DIR=""
-args_file="$work_abs/docker-build-args.txt"
-run_script="$work_abs/docker-build-inside.sh"
 
 docker_args=(
   run
@@ -1284,12 +2551,28 @@ docker_args=(
   -e "SP11_BUILD_CONTAINER_IMAGE=$IMAGE"
   -e "SP11_BUILD_CONTAINER_PLATFORM=$PLATFORM"
   -e "SP11_CONTAINER_WORK_DIR=$CONTAINER_WORK_DIR"
-  -v "$repo_dir:/repo:ro"
   -v "$work_abs:/work"
 )
 
 if [ "$RELEASE_BUILD" = "true" ]; then
-  docker_args+=(-e "SP11_EXPECTED_SUPPORT_COMMIT=$SUPPORT_HEAD_START")
+  [ -n "$COMMITTED_SUPPORT_DIR" ] || {
+    echo "Release Docker run is missing its private committed support checkout." >&2
+    exit 1
+  }
+  docker_args+=(
+    -e "SP11_EXPECTED_SUPPORT_COMMIT=$SUPPORT_HEAD_START"
+    -e "SP11_PRIVATE_SUPPORT_SNAPSHOT=true"
+    -e "SP11_EXPECTED_BUILD_ARGS_SHA256=$RELEASE_BUILD_ARGS_SHA256"
+    -e "SP11_EXPECTED_ENTRYPOINT_SHA256=$RELEASE_ENTRYPOINT_SHA256"
+    -e "SP11_EXPECTED_BASELINE_SHA256=$KERNEL_BASELINE_SHA256"
+    -v "$COMMITTED_SUPPORT_DIR:/repo:ro"
+    -v "$BASELINE_CONTROL_DIR:/sp11-control:ro"
+  )
+  if [ -n "$RELEASE_OCI_INDEX_SHA256" ]; then
+    docker_args+=(-e "SP11_EXPECTED_OCI_INDEX_SHA256=$RELEASE_OCI_INDEX_SHA256")
+  fi
+else
+  docker_args+=(-v "$repo_dir:/repo:ro")
 fi
 if [ "$IMMUTABLE_APT" = "true" ]; then
   docker_args+=(-e "SP11_IMMUTABLE_APT_REQUIRED=true")
@@ -1303,14 +2586,20 @@ if [ -n "$APT_SOURCES_FILE" ]; then
   docker_args+=(-v "$APT_SOURCES_FILE:/tmp/sp11-apt-sources:ro")
 fi
 
-docker_args+=("$IMAGE" /work/docker-build-inside.sh)
+if [ "$RELEASE_BUILD" = "true" ]; then
+  docker_args+=("$IMAGE" bash /sp11-control/docker-build-inside.sh)
+else
+  docker_args+=("$IMAGE" /work/docker-build-inside.sh)
+fi
 
 if [ "$DRY_RUN" = "true" ]; then
   printf 'Docker command:\n  docker'
   printf ' %q' "${docker_args[@]}"
   printf '\n\nInner build args:\n'
   printf '  %s\n' "${inner_args[@]}"
+  verify_release_control_state
   verify_release_support_stable
+  verify_release_work_root_binding
   exit 0
 fi
 
@@ -1324,10 +2613,16 @@ if [ "$CONTAINER_WORK_DIR" = "/work" ] &&
 fi
 
 capture_docker_control_state
+verify_release_control_state
+verify_release_support_checkout
+verify_release_work_root_binding
 set +e
 docker "${docker_args[@]}"
 docker_status=$?
 set -e
+verify_release_control_state
+verify_release_support_checkout
+verify_release_work_root_binding
 if [ "$docker_status" -ne 0 ]; then
   echo "Docker kernel build failed; inspect the log above for the first build error." >&2
   echo "If the source tree was partially prepared, rerun with --reset-source after fixing the failure." >&2
@@ -1357,8 +2652,14 @@ if [ "$RELEASE_BUILD" = "true" ]; then
       echo "Docker release build completed without immutable APT provenance." >&2
       exit 1
     fi
-    python3 "$repo_dir/scripts/sp11-kernel-build-inputs.py" write \
+    verify_release_control_state
+    verify_release_support_checkout
+    python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" write \
       --baseline "$KERNEL_BASELINE" \
+      --baseline-sha256 "$KERNEL_BASELINE_SHA256" \
+      --build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256" \
+      --entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256" \
+      --oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256" \
       --work-dir "$work_abs" \
       --support-head "$SUPPORT_HEAD_START" \
       --build-args "$work_abs/docker-build-args.txt" \
@@ -1373,8 +2674,14 @@ if [ "$RELEASE_BUILD" = "true" ]; then
       --apt-pre-inventory "$work_abs/sp11-apt-installed-pre.txt" \
       --apt-post-inventory "$work_abs/sp11-apt-installed-post.txt" \
       --output "$build_inputs"
-    python3 "$repo_dir/scripts/sp11-kernel-build-inputs.py" validate \
+    verify_release_control_state
+    verify_release_support_checkout
+    python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" validate \
       --baseline "$KERNEL_BASELINE" \
+      --baseline-sha256 "$KERNEL_BASELINE_SHA256" \
+      --build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256" \
+      --entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256" \
+      --oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256" \
       --work-dir "$work_abs" \
       --support-head "$SUPPORT_HEAD_START" \
       --build-args "$work_abs/docker-build-args.txt" \
@@ -1389,6 +2696,8 @@ if [ "$RELEASE_BUILD" = "true" ]; then
       --apt-pre-inventory "$work_abs/sp11-apt-installed-pre.txt" \
       --apt-post-inventory "$work_abs/sp11-apt-installed-post.txt" \
       --output "$build_inputs"
+    verify_release_control_state
+    verify_release_support_checkout
     for required_artifact in "$completed_manifest" "$apt_provenance" "$build_inputs"; do
       [ -f "$required_artifact" ] && [ ! -L "$required_artifact" ] || {
         echo "Release build is missing a required provenance artifact: $required_artifact" >&2

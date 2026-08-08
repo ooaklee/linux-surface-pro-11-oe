@@ -12,6 +12,10 @@ digest="sha256:db2cb7b11291904f12adeed10ae23fbc95e7bed27f27bd3e35ade0d501e302ce"
 container_image="ubuntu:26.04@$digest"
 source_url="https://github.com/example/linux.git"
 source_commit=""
+source_date_epoch="1785567085"
+kbuild_build_user="sp11-builder"
+kbuild_build_host="sp11-build"
+kbuild_build_timestamp="Sat Aug  1 06:51:25 UTC 2026"
 mock_bin=""
 apt_decoder_root=""
 
@@ -102,6 +106,38 @@ cp "$repo_dir/scripts/sp11-kernel-build-inputs.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-payload-identity-list.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-public-content.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" "$support_seed/scripts/"
+cat > "$support_seed/scripts/validate-sp11-kernel-baseline.sh" <<'EOF_BASELINE_VALIDATOR'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = "--repo-dir" ]
+shift 2
+[ "${1:-}" = "--emit-release-values" ]
+shift
+[ "$#" -eq 1 ]
+[ -f "$1" ] && [ ! -L "$1" ]
+# shellcheck disable=SC1090
+. "$1"
+[ "$SP11_KERNEL_SOURCE_DATE_EPOCH" = "1785567085" ]
+[ "$SP11_KERNEL_KBUILD_BUILD_USER" = "sp11-builder" ]
+[ "$SP11_KERNEL_KBUILD_BUILD_HOST" = "sp11-build" ]
+[ "$SP11_KERNEL_KBUILD_BUILD_TIMESTAMP" = "Sat Aug  1 06:51:25 UTC 2026" ]
+for variable in \
+  SP11_KERNEL_BASELINE_ID \
+  SP11_KERNEL_DOCKER_IMAGE \
+  SP11_KERNEL_DOCKER_PLATFORM \
+  SP11_KERNEL_DOCKER_PLATFORM_MANIFEST \
+  SP11_KERNEL_UPSTREAM_URL \
+  SP11_KERNEL_UPSTREAM_REF \
+  SP11_KERNEL_UPSTREAM_COMMIT \
+  SP11_KERNEL_SOURCE_DATE_EPOCH \
+  SP11_KERNEL_KBUILD_BUILD_USER \
+  SP11_KERNEL_KBUILD_BUILD_HOST \
+  SP11_KERNEL_KBUILD_BUILD_TIMESTAMP \
+  SP11_KERNEL_BUILD_TARGET \
+  SP11_KERNEL_PATCH_DIRS; do
+  printf '%s\t%s\n' "$variable" "${!variable}"
+done
+EOF_BASELINE_VALIDATOR
 chmod +x "$support_seed/scripts/"*.sh
 printf 'build/\n' > "$support_seed/.gitignore"
 
@@ -141,7 +177,18 @@ cat > "$source_repo/debian/rules" <<'EOF_RULES'
 set -euo pipefail
 
 target="${1:-}"
+test "${SOURCE_DATE_EPOCH:-}" = "1785567085"
+test "${KBUILD_BUILD_USER:-}" = "sp11-builder"
+test "${KBUILD_BUILD_HOST:-}" = "sp11-build"
+test "${KBUILD_BUILD_TIMESTAMP:-}" = "Sat Aug  1 06:51:25 UTC 2026"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$target" "$SOURCE_DATE_EPOCH" "$KBUILD_BUILD_USER" \
+  "$KBUILD_BUILD_HOST" "$KBUILD_BUILD_TIMESTAMP" >> "$FIXTURE_IDENTITY_LOG"
 if [ "$target" = "clean" ]; then
+  exit 0
+fi
+if [ "$target" = "debian/control" ]; then
+  printf 'Source: linux-fixture\nBuild-Depends: fixture-dependency\n' > debian/control
   exit 0
 fi
 if [ "${FAIL_BUILD:-false}" = "true" ]; then
@@ -194,8 +241,12 @@ git -C "$source_repo" init --quiet --initial-branch=fixture
 git -C "$source_repo" config user.name "SP11 CI fixture"
 git -C "$source_repo" config user.email "sp11-ci@example.invalid"
 git -C "$source_repo" add .
-git -C "$source_repo" commit --quiet -m "Create kernel source fixture"
+GIT_AUTHOR_DATE="$source_date_epoch +0000" \
+GIT_COMMITTER_DATE="$source_date_epoch +0000" \
+  git -C "$source_repo" commit --quiet -m "Create kernel source fixture"
 source_commit="$(git -C "$source_repo" rev-parse 'HEAD^{commit}')"
+[ "$(git -C "$source_repo" show -s --format=%ct "$source_commit")" = "$source_date_epoch" ] ||
+  die "kernel fixture commit did not retain the deterministic source epoch"
 
 apt_template="$temporary_root/immutable-apt-template"
 mkdir -p "$support_seed/config/kernel-baselines"
@@ -295,6 +346,62 @@ cat > "$mock_bin/fakeroot" <<'EOF_FAKEROOT'
 exec "$@"
 EOF_FAKEROOT
 
+cat > "$mock_bin/id" <<'EOF_ID'
+#!/usr/bin/env bash
+if [ "${FIXTURE_FORCE_NON_ROOT:-false}" = "true" ] && [ "${1:-}" = "-u" ]; then
+  printf '1000\n'
+  exit 0
+fi
+exec /usr/bin/id "$@"
+EOF_ID
+
+cat > "$mock_bin/sudo" <<'EOF_SUDO'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == --preserve-env=* ]]; then
+  [ "$1" = "--preserve-env=SOURCE_DATE_EPOCH,KBUILD_BUILD_USER,KBUILD_BUILD_HOST,KBUILD_BUILD_TIMESTAMP" ]
+  shift
+  [ "${1:-}" = "--" ]
+  shift
+  test "${SOURCE_DATE_EPOCH:-}" = "1785567085"
+  test "${KBUILD_BUILD_USER:-}" = "sp11-builder"
+  test "${KBUILD_BUILD_HOST:-}" = "sp11-build"
+  test "${KBUILD_BUILD_TIMESTAMP:-}" = "Sat Aug  1 06:51:25 UTC 2026"
+  printf 'sudo-preserve\n' >> "$FIXTURE_IDENTITY_LOG"
+fi
+exec "$@"
+EOF_SUDO
+
+cat > "$mock_bin/apt-get" <<'EOF_APT_GET'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'apt-get\t%s\n' "$*" >> "$FIXTURE_IDENTITY_LOG"
+exit 0
+EOF_APT_GET
+
+cat > "$mock_bin/dpkg-query" <<'EOF_DPKG_QUERY'
+#!/usr/bin/env bash
+exit 0
+EOF_DPKG_QUERY
+
+cat > "$mock_bin/lz4" <<'EOF_LZ4'
+#!/usr/bin/env bash
+exit 0
+EOF_LZ4
+
+cat > "$mock_bin/mk-build-deps" <<'EOF_MK_BUILD_DEPS'
+#!/usr/bin/env bash
+set -euo pipefail
+test "${SOURCE_DATE_EPOCH:-}" = "1785567085"
+test "${KBUILD_BUILD_USER:-}" = "sp11-builder"
+test "${KBUILD_BUILD_HOST:-}" = "sp11-build"
+test "${KBUILD_BUILD_TIMESTAMP:-}" = "Sat Aug  1 06:51:25 UTC 2026"
+printf 'mk-build-deps\t%s\t%s\t%s\t%s\n' \
+  "$SOURCE_DATE_EPOCH" "$KBUILD_BUILD_USER" "$KBUILD_BUILD_HOST" \
+  "$KBUILD_BUILD_TIMESTAMP" >> "$FIXTURE_IDENTITY_LOG"
+exit 0
+EOF_MK_BUILD_DEPS
+
 cat > "$mock_bin/python3" <<'EOF_PYTHON3'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -373,13 +480,19 @@ run_release_build() {
     FIXTURE_REAL_RM="$real_rm" \
     FIXTURE_SOURCE_REPO="$source_repo" \
     FIXTURE_PUBLIC_SOURCE_URL="$source_url" \
-    SP11_BUILD_CONTAINER_IMAGE="$container_image" \
-    SP11_BUILD_CONTAINER_PLATFORM="linux/arm64/v8" \
+    FIXTURE_IDENTITY_LOG="$temporary_root/build-identity-environment.log" \
+    SP11_KERNEL_RELEASE_TEST_FIXTURE="${SP11_KERNEL_RELEASE_TEST_FIXTURE_OVERRIDE:-sp11-kernel-release-provenance-v1}" \
+    SP11_BUILD_CONTAINER_IMAGE="${FIXTURE_CONTAINER_IMAGE_OVERRIDE:-$container_image}" \
+    SP11_BUILD_CONTAINER_PLATFORM="${FIXTURE_CONTAINER_PLATFORM_OVERRIDE:-linux/arm64/v8}" \
     "$support_dir/scripts/build-sp11-qcom-x1e-kernel.sh" \
       --source git \
       --git-url "$source_url" \
       --git-branch fixture \
       --expected-source-commit "$source_commit" \
+      --source-date-epoch "$source_date_epoch" \
+      --kbuild-build-user "$kbuild_build_user" \
+      --kbuild-build-host "$kbuild_build_host" \
+      --kbuild-build-timestamp "$kbuild_build_timestamp" \
       --patch-dir "$support_dir/patches/release" \
       --work-dir "$work_dir" \
       --build-target "binary-indep binary-qcom-x1e" \
@@ -470,6 +583,10 @@ for unsafe_source_url in \
         --git-url "$unsafe_source_url" \
         --git-branch fixture \
         --expected-source-commit "$source_commit" \
+        --source-date-epoch "$source_date_epoch" \
+        --kbuild-build-user "$kbuild_build_user" \
+        --kbuild-build-host "$kbuild_build_host" \
+        --kbuild-build-timestamp "$kbuild_build_timestamp" \
         --patch-dir "$support_a/patches/release" \
         --work-dir "$temporary_root/unsafe-inner-$unsafe_source_index" \
         --build-target "binary-indep binary-qcom-x1e" \
@@ -503,14 +620,81 @@ for unsafe_source_url in \
     "$temporary_root/unsafe-docker-$unsafe_source_index.log" ||
     die "Docker release build did not explain its non-public source rejection"
 done
-if ! GIT_DIR="$source_repo/.git" GIT_CONFIG_COUNT=1 \
+
+expect_identity_failure() {
+  local name="$1" expected="$2"
+  shift 2
+  if run_release_build "$support_a" "$temporary_root/identity-$name" "$@" \
+      > "$temporary_root/identity-$name.log" 2>&1; then
+    die "inner release build accepted hostile deterministic identity: $name"
+  fi
+  grep -Fq -- "$expected" "$temporary_root/identity-$name.log" || {
+    cat "$temporary_root/identity-$name.log" >&2
+    die "inner release identity rejection was not explicit: $name"
+  }
+}
+
+expect_identity_failure alternate-user \
+  'Release build identity arguments do not match the trusted kernel baseline' \
+  --kbuild-build-user alternate-builder
+expect_identity_failure alternate-host \
+  'Release build identity arguments do not match the trusted kernel baseline' \
+  --kbuild-build-host alternate-host
+expect_identity_failure alternate-timestamp \
+  'Release build identity arguments do not match the trusted kernel baseline' \
+  --kbuild-build-timestamp 'Sat Aug  1 06:51:26 UTC 2026'
+expect_identity_failure alternate-epoch \
+  'Release build identity arguments do not match the trusted kernel baseline' \
+  --source-date-epoch 1785567086
+expect_identity_failure unsafe-user \
+  '--kbuild-build-user must be a bounded portable identity' \
+  --kbuild-build-user 'unsafe user'
+expect_identity_failure wrong-source \
+  'Release build source arguments do not match the trusted kernel baseline' \
+  --expected-source-commit 0000000000000000000000000000000000000000
+expect_identity_failure alternate-url \
+  'Release build source arguments do not match the trusted kernel baseline' \
+  --git-url https://github.com/example/alternate-linux.git
+expect_identity_failure alternate-ref \
+  'Release build source arguments do not match the trusted kernel baseline' \
+  --git-branch fixture/alternate
+FIXTURE_CONTAINER_IMAGE_OVERRIDE="ubuntu:26.04@sha256:$(printf 'a%.0s' {1..64})" \
+  expect_identity_failure alternate-image \
+    'Release build container identity does not match the trusted kernel baseline'
+FIXTURE_CONTAINER_PLATFORM_OVERRIDE=linux/arm64 \
+  expect_identity_failure alternate-platform \
+    'Release build container identity does not match the trusted kernel baseline'
+expect_identity_failure alternate-target \
+  '--release-build requires --build-target "binary-indep binary-qcom-x1e"' \
+  --build-target binary-qcom-x1e
+expect_identity_failure alternate-patches \
+  'Release build patch directories do not match the trusted kernel baseline' \
+  --patch-dir "$support_a/patches"
+SP11_KERNEL_RELEASE_TEST_FIXTURE_OVERRIDE=disabled \
+  expect_identity_failure direct-inner-wrapper-only \
+    '--release-build is wrapper-only and requires its exact private /repo support snapshot'
+
+if ! FIXTURE_FORCE_NON_ROOT=true \
+    GIT_DIR="$source_repo/.git" GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true \
-    run_release_build "$support_a" "$work_a" > "$temporary_root/build-a.log" 2>&1; then
+    run_release_build "$support_a" "$work_a" --install-deps \
+      > "$temporary_root/build-a.log" 2>&1; then
   cat "$temporary_root/build-a.log" >&2
   die "fixture release build A failed"
 fi
-if ! INCLUDE_OPTIONAL_DEB=true UNSIGNED_IMAGE=true \
-    run_release_build "$support_b" "$work_b" > "$temporary_root/build-b.log" 2>&1; then
+
+identity_log="$temporary_root/build-identity-environment.log"
+for identity_target in debian/control clean binary-indep binary-qcom-x1e; do
+  grep -Fq "$identity_target"$'\t'"$source_date_epoch"$'\t'"$kbuild_build_user"$'\t'"$kbuild_build_host"$'\t'"$kbuild_build_timestamp" \
+    "$identity_log" || die "deterministic build identity did not reach rules target: $identity_target"
+done
+grep -Fxq 'sudo-preserve' "$identity_log" ||
+  die "non-root build-deps path did not preserve the deterministic identity explicitly"
+grep -Fq "mk-build-deps"$'\t'"$source_date_epoch"$'\t'"$kbuild_build_user"$'\t'"$kbuild_build_host"$'\t'"$kbuild_build_timestamp" \
+  "$identity_log" || die "deterministic build identity did not reach mk-build-deps"
+if ! FIXTURE_FORCE_NON_ROOT=true INCLUDE_OPTIONAL_DEB=true UNSIGNED_IMAGE=true \
+    run_release_build "$support_b" "$work_b" --install-deps \
+      > "$temporary_root/build-b.log" 2>&1; then
   cat "$temporary_root/build-b.log" >&2
   die "fixture release build B failed"
 fi
@@ -683,7 +867,7 @@ if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --expected-source-commit "$source_commit" \
     --image 'ubuntu:26.04' \
     --platform linux/arm64/v8 \
-    --patch-dir patches/release \
+    --patch-dirs patches/release \
     --build-target "binary-indep binary-qcom-x1e" \
     --work-dir "$docker_work-invalid" \
     --release-build \
@@ -728,6 +912,29 @@ grep -Fq 'must not overlap a container control or support-repository mount' \
   "$temporary_root/docker-overlap.log" ||
   die "Docker control-mount overlap rejection was not explicit"
 
+reserved_control_index=0
+for reserved_control_path in /sp11-control /sp11-control/nested; do
+  reserved_control_index=$((reserved_control_index + 1))
+  if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+      --source git \
+      --git-url "$source_url" \
+      --git-branch fixture \
+      --expected-source-commit "$source_commit" \
+      --image "$container_image" \
+      --platform linux/arm64/v8 \
+      --patch-dirs patches/release \
+      --build-target "binary-indep binary-qcom-x1e" \
+      --work-dir "$support_a/build/docker-control-overlap-$reserved_control_index" \
+      --container-work-dir "$reserved_control_path" \
+      --release-build \
+      --dry-run > "$temporary_root/docker-control-overlap-$reserved_control_index.log" 2>&1; then
+    die "Docker wrapper accepted reserved control mount overlap: $reserved_control_path"
+  fi
+  grep -Fq 'must not overlap a container control or support-repository mount' \
+    "$temporary_root/docker-control-overlap-$reserved_control_index.log" ||
+    die "reserved control-mount overlap rejection was not explicit: $reserved_control_path"
+done
+
 if ! GIT_DIR="$source_repo/.git" GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true \
     "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
@@ -737,7 +944,7 @@ if ! GIT_DIR="$source_repo/.git" GIT_CONFIG_COUNT=1 \
     --expected-source-commit "$source_commit" \
     --image "$container_image" \
     --platform linux/arm64/v8 \
-    --patch-dir patches/release \
+    --patch-dirs patches/release \
     --build-target "binary-indep binary-qcom-x1e" \
     --work-dir "$docker_work" \
     --release-build \
@@ -749,6 +956,35 @@ grep -Fq -- '--release-build' "$temporary_root/docker-valid.log" ||
   die "inner release flag was not forwarded"
 grep -Fq "SP11_BUILD_CONTAINER_PLATFORM=linux/arm64/v8" "$temporary_root/docker-valid.log" ||
   die "container platform was not forwarded"
+grep -Fq "SP11_PRIVATE_SUPPORT_SNAPSHOT=true" "$temporary_root/docker-valid.log" ||
+  die "wrapper-private support marker was not forwarded"
+if grep -Fq "$support_a:/repo:ro" "$temporary_root/docker-valid.log"; then
+  die "release Docker command mounted the original live support worktree"
+fi
+grep -Fq '/sp11-kernel-support.' "$temporary_root/docker-valid.log" ||
+  die "release Docker command did not use a private committed support checkout"
+grep -Fq "SP11_IMMUTABLE_APT_REQUIRED=true" "$temporary_root/docker-valid.log" ||
+  die "release dry-run did not preserve the immutable APT container contract"
+grep -Fq ':/sp11-control:ro' "$temporary_root/docker-valid.log" ||
+  die "release dry-run did not bind-mount its private control directory"
+grep -Fq '/sp11-control/docker-build-inside.sh' "$temporary_root/docker-valid.log" ||
+  die "release dry-run did not execute its private read-only entrypoint"
+for expected_digest_variable in \
+  SP11_EXPECTED_BUILD_ARGS_SHA256 \
+  SP11_EXPECTED_ENTRYPOINT_SHA256 \
+  SP11_EXPECTED_BASELINE_SHA256; do
+  grep -Eq "$expected_digest_variable=[0-9a-f]{64}" \
+    "$temporary_root/docker-valid.log" ||
+    die "release dry-run omitted private control digest: $expected_digest_variable"
+done
+for identity_argument in \
+    --source-date-epoch "$source_date_epoch" \
+    --kbuild-build-user "$kbuild_build_user" \
+    --kbuild-build-host "$kbuild_build_host" \
+    --kbuild-build-timestamp "$kbuild_build_timestamp"; do
+  grep -Fxq -- "$identity_argument" "$docker_work/docker-build-args.txt" ||
+    die "Docker release build did not retain identity argument: $identity_argument"
+done
 
 if "$support_status_failure/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --source git \
