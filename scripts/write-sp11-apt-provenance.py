@@ -582,6 +582,16 @@ def write_provenance(args: argparse.Namespace, baseline: dict[str, str]) -> None
         package, version = spec.split("=", 1)
         if (package, version, expected_digest) not in observed:
             fail(f"bootstrap package is absent from retained Deb lock: {spec}")
+    python_spec = required(baseline, "SP11_APT_PYTHON_PACKAGE_SPEC")
+    python_package, python_version = python_spec.split("=", 1)
+    python_architecture = required(baseline, "SP11_APT_SNAPSHOT_ARCHITECTURE")
+    if not any(
+        row[1] == python_package
+        and row[2] == python_version
+        and row[3] == python_architecture
+        for row in deb_rows
+    ):
+        fail(f"snapshot Python package is absent from retained Deb lock: {python_spec}")
 
     local_paths = sorted(local_dir.glob("*-build-deps_*.deb"), key=lambda item: item.name)
     if len(local_paths) != 1:

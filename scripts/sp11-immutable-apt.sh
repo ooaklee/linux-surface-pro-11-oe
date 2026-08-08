@@ -191,6 +191,7 @@ for variable in \
   SP11_APT_INRELEASE_RESOLUTE_BACKPORTS_SHA256 \
   SP11_APT_INRELEASE_RESOLUTE_SECURITY_SHA256 \
   SP11_APT_AUTHENTICATED_INDEX_COUNT \
+  SP11_APT_PYTHON_PACKAGE_SPEC \
   SP11_APT_BOOTSTRAP_PACKAGE_COUNT; do
   [ -n "${!variable:-}" ] || die "baseline variable is empty or missing: $variable"
 done
@@ -202,6 +203,8 @@ done
   die "snapshot component set or order changed"
 [ "$SP11_APT_SNAPSHOT_ARCHITECTURE" = "arm64" ] || die "snapshot architecture must be arm64"
 [ "$SP11_APT_AUTHENTICATED_INDEX_COUNT" = "32" ] || die "authenticated index count must be 32"
+[[ "$SP11_APT_PYTHON_PACKAGE_SPEC" =~ ^python3=[0-9A-Za-z.+:~_-]+$ ]] ||
+  die "snapshot Python package must pin one exact python3 version"
 [ "$SP11_APT_BOOTSTRAP_PACKAGE_COUNT" = "4" ] || die "bootstrap package count must be four"
 
 expected_inrelease_sha() {
@@ -408,11 +411,12 @@ snapshot_apt_lists() {
 
 bootstrap() {
   local state_tmp index spec_variable spec bootstrap_specs=() pre_inventory
+  local python_package python_version installed_python_version
 
   if [ "$(id -u)" -ne 0 ] && [ "${SP11_APT_ALLOW_NON_ROOT_FIXTURE:-false}" != "true" ]; then
     die "bootstrap must run as root inside the disposable build container"
   fi
-  for tool in apt-get dpkg-deb dpkg-query find gpgv grep mktemp python3; do
+  for tool in apt-get dpkg-deb dpkg-query find gpgv grep mktemp; do
     command -v "$tool" >/dev/null 2>&1 || die "missing required bootstrap tool: $tool"
   done
   if find "$archives_dir" -mindepth 1 -maxdepth 1 -print | grep -q .; then
@@ -462,6 +466,18 @@ bootstrap() {
   clear_apt_lists
   apt-get --error-on=any update
   verify_snapshot_metadata
+  apt-get -y --no-install-recommends install "$SP11_APT_PYTHON_PACKAGE_SPEC"
+  python_package="${SP11_APT_PYTHON_PACKAGE_SPEC%%=*}"
+  python_version="${SP11_APT_PYTHON_PACKAGE_SPEC#*=}"
+  if ! installed_python_version="$(
+    dpkg-query -W -f='${Version}' "$python_package" 2>/dev/null
+  )"; then
+    die "authenticated snapshot Python package was not installed: $python_package"
+  fi
+  [ "$installed_python_version" = "$python_version" ] ||
+    die "authenticated snapshot Python package version does not match the baseline"
+  command -v python3 >/dev/null 2>&1 ||
+    die "authenticated snapshot Python installation did not provide python3"
   python3 "$repo_dir/scripts/write-sp11-apt-provenance.py" acquire-indexes \
     --baseline "$baseline" \
     --lists-dir "$apt_lists_dir" \

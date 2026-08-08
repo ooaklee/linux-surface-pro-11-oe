@@ -456,6 +456,17 @@ def validate_apt_sidecar(path: Path, baseline: dict[str, str]) -> dict[str, str]
         digest = required(baseline, f"SP11_APT_BOOTSTRAP_PACKAGE_{index}_SHA256")
         if (package, version, digest) not in bootstrap_seen:
             fail(f"APT sidecar is missing bootstrap lock entry {index}")
+    python_package, python_version = required(
+        baseline, "SP11_APT_PYTHON_PACKAGE_SPEC"
+    ).split("=", 1)
+    python_architecture = required(baseline, "SP11_APT_SNAPSHOT_ARCHITECTURE")
+    if not any(
+        package == python_package
+        and version == python_version
+        and architecture == python_architecture
+        for package, version, architecture, _digest in deb_identities
+    ):
+        fail("APT sidecar is missing the required snapshot Python package")
 
     expected_keys.append("Local build-deps count")
     if required(fields, "Local build-deps count") != "1":

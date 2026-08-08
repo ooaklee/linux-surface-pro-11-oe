@@ -167,8 +167,11 @@ class Fixture:
         self.source_lists = self.root / "fixture-list-source"
         self.source_indexes = self.root / "fixture-index-source"
         self.mock_bin = self.root / "mock-bin"
+        self.tool_bin = self.root / "tool-bin"
         self.deb_fields = self.root / "deb-fields.tsv"
         self.call_log = self.root / "call.log"
+        self.python_source = self.root / "python3-fixture"
+        self.python_install_marker = self.root / "python-package-installed"
         for directory in (
             self.archives,
             self.index_cache,
@@ -183,8 +186,35 @@ class Fixture:
             self.source_lists,
             self.source_indexes,
             self.mock_bin,
+            self.tool_bin,
         ):
             directory.mkdir(parents=True, exist_ok=True)
+        for tool in (
+            "awk",
+            "bash",
+            "basename",
+            "cat",
+            "chmod",
+            "cp",
+            "dirname",
+            "find",
+            "git",
+            "grep",
+            "id",
+            "mkdir",
+            "mktemp",
+            "mv",
+            "rm",
+            "sort",
+            "stat",
+            "tr",
+            "uname",
+            "wc",
+        ):
+            tool_path = shutil.which(tool)
+            if tool_path is None:
+                raise AssertionError(f"fixture host is missing required tool: {tool}")
+            (self.tool_bin / tool).symlink_to(tool_path)
         self.keyring.write_bytes(b"fixture Ubuntu archive keyring\n")
         self.call_log.write_text("", encoding="utf-8")
         (self.root / "etc/apt/sources.list").write_text(
@@ -199,9 +229,10 @@ class Fixture:
             ("libssl3t64_1_arm64.deb", "libssl3t64", "1", "arm64"),
             ("openssl-provider-legacy_1_arm64.deb", "openssl-provider-legacy", "1", "arm64"),
         )
+        self.python_deb = ("python3_1_arm64.deb", "python3", "1", "arm64")
         self.deb_bytes: dict[str, bytes] = {
             name: f"fixture Deb {package}\n".encode()
-            for name, package, _version, _arch in self.debs
+            for name, package, _version, _arch in (*self.debs, self.python_deb)
         }
         self.local_name = "linux-qcom-x1e-build-deps_1.0_arm64.deb"
         self.local_bytes = b"local generated build-deps Deb\n"
@@ -233,7 +264,10 @@ class Fixture:
         self._write_mocks()
 
     def _write_deb_fields(self) -> None:
-        rows = [f"{name}\t{package}\t{version}\t{arch}" for name, package, version, arch in self.debs]
+        rows = [
+            f"{name}\t{package}\t{version}\t{arch}"
+            for name, package, version, arch in (*self.debs, self.python_deb)
+        ]
         rows.extend(
             (
                 f"{self.local_name}\tlinux-qcom-x1e-build-deps\t1.0\tarm64",
@@ -259,7 +293,7 @@ class Fixture:
                 if suite == "resolute" and component == "main":
                     packages = b"".join(
                         self.package_record(name, package, version, arch, self.deb_bytes[name])
-                        for name, package, version, arch in self.debs
+                        for name, package, version, arch in (*self.debs, self.python_deb)
                     )
                 else:
                     marker = f"fixture-{suite}-{component}"
@@ -343,6 +377,7 @@ class Fixture:
             f'SP11_APT_INRELEASE_RESOLUTE_BACKPORTS_SHA256="{self.inrelease_hashes["resolute-backports"]}"',
             f'SP11_APT_INRELEASE_RESOLUTE_SECURITY_SHA256="{self.inrelease_hashes["resolute-security"]}"',
             'SP11_APT_AUTHENTICATED_INDEX_COUNT="32"',
+            'SP11_APT_PYTHON_PACKAGE_SPEC="python3=1"',
             'SP11_APT_BOOTSTRAP_PACKAGE_COUNT="4"',
         ]
         for index, (name, package, version, _arch) in enumerate(self.debs, 1):
@@ -380,7 +415,7 @@ case " $* " in
   *" --download-only "*)
     printf 'apt-get download-only:%s\n' "$*" >> "$SP11_TEST_CALL_LOG"
     while IFS=$'\\t' read -r name package version arch; do
-      case "$package" in evil|linux-qcom-x1e-build-deps) continue ;; esac
+      case "$package" in evil|linux-qcom-x1e-build-deps|python3) continue ;; esac
       cp "$SP11_TEST_DEB_SOURCE/$name" "$SP11_TEST_ARCHIVES/$name"
     done < "$SP11_TEST_DEB_FIELDS"
     if [ "${SP11_TEST_EXTRA_DEB:-false}" = "true" ]; then
@@ -390,6 +425,23 @@ case " $* " in
   *" --no-download "*)
     printf 'apt-get no-download:%s\n' "$*" >> "$SP11_TEST_CALL_LOG"
     printf 'fixture CA bundle\\n' > "$SP11_APT_FIXTURE_ROOT/etc/ssl/certs/ca-certificates.crt"
+    ;;
+  *" install python3="*)
+    case " $* " in
+      *" Acquire::https::Verify-Peer=false "*)
+        printf '%s\n' 'python3 install rejected disabled TLS verification' >> "$SP11_TEST_CALL_LOG"
+        exit 96
+        ;;
+    esac
+    printf 'apt-get install python3 strict:%s\n' "$*" >> "$SP11_TEST_CALL_LOG"
+    if [ "${SP11_TEST_SKIP_PYTHON_INSTALL:-false}" != "true" ]; then
+      : > "$SP11_TEST_PYTHON_INSTALL_MARKER"
+      if [ "${SP11_TEST_SKIP_PYTHON_EXECUTABLE:-false}" != "true" ]; then
+        cp "$SP11_TEST_PYTHON_SOURCE" "$SP11_TEST_PYTHON_TARGET"
+        chmod 0755 "$SP11_TEST_PYTHON_TARGET"
+      fi
+      cp "$SP11_TEST_PYTHON_DEB_SOURCE" "$SP11_TEST_ARCHIVES/"
+    fi
     ;;
 esac
 """,
@@ -414,19 +466,30 @@ esac
         )
         self._write_executable(
             "sha256sum",
-            """#!/usr/bin/env python3
+            """#!/usr/bin/env bash
+set -euo pipefail
+path="${!#}"
+value="$("$SP11_TEST_REAL_PYTHON3" - "$path" <<'PY_SHA256'
 import hashlib
-import os
 import sys
 
-path = sys.argv[-1]
-with open(path, "rb") as handle:
-    value = hashlib.sha256(handle.read()).hexdigest()
-with open(os.environ["SP11_TEST_CALL_LOG"], "a", encoding="utf-8") as handle:
-    handle.write(f"sha256 {os.path.basename(path)}\\n")
-print(f"{value}  {path}")
+with open(sys.argv[1], "rb") as handle:
+    print(hashlib.sha256(handle.read()).hexdigest())
+PY_SHA256
+)"
+printf 'sha256 %s\\n' "$(basename "$path")" >> "$SP11_TEST_CALL_LOG"
+printf '%s  %s\\n' "$value" "$path"
 """,
         )
+        self.python_source.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+printf 'python3 acquired:%s\n' "$(basename "${1:-}")" >> "$SP11_TEST_CALL_LOG"
+exec "$SP11_TEST_REAL_PYTHON3" "$@"
+""",
+            encoding="utf-8",
+        )
+        self.python_source.chmod(0o755)
         self._write_executable(
             "dpkg-deb",
             """#!/usr/bin/env bash
@@ -454,6 +517,13 @@ if [ "$#" -eq 2 ]; then
   exit 0
 fi
 package="${!#}"
+if [ "$package" = "python3" ]; then
+  [ -f "$SP11_TEST_PYTHON_INSTALL_MARKER" ] || exit 1
+  if [ -n "${SP11_TEST_PYTHON_INSTALLED_VERSION:-}" ]; then
+    printf '%s\n' "$SP11_TEST_PYTHON_INSTALLED_VERSION"
+    exit 0
+  fi
+fi
 awk -F '\\t' -v package="$package" '$2 == package { print $3; found=1 } END { if (!found) exit 1 }' "$SP11_TEST_DEB_FIELDS"
 """,
         )
@@ -472,7 +542,7 @@ printf '[GNUPG:] VALIDSIG {FINGERPRINT} 2026 0 0 0 0 0 0 0\n'
         environment = dict(os.environ)
         environment.update(
             {
-                "PATH": f"{self.mock_bin}:{environment['PATH']}",
+                "PATH": f"{self.mock_bin}:{self.tool_bin}",
                 "SP11_APT_FIXTURE_ROOT": str(self.root),
                 "SP11_APT_ALLOW_NON_ROOT_FIXTURE": "true",
                 "SP11_APT_HELPER": str(self.mock_bin / "apt-helper"),
@@ -482,6 +552,15 @@ printf '[GNUPG:] VALIDSIG {FINGERPRINT} 2026 0 0 0 0 0 0 0\n'
                 "SP11_TEST_DEB_FIELDS": str(self.deb_fields),
                 "SP11_TEST_ARCHIVES": str(self.archives),
                 "SP11_TEST_CALL_LOG": str(self.call_log),
+                "SP11_TEST_PYTHON_SOURCE": str(self.python_source),
+                "SP11_TEST_PYTHON_TARGET": str(self.mock_bin / "python3"),
+                "SP11_TEST_PYTHON_INSTALL_MARKER": str(
+                    self.python_install_marker
+                ),
+                "SP11_TEST_PYTHON_DEB_SOURCE": str(
+                    self.root / "deb-source" / self.python_deb[0]
+                ),
+                "SP11_TEST_REAL_PYTHON3": sys.executable,
             }
         )
         environment.update(extra)
@@ -578,6 +657,7 @@ def assert_path_guards(temp_root: Path) -> None:
 def assert_wrapper_contract() -> None:
     wrapper = DOCKER_WRAPPER.read_text(encoding="utf-8")
     inner = INNER_BUILDER.read_text(encoding="utf-8")
+    apt_helper = APT_HELPER.read_text(encoding="utf-8")
     for required_text in (
         "docker buildx imagetools inspect --raw",
         "/repo/scripts/sp11-immutable-apt.sh bootstrap",
@@ -605,6 +685,34 @@ def assert_wrapper_contract() -> None:
     assert envelope_write < envelope_validate < required_artifacts < final_stability_check
     assert wrapper.rstrip().endswith("verify_release_support_stable")
 
+    bootstrap = apt_helper[
+        apt_helper.index("bootstrap() {") : apt_helper.index("\nfinalize() {")
+    ]
+    initial_preflight = bootstrap[: bootstrap.index('if find "$archives_dir"')]
+    assert "python3" not in initial_preflight
+    strict_update = bootstrap.index("apt-get --error-on=any update")
+    strict_verification = bootstrap.index("verify_snapshot_metadata", strict_update)
+    python_install = bootstrap.index(
+        'apt-get -y --no-install-recommends install "$SP11_APT_PYTHON_PACKAGE_SPEC"',
+        strict_verification,
+    )
+    installed_version = bootstrap.index("dpkg-query -W -f='${Version}'", python_install)
+    executable_check = bootstrap.index("command -v python3", installed_version)
+    python_use = bootstrap.index(
+        'python3 "$repo_dir/scripts/write-sp11-apt-provenance.py" acquire-indexes',
+        executable_check,
+    )
+    state_write = bootstrap.index("APT bootstrap state schema", python_use)
+    assert (
+        strict_update
+        < strict_verification
+        < python_install
+        < installed_version
+        < executable_check
+        < python_use
+        < state_write
+    )
+
 
 def assert_production_baseline_is_exact(temp_root: Path) -> None:
     original = (REPO / "config/kernel-baselines/7.2-rc5-jg-0.env").read_text(
@@ -618,6 +726,14 @@ def assert_production_baseline_is_exact(temp_root: Path) -> None:
             original.replace(
                 "45f95ce276cdba3e41870516a130e03c58b8b7a79e9546b0efe9e526d255740c",
                 "0" * 64,
+            ),
+            encoding="utf-8",
+        )
+        run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
+        tampered.write_text(
+            original.replace(
+                'SP11_APT_PYTHON_PACKAGE_SPEC="python3=3.14.3-0ubuntu2"',
+                'SP11_APT_PYTHON_PACKAGE_SPEC="python3=3.14.3-0ubuntu1"',
             ),
             encoding="utf-8",
         )
@@ -723,13 +839,23 @@ def assert_ordered_bootstrap_calls(fixture: Fixture) -> None:
         cursor = next_event(f"sha256 {name}", cursor) + 1
         cursor = next_event(f"gpgv {name}", cursor) + 1
 
+    python_install_event = (
+        "apt-get install python3 strict:"
+        "-y --no-install-recommends install python3=1"
+    )
+    python_install_index = next_event(python_install_event, cursor)
+    assert "Acquire::https::Verify-Peer=false" not in events[python_install_index]
+    python_use_index = next_event(
+        "python3 acquired:write-sp11-apt-provenance.py", python_install_index + 1
+    )
+
     index_downloads = [
         (index, event)
         for index, event in enumerate(events)
         if event.startswith("apt-helper download-file:")
     ]
     assert len(index_downloads) == 32
-    assert all(index >= cursor for index, _event in index_downloads)
+    assert all(index > python_use_index for index, _event in index_downloads)
     assert all(
         event.startswith(
             "apt-helper download-file:https://snapshot.ubuntu.com/ubuntu/"
@@ -743,6 +869,70 @@ def assert_ordered_bootstrap_calls(fixture: Fixture) -> None:
 
 
 def bootstrap_and_finalize(temp_root: Path) -> Fixture:
+    missing_python_fixture = Fixture(temp_root)
+    missing_python_fixture.populate_deb_source()
+    missing_python_result = run(
+        missing_python_fixture.helper_command("bootstrap"),
+        missing_python_fixture.env(SP11_TEST_SKIP_PYTHON_INSTALL="true"),
+        expect=False,
+    )
+    missing_python_events = missing_python_fixture.call_log.read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert any(
+        event.startswith("apt-get install python3 strict:")
+        for event in missing_python_events
+    )
+    assert (
+        "error: authenticated snapshot Python package was not installed: python3"
+        in missing_python_result.stderr
+    )
+    assert not any(event.startswith("apt-helper download-file:") for event in missing_python_events)
+    assert not (missing_python_fixture.work / "sp11-apt-bootstrap-state.txt").exists()
+
+    wrong_python_fixture = Fixture(temp_root)
+    wrong_python_fixture.populate_deb_source()
+    wrong_python_result = run(
+        wrong_python_fixture.helper_command("bootstrap"),
+        wrong_python_fixture.env(SP11_TEST_PYTHON_INSTALLED_VERSION="2"),
+        expect=False,
+    )
+    wrong_python_events = wrong_python_fixture.call_log.read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert (
+        "error: authenticated snapshot Python package version does not match the baseline"
+        in wrong_python_result.stderr
+    )
+    assert not any(event.startswith("python3 acquired:") for event in wrong_python_events)
+    assert not any(event.startswith("apt-helper download-file:") for event in wrong_python_events)
+    assert not (wrong_python_fixture.work / "sp11-apt-bootstrap-state.txt").exists()
+
+    missing_executable_fixture = Fixture(temp_root)
+    missing_executable_fixture.populate_deb_source()
+    missing_executable_result = run(
+        missing_executable_fixture.helper_command("bootstrap"),
+        missing_executable_fixture.env(SP11_TEST_SKIP_PYTHON_EXECUTABLE="true"),
+        expect=False,
+    )
+    missing_executable_events = missing_executable_fixture.call_log.read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert (
+        "error: authenticated snapshot Python installation did not provide python3"
+        in missing_executable_result.stderr
+    )
+    assert not any(
+        event.startswith("python3 acquired:") for event in missing_executable_events
+    )
+    assert not any(
+        event.startswith("apt-helper download-file:")
+        for event in missing_executable_events
+    )
+    assert not (
+        missing_executable_fixture.work / "sp11-apt-bootstrap-state.txt"
+    ).exists()
+
     extra_fixture = Fixture(temp_root)
     extra_fixture.populate_deb_source()
     run(
@@ -782,6 +972,22 @@ def bootstrap_and_finalize(temp_root: Path) -> Fixture:
     (fixture.artifacts / fixture.local_name).write_bytes(fixture.local_bytes)
     run(fixture.helper_command("finalize"), fixture.env())
     assert_ordered_bootstrap_calls(fixture)
+    sidecar = (fixture.artifacts / "sp11-kernel-apt-provenance.txt").read_text(
+        encoding="utf-8"
+    )
+    python_name, python_package, python_version, python_arch = fixture.python_deb
+    python_bytes = fixture.deb_bytes[python_name]
+    assert "Downloaded Deb count: 5\n" in sidecar
+    assert f"Downloaded Deb 5 path: {python_name}\n" in sidecar
+    assert f"Downloaded Deb 5 package: {python_package}\n" in sidecar
+    assert f"Downloaded Deb 5 version: {python_version}\n" in sidecar
+    assert f"Downloaded Deb 5 architecture: {python_arch}\n" in sidecar
+    assert f"Downloaded Deb 5 size: {len(python_bytes)}\n" in sidecar
+    assert f"Downloaded Deb 5 SHA256: {digest(python_bytes)}\n" in sidecar
+    assert (
+        f"Downloaded Deb 5 archive filename: pool/main/f/{python_package}/{python_name}\n"
+        in sidecar
+    )
     return fixture
 
 
@@ -953,6 +1159,51 @@ def envelope_cases(fixture: Fixture) -> None:
         str(envelope),
     ]
     run(attached_command, fixture.env())
+
+    original_sidecar = sidecar.read_text(encoding="utf-8")
+    without_python = [
+        line
+        for line in original_sidecar.splitlines()
+        if not line.startswith("Downloaded Deb 5 ")
+    ]
+    without_python[without_python.index("Downloaded Deb count: 5")] = (
+        "Downloaded Deb count: 4"
+    )
+    sidecar.write_text("\n".join(without_python) + "\n", encoding="utf-8")
+    missing_python_result = run(attached_command, fixture.env(), expect=False)
+    assert (
+        "error: APT sidecar is missing the required snapshot Python package"
+        in missing_python_result.stderr
+    )
+    sidecar.write_text(original_sidecar, encoding="utf-8")
+
+    sidecar.write_text(
+        original_sidecar.replace(
+            "Downloaded Deb 5 version: 1", "Downloaded Deb 5 version: 2"
+        ),
+        encoding="utf-8",
+    )
+    wrong_python_result = run(attached_command, fixture.env(), expect=False)
+    assert (
+        "error: APT sidecar is missing the required snapshot Python package"
+        in wrong_python_result.stderr
+    )
+    sidecar.write_text(original_sidecar, encoding="utf-8")
+
+    sidecar.write_text(
+        original_sidecar.replace(
+            "Downloaded Deb 5 architecture: arm64",
+            "Downloaded Deb 5 architecture: amd64",
+        ),
+        encoding="utf-8",
+    )
+    wrong_python_arch_result = run(attached_command, fixture.env(), expect=False)
+    assert (
+        "error: APT sidecar is missing the required snapshot Python package"
+        in wrong_python_arch_result.stderr
+    )
+    sidecar.write_text(original_sidecar, encoding="utf-8")
+
     release_snapshot = fixture.root / "release-snapshot"
     release_snapshot.mkdir()
     snapshot_manifest = release_snapshot / manifest.name
