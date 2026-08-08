@@ -63,7 +63,7 @@ wait_for_final_pause() {
   return 1
 }
 
-for tool in find git mkfifo python3 sed shasum xz; do
+for tool in cp find git mkfifo python3 sed shasum xz; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 [ -x "$generator_script" ] || die "missing executable source archive generator"
@@ -72,34 +72,58 @@ done
 temporary_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 temporary_root="$(mktemp -d "$temporary_parent/sp11-kernel-source-generation.XXXXXX")"
 temporary_root="$(cd "$temporary_root" && pwd -P)"
+upstream_repo="$temporary_root/upstream"
 source_repo="$temporary_root/source"
 output_a="$temporary_root/output-a"
 output_b="$temporary_root/output-b"
+output_no_shallow="$temporary_root/output-no-shallow"
+output_wrong_shallow="$temporary_root/output-wrong-shallow"
+output_mixed_shallow="$temporary_root/output-mixed-shallow"
+output_commit_graph="$temporary_root/output-commit-graph"
 hostile_home="$temporary_root/hostile-home"
 hostile_bin="$temporary_root/hostile-bin"
 hostile_python="$temporary_root/hostile-python"
 hostile_tmp="$source_repo/hostile-tmp"
 scratch_parent="$temporary_root/scratch"
 mkdir -p \
-  "$source_repo" "$output_a" "$output_b" "$hostile_home" "$hostile_bin" \
-  "$hostile_python" "$hostile_tmp" "$scratch_parent"
+  "$upstream_repo" "$output_a" "$output_b" "$output_no_shallow" \
+  "$output_wrong_shallow" "$output_mixed_shallow" "$output_commit_graph" \
+  "$hostile_home" "$hostile_bin" "$hostile_python" "$scratch_parent"
 
 epoch=1700000000
-git -C "$source_repo" init --quiet --initial-branch=fixture
-git -C "$source_repo" config user.name 'SP11 source generator fixture'
-git -C "$source_repo" config user.email 'sp11-source-generator@example.invalid'
-printf 'fixture_function\nbase source\nfixture_tail\n' > "$source_repo/source.c"
-printf 'source.c diff=cpp\n' > "$source_repo/.gitattributes"
-printf '*.generated\n' > "$source_repo/.gitignore"
-mkdir "$source_repo/bulk"
+git -C "$upstream_repo" init --quiet --initial-branch=fixture
+git -C "$upstream_repo" config user.name 'SP11 source generator fixture'
+git -C "$upstream_repo" config user.email 'sp11-source-generator@example.invalid'
+printf 'fixture_function\nancestor source\nfixture_tail\n' > "$upstream_repo/source.c"
+printf 'source.c diff=cpp\n' > "$upstream_repo/.gitattributes"
+printf '*.generated\n' > "$upstream_repo/.gitignore"
+mkdir "$upstream_repo/bulk"
 for ((bulk_index = 0; bulk_index < 2000; bulk_index++)); do
   printf 'index fixture %04d\n' "$bulk_index" \
-    > "$source_repo/bulk/file-$(printf '%04d' "$bulk_index")"
+    > "$upstream_repo/bulk/file-$(printf '%04d' "$bulk_index")"
 done
-git -C "$source_repo" add .
+git -C "$upstream_repo" add .
+GIT_AUTHOR_DATE="@$((epoch - 1)) +0000" \
+  GIT_COMMITTER_DATE="@$((epoch - 1)) +0000" \
+  git -C "$upstream_repo" commit --quiet -m 'Create unavailable shallow parent'
+printf 'fixture_function\nbase source\nfixture_tail\n' > "$upstream_repo/source.c"
+git -C "$upstream_repo" add source.c
 GIT_AUTHOR_DATE="@$epoch +0000" GIT_COMMITTER_DATE="@$epoch +0000" \
-  git -C "$source_repo" commit --quiet -m 'Create source archive base'
+  git -C "$upstream_repo" commit --quiet -m 'Create source archive base'
+source_parent="$(git -C "$upstream_repo" rev-parse 'HEAD^1^{commit}')"
+git clone --quiet --depth=1 --branch=fixture \
+  "file://$upstream_repo" "$source_repo"
+git -C "$source_repo" config user.name 'SP11 source generator fixture'
+git -C "$source_repo" config user.email 'sp11-source-generator@example.invalid'
+mkdir "$hostile_tmp"
 source_head="$(git -C "$source_repo" rev-parse 'HEAD^{commit}')"
+[ "$(sed -n '1p' "$source_repo/.git/shallow")" = "$source_head" ] ||
+  die "depth-1 fixture did not bind Source HEAD as its shallow boundary"
+[ "$(wc -l < "$source_repo/.git/shallow" | tr -d ' ')" = 1 ] ||
+  die "depth-1 fixture produced more than one shallow boundary"
+if git -C "$source_repo" cat-file -e "$source_parent^{commit}" 2>/dev/null; then
+  die "depth-1 fixture unexpectedly retained the source parent object"
+fi
 
 printf 'fixture_function\npatched source $Format:%%H$\nfixture_tail\n' > "$source_repo/source.c"
 printf 'forced corresponding source\n' > "$source_repo/required.generated"
@@ -198,6 +222,17 @@ fi
 grep -Fq 'Python isolated mode (-I)' "$temporary_root/nonisolated.log" ||
   die "non-isolated Python rejection was not explicit"
 
+"$python_path" -I - "$generator_script" <<'PY_PRIVATE_GIT_CONFIG'
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1])
+private_git_config = module["private_git_config"]
+for object_format in ("sha1", "sha256"):
+    lines = private_git_config(object_format).decode("ascii").splitlines()
+    assert lines.count("\tcommitGraph = false") == 1, (object_format, lines)
+PY_PRIVATE_GIT_CONFIG
+
 manifest="$temporary_root/build-manifest.txt"
 cat > "$manifest" <<EOF_MANIFEST
 Provenance schema: sp11-kernel-build-v2
@@ -291,6 +326,216 @@ grep -Fxq 'Publication authorized: false' "$temporary_root/generation-a.log" ||
   die "generator did not keep publication fail-closed"
 grep -Fxq "Archive source epoch: $epoch" "$temporary_root/generation-a.log" ||
   die "independent exact-epoch validation was not reported"
+
+# The generator's private history boundary is derived only from manifest Source
+# HEAD.  A true depth-1 object store must remain usable even when its ambient
+# .git/shallow authority is absent, and the resulting raw bytes must be exact.
+source_shallow="$source_repo/.git/shallow"
+saved_source_shallow="$temporary_root/source-shallow.saved"
+mv "$source_shallow" "$saved_source_shallow"
+archive_no_shallow="$output_no_shallow/$archive_name"
+run_generator \
+  --baseline "$baseline" \
+  --build-manifest "$manifest" \
+  --source-repo "$source_repo" \
+  --toolchain-contract "$contract" \
+  --output "$archive_no_shallow" > "$temporary_root/generation-no-shallow.log"
+[ ! -e "$source_shallow" ] && [ ! -L "$source_shallow" ] ||
+  die "generator recreated or consumed ambient shallow authority"
+cmp -s "$archive_a" "$archive_no_shallow" ||
+  die "absent ambient shallow authority changed generated archive bytes"
+mv "$saved_source_shallow" "$source_shallow"
+
+# Same-format and mixed-format ambient boundary tampering is never private Git
+# authority.  Git may reject malformed source metadata during its read-only
+# repository preflight; if it accepts it, output bytes must remain identical.
+printf '%s\n' "$source_parent" > "$source_shallow"
+archive_wrong_shallow="$output_wrong_shallow/$archive_name"
+if run_generator \
+    --baseline "$baseline" \
+    --build-manifest "$manifest" \
+    --source-repo "$source_repo" \
+    --toolchain-contract "$contract" \
+    --output "$archive_wrong_shallow" \
+    > "$temporary_root/generation-wrong-shallow.stdout" \
+    2> "$temporary_root/generation-wrong-shallow.stderr"; then
+  cmp -s "$archive_a" "$archive_wrong_shallow" ||
+    die "tampered ambient shallow boundary changed successful archive bytes"
+else
+  [ ! -s "$archive_wrong_shallow" ] ||
+    die "tampered ambient shallow rejection left nonempty output bytes"
+  ! grep -Fq 'Generated deterministic' \
+    "$temporary_root/generation-wrong-shallow.stdout" ||
+    die "tampered ambient shallow rejection emitted a success claim"
+fi
+[ "$(sed -n '1p' "$source_shallow")" = "$source_parent" ] ||
+  die "generator changed the tampered ambient shallow boundary"
+
+mixed_shallow="$(printf '0%.0s' {1..64})"
+printf '%s\n' "$mixed_shallow" > "$source_shallow"
+archive_mixed_shallow="$output_mixed_shallow/$archive_name"
+if run_generator \
+    --baseline "$baseline" \
+    --build-manifest "$manifest" \
+    --source-repo "$source_repo" \
+    --toolchain-contract "$contract" \
+    --output "$archive_mixed_shallow" \
+    > "$temporary_root/generation-mixed-shallow.stdout" \
+    2> "$temporary_root/generation-mixed-shallow.stderr"; then
+  cmp -s "$archive_a" "$archive_mixed_shallow" ||
+    die "mixed-format ambient shallow boundary changed successful archive bytes"
+else
+  [ ! -s "$archive_mixed_shallow" ] ||
+    die "mixed-format ambient shallow rejection left nonempty output bytes"
+  ! grep -Fq 'Generated deterministic' \
+    "$temporary_root/generation-mixed-shallow.stdout" ||
+    die "mixed-format ambient shallow rejection emitted a success claim"
+fi
+[ "$(sed -n '1p' "$source_shallow")" = "$mixed_shallow" ] ||
+  die "generator changed the mixed-format ambient shallow boundary"
+printf '%s\n' "$source_head" > "$source_shallow"
+
+# Alternate object storage may contain an ambient commit-graph cache with its
+# own commit date/tree/parent metadata.  Source-local config keeps the read-only
+# source preflight independent of this deliberately corrupt cache; the private
+# object view must independently disable commit-graph authority and reproduce
+# the exact archive bytes from raw objects.
+git -C "$upstream_repo" commit-graph write --reachable
+upstream_commit_graph="$upstream_repo/.git/objects/info/commit-graph"
+source_commit_graph="$source_repo/.git/objects/info/commit-graph"
+[ -f "$upstream_commit_graph" ] && [ ! -L "$upstream_commit_graph" ] ||
+  die "full-history fixture did not create a regular commit-graph cache"
+cp "$upstream_commit_graph" "$source_commit_graph"
+[ -f "$source_commit_graph" ] && [ ! -L "$source_commit_graph" ] ||
+  die "commit-graph fixture did not create a regular cache file"
+chmod u+w "$source_commit_graph"
+python3 - "$source_commit_graph" <<'PY_CORRUPT_COMMIT_GRAPH'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+assert len(data) > 20
+data[-1] ^= 0x01
+path.write_bytes(data)
+PY_CORRUPT_COMMIT_GRAPH
+source_commit_graph_sha="$(shasum -a 256 "$source_commit_graph" | awk '{print $1}')"
+git -C "$source_repo" config core.commitGraph false
+archive_commit_graph="$output_commit_graph/$archive_name"
+run_generator \
+  --baseline "$baseline" \
+  --build-manifest "$manifest" \
+  --source-repo "$source_repo" \
+  --toolchain-contract "$contract" \
+  --output "$archive_commit_graph" > "$temporary_root/generation-commit-graph.log"
+cmp -s "$archive_a" "$archive_commit_graph" ||
+  die "ambient source commit-graph changed generated archive bytes"
+[ "$(shasum -a 256 "$source_commit_graph" | awk '{print $1}')" = \
+  "$source_commit_graph_sha" ] || die "generator changed the ambient commit-graph cache"
+git -C "$source_repo" config --unset-all core.commitGraph
+rm -f -- "$source_commit_graph"
+
+# A private shallow boundary waives traversal beyond Source HEAD; it never
+# waives the exact bound commit object itself.  Point an isolated fixture copy
+# at a canonical but unavailable commit and bind baseline/manifest to it.
+missing_head="$(printf '1%.0s' {1..40})"
+if git -C "$source_repo" cat-file -e "$missing_head^{commit}" 2>/dev/null; then
+  die "missing-HEAD fixture unexpectedly resolved its absent commit"
+fi
+missing_head_repo="$temporary_root/missing-head-source"
+cp -R "$source_repo" "$missing_head_repo"
+missing_head_ref="$(git -C "$missing_head_repo" symbolic-ref HEAD)"
+case "$missing_head_ref" in
+  refs/heads/*) ;;
+  *) die "missing-HEAD fixture resolved an unsafe symbolic ref" ;;
+esac
+printf '%s\n' "$missing_head" > "$missing_head_repo/.git/$missing_head_ref"
+printf '%s\n' "$missing_head" > "$missing_head_repo/.git/shallow"
+missing_head_baseline="$temporary_root/missing-head-baseline.env"
+sed "s/SP11_KERNEL_UPSTREAM_COMMIT=\"$source_head\"/SP11_KERNEL_UPSTREAM_COMMIT=\"$missing_head\"/" \
+  "$baseline" > "$missing_head_baseline"
+missing_head_manifest="$temporary_root/missing-head-manifest.txt"
+sed \
+  -e "s/^Expected source commit: $source_head$/Expected source commit: $missing_head/" \
+  -e "s/^Source HEAD: $source_head$/Source HEAD: $missing_head/" \
+  "$manifest" > "$missing_head_manifest"
+expect_failure 'source HEAD check failed' \
+  "$output_a/missing-head-patched-source.tar.xz" \
+  run_generator --baseline "$missing_head_baseline" \
+  --build-manifest "$missing_head_manifest" \
+  --source-repo "$missing_head_repo" --toolchain-contract "$contract" \
+  --output "$output_a/missing-head-patched-source.tar.xz"
+
+# A syntactically valid commit whose exact tree object is absent must also fail.
+# hash-object writes only the commit object; the referenced tree stays missing.
+missing_head_tree="$(printf '2%.0s' {1..40})"
+if git -C "$source_repo" cat-file -e "$missing_head_tree^{tree}" 2>/dev/null; then
+  die "missing-HEAD-tree fixture unexpectedly resolved its absent tree"
+fi
+missing_head_tree_repo="$temporary_root/missing-head-tree-source"
+cp -R "$source_repo" "$missing_head_tree_repo"
+missing_head_tree_content="$temporary_root/missing-head-tree.commit"
+cat > "$missing_head_tree_content" <<EOF_MISSING_HEAD_TREE
+tree $missing_head_tree
+author SP11 source generator fixture <sp11-source-generator@example.invalid> $epoch +0000
+committer SP11 source generator fixture <sp11-source-generator@example.invalid> $epoch +0000
+
+Bind a deliberately unavailable tree
+EOF_MISSING_HEAD_TREE
+synthetic_head="$(git -C "$missing_head_tree_repo" \
+  hash-object -t commit -w "$missing_head_tree_content")"
+missing_head_tree_ref="$(git -C "$missing_head_tree_repo" symbolic-ref HEAD)"
+case "$missing_head_tree_ref" in
+  refs/heads/*) ;;
+  *) die "missing-HEAD-tree fixture resolved an unsafe symbolic ref" ;;
+esac
+printf '%s\n' "$synthetic_head" \
+  > "$missing_head_tree_repo/.git/$missing_head_tree_ref"
+printf '%s\n' "$synthetic_head" > "$missing_head_tree_repo/.git/shallow"
+if git -C "$missing_head_tree_repo" cat-file -e "$synthetic_head^{tree}" 2>/dev/null; then
+  die "synthetic Source HEAD unexpectedly resolved its unavailable tree"
+fi
+missing_head_tree_baseline="$temporary_root/missing-head-tree-baseline.env"
+sed "s/SP11_KERNEL_UPSTREAM_COMMIT=\"$source_head\"/SP11_KERNEL_UPSTREAM_COMMIT=\"$synthetic_head\"/" \
+  "$baseline" > "$missing_head_tree_baseline"
+missing_head_tree_manifest="$temporary_root/missing-head-tree-manifest.txt"
+sed \
+  -e "s/^Expected source commit: $source_head$/Expected source commit: $synthetic_head/" \
+  -e "s/^Source HEAD: $source_head$/Source HEAD: $synthetic_head/" \
+  "$manifest" > "$missing_head_tree_manifest"
+missing_head_tree_output="$output_a/missing-head-tree-patched-source.tar.xz"
+if run_generator --baseline "$missing_head_tree_baseline" \
+    --build-manifest "$missing_head_tree_manifest" \
+    --source-repo "$missing_head_tree_repo" --toolchain-contract "$contract" \
+    --output "$missing_head_tree_output" \
+    > "$temporary_root/missing-head-tree.stdout" \
+    2> "$temporary_root/missing-head-tree.stderr"; then
+  die "generator accepted a Source HEAD with an unavailable tree object"
+fi
+[ ! -s "$missing_head_tree_output" ] ||
+  die "missing Source HEAD tree failure left nonempty output bytes"
+! grep -Fq 'Generated deterministic' "$temporary_root/missing-head-tree.stdout" ||
+  die "missing Source HEAD tree failure emitted a success claim"
+grep -Fq 'error:' "$temporary_root/missing-head-tree.stderr" ||
+  die "missing Source HEAD tree failure was not explicit"
+! grep -Fq 'Traceback' "$temporary_root/missing-head-tree.stderr" ||
+  die "missing Source HEAD tree failure leaked a traceback"
+
+# The patched tree is an independent bound object and must exist even though
+# Source HEAD is intentionally shallow.
+missing_patched_tree="$(printf '3%.0s' {1..40})"
+if git -C "$source_repo" cat-file -e "$missing_patched_tree^{tree}" 2>/dev/null; then
+  die "missing-patched-tree fixture unexpectedly resolved its absent tree"
+fi
+missing_patched_tree_manifest="$temporary_root/missing-patched-tree-manifest.txt"
+sed "s/^Patched tree ID: $patched_tree$/Patched tree ID: $missing_patched_tree/" \
+  "$manifest" > "$missing_patched_tree_manifest"
+expect_failure 'patched-tree type check failed' \
+  "$output_a/missing-patched-tree-patched-source.tar.xz" \
+  run_generator --baseline "$baseline" \
+  --build-manifest "$missing_patched_tree_manifest" \
+  --source-repo "$source_repo" --toolchain-contract "$contract" \
+  --output "$output_a/missing-patched-tree-patched-source.tar.xz"
 
 python3 - "$archive_a" "$epoch" "$archive_name" <<'PY_VERIFY'
 import pathlib

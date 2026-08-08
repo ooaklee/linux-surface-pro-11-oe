@@ -911,34 +911,53 @@ def safe_environment(scratch: Path) -> dict[str, str]:
     }
 
 
-def create_private_git_view(scratch: PinnedScratch, object_format: str) -> Path:
-    """Construct the minimal config-free bare object view without git-init output."""
+def private_git_config(object_format: str) -> bytes:
+    """Return exact config bytes for one private object format."""
 
+    if object_format == "sha1":
+        return (
+            b"[core]\n"
+            b"\trepositoryformatversion = 0\n"
+            b"\tfilemode = true\n"
+            b"\tbare = true\n"
+            b"\tcommitGraph = false\n"
+        )
+    if object_format == "sha256":
+        return (
+            b"[core]\n"
+            b"\trepositoryformatversion = 1\n"
+            b"\tfilemode = true\n"
+            b"\tbare = true\n"
+            b"\tcommitGraph = false\n"
+            b"[extensions]\n"
+            b"\tobjectformat = sha256\n"
+        )
+    fail("unsupported private Git object format")
+
+
+def create_private_git_view(
+    scratch: PinnedScratch, object_format: str, source_head: str
+) -> Path:
+    """Construct a config-free object view with one manifest-bound shallow root."""
+
+    config = private_git_config(object_format)
+    expected_length = 40 if object_format == "sha1" else 64
+    if not OBJECT_ID.fullmatch(source_head) or len(source_head) != expected_length:
+        fail("private Git shallow boundary does not match the source object format")
     create_private_directory(scratch, "object-view.git")
     create_private_directory(scratch, "object-view.git/objects")
     create_private_directory(scratch, "object-view.git/refs")
     write_private_file(
         scratch, "object-view.git/HEAD", b"ref: refs/heads/private-view\n"
     )
-    if object_format == "sha1":
-        config = (
-            b"[core]\n"
-            b"\trepositoryformatversion = 0\n"
-            b"\tfilemode = true\n"
-            b"\tbare = true\n"
-        )
-    elif object_format == "sha256":
-        config = (
-            b"[core]\n"
-            b"\trepositoryformatversion = 1\n"
-            b"\tfilemode = true\n"
-            b"\tbare = true\n"
-            b"[extensions]\n"
-            b"\tobjectformat = sha256\n"
-        )
-    else:
-        fail("unsupported private Git object format")
     write_private_file(scratch, "object-view.git/config", config)
+    # The preserved production checkout may be a true depth-1 clone whose
+    # source commit has an unavailable parent.  Recreate only the exact
+    # manifest-bound Source HEAD as private shallow authority; never copy or
+    # consult the source repository's mutable .git/shallow file.
+    write_private_file(
+        scratch, "object-view.git/shallow", f"{source_head}\n".encode("ascii")
+    )
     return Path("object-view.git")
 
 
@@ -2099,9 +2118,26 @@ def main() -> int:
         if os.pathsep in str(source_objects) or "\n" in str(source_objects):
             fail("source object directory cannot be encoded as one private alternate")
 
-        private_git_dir = create_private_git_view(scratch_handle, object_format)
+        private_git_dir = create_private_git_view(
+            scratch_handle, object_format, source_head
+        )
         object_environment = environment.copy()
         object_environment["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = str(source_objects)
+        private_commit_graph = run_text(
+            [
+                git,
+                "--git-dir",
+                str(private_git_dir),
+                "config",
+                "--type=bool",
+                "--get",
+                "core.commitGraph",
+            ],
+            object_environment,
+            "private commit-graph authority check",
+        )
+        if private_commit_graph != "false":
+            fail("private Git view did not disable ambient commit-graph authority")
         commit_epoch = run_text(
             [
                 git,
