@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Safely validate corresponding-source archives against Git object IDs."""
+"""Technically validate patched-source archive candidates against Git objects."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ import re
 import stat
 import sys
 import tarfile
-import tempfile
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
@@ -23,9 +23,15 @@ MAX_EXPANDED_BYTES = 8 * 1024 * 1024 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_MEMBERS = 250_000
 MAX_PATH_BYTES = 4096
+MAX_PATH_COMPONENTS = 64
+MAX_TOTAL_PATH_COMPONENTS = 1_000_000
+MAX_TOTAL_PATH_AND_LINK_BYTES = 64 * 1024 * 1024
+MAX_TREE_CONTENT_BYTES = 32 * 1024 * 1024
 COPY_CHUNK_BYTES = 1024 * 1024
 MAX_ZERO_TAIL_BYTES = 1024 * 1024
 MAX_XZ_DECODER_MEMORY = 256 * 1024 * 1024
+MAX_TAR_READ_REQUEST = 8 * 1024 * 1024
+MAX_TAR_EXTENSION_BYTES = 64 * 1024
 MAX_TAR_BYTES = MAX_EXPANDED_BYTES + MAX_MEMBERS * 1024 + MAX_ZERO_TAIL_BYTES
 OBJECT_ID_PATTERN = re.compile(r"(?:[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})\Z")
 
@@ -68,94 +74,199 @@ def validate_object_id(value: str, label: str) -> str:
     return value.lower()
 
 
-def snapshot_archive(archive: Path, scratch: Path) -> Path:
-    """Pin one bounded input capture before any multi-pass format validation."""
+@contextmanager
+def pinned_archive_stream(archive: Path, inherited_fd: int | None):
+    """Hold one immutable-by-state archive inode without filesystem intermediates."""
 
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    descriptor = -1
+    before_path = None
     try:
-        descriptor = os.open(archive, flags)
-    except OSError as exc:
-        raise ValidationError(
-            "source archive must be a non-empty regular, non-symlinked file"
-        ) from exc
-    snapshot = scratch / "captured-source.tar.xz"
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size <= 0:
-            raise ValidationError(
-                "source archive must be a non-empty regular, non-symlinked file"
+        if inherited_fd is None:
+            before_path = archive.lstat()
+            descriptor = os.open(
+                archive,
+                os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
             )
-        if metadata.st_size > MAX_ARCHIVE_BYTES:
-            raise ValidationError("source archive exceeds the compressed-size validation limit")
-        copied = 0
-        with os.fdopen(descriptor, "rb", closefd=True) as source:
+        else:
+            if inherited_fd < 3:
+                raise ValidationError("inherited source-archive descriptor is invalid")
+            descriptor = os.dup(inherited_fd)
+        before = os.fstat(descriptor)
+        identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            before.st_nlink,
+        )
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_size <= 0
+            or before.st_size > MAX_ARCHIVE_BYTES
+            or (
+                before_path is not None
+                and (
+                    not stat.S_ISREG(before_path.st_mode)
+                    or stat.S_ISLNK(before_path.st_mode)
+                    or (before_path.st_dev, before_path.st_ino)
+                    != (before.st_dev, before.st_ino)
+                )
+            )
+        ):
+            raise ValidationError(
+                "source archive must be a bounded non-empty regular, non-symlinked file"
+            )
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
             descriptor = -1
-            with snapshot.open("xb") as output:
-                while True:
-                    chunk = source.read(COPY_CHUNK_BYTES)
-                    if not chunk:
-                        break
-                    copied += len(chunk)
-                    if copied > MAX_ARCHIVE_BYTES or copied > metadata.st_size:
-                        raise ValidationError(
-                            "source archive changed or exceeded the compressed-size validation limit"
-                        )
-                    output.write(chunk)
-                output.flush()
-                os.fsync(output.fileno())
-            final_metadata = os.fstat(source.fileno())
-            if copied != metadata.st_size or final_metadata.st_size != metadata.st_size:
-                raise ValidationError("source archive changed while it was captured")
-        os.chmod(snapshot, 0o400)
-        return snapshot
+            yield stream
+            after = os.fstat(stream.fileno())
+        if identity != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_nlink,
+        ):
+            raise ValidationError("source archive changed while it was validated")
+        if before_path is not None:
+            after_path = archive.lstat()
+            if (
+                after_path.st_dev,
+                after_path.st_ino,
+                after_path.st_size,
+                after_path.st_mtime_ns,
+                after_path.st_ctime_ns,
+                after_path.st_nlink,
+            ) != identity:
+                raise ValidationError("source archive mapping changed while it was validated")
+    except ValidationError:
+        raise
     except OSError as exc:
-        raise ValidationError(f"source archive could not be captured safely: {exc}") from exc
+        raise ValidationError("source archive could not be pinned safely") from exc
     finally:
         if descriptor >= 0:
             os.close(descriptor)
 
 
-def decompress_single_xz_stream(source: BinaryIO, destination: Path) -> None:
-    decompressor = lzma.LZMADecompressor(
-        format=lzma.FORMAT_XZ, memlimit=MAX_XZ_DECODER_MEMORY
-    )
-    expanded = 0
-    try:
-        if source.read(6) != b"\xfd7zXZ\x00":
+class SingleXZReader:
+    """Bounded non-seekable reader for exactly one XZ stream."""
+
+    def __init__(self, source: BinaryIO):
+        self.source = source
+        self.decompressor = lzma.LZMADecompressor(
+            format=lzma.FORMAT_XZ, memlimit=MAX_XZ_DECODER_MEMORY
+        )
+        header = source.read(6)
+        if header != b"\xfd7zXZ\x00":
             raise ValidationError("source archive must be one XZ-compressed tar stream")
-        source.seek(0)
-        with destination.open("xb") as output_file:
-            while True:
-                chunk = source.read(COPY_CHUNK_BYTES)
-                if not chunk:
-                    break
-                pending = chunk
-                while pending or not decompressor.needs_input:
-                    output = decompressor.decompress(pending, max_length=COPY_CHUNK_BYTES)
-                    pending = b""
-                    expanded += len(output)
-                    if expanded > MAX_TAR_BYTES:
+        self.pending = header
+        self.buffer = bytearray()
+        self.expanded = 0
+        self.finished = False
+
+    def read(self, size: int = -1) -> bytes:
+        if size == 0:
+            return b""
+        if size < 0:
+            size = COPY_CHUNK_BYTES
+        if size > MAX_TAR_READ_REQUEST:
+            raise ValidationError("source tar metadata read request exceeds its limit")
+        try:
+            while len(self.buffer) < size and not self.finished:
+                if not self.pending and self.decompressor.needs_input:
+                    self.pending = self.source.read(COPY_CHUNK_BYTES)
+                    if not self.pending:
                         raise ValidationError(
-                            "source archive exceeds the expanded-size validation limit"
+                            "source archive contains a truncated XZ stream"
                         )
-                    output_file.write(output)
-                    if decompressor.eof:
-                        if decompressor.unused_data or source.read(1):
-                            raise ValidationError(
-                                "source archive contains bytes after its single XZ stream"
-                            )
-                        output_file.flush()
-                        os.fsync(output_file.fileno())
-                        os.chmod(destination, 0o400)
-                        return
-        if not decompressor.eof:
-            raise ValidationError("source archive contains a truncated XZ stream")
-    except lzma.LZMAError as exc:
-        if "memory usage limit" in str(exc).lower():
-            raise ValidationError("source archive exceeds the XZ decoder memory limit") from exc
-        raise ValidationError(f"source archive has malformed XZ compression: {exc}") from exc
+                output = self.decompressor.decompress(
+                    self.pending, max_length=max(1, size - len(self.buffer))
+                )
+                self.pending = b""
+                self.expanded += len(output)
+                if self.expanded > MAX_TAR_BYTES:
+                    raise ValidationError(
+                        "source archive exceeds the expanded-size validation limit"
+                    )
+                self.buffer.extend(output)
+                if self.decompressor.eof:
+                    if self.decompressor.unused_data or self.source.read(1):
+                        raise ValidationError(
+                            "source archive contains bytes after its single XZ stream"
+                        )
+                    self.finished = True
+                elif not output and not self.decompressor.needs_input:
+                    continue
+            result = bytes(self.buffer[:size])
+            del self.buffer[:size]
+            return result
+        except lzma.LZMAError as exc:
+            if "memory usage limit" in str(exc).lower():
+                raise ValidationError(
+                    "source archive exceeds the XZ decoder memory limit"
+                ) from exc
+            raise ValidationError("source archive has malformed XZ compression") from exc
+
+
+class BoundedTarInfo(tarfile.TarInfo):
+    """Reject attacker-sized extension payloads before tarfile buffers them."""
+
+    def _proc_pax(self, source: tarfile.TarFile):
+        if self.size < 0 or self.size > MAX_TAR_EXTENSION_BYTES:
+            raise ValidationError("source tar extension metadata exceeds its limit")
+        # tarfile processes GNU sparse PAX keys before returning the next
+        # TarInfo.  In particular, sparse 1.0 trusts a following, attacker-set
+        # field count and can grow a very large integer list.  Read and strictly
+        # frame the already bounded PAX payload first, reject every GNU sparse
+        # namespace key, then replay the bytes to the standard parser.
+        stream = source.fileobj
+        padded_size = self._block(self.size)
+        payload = stream.read(padded_size)
+        if len(payload) != padded_size:
+            raise ValidationError("source tar extension metadata is truncated")
+        content = payload[: self.size]
+        position = 0
+        while position < len(content) and content[position] != 0:
+            space = content.find(b" ", position, min(len(content), position + 32))
+            if space < 0:
+                raise ValidationError("source tar has malformed PAX metadata")
+            length_text = content[position:space]
+            if not length_text or not length_text.isdigit():
+                raise ValidationError("source tar has malformed PAX metadata")
+            record_length = int(length_text)
+            record_end = position + record_length
+            if record_length < 5 or record_end > len(content):
+                raise ValidationError("source tar has malformed PAX metadata")
+            record = content[space + 1 : record_end]
+            if not record.endswith(b"\n"):
+                raise ValidationError("source tar has malformed PAX metadata")
+            keyword, equals, _value = record[:-1].partition(b"=")
+            if not keyword or equals != b"=":
+                raise ValidationError("source tar has malformed PAX metadata")
+            if keyword.startswith(b"GNU.sparse."):
+                raise ValidationError("source tar GNU sparse PAX metadata is not permitted")
+            position = record_end
+        if position != len(content):
+            raise ValidationError("source tar has malformed PAX metadata")
+
+        buffered = getattr(stream, "buf", None)
+        stream_position = getattr(stream, "pos", None)
+        if not isinstance(buffered, bytes) or not isinstance(stream_position, int):
+            raise ValidationError("source tar PAX stream cannot be replayed safely")
+        stream.buf = payload + buffered
+        stream.pos = stream_position - len(payload)
+        return super()._proc_pax(source)
+
+    def _proc_gnulong(self, source: tarfile.TarFile):
+        if self.size < 0 or self.size > MAX_TAR_EXTENSION_BYTES:
+            raise ValidationError("source tar extension metadata exceeds its limit")
+        return super()._proc_gnulong(source)
+
+    def _proc_sparse(self, source: tarfile.TarFile):
+        raise ValidationError("source tar sparse extension metadata is not permitted")
 
 
 def canonical_member_name(raw_name: str) -> tuple[str, tuple[str, ...]]:
@@ -171,7 +282,14 @@ def canonical_member_name(raw_name: str) -> tuple[str, tuple[str, ...]]:
     if len(name.encode("utf-8", "surrogateescape")) > MAX_PATH_BYTES:
         raise ValidationError("archive contains a path longer than the validation limit")
     parts = PurePosixPath(name).parts
-    if not parts or any(part in ("", ".", "..") for part in parts):
+    if len(parts) > MAX_PATH_COMPONENTS:
+        raise ValidationError(
+            "archive path exceeds the path-component validation limit"
+        )
+    if (
+        not parts
+        or any(part in ("", ".", "..") for part in parts)
+    ):
         raise ValidationError(f"archive contains a non-canonical path: {raw_name!r}")
     if posixpath.normpath(name) != name or "//" in name:
         raise ValidationError(f"archive contains a non-canonical path: {raw_name!r}")
@@ -202,23 +320,31 @@ def allowed_member_pax_headers(
     return headers == expected
 
 
-def validate_header_identity(member: tarfile.TarInfo, name: str) -> None:
+def validate_header_identity(
+    member: tarfile.TarInfo, name: str, expected_mtime: int | None
+) -> None:
     if member.uid != 0 or member.gid != 0 or member.uname != "root" or member.gname != "root":
         raise ValidationError(f"archive member has non-canonical owner metadata: {name}")
     if member.devmajor != 0 or member.devminor != 0:
         raise ValidationError(f"archive member has non-canonical device metadata: {name}")
     if not isinstance(member.mtime, (int, float)) or member.mtime < 0:
         raise ValidationError(f"archive member has an invalid timestamp: {name}")
+    if expected_mtime is not None and member.mtime != expected_mtime:
+        raise ValidationError(
+            f"archive member timestamp does not match the expected source epoch: {name}"
+        )
 
 
 def read_members(
     archive_stream: BinaryIO,
     expected_comment: str | None,
     git_object_format: str,
+    expected_mtime: int | None = None,
 ) -> tuple[list[ArchiveMember], str]:
     try:
-        archive_stream.seek(0)
-        source = tarfile.open(fileobj=archive_stream, mode="r:")
+        source = tarfile.open(
+            fileobj=archive_stream, mode="r|", tarinfo=BoundedTarInfo
+        )
     except (tarfile.TarError, OSError) as exc:
         raise ValidationError(f"source archive is malformed or unsupported: {exc}") from exc
 
@@ -226,6 +352,8 @@ def read_members(
     seen: set[str] = set()
     roots: set[str] = set()
     expanded_bytes = 0
+    total_path_components = 0
+    total_path_and_link_bytes = 0
     try:
         if not allowed_global_pax_headers(source.pax_headers, expected_comment):
             raise ValidationError(
@@ -235,6 +363,18 @@ def read_members(
             if len(members) >= MAX_MEMBERS:
                 raise ValidationError("source archive contains too many members")
             name, parts = canonical_member_name(member.name)
+            total_path_components += len(parts)
+            if total_path_components > MAX_TOTAL_PATH_COMPONENTS:
+                raise ValidationError(
+                    "archive exceeds the aggregate path-component validation limit"
+                )
+            total_path_and_link_bytes += len(
+                name.encode("utf-8", "surrogateescape")
+            )
+            if total_path_and_link_bytes > MAX_TOTAL_PATH_AND_LINK_BYTES:
+                raise ValidationError(
+                    "archive exceeds the aggregate path and link-name byte limit"
+                )
             if name in seen:
                 raise ValidationError(f"archive contains a duplicate path: {name}")
             seen.add(name)
@@ -243,16 +383,20 @@ def read_members(
                 member.pax_headers, expected_comment, member, name
             ):
                 raise ValidationError(f"archive member has untrusted pax metadata: {name}")
-            validate_header_identity(member, name)
+            validate_header_identity(member, name, expected_mtime)
 
-            if member.isdir():
+            if member.type == tarfile.DIRTYPE:
+                if member.size != 0:
+                    raise ValidationError(
+                        f"directory carries a non-canonical payload: {name}"
+                    )
                 mode = stat.S_IMODE(member.mode)
                 if mode not in (0o755, 0o775):
                     raise ValidationError(
                         f"directory has a non-Git archive mode {mode:o}: {name}"
                     )
                 record = ArchiveMember(name=name, parts=parts, kind="directory")
-            elif member.isreg():
+            elif member.type == tarfile.REGTYPE:
                 mode = stat.S_IMODE(member.mode)
                 if mode not in (0o644, 0o664, 0o755, 0o775):
                     raise ValidationError(
@@ -283,7 +427,11 @@ def read_members(
                     mode=git_mode,
                     object_id=object_id,
                 )
-            elif member.issym():
+            elif member.type == tarfile.SYMTYPE:
+                if member.size != 0:
+                    raise ValidationError(
+                        f"symlink carries a non-canonical payload: {name}"
+                    )
                 if (
                     not member.linkname
                     or "\x00" in member.linkname
@@ -296,6 +444,13 @@ def read_members(
                     raise ValidationError(f"archive contains an unsafe symlink target: {name}")
                 if len(member.linkname.encode("utf-8", "surrogateescape")) > MAX_PATH_BYTES:
                     raise ValidationError(f"archive symlink target is too long: {name}")
+                total_path_and_link_bytes += len(
+                    member.linkname.encode("utf-8", "surrogateescape")
+                )
+                if total_path_and_link_bytes > MAX_TOTAL_PATH_AND_LINK_BYTES:
+                    raise ValidationError(
+                        "archive exceeds the aggregate path and link-name byte limit"
+                    )
                 if stat.S_IMODE(member.mode) != 0o777:
                     raise ValidationError(f"symlink has a non-Git archive mode: {name}")
                 object_id = hash_git_blob_bytes(
@@ -315,7 +470,6 @@ def read_members(
                     f"archive contains a non-file, non-directory, non-symlink member: {name}"
                 )
             members.append(record)
-        source.fileobj.seek(source.offset)
         tail = source.fileobj.read(MAX_ZERO_TAIL_BYTES + 1)
         if len(tail) > MAX_ZERO_TAIL_BYTES:
             raise ValidationError("source tar has an excessive end-of-archive zero tail")
@@ -343,9 +497,8 @@ def read_members(
     }
     for member in members:
         name = member.name
-        parts = member.parts
-        for depth in range(1, len(parts)):
-            parent = "/".join(parts[:depth])
+        if "/" in name:
+            parent = name.rpartition("/")[0]
             if kinds.get(parent) == "symlink":
                 raise ValidationError(f"archive member traverses a symlink parent: {name}")
             if kinds.get(parent) != "directory":
@@ -452,6 +605,7 @@ def write_tree(node: TreeNode, git_object_format: str) -> str:
     # deterministically rather than raising RecursionError.
     stack: list[tuple[TreeNode, bool]] = [(node, False)]
     object_ids: dict[int, str] = {}
+    aggregate_tree_content_bytes = 0
     while stack:
         current, ready = stack.pop()
         if not ready:
@@ -478,13 +632,21 @@ def write_tree(node: TreeNode, git_object_format: str) -> str:
                 )
 
         entries.sort(key=lambda entry: entry[0] + (b"/" if entry[1] else b""))
-        tree_content = b"".join(
+        records = [
             mode + b" " + name + b"\0" + object_id
             for name, _, mode, object_id in entries
-        )
-        object_ids[id(current)] = hash_git_object(
-            "tree", tree_content, git_object_format
-        )
+        ]
+        content_size = sum(map(len, records))
+        aggregate_tree_content_bytes += content_size
+        if aggregate_tree_content_bytes > MAX_TREE_CONTENT_BYTES:
+            raise ValidationError(
+                "archive exceeds the aggregate Git tree-content byte limit"
+            )
+        digest = new_git_hasher(git_object_format)
+        digest.update(f"tree {content_size}\0".encode("ascii"))
+        for record in records:
+            digest.update(record)
+        object_ids[id(current)] = digest.hexdigest()
     return object_ids[id(node)]
 
 
@@ -566,6 +728,8 @@ def parse_arguments() -> argparse.Namespace:
     kernel.add_argument("--archive", required=True, type=Path)
     kernel.add_argument("--expected-tree", required=True)
     kernel.add_argument("--expected-archive-comment")
+    kernel.add_argument("--expected-mtime")
+    kernel.add_argument("--archive-fd", type=int, help=argparse.SUPPRESS)
 
     touchscreen = subparsers.add_parser("touchscreen")
     touchscreen.add_argument("--archive", required=True, type=Path)
@@ -573,16 +737,33 @@ def parse_arguments() -> argparse.Namespace:
     touchscreen.add_argument("--expected-license-blob", required=True)
     touchscreen.add_argument("--license-mode", required=True)
     touchscreen.add_argument("--expected-archive-comment", required=True)
+    touchscreen.add_argument("--archive-fd", type=int, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
 def main() -> int:
+    if not sys.flags.isolated:
+        raise ValidationError(
+            "source archive validator must be invoked with Python isolated mode (-I)"
+        )
     args = parse_arguments()
     comment = None
     if args.expected_archive_comment is not None:
         comment = validate_object_id(args.expected_archive_comment, "expected Git archive comment")
     if args.mode == "kernel":
         expected_object_id = validate_object_id(args.expected_tree, "expected kernel tree ID")
+        if comment is not None and object_format(comment) != object_format(expected_object_id):
+            raise ValidationError(
+                "kernel source commit and tree identities use mixed Git object formats"
+            )
+        if args.expected_mtime is not None:
+            if not re.fullmatch(r"[1-9][0-9]{0,9}", args.expected_mtime):
+                raise ValidationError("expected source epoch must be canonical decimal")
+            args.expected_mtime = int(args.expected_mtime)
+            if args.expected_mtime > 4_102_444_799:
+                raise ValidationError(
+                    "expected source epoch must be a bounded Unix timestamp before 2100 UTC"
+                )
     else:
         expected_object_id = validate_object_id(
             args.expected_modules_tree, "expected modules tree ID"
@@ -596,26 +777,26 @@ def main() -> int:
             raise ValidationError(
                 "touchscreen source commit and object identities use mixed Git object formats"
             )
-    with tempfile.TemporaryDirectory(prefix="sp11-source-archive.") as temporary:
-        temporary_root = Path(temporary)
-        captured_archive = snapshot_archive(args.archive, temporary_root)
-        captured_tar = temporary_root / "captured-source.tar"
+    with pinned_archive_stream(args.archive, args.archive_fd) as captured_archive:
         git_object_format = object_format(expected_object_id)
-        with captured_archive.open("rb") as archive_stream:
-            decompress_single_xz_stream(archive_stream, captured_tar)
-        with captured_tar.open("rb") as archive_stream:
-            members, archive_root = read_members(
-                archive_stream, comment, git_object_format
-            )
+        expanded_stream = SingleXZReader(captured_archive)
+        members, archive_root = read_members(
+            expanded_stream,
+            comment,
+            git_object_format,
+            args.expected_mtime if args.mode == "kernel" else None,
+        )
         if args.mode == "kernel":
             lines = validate_kernel(args, members, archive_root, git_object_format)
         else:
             lines = validate_touchscreen(
                 args, members, archive_root, git_object_format
             )
-    print("Validated corresponding-source archive safely.")
+    print("Validated patched-source archive technical structure, tree identity, and metadata.")
     for line in lines:
         print(line)
+    if args.mode == "kernel" and args.expected_mtime is not None:
+        print(f"Archive source epoch: {args.expected_mtime}")
     return 0
 
 
@@ -624,4 +805,13 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except ValidationError as error:
         print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(1)
+    except Exception as error:
+        print(
+            f"error: source archive validation failed safely ({type(error).__name__})",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        print("error: source archive validation interrupted safely", file=sys.stderr)
         raise SystemExit(1)

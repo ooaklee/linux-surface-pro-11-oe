@@ -196,9 +196,9 @@ validate_schema_v2_touchscreen_bindings() {
     error "schema-v2 release manifests and source assets failed complete cross-binding validation."
     return
   fi
-  if ! python3 "$archive_validator" kernel \
+  if ! python3 -I "$archive_validator" kernel \
       --archive "$kernel_archive" --expected-tree "$patched_tree" >/dev/null ||
-     ! python3 "$archive_validator" touchscreen \
+     ! python3 -I "$archive_validator" touchscreen \
       --archive "$touch_archive" \
       --expected-modules-tree "$touch_tree" \
       --expected-license-blob "$touch_license" \
@@ -303,7 +303,7 @@ validate_schema_v2_kernel_bindings() {
     error "schema-v2 kernel release manifest and source failed complete cross-binding validation."
     return
   fi
-  if ! python3 "$archive_validator" kernel \
+  if ! python3 -I "$archive_validator" kernel \
       --archive "$kernel_archive" --expected-tree "$patched_tree" >/dev/null; then
     error "schema-v2 kernel source archive does not match its Git tree identity."
     return

@@ -1367,12 +1367,12 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     exit 1
   fi
 
-  if ! python3 "$source_archive_validator" kernel \
+  if ! python3 -I "$source_archive_validator" kernel \
       --archive "$KERNEL_SOURCE_ASSET" --expected-tree "$build_patched_tree"; then
     echo "Kernel source archive failed exact-tree validation." >&2
     exit 1
   fi
-  if ! python3 "$source_archive_validator" touchscreen \
+  if ! python3 -I "$source_archive_validator" touchscreen \
       --archive "$TOUCHSCREEN_SOURCE_ASSET" \
       --expected-modules-tree "$module_source_tree" \
       --expected-license-blob "$module_license_blob" \
@@ -2370,9 +2370,9 @@ verify_prepared_output() {
       echo "Prepared manifests no longer match the validated raw-image payload." >&2
       return 1
     fi
-    if ! python3 "$source_archive_validator" kernel \
+    if ! python3 -I "$source_archive_validator" kernel \
         --archive "$prepared_dir/$kernel_source_base" --expected-tree "$build_patched_tree" ||
-      ! python3 "$source_archive_validator" touchscreen \
+      ! python3 -I "$source_archive_validator" touchscreen \
         --archive "$prepared_dir/$touchscreen_source_base" \
         --expected-modules-tree "$module_source_tree" \
         --expected-license-blob "$module_license_blob" \

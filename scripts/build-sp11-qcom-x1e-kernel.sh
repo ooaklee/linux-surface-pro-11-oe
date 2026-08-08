@@ -84,6 +84,21 @@ PATCHED_DIFF_FORMAT="git-diff-full-index-binary-v1"
 PATCHED_DIFF_GIT_VERSION=""
 PATCHED_DIFF_SHA256=""
 PATCHED_TREE_ID=""
+PATCHED_DIFF_ARGS=(
+  --binary
+  --full-index
+  --no-ext-diff
+  --no-textconv
+  --no-color
+  --diff-algorithm=myers
+  --indent-heuristic
+  --unified=3
+  --inter-hunk-context=0
+  --no-renames
+  -O/dev/null
+  --src-prefix=a/
+  --dst-prefix=b/
+)
 PATCHED_UNTRACKED_PATHS_FILE=""
 RELEASE_PATCH_PATHS=()
 RELEASE_PATCH_ABS_PATHS=()
@@ -1807,6 +1822,12 @@ capture_patched_tree_identity() {
   [ "$RELEASE_BUILD" = "true" ] || return 0
   require_tool cmp
 
+  if [ -e "$source_dir/.git/info/attributes" ] ||
+     [ -L "$source_dir/.git/info/attributes" ]; then
+    echo "Release source repository must not contain private Git attributes." >&2
+    exit 1
+  fi
+
   PATCHED_UNTRACKED_PATHS_FILE="$(mktemp "$work_dir/.sp11-release-untracked-paths.XXXXXX")"
   if ! git -C "$source_dir" ls-files -z --others --exclude-standard \
       > "$PATCHED_UNTRACKED_PATHS_FILE"; then
@@ -1823,9 +1844,10 @@ capture_patched_tree_identity() {
   if ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" read-tree HEAD ||
      ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" add -A -f -- . ||
      ! PATCHED_TREE_ID="$(GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" write-tree)" ||
-     ! GIT_INDEX_FILE="$temporary_index" LC_ALL=C GIT_EXTERNAL_DIFF= \
-       git -C "$source_dir" diff --cached --binary --full-index --no-ext-diff \
-         --no-textconv --src-prefix=a/ --dst-prefix=b/ HEAD -- > "$temporary_diff"; then
+     ! LC_ALL=C GIT_EXTERNAL_DIFF= \
+       git -C "$source_dir" -c core.attributesFile=/dev/null \
+         -c diff.suppressBlankEmpty=false --attr-source="$PATCHED_TREE_ID" diff \
+         "${PATCHED_DIFF_ARGS[@]}" HEAD "$PATCHED_TREE_ID" -- > "$temporary_diff"; then
     rm -f -- "$temporary_index" "$temporary_diff"
     echo "Could not capture the canonical patched kernel tree identity." >&2
     exit 1
@@ -1847,6 +1869,12 @@ verify_patched_tree_stable() {
   local post_untracked_paths source_head deleted_path
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  if [ -e "$source_dir/.git/info/attributes" ] ||
+     [ -L "$source_dir/.git/info/attributes" ]; then
+    echo "Release source repository gained private Git attributes during the build." >&2
+    return 1
+  fi
 
   if ! source_head="$(git -C "$source_dir" rev-parse --verify 'HEAD^{commit}')" ||
      [ "$source_head" != "$EXPECTED_SOURCE_COMMIT" ]; then
@@ -1893,9 +1921,10 @@ verify_patched_tree_stable() {
   if ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" read-tree "$PATCHED_TREE_ID" ||
      ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" add -u -- . ||
      ! recomputed_tree="$(GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" write-tree)" ||
-     ! GIT_INDEX_FILE="$temporary_index" LC_ALL=C GIT_EXTERNAL_DIFF= \
-       git -C "$source_dir" diff --cached --binary --full-index --no-ext-diff \
-         --no-textconv --src-prefix=a/ --dst-prefix=b/ HEAD -- > "$temporary_diff"; then
+     ! LC_ALL=C GIT_EXTERNAL_DIFF= \
+       git -C "$source_dir" -c core.attributesFile=/dev/null \
+         -c diff.suppressBlankEmpty=false --attr-source="$recomputed_tree" diff \
+         "${PATCHED_DIFF_ARGS[@]}" HEAD "$recomputed_tree" -- > "$temporary_diff"; then
     rm -f -- "$temporary_index" "$temporary_diff"
     echo "Could not recompute the exact pre-build kernel source contract." >&2
     return 1

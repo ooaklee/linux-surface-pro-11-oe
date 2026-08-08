@@ -1696,14 +1696,14 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   done
   SOURCE_ASSETS=("${snapshot_source_assets[@]}")
 
-  if ! python3 "$source_archive_validator" kernel \
+  if ! python3 -I "$source_archive_validator" kernel \
       --archive "$KERNEL_SOURCE_ASSET" \
       --expected-tree "$patched_tree_id"; then
     echo "Patched-kernel corresponding-source archive does not match build provenance." >&2
     exit 1
   fi
   if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
-    if ! python3 "$source_archive_validator" touchscreen \
+    if ! python3 -I "$source_archive_validator" touchscreen \
         --archive "$TOUCHSCREEN_SOURCE_ASSET" \
         --expected-modules-tree "$touchscreen_source_modules_tree_id" \
         --expected-license-blob "$touchscreen_source_license_blob_id" \

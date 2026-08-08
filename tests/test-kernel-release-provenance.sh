@@ -145,7 +145,8 @@ printf '%s\n' \
   'diff --git a/guard.txt b/guard.txt' \
   '--- a/guard.txt' \
   '+++ b/guard.txt' \
-  '@@ -1 +1 @@' \
+  '@@ -1,2 +1,2 @@' \
+  ' fixture_function()' \
   '-before' \
   '+after' \
   'diff --git a/new-from-patch.txt b/new-from-patch.txt' \
@@ -166,7 +167,8 @@ mkdir -p \
   "$source_repo/drivers/net/wireless/ath/ath12k" \
   "$source_repo/arch/arm64/boot/dts/qcom" \
   "$source_repo/debian"
-printf 'before\n' > "$source_repo/guard.txt"
+printf 'guard.txt diff=cpp\n' > "$source_repo/.gitattributes"
+printf 'fixture_function()\nbefore\n' > "$source_repo/guard.txt"
 printf '%s\n' new-from-patch.txt debian/build/ > "$source_repo/.gitignore"
 printf '%s\n' 'of_property_read_bool(ab->dev->of_node, "disable-rfkill")' \
   > "$source_repo/drivers/net/wireless/ath/ath12k/core.c"
@@ -285,6 +287,23 @@ for arg in "$@"; do
     args+=("$arg")
   fi
 done
+if [ "${HOSTILE_SOURCE_DIFF_CONFIG:-false}" = "true" ] &&
+   [ "${args[0]:-}" = "clone" ]; then
+  destination="${args[${#args[@]} - 1]}"
+  "$FIXTURE_REAL_GIT" "${args[@]}"
+  printf 'guard.txt\n' > "$destination/.git/hostile-order"
+  printf 'guard.txt -diff\n' > "$destination/.git/hostile-attributes"
+  "$FIXTURE_REAL_GIT" -C "$destination" config diff.algorithm histogram
+  "$FIXTURE_REAL_GIT" -C "$destination" config diff.renames copies
+  "$FIXTURE_REAL_GIT" -C "$destination" config diff.orderFile \
+    "$destination/.git/hostile-order"
+  "$FIXTURE_REAL_GIT" -C "$destination" config diff.indentHeuristic false
+  "$FIXTURE_REAL_GIT" -C "$destination" config diff.context 12
+  "$FIXTURE_REAL_GIT" -C "$destination" config diff.interHunkContext 5
+  "$FIXTURE_REAL_GIT" -C "$destination" config core.attributesFile \
+    "$destination/.git/hostile-attributes"
+  exit 0
+fi
 exec "$FIXTURE_REAL_GIT" "${args[@]}"
 EOF_GIT
 
@@ -693,6 +712,7 @@ grep -Fxq 'sudo-preserve' "$identity_log" ||
 grep -Fq "mk-build-deps"$'\t'"$source_date_epoch"$'\t'"$kbuild_build_user"$'\t'"$kbuild_build_host"$'\t'"$kbuild_build_timestamp" \
   "$identity_log" || die "deterministic build identity did not reach mk-build-deps"
 if ! FIXTURE_FORCE_NON_ROOT=true INCLUDE_OPTIONAL_DEB=true UNSIGNED_IMAGE=true \
+    HOSTILE_SOURCE_DIFF_CONFIG=true \
     run_release_build "$support_b" "$work_b" --install-deps \
       > "$temporary_root/build-b.log" 2>&1; then
   cat "$temporary_root/build-b.log" >&2
