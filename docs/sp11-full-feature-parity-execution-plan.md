@@ -59,7 +59,7 @@ The starting state is intentionally conservative:
 
 | Area | Recorded starting point | Programme state |
 |---|---|---|
-| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Two clean builds have a reviewed semantic comparison; immutable-APT replay is implemented and hostile-fixture tested but awaits a real clean build, while byte reproducibility, publication-schema propagation, signing, and recovery remain open |
+| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Two clean builds have a reviewed semantic comparison; immutable-APT replay and exact outer-schema propagation are implemented and hostile-fixture tested but await a real clean build, while byte reproducibility, signing, and recovery remain open |
 | Thin fork | The immutable base remains at `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; CI foundation commit `971b5af85ed0c7283ffb33430badeac9b5575057` is merged to the protected integration branch | Base and integration rules are active and thin-fork CI is green; no parity feature is accepted by branch presence |
 | Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is running and named by the effective static `GRUB_DEFAULT`, while `grubenv`'s stale `saved_entry` still names v2 | ADR0053 deliberately rejects mixed static/saved semantics; one-shot apply is blocked until `GRUB_DEFAULT=saved` and `saved_entry` both resolve to known-good v3, then P0 must capture the no-op canary and physical-recovery evidence |
 | Installed DTB path | Repository support retires its loose-DTB helper and kernel hooks under ADR0055; the exact Stubble image is authoritative | Target migration, successful normal GRUB regeneration, absence of project-managed loose-DTB lines, and packaged/embedded/active-FDT pairing remain pending P0 evidence |
@@ -221,15 +221,18 @@ state.
 
 P0.4's first adjacent-build audit is complete and recorded in the
 [2026-08-07 reproducibility report](sp11-kernel-reproducibility-report-20260807.md).
-All functional payload differences were classified and normalized comparison
-passed with zero unknown bytes, but every raw `.deb` differed. Immutable future
-replay for that pair is also unproven because APT was not snapshot-pinned.
-P0.4c now has a fail-closed dated-snapshot implementation and exact outer
-release/image propagation with hostile fixtures, but no real clean kernel build
-has exercised it. P0.4 therefore remains in evidence review: semantic
-equivalence passed, byte reproducibility failed, the immutable-input path is
-implemented-but-unverified on a real build, and signing plus the independent
-licence gates remain open.
+For evidence accounting rather than new backlog IDs, P0.4 has three facets: the
+exact directional historical comparator and retained-artifact gate close the
+P0.4a semantic facet with zero unknown payload differences; every raw `.deb`
+differed, so the P0.4b byte-reproducibility facet remains failed/open; and the
+P0.4c immutable-input facet remains open. CI exercises the comparator's hostile
+synthetic fixtures but does not carry the retained Debs. Immutable future replay
+for that pair is unproven because APT was not snapshot-pinned. The P0.4c path now
+has a fail-closed dated-snapshot implementation and exact outer release/image
+propagation with hostile fixtures, but no real clean kernel build has exercised
+it. P0.4 remains open overall. The comparator does not satisfy the
+byte-reproducibility, signing, real immutable-build, licence, recovery, or
+release-authorization gates; publication remains blocked.
 
 P0.6 is complete for the current target observation. The schema-3 inventory
 collector ran read-only, and both its sanitized result and a separately
@@ -348,7 +351,10 @@ required.
 
 **Dependencies:** P0. **Parallel lane:** input transport. **Research branch:**
 `lsp11-x-g6-contract-research`; **first implementation branch:**
-`lsp11-x-g6-hidraw-bridge-7.2-rc5`.
+`lsp11-x-g6-hidraw-bridge-7.2-rc5` in the public touchscreen-module fork,
+based exactly on geocausa commit
+`6bbcf7a4759a73014047a57e819219dd7f34951a`. Generic HID, Qualcomm, and DT
+deltas remain separate branches in the thin kernel fork.
 
 P2 must preserve the exact-ABI GPI/QSPI touchscreen path while exposing enough
 documented raw HID data for pen research. The current module validates a
@@ -360,6 +366,14 @@ finger-only input device remains authoritative. The first bridge registers a
 transport-backed raw control request, and does not connect generic HID input.
 Identity is observed, not spoofed. See
 [G6 HIDRAW and IPTSD research](sp11-g6-hidraw-iptsd-research.md).
+
+Candidate K1a commit
+[`1807d22a476360a05a5b4c865f5e8ad857ae5721`](https://github.com/ooaklee/SP11X1e-touchscreen/commit/1807d22a476360a05a5b4c865f5e8ad857ae5721)
+now provides the bounded off-target `DATA` ingress classifier and preserves the
+existing touch consumer. Synthetic, sanitizer, CI, and retained-v3-header
+compile checks pass. It retains no descriptor, publishes no HID child, logs no
+payload, sends no hardware command, has not run on the target, and does not
+complete P2.1, P2.3, or P2.4.
 
 ### Backlog
 
@@ -415,7 +429,7 @@ its upstream interface is agreed.
 ## P3 — Pen and IPTSD userspace
 
 **Dependencies:** P2 complete. **Parallel lane:** userspace may proceed after a
-stable, versioned P2 report contract. **Kernel branch:** separate from
+stable, versioned P2 report contract. **Transport branch:** separate from
 `lsp11-x-g6-hidraw-bridge-7.2-rc5`; **userspace source:** a reviewed immutable IPTSD
 pin or a new independently licensed component.
 

@@ -73,13 +73,30 @@ Each accepted integration update changes its expected commit and source-ledger
 row in the corresponding support-repository change, so CI verifies both refs
 without incorrectly requiring them to remain equal forever.
 
-Feature work follows the project branch convention with bounded names such as
-`lsp11-x-volume-keys-7.2-rc5`, `lsp11-x-g6-hid-raw-7.2-rc5`,
+Kernel-resident feature work follows the project branch convention with
+bounded names such as `lsp11-x-volume-keys-7.2-rc5`,
 `lsp11-x-camera-ov13858-7.2-rc5`, and
 `lsp11-x-suspend-cpuidle-7.2-rc5`. Every feature branch records its baseline
 and intended upstream destination. Generic driver and binding changes are
 prepared for their subsystem upstream rather than accumulating indefinitely
 in the fork.
+
+The working G6 transport is not present in the kernel tree: it is the
+GPL-2.0-only `mshw0485_touch` module in the separately pinned
+`geocausa/SP11X1e-touchscreen` source. Its first HIDRAW bridge therefore lives
+on `lsp11-x-g6-hidraw-bridge-7.2-rc5` in the public
+[`ooaklee/SP11X1e-touchscreen`](https://github.com/ooaklee/SP11X1e-touchscreen)
+fork, based exactly on geocausa commit
+`6bbcf7a4759a73014047a57e819219dd7f34951a`. The support repository owns its
+build pin and exported provenance. Only generic HID, Qualcomm GENI/GPI, DT,
+or later integration deltas belong in the thin kernel fork; the external
+driver is not silently imported into it.
+
+The first bounded K1a commit is
+[`1807d22a476360a05a5b4c865f5e8ad857ae5721`](https://github.com/ooaklee/SP11X1e-touchscreen/commit/1807d22a476360a05a5b4c865f5e8ad857ae5721).
+It adds only an off-target `DATA` ingress classifier and preserves the existing
+touch consumer. It does not retain a descriptor, publish a HID child, log
+payloads, issue hardware commands, or complete P2.3.
 
 This `linux-surface-pro-11-oe` repository remains responsible for:
 

@@ -634,6 +634,18 @@ fi
   die "failed mocked build created the documented output path"
 rm -f "$temporary_root/make-invoked"
 
+nested_documented_output="$output_fixture_root/g6-k1a-touchscreen-modules"
+rm -f "$temporary_root/make-invoked"
+if FIXTURE_OUT_DIR="$nested_documented_output" run_builder "$path_checkout" \
+    > "$temporary_root/nested-documented-output.log" 2>&1; then
+  die "dedicated nested *-touchscreen-modules output unexpectedly completed"
+fi
+[ -s "$temporary_root/make-invoked" ] ||
+  die "dedicated nested *-touchscreen-modules output was rejected before the build"
+[ ! -e "$nested_documented_output" ] && [ ! -L "$nested_documented_output" ] ||
+  die "failed mocked build created the dedicated nested output path"
+rm -f "$temporary_root/make-invoked"
+
 output_parent_victim="$temporary_root/output-parent-victim"
 mkdir "$output_parent_victim"
 printf 'output parent victim\n' > "$output_parent_victim/victim"

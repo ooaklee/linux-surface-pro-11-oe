@@ -17,12 +17,15 @@ Scope: `7.2-rc5-jg-0sp11v3-qcom-x1e`, build pair A/B
 > path is implemented and hostile-fixture tested, but has not yet completed a
 > real clean kernel build, so it cannot retroactively strengthen this pair.
 >
-> **P0.4 remains in evidence review and is blocked if interpreted bytewise.**
-> This report supports adjacent-pair semantic equivalence; it does not support
-> a bit-for-bit reproducibility claim. The P0.4c implementation gate is ready
-> for a real-build verification run. Release/image schema propagation is now
-> implemented and hostile-fixture tested; signing and the independent licence
-> gates remain open.
+> **P0.4 remains OPEN overall.** For evidence accounting, this report calls the
+> historical semantic facet P0.4a (complete), the byte-reproducibility facet
+> P0.4b (failed/open), and the immutable-input replay facet P0.4c (open); these
+> are not additional backlog IDs. The checked-in historical comparator verifies
+> this exact directional A/B pair with zero unknown payload differences, but it
+> does not support a bit-for-bit reproducibility claim. The P0.4c implementation
+> gate is ready for a real-build verification run. Release/image schema
+> propagation is implemented and hostile-fixture tested. Signing, licence,
+> recovery/hardware evidence, and explicit release authorization remain open.
 
 ## Scope and method
 
@@ -198,7 +201,54 @@ archive mtimes, and the layout/build-ID values derived from those inputs. After
 canonicalizing those fields and rebuilding the path-qualified archive
 inventory, no difference remains.
 
-## Reproduction command
+## Machine-verifiable historical comparison
+
+The checked-in comparator emits `sp11-kernel-adjacent-comparison-v1` under the
+`sp11-kernel-historical-semantic-v1` policy. Run the complete retained-artifact
+gate from the support repository root:
+
+```bash
+python3 ./tests/test-sp11-kernel-build-comparison.py --require-real
+```
+
+This command fails if either retained directory is absent, runs the hostile
+parser fixtures, scans the complete A/B pair twice, and requires deterministic
+path-neutral output. The underlying report can also be generated directly:
+
+```bash
+python3 ./scripts/compare-sp11-kernel-builds.py \
+  --build-a build/phase0-repro-a-f93fe57/artifacts \
+  --build-b build/phase0-repro-b-f93fe57/artifacts
+```
+
+The policy is deliberately limited to this historical pair. Before parsing any
+Debian archive, it binds every role and side to the exact filename, byte size,
+and SHA-256 recorded above on retained no-follow descriptors. Parsing then
+confirms the expected package name, version, and architecture on those same
+bytes. A/B order is part of the policy, so swapped inputs fail. Future pairs
+require a reviewed, versioned policy and allowlist rather than expansion of this
+historical result.
+
+`Installed-Size` is checked independently against each package data inventory:
+
+```text
+int(Installed-Size) -
+sum(ceil(each regular data-member size / 1024))
+```
+
+The reviewed residuals are 4,112 KiB for common headers, 456 KiB for ARM64
+headers, 17 KiB for the image package, and 1,415 KiB for modules. Each residual
+must match on both sides; equal apparent data size also requires equal
+`Installed-Size`.
+
+The comparator labels its new aggregate encoding as
+`sp11-path-inventory-json-lines-v1` and separately carries the four published
+historical aggregate values as exact-pair-bound references. The local retained
+gate asserts both sets. Repository CI runs only `--synthetic-only`, because the
+large retained Debs are not committed; a green CI run is parser/policy fixture
+evidence, not a rerun of the historical pair.
+
+## Original build reproduction command
 
 Run the following from the support repository root at commit
 `f93fe57c0b7d8cb396168a0d7ba4547a5d91f25a`. Run it once with `RUN_ID=a` and
@@ -386,11 +436,12 @@ this historical pair means its future replay is not immutable even though the
 two adjacent installed inventories match. A newer immutable-input
 implementation exists, but no real build has yet verified it.
 
-P0.4 should therefore remain in evidence review. It is blocked if its required
-meaning is bit-for-bit identity, and it must not be cited as complete proof of
-immutable future replay. P0.4c remains implemented-but-unverified, and
-publication remains blocked on a real clean run, signing, and the independent
-licence gates even though outer-schema propagation is implemented.
-A reviewer may separately accept the adjacent-pair semantic-equivalence result
-for continued non-release development, provided the bytewise and future-input
-limitations remain explicit.
+P0.4 remains open overall. Its P0.4a historical semantic-evidence facet is
+complete; P0.4b remains open because all four package byte identities differ;
+and P0.4c remains implemented-but-unverified on a real immutable-input build.
+Publication remains blocked on that real clean run, byte-reproducibility
+remediation, signing, the independent licence gates, recovery/hardware
+evidence, and explicit release authorization even though outer-schema
+propagation is implemented. The historical semantic result supports continued
+non-release development only; it is neither release authorization nor proof of
+immutable future replay.

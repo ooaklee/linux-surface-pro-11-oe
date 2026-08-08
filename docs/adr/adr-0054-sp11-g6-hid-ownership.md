@@ -40,6 +40,25 @@ reach QSPI and synchronous replies never enter the input stream.
 Do not connect generic HID input during this phase. This prevents duplicate
 touch devices and separates evidence collection from parser behavior.
 
+The transport owner is the GPL-2.0-only `mshw0485_touch` module in the pinned
+`geocausa/SP11X1e-touchscreen` tree, not a file in the Johan G. kernel tree.
+The first implementation branch is therefore
+`lsp11-x-g6-hidraw-bridge-7.2-rc5` in the public
+[`ooaklee/SP11X1e-touchscreen`](https://github.com/ooaklee/SP11X1e-touchscreen)
+fork, starting exactly at geocausa commit
+`6bbcf7a4759a73014047a57e819219dd7f34951a`. Preserve the original SPDX and
+history. The support repository pins, builds, and exports the resulting
+source identity. Generic HID or Qualcomm changes remain separate in the thin
+kernel fork, and no transport source is copied there merely to fit a branch
+table.
+
+Candidate commit
+[`1807d22a476360a05a5b4c865f5e8ad857ae5721`](https://github.com/ooaklee/SP11X1e-touchscreen/commit/1807d22a476360a05a5b4c865f5e8ad857ae5721)
+establishes only the off-target K1a boundary: spontaneous `DATA` responses are
+bounded at the real ingress before the existing touch consumer. It adds no
+descriptor retention, HID child, payload logging, hardware command, or pen
+path, and it has not run on the target.
+
 After a one-shot diagnostic build captures the descriptor hash and bounded
 report ID/size histograms, choose one pen owner:
 
@@ -60,6 +79,8 @@ a prerequisite for the first diagnostic boundary.
 - A vendor/product match alone cannot authorize IPTSD or a parser; descriptor,
   report schema, geometry, and service security are explicit gates.
 - The first implementation adds no pen feature by itself.
+- The external transport fork and the thin kernel fork retain distinct source
+  identities and upstream destinations.
 - Raw payloads remain local and short-lived; public evidence contains hashes,
   schemas, counters, and synthetic fixtures.
 - The custom bridge may later be retired when generic HID-over-SPI supports

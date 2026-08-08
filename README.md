@@ -74,7 +74,7 @@ defines the phase gates, acceptance matrices, rollback paths, and upstream
 destinations.
 
 The [public feature demonstration](https://www.youtube.com/watch?v=WJqRIeTjUbI)
-and [public SP11 ACPI dumps](https://github.com/linux-surface/acpidumps/tree/master/surface_pro_11_qcom)
+and [pinned public SP11 ACPI dumps](https://github.com/linux-surface/acpidumps/tree/1d0a2ce742b450fe3f65287adbe174ddccabe228/surface_pro_11_qcom)
 define useful research and acceptance-test inputs. They do not replace source
 provenance or target-device validation. Experimental kernels are built from an
 expected full source commit and are queued for one boot only after the running

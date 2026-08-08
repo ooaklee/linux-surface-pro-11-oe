@@ -215,17 +215,26 @@ sufficient for these tests:
    and resume with descriptor drift. No failure may leave a published child,
    feed after detach, call a freed callback, or change parent mode/power state.
 
-Run this KUnit seam against the exact JG tree, compile the production module
-for the exact arm64 ABI, and run the existing static checks before P0 permits a
-one-shot hardware build. Captured report bytes, the real descriptor, and
-hardware access are not required for this stage.
+Run this seam in the pinned touchscreen transport fork and compile the
+production module against the exact JG arm64 build tree. Run its KUnit or
+equivalent exact-tree offline tests plus the existing static checks before P0
+permits a one-shot hardware build. Generic kernel helpers, if later required,
+receive their own thin-fork branch and tests. Captured report bytes, the real
+descriptor, and hardware access are not required for this stage.
+
+Candidate K1a commit
+[`1807d22a476360a05a5b4c865f5e8ad857ae5721`](https://github.com/ooaklee/SP11X1e-touchscreen/commit/1807d22a476360a05a5b4c865f5e8ad857ae5721)
+implements only that bounded off-target ingress classifier. It passes synthetic,
+sanitizer, CI, and retained-v3-header compile checks, but retains no descriptor,
+publishes no HID child, logs no payload, issues no hardware command, and has not
+run on the target. It is not P2.3 completion.
 
 ## Execution branches and gates
 
 | Sequence | Branch | Scope and exit gate |
 |---|---|---|
 | G6-R0 | `lsp11-x-g6-contract-research` | Ledger, ADR, collector schema, privacy boundary, and no target mutation |
-| G6-K1 | `lsp11-x-g6-hidraw-bridge-7.2-rc5` in the kernel fork | Retained descriptor, HIDRAW-only child, rejecting controls, scalar counters, and synthetic/KUnit tests |
+| G6-K1 | `lsp11-x-g6-hidraw-bridge-7.2-rc5` in the public `ooaklee/SP11X1e-touchscreen` fork, based on exact geocausa commit `6bbcf7a4759a73014047a57e819219dd7f34951a` | Retained descriptor, HIDRAW-only child, rejecting controls, scalar counters, and synthetic/KUnit tests; preserve GPL provenance and keep generic kernel deltas separate |
 | G6-C1 | `lsp11-x-g6-report-schema` in the support repository | Descriptor-only checker and bounded local histogram tool; publish no report payloads |
 | G6-D1 | Decision gate | Select standard HID pen, an IPTSD G6 backend, another independently licensed parser, or stop |
 | G6-U1 | `lsp11-x-iptsd-g6-v3.1.0` in a dedicated IPTSD fork | Only if required: read-only transport-owned mode, exact descriptor allowlist, pen-only output, unit/fuzz tests |
@@ -233,9 +242,11 @@ hardware access are not required for this stage.
 | G6-I1 | `lsp11-x-g6-pen-integration-7.2-rc5` in the kernel fork | One-shot device matrix and regression evidence |
 | G6-UP1 | `lsp11-x-spi-hid-qspi-7.2-rc5` in the kernel fork | Parallel long-term port of public HID-over-SPI to the validated QSPI lifecycle |
 
-Each kernel branch starts from the protected integration branch and uses a
-distinct co-installable ABI. It cannot become the persistent boot default
-until the one-shot recovery contract is proven on the target.
+Each kernel branch starts from the protected integration branch. The G6
+transport branch instead starts from its exact external-module source commit;
+its eventual kernel package still uses a distinct co-installable ABI. No
+candidate can become the persistent boot default until the one-shot recovery
+contract is proven on the target.
 
 ## Collector schema
 

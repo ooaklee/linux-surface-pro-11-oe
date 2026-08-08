@@ -313,11 +313,6 @@ resolve_output_path() {
       [[ "$output_leaf" =~ ^\.sp11-kmod-v[0-9]+([._+-][A-Za-z0-9._+-]+)?$ ]] ||
         die "repository-root output must match .sp11-kmod-vN"
       ;;
-    "$repo_build_dir"/*-touchscreen-modules)
-      [ "$output_parent_physical" = "$repo_build_dir" ] &&
-        [[ "$output_leaf" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*-touchscreen-modules$ ]] ||
-        die "direct build output must use a safe *-touchscreen-modules leaf"
-      ;;
     "$repo_build_dir"/sp11-touchscreen-module-output/*)
       dedicated_root="$repo_build_dir/sp11-touchscreen-module-output"
       [ -d "$dedicated_root" ] && [ ! -L "$dedicated_root" ] ||
@@ -329,6 +324,11 @@ resolve_output_path() {
         "$dedicated_root_physical"|"$dedicated_root_physical"/*) ;;
         *) die "output directory parent escapes the dedicated module output root" ;;
       esac
+      ;;
+    "$repo_build_dir"/*-touchscreen-modules)
+      [ "$output_parent_physical" = "$repo_build_dir" ] &&
+        [[ "$output_leaf" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*-touchscreen-modules$ ]] ||
+        die "direct build output must use a safe *-touchscreen-modules leaf"
       ;;
     *)
       die "output directory must match repository .sp11-kmod-vN, a direct build/*-touchscreen-modules leaf, or live under build/sp11-touchscreen-module-output/"
