@@ -34,6 +34,7 @@ SUPPORT_HEAD = subprocess.run(
 ).stdout.strip()
 SOURCE_HEAD = "b" * 40
 CHILD_DIGEST = "sha256:" + "c" * 64
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 CREATED_FIXTURES: list[Path] = []
 
 
@@ -315,8 +316,8 @@ class Fixture:
             f"Suite: {suite}",
             "Codename: resolute",
             "Architectures: amd64 arm64",
-            "Acquire-By-Hash: yes",
             "SHA256:",
+            f" {EMPTY_SHA256} 0 main/debian-installer/binary-arm64/Packages",
         ]
         for component in COMPONENTS:
             for relative in (
@@ -325,7 +326,14 @@ class Fixture:
             ):
                 compressed = gzip.compress(self.index_raw[(suite, relative)], mtime=0)
                 lines.append(f" {digest(compressed)} {len(compressed)} {relative}")
-        lines.extend(("-----BEGIN PGP SIGNATURE-----", "fixture", "-----END PGP SIGNATURE-----"))
+        lines.extend(
+            (
+                "Acquire-By-Hash: yes",
+                "-----BEGIN PGP SIGNATURE-----",
+                "fixture",
+                "-----END PGP SIGNATURE-----",
+            )
+        )
         return ("\n".join(lines) + "\n").encode()
 
     def rebuild_metadata(self) -> None:
@@ -790,6 +798,79 @@ def assert_bootstrap_authentication_failures(temp_root: Path) -> None:
         in signature_events
     )
     assert not any(event.startswith("apt-get download-only:") for event in signature_events)
+
+
+def assert_inrelease_empty_entry_contract(temp_root: Path) -> None:
+    def acquire_indexes(fixture: Fixture) -> subprocess.CompletedProcess[str]:
+        return run(
+            [
+                sys.executable,
+                str(WRITER),
+                "acquire-indexes",
+                "--baseline",
+                str(fixture.baseline),
+                "--lists-dir",
+                str(fixture.source_lists),
+                "--index-cache-dir",
+                str(fixture.index_cache),
+            ],
+            fixture.env(),
+            expect=False,
+        )
+
+    benign = (
+        f" {EMPTY_SHA256} 0 main/debian-installer/binary-arm64/Packages"
+    )
+    hostile_rows = (
+        f" {'f' * 64} 0 main/debian-installer/binary-arm64/Packages",
+        f" {EMPTY_SHA256} 1 main/debian-installer/binary-arm64/Packages",
+        f" {EMPTY_SHA256} \u0660 main/debian-installer/binary-arm64/Packages",
+        f" {EMPTY_SHA256} 00 main/debian-installer/binary-arm64/Packages",
+        f" {'f' * 64} {1 << 64} main/debian-installer/binary-arm64/Packages",
+        f" {'f' * 64} {'9' * 5000} main/debian-installer/binary-arm64/Packages",
+    )
+    for hostile in hostile_rows:
+        fixture = Fixture(temp_root)
+        inrelease = (
+            fixture.source_lists
+            / "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_resolute_InRelease"
+        )
+        original = inrelease.read_text(encoding="utf-8")
+        assert original.count(benign) == 1
+        assert original.index(benign) < original.index("\nAcquire-By-Hash: yes\n")
+        inrelease.write_text(
+            original.replace(benign, hostile), encoding="utf-8"
+        )
+        result = acquire_indexes(fixture)
+        assert (
+            "error: invalid SHA256 entry in "
+            "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_resolute_InRelease"
+            in result.stderr
+        )
+        assert "Traceback" not in result.stderr
+        assert fixture.call_log.read_text(encoding="utf-8") == ""
+
+    fixture = Fixture(temp_root)
+    inrelease = (
+        fixture.source_lists
+        / "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_resolute_InRelease"
+    )
+    original = inrelease.read_text(encoding="utf-8")
+    selected_suffix = " main/binary-arm64/Packages.gz"
+    selected = next(
+        line for line in original.splitlines() if line.endswith(selected_suffix)
+    )
+    selected_empty = f" {EMPTY_SHA256} 0{selected_suffix}"
+    inrelease.write_text(
+        original.replace(selected, selected_empty, 1), encoding="utf-8"
+    )
+    result = acquire_indexes(fixture)
+    assert (
+        "error: selected authenticated index entry is empty: "
+        "resolute/main/binary-arm64/Packages.gz"
+        in result.stderr
+    )
+    assert fixture.call_log.read_text(encoding="utf-8") == ""
 
 
 def assert_ordered_bootstrap_calls(fixture: Fixture) -> None:
@@ -1486,6 +1567,7 @@ def main() -> None:
         assert_production_baseline_is_exact(temp_root)
         assert_path_guards(temp_root)
         assert_bootstrap_authentication_failures(temp_root)
+        assert_inrelease_empty_entry_contract(temp_root)
         fixture = bootstrap_and_finalize(temp_root)
         writer_hostile_cases(fixture)
         envelope_cases(fixture)

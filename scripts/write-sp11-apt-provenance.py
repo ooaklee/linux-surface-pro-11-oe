@@ -16,6 +16,9 @@ from typing import NoReturn
 
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+SIGNED_SIZE_RE = re.compile(r"(?:0|[1-9][0-9]{0,19})\Z")
+UINT64_MAX = (1 << 64) - 1
 BASELINE_RE = re.compile(r'^([A-Z0-9_]+)="([^"\r\n]*)"$')
 PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]*$")
 VERSION_RE = re.compile(r"^[0-9A-Za-z.+:~_-]+$")
@@ -165,14 +168,16 @@ def signed_sha256_entries(path: Path) -> dict[str, tuple[int, str]]:
         if (
             len(parts) != 3
             or not SHA256_RE.fullmatch(parts[0])
-            or not parts[1].isdigit()
-            or int(parts[1]) <= 0
+            or not SIGNED_SIZE_RE.fullmatch(parts[1])
         ):
+            fail(f"invalid SHA256 entry in {path.name}")
+        size = int(parts[1])
+        if size > UINT64_MAX or (size == 0) != (parts[0] == EMPTY_SHA256):
             fail(f"invalid SHA256 entry in {path.name}")
         safe_relative_path(parts[2], "signed index path")
         if parts[2] in entries:
             fail(f"duplicate SHA256 path in {path.name}: {parts[2]}")
-        entries[parts[2]] = (int(parts[1]), parts[0])
+        entries[parts[2]] = (size, parts[0])
     return entries
 
 
@@ -207,6 +212,11 @@ def expected_index_rows(
                 if relative not in entries:
                     continue
                 size, digest = entries[relative]
+                if size == 0 or digest == EMPTY_SHA256:
+                    fail(
+                        "selected authenticated index entry is empty: "
+                        f"{suite}/{relative}"
+                    )
                 parent = relative.rsplit("/", 1)[0]
                 uri = (
                     f"{snapshot_uri}dists/{suite}/{parent}/by-hash/SHA256/{digest}"
