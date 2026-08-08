@@ -131,7 +131,7 @@ def write_apt_sidecar(path: Path, baseline: dict[str, str]) -> None:
             )
         )
 
-    deb_rows: list[tuple[str, str, str, str, str]] = []
+    deb_rows: list[tuple[str, str, str, str, int, str]] = []
     count = int(required(baseline, "SP11_APT_BOOTSTRAP_PACKAGE_COUNT"))
     for index in range(1, count + 1):
         package, version = required(
@@ -140,11 +140,26 @@ def write_apt_sidecar(path: Path, baseline: dict[str, str]) -> None:
         digest = required(baseline, f"SP11_APT_BOOTSTRAP_PACKAGE_{index}_SHA256")
         arch = "all" if package == "ca-certificates" else architecture
         filename = f"{package}_{version}_{arch}.deb"
-        deb_rows.append((filename, package, version, arch, digest))
+        deb_rows.append((filename, package, version, arch, 4000 + index, digest))
+
+    python_package, python_version = required(
+        baseline, "SP11_APT_PYTHON_PACKAGE_SPEC"
+    ).split("=", 1)
+    python_payload = f"fixture Deb {python_package}\n".encode()
+    deb_rows.append(
+        (
+            f"{python_package}_{python_version}_{architecture}.deb",
+            python_package,
+            python_version,
+            architecture,
+            len(python_payload),
+            sha256_bytes(python_payload),
+        )
+    )
     deb_rows.sort()
     lines.append(f"Downloaded Deb count: {len(deb_rows)}")
     signed_location = f"{SUITES[0]}/{COMPONENTS[0]}/binary-{architecture}/Packages.gz"
-    for index, (filename, package, version, arch, digest) in enumerate(deb_rows, 1):
+    for index, (filename, package, version, arch, size, digest) in enumerate(deb_rows, 1):
         archive_filename = f"pool/main/f/{package}/{filename}"
         lines.extend(
             (
@@ -152,7 +167,7 @@ def write_apt_sidecar(path: Path, baseline: dict[str, str]) -> None:
                 f"Downloaded Deb {index} package: {package}",
                 f"Downloaded Deb {index} version: {version}",
                 f"Downloaded Deb {index} architecture: {arch}",
-                f"Downloaded Deb {index} size: {4000 + index}",
+                f"Downloaded Deb {index} size: {size}",
                 f"Downloaded Deb {index} SHA256: {digest}",
                 f"Downloaded Deb {index} archive filename: {archive_filename}",
                 f"Downloaded Deb {index} URI: {snapshot_uri}{archive_filename}",

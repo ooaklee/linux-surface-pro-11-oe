@@ -588,6 +588,24 @@ python3 "$repo_dir/tests/fixtures/write-sp11-attached-provenance-fixture.py" \
   --build-manifest "$kernel_build_manifest" \
   --apt-provenance "$apt_provenance" \
   --build-inputs "$build_inputs"
+python_fixture_sha="$(printf 'fixture Deb python3\n' | shasum -a 256 | awk '{print $1}')"
+grep -Fxq 'Downloaded Deb count: 5' "$apt_provenance"
+grep -Fxq 'Downloaded Deb 5 path: python3_3.14.3-0ubuntu2_arm64.deb' "$apt_provenance"
+grep -Fxq 'Downloaded Deb 5 package: python3' "$apt_provenance"
+grep -Fxq 'Downloaded Deb 5 version: 3.14.3-0ubuntu2' "$apt_provenance"
+grep -Fxq 'Downloaded Deb 5 architecture: arm64' "$apt_provenance"
+grep -Fxq 'Downloaded Deb 5 size: 20' "$apt_provenance"
+grep -Fxq "Downloaded Deb 5 SHA256: $python_fixture_sha" "$apt_provenance"
+grep -Fxq \
+  'Downloaded Deb 5 archive filename: pool/main/f/python3/python3_3.14.3-0ubuntu2_arm64.deb' \
+  "$apt_provenance"
+grep -Fxq \
+  'Downloaded Deb 5 URI: https://snapshot.ubuntu.com/ubuntu/20260807T000000Z/pool/main/f/python3/python3_3.14.3-0ubuntu2_arm64.deb' \
+  "$apt_provenance"
+grep -Fxq 'Downloaded Deb 5 signed record count: 1' "$apt_provenance"
+grep -Fxq \
+  'Downloaded Deb 5 signed record 1 location: resolute/main/binary-arm64/Packages.gz' \
+  "$apt_provenance"
 kernel_build_manifest_size="$(wc -c < "$kernel_build_manifest" | tr -d '[:space:]')"
 kernel_build_manifest_sha="$(shasum -a 256 "$kernel_build_manifest" | awk '{print $1}')"
 apt_provenance_size="$(wc -c < "$apt_provenance" | tr -d '[:space:]')"
