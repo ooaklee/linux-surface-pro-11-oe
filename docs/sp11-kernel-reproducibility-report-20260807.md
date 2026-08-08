@@ -2,6 +2,8 @@
 
 Date: 2026-08-07
 
+Immutable-input verification addendum: 2026-08-08
+
 Scope: `7.2-rc5-jg-0sp11v3-qcom-x1e`, build pair A/B
 
 > **Byte reproducibility: FAIL.** All four emitted `.deb` files have different
@@ -13,19 +15,22 @@ Scope: `7.2-rc5-jg-0sp11v3-qcom-x1e`, build pair A/B
 > relocation-immediate consequence of the compressed payload length.
 >
 > **Immutable future replay for the audited A/B pair: NOT PROVEN.** Those two
-> builds predate the immutable-APT implementation described below. The new
-> path is implemented and hostile-fixture tested, but has not yet completed a
-> real clean kernel build, so it cannot retroactively strengthen this pair.
+> builds predate the immutable-APT implementation described below. A separate
+> real clean build completed that path on 2026-08-08, but it cannot
+> retroactively strengthen this historical pair.
 >
 > **P0.4 remains OPEN overall.** For evidence accounting, this report calls the
 > historical semantic facet P0.4a (complete), the byte-reproducibility facet
-> P0.4b (failed/open), and the immutable-input replay facet P0.4c (open); these
+> P0.4b (failed/open), and the one-real-build immutable-input facet P0.4c
+> (complete); these
 > are not additional backlog IDs. The checked-in historical comparator verifies
 > this exact directional A/B pair with zero unknown payload differences, but it
-> does not support a bit-for-bit reproducibility claim. The P0.4c implementation
-> gate is ready for a real-build verification run. Release/image schema
-> propagation is implemented and hostile-fixture tested. Signing, licence,
-> recovery/hardware evidence, and explicit release authorization remain open.
+> does not support a bit-for-bit reproducibility claim. The
+> [separate P0.4c evidence](sp11-kernel-immutable-build-evidence-20260808.md)
+> records the later build without treating it as a replay or a second member of
+> this pair. Release/image schema propagation is implemented and
+> hostile-fixture tested. Signing, licence, recovery/hardware evidence, and
+> explicit release authorization remain open.
 
 ## Scope and method
 
@@ -344,11 +349,11 @@ the patched-source diff digest, script hashes, and the generated signing
 certificate's identity. A matching legacy manifest hash therefore does not
 fully identify the build.
 
-## Immutable-APT replay implementation after this audit
+## Immutable-APT replay implementation and later verification
 
-The release-mode Docker wrapper now has a fail-closed P0.4c implementation for
-the next clean build. This was not used by builds A and B and is therefore not
-evidence that those historical package bytes can be replayed.
+The release-mode Docker wrapper has a fail-closed P0.4c implementation. This
+was not used by builds A and B and is therefore not evidence that those
+historical package bytes can be replayed.
 
 The new path pins the direct dated Ubuntu snapshot
 `https://snapshot.ubuntu.com/ubuntu/20260807T000000Z/`, the Ubuntu archive
@@ -393,13 +398,23 @@ sidecar. Host-side validation independently re-hashes the retained snapshot
 metadata, indexes, lists, Debs, local build-dependencies package, and package
 inventories before and after envelope creation.
 
-P0.4c is therefore **implemented but not yet real-build verified**. The current
+On 2026-08-08, one fresh release-mode build completed this path at support
+commit `8110b2933beca73e2046f706f1299553906ff30d`. Independent host validation
+accepted the retained v2 manifest, v1 APT sidecar, v1 build-inputs envelope,
+32 authenticated indexes, 31 exact list targets, 334 cached Debs, pre/post
+inventories of 87/415 packages, and all copied kernel-package identities. The
+exhaustive module scan recorded 7,814 modules: 7,729 marker-signed and 85
+unsigned. The exact hashes and bounded claim are in the
+[2026-08-08 immutable-build evidence](sp11-kernel-immutable-build-evidence-20260808.md).
+
+P0.4c is therefore **complete for one real immutable-input build**. The current
 release/image preparation paths validate and attach the exact v2 manifest, v1
 APT sidecar, and v1 build-inputs envelope, then attest their propagation in
 outer manifests. The envelope's literal incomplete state remains unchanged as
-a build-time fact. Publication remains closed because real-build evidence, the
-release-signing model, byte-reproducibility remediation, and independent
-licence gates remain open.
+a build-time fact. Publication remains closed because byte reproducibility,
+the release-signing model, independent licence/UCM gates, recovery/hardware
+evidence, corresponding-source/release-candidate review, and explicit release
+authorization remain open.
 
 ## Required remediation before a byte-reproducible claim
 
@@ -411,9 +426,9 @@ licence gates remain open.
    certificate through a reproducible signing process or keep unsigned build
    payload production separate from release signing. Never generate an
    unrecorded ephemeral certificate while claiming byte reproducibility.
-3. Run and retain a real clean-build result from the implemented dated-snapshot
-   path, then verify its exact attached trio and outer release/image bindings.
-   Do not treat hostile-fixture coverage as build evidence.
+3. Preserve the completed 2026-08-08 real-build result and its exact attached
+   trio as immutable-input provenance evidence. Do not treat the single run as
+   a byte-reproducibility result or publication authorization.
 4. Retain the schema-v2 manifest's existing support HEAD/dirty-state, ordered
    patch, patched-tree/diff, exact source, output, and certificate bindings.
    Retain the current outer-schema propagation of the v1 envelope's OCI-child,
@@ -438,15 +453,17 @@ It also demonstrates that the current recipe is **not byte-reproducible**:
 package bytes, raw signed modules, `vmlinuz`, the raw inner Image, and classified
 zboot relocation immediates differ. The mutable APT dependency source used by
 this historical pair means its future replay is not immutable even though the
-two adjacent installed inventories match. A newer immutable-input
-implementation exists, but no real build has yet verified it.
+two adjacent installed inventories match. A newer immutable-input path has
+completed one separately recorded real build, but that cannot change the
+historical pair's inputs or byte result.
 
 P0.4 remains open overall. Its P0.4a historical semantic-evidence facet is
 complete; P0.4b remains open because all four package byte identities differ;
-and P0.4c remains implemented-but-unverified on a real immutable-input build.
-Publication remains blocked on that real clean run, byte-reproducibility
-remediation, signing, the independent licence gates, recovery/hardware
-evidence, and explicit release authorization even though outer-schema
-propagation is implemented. The historical semantic result supports continued
-non-release development only; it is neither release authorization nor proof of
-immutable future replay.
+and P0.4c is complete for one real immutable-input build. Publication remains
+blocked on byte-reproducibility remediation, signing, the independent
+licence/UCM gates, corresponding-source and release-candidate review,
+recovery/hardware evidence, and explicit release authorization even though
+outer-schema propagation is implemented. The historical semantic result and
+the later immutable-input result support continued non-release development
+only; neither is release authorization or proof that the historical A/B pair
+can be replayed immutably.

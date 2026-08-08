@@ -59,7 +59,7 @@ The starting state is intentionally conservative:
 
 | Area | Recorded starting point | Programme state |
 |---|---|---|
-| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Two clean builds have a reviewed semantic comparison; immutable-APT replay and exact outer-schema propagation are implemented and hostile-fixture tested but await a real clean build, while byte reproducibility, signing, and recovery remain open |
+| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Two historical builds have a reviewed semantic comparison, and one later real clean build verified the immutable-APT/provenance path; byte reproducibility, signing, licensing, recovery, and release authorization remain open |
 | Thin fork | The immutable base remains at `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; CI foundation commit `971b5af85ed0c7283ffb33430badeac9b5575057` is merged to the protected integration branch | Base and integration rules are active and thin-fork CI is green; no parity feature is accepted by branch presence |
 | Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is running and named by the effective static `GRUB_DEFAULT`, while `grubenv`'s stale `saved_entry` still names v2 | ADR0053 deliberately rejects mixed static/saved semantics; one-shot apply is blocked until `GRUB_DEFAULT=saved` and `saved_entry` both resolve to known-good v3, then P0 must capture the no-op canary and physical-recovery evidence |
 | Installed DTB path | Repository support retires its loose-DTB helper and kernel hooks under ADR0055; the exact Stubble image is authoritative | Target migration, successful normal GRUB regeneration, absence of project-managed loose-DTB lines, and packaged/embedded/active-FDT pairing remain pending P0 evidence |
@@ -211,7 +211,7 @@ state.
 | P0.1 | None | Verify the Johan G. baseline ref resolves to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; make build scripts reject any other source HEAD before applying patches | Passing exact-commit build preflight and manifest containing expected and actual source commits |
 | P0.2 | P0.1 | Verify protected `sp11/base-jg-7.2-rc5-jg-0` and development `sp11/integration-7.2-rc5` begin at the same commit; prohibit force-push/deletion of the base branch | Public fork settings and CI output showing both branch identities |
 | P0.3 | None | Validate `config/source-ledger.tsv`; resolve licences before importing candidates; keep ACPI and the video evidence-only; require the repository owner to choose and document the licence boundary for original project code rather than inferring one | Passing ledger validator, reviewed source-ledger update, and explicit project licence decision before redistribution |
-| P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, and dated APT snapshot in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report, three bound provenance artifacts, and exact outer release/image propagation; every unexplained difference is a blocker, and publication stays closed while real-build, signing, and licence gates remain open |
+| P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, and dated APT snapshot in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report, three bound provenance artifacts, and exact outer release/image propagation; every unexplained difference is a blocker, and publication stays closed while byte-reproducibility, signing, licence/UCM, recovery/hardware, and authorization gates remain open |
 | P0.5 | P0.1-P0.3 | Require shell syntax checks, public-content scan, source-ledger validation, exact remote-ref validation, patch-apply smoke test, and build dry-run in CI | Required green CI for this repository and the thin-fork branch |
 | P0.6 | None | Run `scripts/collect-sp11-feature-parity-inventory.sh` read-only; separately capture an optional sanitized kernel-log section; manually review both | Baseline inventory with no serial, UUID, MAC/IP, account, credential, or access-endpoint data |
 | P0.7 | P0.4, P0.6 | Migrate the target with the current support installer; require the retire-only transaction to commit, successful live-root GRUB regeneration, no project-managed loose-DTB lines, and unchanged `grubenv` and historical loose-DTB identity; verify the exact recovery ABI from `config/kernel-baselines/7.2-rc5-jg-0.env` is installed, running, boot-tested, and has matching image/initramfs/modules plus packaged, embedded, and active-FDT evidence | Migration transcript, transaction postchecks, recovery checklist, and checksums; any old loose DTB remains byte-for-byte unchanged and inert; any obstructed rollback blocks reboot and package operations until its private recovery backup is reconciled |
@@ -225,13 +225,13 @@ For evidence accounting rather than new backlog IDs, P0.4 has three facets: the
 exact directional historical comparator and retained-artifact gate close the
 P0.4a semantic facet with zero unknown payload differences; every raw `.deb`
 differed, so the P0.4b byte-reproducibility facet remains failed/open; and the
-P0.4c immutable-input facet remains open. CI exercises the comparator's hostile
-synthetic fixtures but does not carry the retained Debs. Immutable future replay
-for that pair is unproven because APT was not snapshot-pinned. The P0.4c path now
-has a fail-closed dated-snapshot implementation and exact outer release/image
-propagation with hostile fixtures, but no real clean kernel build has exercised
-it. P0.4 remains open overall. The comparator does not satisfy the
-byte-reproducibility, signing, real immutable-build, licence, recovery, or
+[2026-08-08 real-build evidence](sp11-kernel-immutable-build-evidence-20260808.md)
+closes P0.4c's one-real-build immutable-input verification scope. That later
+run does not retroactively make the historical pair replayable, and it is not a
+second build for a raw-byte comparison. CI exercises the comparator's hostile
+synthetic fixtures but does not carry the retained Debs. P0.4 remains open
+overall. Neither completed facet satisfies the byte-reproducibility, signing,
+licence/UCM, recovery/hardware, corresponding-source/release-candidate, or
 release-authorization gates; publication remains blocked.
 
 P0.6 is complete for the current target observation. The schema-3 inventory

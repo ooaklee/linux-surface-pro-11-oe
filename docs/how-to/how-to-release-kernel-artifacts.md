@@ -35,9 +35,11 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
 > `Publication schema propagation: incomplete` remains unchanged as its
 > build-time state; the outer manifest records kernel-release propagation as
 > complete while keeping `Publication state: blocked`. The preparer emits
-> **NO-PUBLISH** and no publication command. A real clean build, the signing
-> policy, and P0.3's project-code licence and UCM provenance decisions remain
-> independent blockers.
+> **NO-PUBLISH** and no publication command. One real immutable-input build is
+> now recorded, but byte reproducibility, the signing policy, P0.3's
+> project-code licence and UCM provenance decisions, recovery/hardware
+> evidence, corresponding-source/release-candidate review, and explicit release
+> authorization remain independent blockers.
 
 ## Prerequisites
 
@@ -400,15 +402,16 @@ validate_release_dir "build/release/$TAG"
 
 The helper emits no publication command. Confirm the outer manifest says
 `Kernel release propagation: complete` and `Publication state: blocked`, and
-confirm the release notes disclose the real-build, signing, and licence gates.
+confirm the release notes disclose the byte-reproducibility, signing,
+licence/UCM, recovery/hardware, corresponding-source, and authorization gates.
 Do not add, remove, or regenerate files after validation.
 
 8. Record the offline review result.
 
 Retain the candidate path, checksum result, semantic-validator result, and
-human source/licence review with the evidence for the future real-build run.
-Do not create or move a tag, upload assets, or change the historical r1
-release.
+human source/licence review with the
+[real immutable-input build evidence](../sp11-kernel-immutable-build-evidence-20260808.md).
+Do not create or move a tag, upload assets, or change the historical r1 release.
 
 9. Stop at the publication boundary.
 

@@ -271,13 +271,16 @@ artifacts/sp11-kernel-apt-provenance.txt
 artifacts/sp11-kernel-build-inputs.txt
 ```
 
-This P0.4c path is implemented and fixture-tested, not yet verified by a real
-kernel build. The last envelope deliberately records publication schema
-propagation as incomplete because that is its immutable build-time state. The
-kernel and image preparation paths now consume and validate the exact trio and
-record their propagation completion in outer manifests while keeping overall
-publication blocked. Preserve all three files byte-for-byte. A real clean build,
-the release-signing decision, and the independent licence gates are still open.
+This P0.4c path is implemented, fixture-tested, and verified by the
+[2026-08-08 real immutable-input build](../sp11-kernel-immutable-build-evidence-20260808.md).
+That is one provenance-validated build, not a byte-reproducibility result. The
+last envelope deliberately records publication schema propagation as
+incomplete because that is its immutable build-time state. The kernel and image
+preparation paths consume and validate the exact trio and record their
+propagation completion in outer manifests while keeping overall publication
+blocked. Preserve all three files byte-for-byte. Byte reproducibility, the
+release-signing decision, licence/UCM gates, recovery/hardware evidence, and
+explicit release authorization remain open.
 
 The kernel ABI carries the touchscreen device tree, but the runtime QSPI
 support ships as out-of-tree modules from the geocausa Phase 91 baseline

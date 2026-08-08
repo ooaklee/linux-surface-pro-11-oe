@@ -114,8 +114,9 @@ will:
 10. copy and hash the reviewed kernel source, touchscreen source, source
    notice, and all six manifests required by an image containing the v3
    binary payload
-11. finish with an explicit `NO-PUBLISH` result while independent real-build,
-   signing, licensing, and release-authorization gates remain open
+11. finish with an explicit `NO-PUBLISH` result while byte-reproducibility,
+    signing, licensing, recovery/hardware, and release-authorization gates
+    remain open
 
 Snapshot creation compares the source image's size and SHA-256 before and
 after the copy with the private snapshot's size and SHA-256. Clone or reflink
