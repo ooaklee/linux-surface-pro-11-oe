@@ -35,6 +35,9 @@ Surface Pro 11 rfkill patches.
 - For the preferred off-device build: Docker on a host that can run
   `linux/arm64` containers. Native ARM64 is fastest; x86_64 hosts may use QEMU
   emulation and can be much slower.
+- The Docker build host must provide `python3` and either the regular system
+  `/usr/lib/apt/apt-helper` or `lz4` on `PATH`. The wrapper checks this before
+  starting the immutable release build; macOS hosts normally use `lz4`.
 - Enough Docker storage for a persistent Linux work volume. The host work
   directory only receives control files and copied artifacts; the kernel source
   and object tree are kept in Docker's `sp11-qcom-x1e-kernel-build` volume.
@@ -255,6 +258,12 @@ Release mode refuses `--apt-sources`. It uses the exact
 signed indexes, acquired list targets, and pre/post installed-package
 inventories beneath the managed work directory. A successful run requires all
 three files below:
+
+The pinned snapshot contains six signed, positive-size backports indexes whose
+decompressed payload is empty. APT legitimately emits no local list view for
+those indexes. Release mode binds the six exact paths and compressed
+identities, requires their views to be absent, and still requires and verifies
+the other 26 list views. It never fabricates placeholder list files.
 
 ```text
 artifacts/sp11-kernel-build-manifest.txt

@@ -127,6 +127,15 @@ require_tool() {
   fi
 }
 
+require_apt_list_decoder() {
+  if [ -f /usr/lib/apt/apt-helper ] &&
+     [ -x /usr/lib/apt/apt-helper ] &&
+     [ ! -L /usr/lib/apt/apt-helper ]; then
+    return 0
+  fi
+  require_tool lz4
+}
+
 require_arg() {
   if [ -z "${2:-}" ]; then
     echo "Missing value for $1." >&2
@@ -1004,12 +1013,16 @@ if [ "$CONTAINER_WORK_DIR" = "/work" ] && is_case_insensitive_dir "$work_abs"; t
   exit 1
 fi
 
+if [ "$IMMUTABLE_APT" = "true" ]; then
+  require_tool python3
+  require_apt_list_decoder
+fi
+
 if [ "$DRY_RUN" != "true" ]; then
   require_tool docker
 fi
 
 if [ "$IMMUTABLE_APT" = "true" ]; then
-  require_tool python3
   for release_dir in \
     "$work_abs/apt-archives" \
     "$work_abs/apt-indexes" \

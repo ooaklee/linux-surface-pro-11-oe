@@ -54,6 +54,10 @@ mkdir -p \
   "$mock_bin"
 cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" "$support_dir/scripts/"
 chmod +x "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh"
+sed 's#/usr/lib/apt/apt-helper#/sp11-fixture-missing-apt-helper#g' \
+  "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+  > "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker-no-apt-helper.sh"
+chmod +x "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker-no-apt-helper.sh"
 printf 'build/\n' > "$support_dir/.gitignore"
 printf 'fixture patch input\n' > "$support_dir/patches/release/0001-fixture.patch"
 
@@ -95,6 +99,7 @@ git -C "$support_dir" add .
 git -C "$support_dir" commit --quiet -m "Create Docker wrapper safety fixture"
 
 wrapper="$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh"
+no_apt_helper_wrapper="$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker-no-apt-helper.sh"
 
 run_dry() {
   local work_dir="$1"
@@ -163,6 +168,73 @@ case "${MOCK_MUTATE_CONTROL:-}" in
 esac
 EOF_DOCKER
 chmod +x "$mock_bin/docker"
+
+# Immutable validation needs an LZ4 list decoder on hosts without apt-helper.
+# An isolated PATH and a wrapper fixture with an unavailable system helper make
+# both fallback branches deterministic, including on Ubuntu hosts.
+decoder_bin="$temporary_root/decoder-bin"
+decoder_docker_marker="$temporary_root/decoder-docker-invoked"
+mkdir "$decoder_bin"
+for tool in \
+  awk bash chmod dirname find git grep mkdir mktemp python3 rm rmdir shasum \
+  sort stat touch tr uname wc; do
+  tool_path="$(type -P "$tool")"
+  [ -n "$tool_path" ] || die "missing decoder-preflight fixture tool: $tool"
+  ln -s "$tool_path" "$decoder_bin/$tool"
+done
+cat > "$decoder_bin/docker" <<'EOF_DECODER_DOCKER'
+#!/usr/bin/env bash
+set -euo pipefail
+: > "$DECODER_DOCKER_MARKER"
+exit 89
+EOF_DECODER_DOCKER
+chmod +x "$decoder_bin/docker"
+
+decoder_args=(
+  --source git
+  --git-url https://github.com/example/linux.git
+  --git-branch fixture/ref
+  --expected-source-commit "$release_source_commit"
+  --image "$release_image"
+  --platform linux/arm64/v8
+  --patch-dirs patches/release
+  --build-target "binary-indep binary-qcom-x1e"
+  --release-build
+)
+missing_decoder_work="$support_dir/build/missing-list-decoder/work"
+if DECODER_DOCKER_MARKER="$decoder_docker_marker" PATH="$decoder_bin" \
+    "$no_apt_helper_wrapper" \
+      --work-dir "$missing_decoder_work" \
+      "${decoder_args[@]}" \
+      > "$temporary_root/missing-list-decoder.log" 2>&1; then
+  die "immutable wrapper accepted a missing APT list decoder"
+fi
+grep -Fxq 'Missing required tool: lz4' "$temporary_root/missing-list-decoder.log" ||
+  die "missing APT list decoder rejection was not explicit"
+[ ! -e "$decoder_docker_marker" ] ||
+  die "missing APT list decoder reached Docker"
+
+cat > "$decoder_bin/lz4" <<'EOF_LZ4'
+#!/usr/bin/env bash
+exit 0
+EOF_LZ4
+chmod +x "$decoder_bin/lz4"
+available_decoder_work="$support_dir/build/available-list-decoder/work"
+if DECODER_DOCKER_MARKER="$decoder_docker_marker" PATH="$decoder_bin" \
+    "$no_apt_helper_wrapper" \
+      --work-dir "$available_decoder_work" \
+      "${decoder_args[@]}" \
+      > "$temporary_root/available-list-decoder.log" 2>&1; then
+  die "decoder fixture unexpectedly completed its sentinel Docker call"
+fi
+[ -f "$decoder_docker_marker" ] ||
+  die "available lz4 did not pass the immutable decoder preflight"
+grep -Fq 'Could not capture the raw pinned OCI index.' \
+  "$temporary_root/available-list-decoder.log" ||
+  die "available lz4 did not reach the sentinel Docker failure"
+
+# Keep normal release fixtures portable on hosts without apt-helper.
+cp "$decoder_bin/lz4" "$mock_bin/lz4"
 
 private_work="$support_dir/build/private-control-work"
 PATH="$mock_bin:/usr/bin:/bin" run_dry "$private_work" > "$temporary_root/private-dry.log"

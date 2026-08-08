@@ -27,6 +27,18 @@ INVENTORY_RE = re.compile(
     r"^[a-z0-9][a-z0-9+.-]*:[a-z0-9][a-z0-9-]*=[0-9A-Za-z.+:~_-]+$"
 )
 PATH_COMPONENT_RE = re.compile(r"^[0-9A-Za-z.+%_~:@=-]+$")
+REVIEWED_EMPTY_INDEX_PATHS = (
+    "resolute-backports/main/binary-arm64/Packages.gz",
+    "resolute-backports/main/source/Sources.gz",
+    "resolute-backports/restricted/binary-arm64/Packages.gz",
+    "resolute-backports/restricted/source/Sources.gz",
+    "resolute-backports/multiverse/binary-arm64/Packages.gz",
+    "resolute-backports/multiverse/source/Sources.gz",
+)
+REVIEWED_EMPTY_GZIP_SIZE = 20
+REVIEWED_EMPTY_GZIP_SHA256 = (
+    "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+)
 
 
 def fail(message: str) -> NoReturn:
@@ -133,6 +145,48 @@ def safe_relative_path(value: str, label: str) -> PurePosixPath:
     return path
 
 
+def empty_index_contract(
+    baseline: dict[str, str],
+    index_rows: list[tuple[str, str, int, str, str]] | None = None,
+) -> tuple[tuple[str, ...], int, str]:
+    count_text = required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT")
+    size_text = required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE")
+    digest = required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256")
+    if not re.fullmatch(r"[1-9][0-9]{0,2}", count_text) or int(count_text) != len(
+        REVIEWED_EMPTY_INDEX_PATHS
+    ):
+        fail("decompressed-empty index count is not the reviewed value")
+    if not SIGNED_SIZE_RE.fullmatch(size_text) or int(size_text) != REVIEWED_EMPTY_GZIP_SIZE:
+        fail("decompressed-empty index gzip size is not the reviewed value")
+    if digest != REVIEWED_EMPTY_GZIP_SHA256:
+        fail("decompressed-empty index gzip hash is not the reviewed value")
+
+    expected_keys = {
+        f"SP11_APT_DECOMPRESSED_EMPTY_INDEX_{index}_PATH"
+        for index in range(1, int(count_text) + 1)
+    }
+    actual_keys = {
+        key
+        for key in baseline
+        if re.fullmatch(r"SP11_APT_DECOMPRESSED_EMPTY_INDEX_[0-9]+_PATH", key)
+    }
+    if actual_keys != expected_keys:
+        fail("decompressed-empty index baseline path fields are not exact")
+    paths = tuple(
+        required(baseline, f"SP11_APT_DECOMPRESSED_EMPTY_INDEX_{index}_PATH")
+        for index in range(1, int(count_text) + 1)
+    )
+    for path in paths:
+        safe_relative_path(path, "decompressed-empty index path")
+    if paths != REVIEWED_EMPTY_INDEX_PATHS:
+        fail("decompressed-empty index paths do not match the reviewed sequence")
+    if index_rows is not None:
+        selected = {f"{suite}/{relative}" for suite, relative, *_rest in index_rows}
+        if not set(paths).issubset(selected):
+            fail("decompressed-empty index baseline is outside the authenticated set")
+    return paths, int(size_text), digest
+
+
 def clear_signed_lines(path: Path) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -234,6 +288,100 @@ def expected_index_rows(
     return rows
 
 
+def local_list_name(snapshot_id: str, suite: str, relative: str) -> str:
+    if not relative.endswith(".gz"):
+        fail(f"authenticated index path does not end in .gz: {suite}/{relative}")
+    return (
+        f"snapshot.ubuntu.com_ubuntu_{snapshot_id}_dists_{suite}_"
+        f"{relative[:-3].replace('/', '_')}.lz4"
+    )
+
+
+def expected_list_target_names(
+    baseline: dict[str, str],
+    index_rows: list[tuple[str, str, int, str, str]],
+) -> tuple[str, ...]:
+    snapshot_id = required(baseline, "SP11_APT_SNAPSHOT_ID")
+    suites = required(baseline, "SP11_APT_SNAPSHOT_SUITES").split()
+    empty_paths, _empty_size, _empty_digest = empty_index_contract(
+        baseline, index_rows
+    )
+    empty_set = set(empty_paths)
+    names = ["lock"]
+    names.extend(
+        f"snapshot.ubuntu.com_ubuntu_{snapshot_id}_dists_{suite}_InRelease"
+        for suite in suites
+    )
+    names.extend(
+        local_list_name(snapshot_id, suite, relative)
+        for suite, relative, *_rest in index_rows
+        if f"{suite}/{relative}" not in empty_set
+    )
+    if len(names) != 31 or len(names) != len(set(names)):
+        fail("derived APT list target set is not the reviewed 31-file set")
+    return tuple(sorted(names))
+
+
+def validate_list_layout(
+    baseline: dict[str, str],
+    lists_dir: Path,
+    index_rows: list[tuple[str, str, int, str, str]],
+) -> tuple[str, ...]:
+    expected_names = expected_list_target_names(baseline, index_rows)
+    expected_set = set(expected_names)
+    actual_files: set[str] = set()
+    for entry in sorted(lists_dir.iterdir(), key=lambda item: item.name):
+        try:
+            metadata = entry.lstat()
+        except OSError as exc:
+            fail(f"could not inspect APT list target {entry.name}: {exc}")
+        if stat.S_ISDIR(metadata.st_mode) and not entry.is_symlink():
+            if entry.name not in {"auxfiles", "partial"}:
+                fail(f"unexpected APT list directory: {entry.name}")
+            if any(entry.iterdir()):
+                fail(f"APT list directory is not empty: {entry.name}")
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            fail(f"unsafe APT list target: {entry.name}")
+        actual_files.add(entry.name)
+    if actual_files != expected_set:
+        missing = sorted(expected_set - actual_files)
+        extra = sorted(actual_files - expected_set)
+        fail(
+            "APT list target set differs from the baseline-derived set; "
+            f"missing={missing or 'none'} extra={extra or 'none'}"
+        )
+    return expected_names
+
+
+def validate_index_cache_layout(
+    cache_dir: Path,
+    index_rows: list[tuple[str, str, int, str, str]],
+) -> None:
+    expected_files = {cache_dir / suite / relative for suite, relative, *_rest in index_rows}
+    expected_dirs: set[Path] = set()
+    for path in expected_files:
+        parent = path.parent
+        while parent != cache_dir:
+            expected_dirs.add(parent)
+            parent = parent.parent
+    actual_files: set[Path] = set()
+    actual_dirs: set[Path] = set()
+    for path in cache_dir.rglob("*"):
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            fail(f"could not inspect APT index cache path {path}: {exc}")
+        if stat.S_ISREG(metadata.st_mode):
+            actual_files.add(path)
+        elif stat.S_ISDIR(metadata.st_mode) and not path.is_symlink():
+            actual_dirs.add(path)
+        else:
+            fail(f"APT index cache contains a symlink or special path: {path}")
+    if actual_files != expected_files or actual_dirs != expected_dirs:
+        fail("APT index cache tree is not the exact reviewed 32-file layout")
+
+
 def authenticated_binary_records(
     cache_dir: Path,
     index_rows: list[tuple[str, str, int, str, str]],
@@ -317,9 +465,20 @@ def acquire_indexes(args: argparse.Namespace, baseline: dict[str, str]) -> None:
     cache_dir = real_directory(args.index_cache_dir, "APT index cache directory")
     ensure_empty_directory(cache_dir, "APT index cache directory")
     rows = expected_index_rows(baseline, lists_dir)
+    empty_paths, empty_gzip_size, empty_gzip_digest = empty_index_contract(
+        baseline, rows
+    )
+    declared_empty = set(empty_paths)
+    validate_list_layout(baseline, lists_dir, rows)
     helper = apt_helper_path()
+    observed_empty: set[str] = set()
 
     for suite, relative, expected_size, expected_digest, uri in rows:
+        full_path = f"{suite}/{relative}"
+        if full_path in declared_empty and (
+            expected_size != empty_gzip_size or expected_digest != empty_gzip_digest
+        ):
+            fail(f"declared empty index has an unexpected signed gzip identity: {full_path}")
         target = cache_dir / suite / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.parent.resolve(strict=True) != target.parent.absolute():
@@ -344,6 +503,28 @@ def acquire_indexes(args: argparse.Namespace, baseline: dict[str, str]) -> None:
             metadata = regular_file(temporary, "acquired authenticated index")
             if metadata.st_size != expected_size or sha256(temporary) != expected_digest:
                 fail(f"acquired index bytes differ from signed metadata: {suite}/{relative}")
+            decompressed = decompressed_gzip_identity(
+                temporary, f"acquired authenticated index {full_path}"
+            )
+            if decompressed[0] == 0:
+                observed_empty.add(full_path)
+            if (decompressed[0] == 0) != (full_path in declared_empty):
+                fail(f"acquired index decompressed-empty state differs from baseline: {full_path}")
+            local = lists_dir / local_list_name(
+                required(baseline, "SP11_APT_SNAPSHOT_ID"), suite, relative
+            )
+            if full_path in declared_empty:
+                if os.path.lexists(local):
+                    fail(f"declared empty index has an APT local-list view: {full_path}")
+                if decompressed != (0, EMPTY_SHA256):
+                    fail(f"declared empty index did not decompress to empty bytes: {full_path}")
+            else:
+                regular_file(local, "acquired APT list target")
+                if decompressed != apt_list_identity(local):
+                    fail(
+                        "acquired APT list bytes differ from the authenticated gzip "
+                        f"index: {full_path}"
+                    )
             os.chmod(temporary, 0o644)
             os.replace(temporary, target)
         except (OSError, subprocess.CalledProcessError) as exc:
@@ -351,6 +532,10 @@ def acquire_indexes(args: argparse.Namespace, baseline: dict[str, str]) -> None:
         finally:
             if temporary.exists():
                 temporary.unlink()
+    if observed_empty != declared_empty:
+        fail("observed decompressed-empty index set differs from the baseline")
+    validate_list_layout(baseline, lists_dir, rows)
+    validate_index_cache_layout(cache_dir, rows)
     print(f"Retained {len(rows)} authenticated gzip indexes under {cache_dir}")
 
 
@@ -372,26 +557,17 @@ def read_inventory(path: Path, label: str) -> tuple[list[str], str]:
     return rows, hashlib.sha256(raw).hexdigest()
 
 
-def list_targets(lists_dir: Path) -> list[tuple[str, int, str]]:
+def list_targets(
+    baseline: dict[str, str],
+    lists_dir: Path,
+    index_rows: list[tuple[str, str, int, str, str]],
+) -> list[tuple[str, int, str]]:
+    names = validate_list_layout(baseline, lists_dir, index_rows)
     rows: list[tuple[str, int, str]] = []
-    allowed_dirs = {"auxfiles", "partial"}
-    for entry in sorted(lists_dir.iterdir(), key=lambda item: item.name):
-        metadata = entry.lstat()
-        if stat.S_ISDIR(metadata.st_mode) and not entry.is_symlink():
-            if entry.name not in allowed_dirs:
-                fail(f"unexpected APT list directory: {entry.name}")
-            if any(entry.iterdir()):
-                fail(f"APT list directory is not empty at finalization: {entry.name}")
-            continue
-        if not stat.S_ISREG(metadata.st_mode):
-            fail(f"unsafe APT list target: {entry.name}")
-        if entry.name != "lock" and not re.fullmatch(
-            r"snapshot\.ubuntu\.com_ubuntu_[0-9]{8}T[0-9]{6}Z_dists_"
-            r"[a-z0-9-]+_(?:InRelease|[a-z]+_(?:binary-arm64_Packages|source_Sources)\.lz4)",
-            entry.name,
-        ):
-            fail(f"unexpected APT list target: {entry.name}")
-        rows.append((entry.name, metadata.st_size, sha256(entry)))
+    for name in names:
+        path = lists_dir / name
+        metadata = regular_file(path, f"APT list target {name}")
+        rows.append((name, metadata.st_size, sha256(path)))
     return rows
 
 
@@ -412,7 +588,7 @@ def validate_archive_layout(archives_dir: Path) -> list[Path]:
     return debs
 
 
-def decompressed_gzip_identity(path: Path) -> tuple[int, str]:
+def decompressed_gzip_identity(path: Path, label: str) -> tuple[int, str]:
     digest = hashlib.sha256()
     size = 0
     try:
@@ -421,7 +597,7 @@ def decompressed_gzip_identity(path: Path) -> tuple[int, str]:
                 size += len(chunk)
                 digest.update(chunk)
     except (OSError, EOFError) as exc:
-        fail(f"could not decompress retained signed index {path}: {exc}")
+        fail(f"could not decompress {label}: {exc}")
     return size, digest.hexdigest()
 
 
@@ -457,19 +633,43 @@ def verify_local_index_views(
     index_rows: list[tuple[str, str, int, str, str]],
 ) -> None:
     snapshot_id = required(baseline, "SP11_APT_SNAPSHOT_ID")
-    for suite, relative, _size, _digest, _uri in index_rows:
+    empty_paths, empty_gzip_size, empty_gzip_digest = empty_index_contract(
+        baseline, index_rows
+    )
+    declared_empty = set(empty_paths)
+    observed_empty: set[str] = set()
+    validate_list_layout(baseline, lists_dir, index_rows)
+    for suite, relative, compressed_size, compressed_digest, _uri in index_rows:
+        full_path = f"{suite}/{relative}"
         retained = cache_dir / suite / relative
-        list_name = (
-            f"snapshot.ubuntu.com_ubuntu_{snapshot_id}_dists_{suite}_"
-            f"{relative[:-3].replace('/', '_')}.lz4"
+        decompressed = decompressed_gzip_identity(
+            retained, f"retained signed index {full_path}"
         )
+        if decompressed[0] == 0:
+            observed_empty.add(full_path)
+        if (decompressed[0] == 0) != (full_path in declared_empty):
+            fail(f"retained index decompressed-empty state differs from baseline: {full_path}")
+        list_name = local_list_name(snapshot_id, suite, relative)
         local = lists_dir / list_name
+        if full_path in declared_empty:
+            if (
+                compressed_size != empty_gzip_size
+                or compressed_digest != empty_gzip_digest
+            ):
+                fail(f"declared empty index has an unexpected signed gzip identity: {full_path}")
+            if decompressed != (0, EMPTY_SHA256):
+                fail(f"declared empty index did not decompress to empty bytes: {full_path}")
+            if os.path.lexists(local):
+                fail(f"declared empty index has an APT local-list view: {full_path}")
+            continue
         regular_file(local, "acquired APT list target")
-        if decompressed_gzip_identity(retained) != apt_list_identity(local):
+        if decompressed != apt_list_identity(local):
             fail(
                 "acquired APT list bytes differ from the retained signed gzip "
-                f"index: {suite}/{relative}"
+                f"index: {full_path}"
             )
+    if observed_empty != declared_empty:
+        fail("observed decompressed-empty index set differs from the baseline")
 
 
 def append_entry(
@@ -513,13 +713,7 @@ def write_provenance(args: argparse.Namespace, baseline: dict[str, str]) -> None
         metadata = regular_file(retained, "retained authenticated gzip index")
         if metadata.st_size != expected_size or sha256(retained) != expected_digest:
             fail(f"retained index does not match signed metadata: {suite}/{relative}")
-    expected_retained = {index_cache_dir / row[0] / row[1] for row in index_rows}
-    actual_retained = {path for path in index_cache_dir.rglob("*") if path.is_file()}
-    if actual_retained != expected_retained:
-        fail("APT index cache contains an extra or missing retained file")
-    for path in index_cache_dir.rglob("*"):
-        if path.is_symlink():
-            fail("APT index cache contains a symlink")
+    validate_index_cache_layout(index_cache_dir, index_rows)
     verify_local_index_views(baseline, lists_dir, index_cache_dir, index_rows)
 
     cached_rows: list[tuple[Path, str, str, str, int, str]] = []
@@ -629,7 +823,7 @@ def write_provenance(args: argparse.Namespace, baseline: dict[str, str]) -> None
             )
         )
 
-    target_rows = list_targets(lists_dir)
+    target_rows = list_targets(baseline, lists_dir, index_rows)
     lines = [
         "APT provenance schema: sp11-kernel-apt-provenance-v1",
         f"Snapshot ID: {snapshot_id}",

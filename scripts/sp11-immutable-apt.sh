@@ -191,6 +191,15 @@ for variable in \
   SP11_APT_INRELEASE_RESOLUTE_BACKPORTS_SHA256 \
   SP11_APT_INRELEASE_RESOLUTE_SECURITY_SHA256 \
   SP11_APT_AUTHENTICATED_INDEX_COUNT \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256 \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_1_PATH \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_2_PATH \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_3_PATH \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_4_PATH \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_5_PATH \
+  SP11_APT_DECOMPRESSED_EMPTY_INDEX_6_PATH \
   SP11_APT_PYTHON_PACKAGE_SPEC \
   SP11_APT_BOOTSTRAP_PACKAGE_COUNT; do
   [ -n "${!variable:-}" ] || die "baseline variable is empty or missing: $variable"
@@ -203,6 +212,26 @@ done
   die "snapshot component set or order changed"
 [ "$SP11_APT_SNAPSHOT_ARCHITECTURE" = "arm64" ] || die "snapshot architecture must be arm64"
 [ "$SP11_APT_AUTHENTICATED_INDEX_COUNT" = "32" ] || die "authenticated index count must be 32"
+[ "$SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT" = "6" ] ||
+  die "decompressed-empty index count must be six"
+[ "$SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE" = "20" ] ||
+  die "decompressed-empty index gzip size must be 20"
+[ "$SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256" = \
+  "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64" ] ||
+  die "decompressed-empty index gzip hash changed"
+reviewed_empty_index_paths=(
+  "resolute-backports/main/binary-arm64/Packages.gz"
+  "resolute-backports/main/source/Sources.gz"
+  "resolute-backports/restricted/binary-arm64/Packages.gz"
+  "resolute-backports/restricted/source/Sources.gz"
+  "resolute-backports/multiverse/binary-arm64/Packages.gz"
+  "resolute-backports/multiverse/source/Sources.gz"
+)
+for empty_index in "${!reviewed_empty_index_paths[@]}"; do
+  variable="SP11_APT_DECOMPRESSED_EMPTY_INDEX_$((empty_index + 1))_PATH"
+  [ "${!variable}" = "${reviewed_empty_index_paths[$empty_index]}" ] ||
+    die "$variable does not match the reviewed empty-index sequence"
+done
 [[ "$SP11_APT_PYTHON_PACKAGE_SPEC" =~ ^python3=[0-9A-Za-z.+:~_-]+$ ]] ||
   die "snapshot Python package must pin one exact python3 version"
 [ "$SP11_APT_BOOTSTRAP_PACKAGE_COUNT" = "4" ] || die "bootstrap package count must be four"

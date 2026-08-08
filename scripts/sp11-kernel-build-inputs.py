@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -18,6 +19,9 @@ from typing import NoReturn
 
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+SIGNED_SIZE_RE = re.compile(r"(?:0|[1-9][0-9]{0,19})\Z")
+UINT64_MAX = (1 << 64) - 1
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 BASELINE_RE = re.compile(r'^([A-Z0-9_]+)="([^"\r\n]*)"$')
@@ -42,6 +46,18 @@ SUITES = (
     "resolute-security",
 )
 COMPONENTS = ("main", "universe", "restricted", "multiverse")
+REVIEWED_EMPTY_INDEX_PATHS = (
+    "resolute-backports/main/binary-arm64/Packages.gz",
+    "resolute-backports/main/source/Sources.gz",
+    "resolute-backports/restricted/binary-arm64/Packages.gz",
+    "resolute-backports/restricted/source/Sources.gz",
+    "resolute-backports/multiverse/binary-arm64/Packages.gz",
+    "resolute-backports/multiverse/source/Sources.gz",
+)
+REVIEWED_EMPTY_GZIP_SIZE = 20
+REVIEWED_EMPTY_GZIP_SHA256 = (
+    "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+)
 
 
 def fail(message: str) -> NoReturn:
@@ -189,6 +205,48 @@ def safe_relative(value: str, label: str, *, basename: bool = False) -> None:
         fail(f"{label} must be a basename")
 
 
+def empty_index_contract(
+    baseline: dict[str, str],
+    index_sequence: list[tuple[str, str]] | None = None,
+) -> tuple[tuple[str, ...], int, str]:
+    count_text = required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT")
+    size_text = required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE")
+    digest = required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256")
+    if not re.fullmatch(r"[1-9][0-9]{0,2}", count_text) or int(count_text) != len(
+        REVIEWED_EMPTY_INDEX_PATHS
+    ):
+        fail("decompressed-empty index count is not the reviewed value")
+    if not SIGNED_SIZE_RE.fullmatch(size_text) or int(size_text) != REVIEWED_EMPTY_GZIP_SIZE:
+        fail("decompressed-empty index gzip size is not the reviewed value")
+    if digest != REVIEWED_EMPTY_GZIP_SHA256:
+        fail("decompressed-empty index gzip hash is not the reviewed value")
+
+    expected_keys = {
+        f"SP11_APT_DECOMPRESSED_EMPTY_INDEX_{index}_PATH"
+        for index in range(1, int(count_text) + 1)
+    }
+    actual_keys = {
+        key
+        for key in baseline
+        if re.fullmatch(r"SP11_APT_DECOMPRESSED_EMPTY_INDEX_[0-9]+_PATH", key)
+    }
+    if actual_keys != expected_keys:
+        fail("decompressed-empty index baseline path fields are not exact")
+    paths = tuple(
+        required(baseline, f"SP11_APT_DECOMPRESSED_EMPTY_INDEX_{index}_PATH")
+        for index in range(1, int(count_text) + 1)
+    )
+    for path in paths:
+        safe_relative(path, "decompressed-empty index path")
+    if paths != REVIEWED_EMPTY_INDEX_PATHS:
+        fail("decompressed-empty index paths do not match the reviewed sequence")
+    if index_sequence is not None:
+        selected = {f"{suite}/{relative}" for suite, relative in index_sequence}
+        if not set(paths).issubset(selected):
+            fail("decompressed-empty index baseline is outside the authenticated set")
+    return paths, int(size_text), digest
+
+
 def positive_count(fields: dict[str, str], key: str, maximum: int = 100000) -> int:
     value = required(fields, key)
     if not value.isdigit() or int(value) <= 0 or int(value) > maximum:
@@ -252,19 +310,62 @@ def expected_index_sequence(architecture: str) -> list[tuple[str, str]]:
     ]
 
 
-def expected_list_targets(snapshot_id: str, architecture: str) -> list[str]:
+def local_list_name(snapshot_id: str, suite: str, relative: str) -> str:
+    if not relative.endswith(".gz"):
+        fail(f"authenticated index path does not end in .gz: {suite}/{relative}")
+    return (
+        f"snapshot.ubuntu.com_ubuntu_{snapshot_id}_dists_{suite}_"
+        f"{relative[:-3].replace('/', '_')}.lz4"
+    )
+
+
+def expected_list_targets(baseline: dict[str, str]) -> list[str]:
+    snapshot_id = required(baseline, "SP11_APT_SNAPSHOT_ID")
+    architecture = required(baseline, "SP11_APT_SNAPSHOT_ARCHITECTURE")
+    index_sequence = expected_index_sequence(architecture)
+    empty_paths, _empty_size, _empty_digest = empty_index_contract(
+        baseline, index_sequence
+    )
+    empty_set = set(empty_paths)
     names = ["lock"]
     for suite in SUITES:
         prefix = f"snapshot.ubuntu.com_ubuntu_{snapshot_id}_dists_{suite}"
         names.append(f"{prefix}_InRelease")
-        for component in COMPONENTS:
-            names.extend(
-                (
-                    f"{prefix}_{component}_binary-{architecture}_Packages.lz4",
-                    f"{prefix}_{component}_source_Sources.lz4",
-                )
-            )
+    names.extend(
+        local_list_name(snapshot_id, suite, relative)
+        for suite, relative in index_sequence
+        if f"{suite}/{relative}" not in empty_set
+    )
+    if len(names) != 31 or len(names) != len(set(names)):
+        fail("derived APT list target set is not the reviewed 31-file set")
     return sorted(names)
+
+
+def validate_index_cache_layout(
+    cache_dir: Path, index_sequence: list[tuple[str, str]]
+) -> None:
+    expected_files = {cache_dir / suite / relative for suite, relative in index_sequence}
+    expected_dirs: set[Path] = set()
+    for path in expected_files:
+        parent = path.parent
+        while parent != cache_dir:
+            expected_dirs.add(parent)
+            parent = parent.parent
+    actual_files: set[Path] = set()
+    actual_dirs: set[Path] = set()
+    for path in cache_dir.rglob("*"):
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            fail(f"could not inspect retained APT index path {path}: {exc}")
+        if stat.S_ISREG(metadata.st_mode):
+            actual_files.add(path)
+        elif stat.S_ISDIR(metadata.st_mode) and not path.is_symlink():
+            actual_dirs.add(path)
+        else:
+            fail(f"retained APT index tree contains an unsafe path: {path}")
+    if actual_files != expected_files or actual_dirs != expected_dirs:
+        fail("retained APT index tree is not the exact reviewed 32-file layout")
 
 
 def validate_apt_sidecar(path: Path, baseline: dict[str, str]) -> dict[str, str]:
@@ -325,6 +426,10 @@ def validate_apt_sidecar(path: Path, baseline: dict[str, str]) -> dict[str, str]
             fail(f"APT sidecar InRelease hash does not match baseline: {suite}")
 
     index_sequence = expected_index_sequence(architecture)
+    empty_paths, empty_gzip_size, empty_gzip_digest = empty_index_contract(
+        baseline, index_sequence
+    )
+    empty_set = set(empty_paths)
     expected_keys.append("Index count")
     if required(fields, "Index count") != required(
         baseline, "SP11_APT_AUTHENTICATED_INDEX_COUNT"
@@ -345,11 +450,25 @@ def validate_apt_sidecar(path: Path, baseline: dict[str, str]) -> dict[str, str]
             fail(f"APT sidecar index path/order changed at row {index}")
         if required(fields, keys[2]) != f"{suite}/{relative}":
             fail(f"APT sidecar retained index path changed at row {index}")
-        if not required(fields, keys[3]).isdigit() or int(fields[keys[3]]) <= 0:
+        size_text = required(fields, keys[3])
+        if (
+            not SIGNED_SIZE_RE.fullmatch(size_text)
+            or int(size_text) <= 0
+            or int(size_text) > UINT64_MAX
+        ):
             fail(f"APT sidecar index size is invalid at row {index}")
         digest = required(fields, keys[4])
         if not SHA256_RE.fullmatch(digest):
             fail(f"APT sidecar index hash is invalid at row {index}")
+        full_path = f"{suite}/{relative}"
+        if full_path in empty_set:
+            if int(size_text) != empty_gzip_size or digest != empty_gzip_digest:
+                fail(
+                    "APT sidecar declared-empty gzip identity is invalid at "
+                    f"row {index}"
+                )
+        elif int(size_text) == empty_gzip_size and digest == empty_gzip_digest:
+            fail(f"APT sidecar undeclared empty gzip appears at row {index}")
         expected_uri = (
             f"{snapshot_uri}dists/{suite}/{relative.rsplit('/', 1)[0]}"
             f"/by-hash/SHA256/{digest}"
@@ -357,7 +476,7 @@ def validate_apt_sidecar(path: Path, baseline: dict[str, str]) -> dict[str, str]
         if required(fields, keys[5]) != expected_uri:
             fail(f"APT sidecar by-hash URI is invalid at row {index}")
 
-    list_paths = expected_list_targets(required(fields, "Snapshot ID"), architecture)
+    list_paths = expected_list_targets(baseline)
     expected_keys.append("APT list target count")
     if required(fields, "APT list target count") != str(len(list_paths)):
         fail("APT sidecar list-target count is not exact")
@@ -498,24 +617,51 @@ def validate_apt_sidecar(path: Path, baseline: dict[str, str]) -> dict[str, str]
     return fields
 
 
-def clear_signed_sha256(path: Path) -> dict[str, tuple[int, str]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
+def clear_signed_lines(path: Path) -> list[str]:
     try:
-        message_start = lines.index("") + 1
-        sha_start = lines.index("SHA256:", message_start) + 1
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        fail(f"could not read retained InRelease {path.name}: {exc}")
+    try:
+        start = lines.index("") + 1
     except ValueError:
         fail(f"retained InRelease has an invalid clear-signed structure: {path.name}")
+    result: list[str] = []
+    saw_signature = False
+    for line in lines[start:]:
+        if line == "-----BEGIN PGP SIGNATURE-----":
+            saw_signature = True
+            break
+        result.append(line[2:] if line.startswith("- ") else line)
+    if not saw_signature:
+        fail(f"retained InRelease has no signature block: {path.name}")
+    return result
+
+
+def clear_signed_sha256(path: Path) -> dict[str, tuple[int, str]]:
+    lines = clear_signed_lines(path)
+    try:
+        sha_start = lines.index("SHA256:") + 1
+    except ValueError:
+        fail(f"retained InRelease has no SHA256 section: {path.name}")
     entries: dict[str, tuple[int, str]] = {}
     for line in lines[sha_start:]:
         if not line.startswith(" "):
             break
         parts = line.split()
-        if len(parts) != 3 or not SHA256_RE.fullmatch(parts[0]) or not parts[1].isdigit():
+        if (
+            len(parts) != 3
+            or not SHA256_RE.fullmatch(parts[0])
+            or not SIGNED_SIZE_RE.fullmatch(parts[1])
+        ):
+            fail(f"retained InRelease has an invalid SHA256 row: {path.name}")
+        size = int(parts[1])
+        if size > UINT64_MAX or (size == 0) != (parts[0] == EMPTY_SHA256):
             fail(f"retained InRelease has an invalid SHA256 row: {path.name}")
         safe_relative(parts[2], "signed InRelease path")
         if parts[2] in entries:
             fail(f"retained InRelease has a duplicate SHA256 path: {path.name}")
-        entries[parts[2]] = (int(parts[1]), parts[0])
+        entries[parts[2]] = (size, parts[0])
     return entries
 
 
@@ -555,6 +701,91 @@ def iter_packages(path: Path) -> object:
                 yield fields
     except (OSError, UnicodeDecodeError, EOFError) as exc:
         fail(f"could not parse retained Packages.gz {path}: {exc}")
+
+
+def decompressed_gzip_identity(path: Path, label: str) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with gzip.open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+    except (OSError, EOFError) as exc:
+        fail(f"could not decompress {label}: {exc}")
+    return size, digest.hexdigest()
+
+
+def apt_list_decoder(path: Path, baseline: dict[str, str]) -> list[str]:
+    fixture_value = os.environ.get("SP11_APT_FIXTURE_ROOT", "")
+    override = os.environ.get("SP11_APT_HELPER", "")
+    if fixture_value:
+        if (
+            baseline.get("SP11_KERNEL_BASELINE_ID") != "fixture"
+            or baseline.get("SP11_KERNEL_UPSTREAM_URL")
+            != "https://github.com/example/linux.git"
+            or baseline.get("SP11_KERNEL_UPSTREAM_REF")
+            not in {"fixture", "fixture/ref"}
+        ):
+            fail("fixture APT decoder is forbidden for a production baseline")
+        fixture_root = real_directory(Path(fixture_value), "APT fixture root")
+        temporary_root = Path(os.environ.get("TMPDIR", "/tmp")).resolve(strict=True)
+        slash_tmp = Path("/tmp").resolve(strict=True)
+        if (
+            fixture_root.parent not in {temporary_root, slash_tmp}
+            or not fixture_root.name.startswith("sp11-apt-fixture.")
+        ):
+            fail("APT fixture root is not an exact temporary fixture child")
+        try:
+            path.resolve(strict=True).relative_to(fixture_root)
+        except (OSError, ValueError):
+            fail("fixture APT list target resolves outside the fixture root")
+        if not override:
+            fail("fixture mode requires SP11_APT_HELPER")
+        helper = Path(override)
+        if helper != fixture_root / "mock-bin/apt-helper":
+            fail("fixture apt-helper path is not exact")
+        regular_file(helper, "fixture apt-helper")
+        if helper.resolve(strict=True) != helper.absolute():
+            fail("fixture apt-helper has a symlinked path component")
+        return [str(helper), "cat-file", str(path)]
+    if override:
+        fail("SP11_APT_HELPER is fixture-only")
+    system_helper = Path("/usr/lib/apt/apt-helper")
+    if (
+        system_helper.is_file()
+        and not system_helper.is_symlink()
+        and os.access(system_helper, os.X_OK)
+    ):
+        return [str(system_helper), "cat-file", str(path)]
+    lz4 = shutil.which("lz4")
+    if not lz4:
+        fail("apt-helper or lz4 is required to validate retained APT list views")
+    return [lz4, "-d", "-c", str(path)]
+
+
+def apt_list_identity(path: Path, baseline: dict[str, str]) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        process = subprocess.Popen(
+            apt_list_decoder(path, baseline),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        fail(f"could not start APT list decoder for {path.name}: {exc}")
+    assert process.stdout is not None
+    for chunk in iter(lambda: process.stdout.read(1024 * 1024), b""):
+        size += len(chunk)
+        digest.update(chunk)
+    _stdout, stderr = process.communicate()
+    if process.returncode != 0:
+        fail(
+            f"could not decompress retained APT list target {path.name}: "
+            f"{stderr.decode('utf-8', errors='replace').strip()}"
+        )
+    return size, digest.hexdigest()
 
 
 def validate_retained_apt(
@@ -604,7 +835,12 @@ def validate_retained_apt(
         signed_by_suite[suite] = clear_signed_sha256(path)
 
     index_sequence = expected_index_sequence(fields["Architecture"])
-    expected_index_files: set[Path] = set()
+    empty_paths, empty_gzip_size, empty_gzip_digest = empty_index_contract(
+        baseline, index_sequence
+    )
+    declared_empty = set(empty_paths)
+    observed_empty: set[str] = set()
+    decompressed_indexes: dict[str, tuple[int, str]] = {}
     wanted_packages: set[tuple[str, str, str]] = set()
     deb_count = int(fields["Downloaded Deb count"])
     for index in range(1, deb_count + 1):
@@ -620,7 +856,6 @@ def validate_retained_apt(
     ] = {}
     for row_index, (suite, relative) in enumerate(index_sequence, 1):
         path = indexes / suite / relative
-        expected_index_files.add(path)
         metadata = regular_file(path, f"retained index {suite}/{relative}")
         digest_value = sha256(path)
         if (
@@ -629,6 +864,21 @@ def validate_retained_apt(
             or signed_by_suite[suite].get(relative) != (metadata.st_size, digest_value)
         ):
             fail(f"retained index differs from signed InRelease/sidecar: {suite}/{relative}")
+        full_path = f"{suite}/{relative}"
+        decompressed = decompressed_gzip_identity(
+            path, f"retained index {full_path}"
+        )
+        decompressed_indexes[full_path] = decompressed
+        if decompressed[0] == 0:
+            observed_empty.add(full_path)
+        if (decompressed[0] == 0) != (full_path in declared_empty):
+            fail(f"retained index decompressed-empty state differs from baseline: {full_path}")
+        if full_path in declared_empty and (
+            metadata.st_size != empty_gzip_size
+            or digest_value != empty_gzip_digest
+            or decompressed != (0, EMPTY_SHA256)
+        ):
+            fail(f"declared empty index identity differs from baseline: {full_path}")
         if not relative.endswith("/Packages.gz"):
             continue
         location = f"{suite}/{relative}"
@@ -645,9 +895,9 @@ def validate_retained_apt(
             package_records.setdefault(identity, []).append(
                 (int(record["Size"]), record["SHA256"], record["Filename"], location)
             )
-    actual_index_files = {path for path in indexes.rglob("*") if path.is_file()}
-    if actual_index_files != expected_index_files or any(path.is_symlink() for path in indexes.rglob("*")):
-        fail("retained APT index tree contains an extra, missing, or symlinked path")
+    validate_index_cache_layout(indexes, index_sequence)
+    if observed_empty != declared_empty:
+        fail("observed decompressed-empty index set differs from the baseline")
 
     expected_deb_paths: set[Path] = set()
     for index in range(1, deb_count + 1):
@@ -690,7 +940,7 @@ def validate_retained_apt(
     if {path for path in archives.glob("*.deb")} != expected_deb_paths:
         fail("retained APT archive Deb set differs from sidecar")
 
-    expected_list_names = expected_list_targets(snapshot_id, fields["Architecture"])
+    expected_list_names = expected_list_targets(baseline)
     actual_list_files: set[str] = set()
     for entry in lists.iterdir():
         metadata = entry.lstat()
@@ -709,6 +959,19 @@ def validate_retained_apt(
             f"APT list target {index} SHA256"
         ]:
             fail(f"retained APT list target differs from sidecar: {name}")
+    for suite, relative in index_sequence:
+        full_path = f"{suite}/{relative}"
+        local = lists / local_list_name(snapshot_id, suite, relative)
+        if full_path in declared_empty:
+            if os.path.lexists(local):
+                fail(f"declared empty index has a retained APT local-list view: {full_path}")
+            continue
+        regular_file(local, f"retained APT local-list view {full_path}")
+        if apt_list_identity(local, baseline) != decompressed_indexes[full_path]:
+            fail(
+                "retained APT local-list bytes differ from the signed gzip index: "
+                f"{full_path}"
+            )
 
     local_paths = sorted(local_dir.glob("*-build-deps_*.deb"), key=lambda path: path.name)
     if len(local_paths) != 1 or local_paths[0].name != fields["Local build-deps 1 path"]:

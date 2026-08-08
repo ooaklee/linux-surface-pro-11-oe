@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -35,11 +36,29 @@ SUPPORT_HEAD = subprocess.run(
 SOURCE_HEAD = "b" * 40
 CHILD_DIGEST = "sha256:" + "c" * 64
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+EMPTY_INDEX_PATHS = (
+    "resolute-backports/main/binary-arm64/Packages.gz",
+    "resolute-backports/main/source/Sources.gz",
+    "resolute-backports/restricted/binary-arm64/Packages.gz",
+    "resolute-backports/restricted/source/Sources.gz",
+    "resolute-backports/multiverse/binary-arm64/Packages.gz",
+    "resolute-backports/multiverse/source/Sources.gz",
+)
+EMPTY_GZIP_HEX = "1f8b08000000000002ff03000000000000000000"
+EMPTY_GZIP = bytes.fromhex(EMPTY_GZIP_HEX)
+EMPTY_GZIP_SHA256 = "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+assert EMPTY_GZIP.hex() == EMPTY_GZIP_HEX
+assert len(EMPTY_GZIP) == 20
+assert hashlib.sha256(EMPTY_GZIP).hexdigest() == EMPTY_GZIP_SHA256
 CREATED_FIXTURES: list[Path] = []
 
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def fixture_gzip(data: bytes) -> bytes:
+    return EMPTY_GZIP if not data else gzip.compress(data, mtime=0)
 
 
 def write_exact_build_manifest(fixture: "Fixture", path: Path) -> None:
@@ -306,6 +325,9 @@ class Fixture:
                 self.index_raw[(suite, f"{component}/source/Sources.gz")] = (
                     f"Package: source-{suite}-{component}\nVersion: 1\n\n"
                 ).encode()
+        for full_path in EMPTY_INDEX_PATHS:
+            suite, relative = full_path.split("/", 1)
+            self.index_raw[(suite, relative)] = b""
 
     def inrelease_bytes(self, suite: str) -> bytes:
         lines = [
@@ -324,7 +346,7 @@ class Fixture:
                 f"{component}/binary-arm64/Packages.gz",
                 f"{component}/source/Sources.gz",
             ):
-                compressed = gzip.compress(self.index_raw[(suite, relative)], mtime=0)
+                compressed = fixture_gzip(self.index_raw[(suite, relative)])
                 lines.append(f" {digest(compressed)} {len(compressed)} {relative}")
         lines.extend(
             (
@@ -353,14 +375,15 @@ class Fixture:
                     f"{component}/source/Sources.gz",
                 ):
                     raw = self.index_raw[(suite, relative)]
-                    compressed = gzip.compress(raw, mtime=0)
+                    compressed = fixture_gzip(raw)
                     compressed_digest = digest(compressed)
                     (self.source_indexes / compressed_digest).write_bytes(compressed)
                     list_name = (
                         f"snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_{suite}_"
                         f"{relative[:-3].replace('/', '_')}.lz4"
                     )
-                    (self.source_lists / list_name).write_bytes(raw)
+                    if f"{suite}/{relative}" not in EMPTY_INDEX_PATHS:
+                        (self.source_lists / list_name).write_bytes(raw)
 
     def write_baseline(self) -> None:
         image_digest = "sha256:" + digest(self.oci_raw)
@@ -385,9 +408,17 @@ class Fixture:
             f'SP11_APT_INRELEASE_RESOLUTE_BACKPORTS_SHA256="{self.inrelease_hashes["resolute-backports"]}"',
             f'SP11_APT_INRELEASE_RESOLUTE_SECURITY_SHA256="{self.inrelease_hashes["resolute-security"]}"',
             'SP11_APT_AUTHENTICATED_INDEX_COUNT="32"',
+            f'SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT="{len(EMPTY_INDEX_PATHS)}"',
+            f'SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE="{len(EMPTY_GZIP)}"',
+            f'SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256="{EMPTY_GZIP_SHA256}"',
             'SP11_APT_PYTHON_PACKAGE_SPEC="python3=1"',
             'SP11_APT_BOOTSTRAP_PACKAGE_COUNT="4"',
         ]
+        for index, path in enumerate(EMPTY_INDEX_PATHS, 1):
+            lines.insert(
+                lines.index('SP11_APT_PYTHON_PACKAGE_SPEC="python3=1"'),
+                f'SP11_APT_DECOMPRESSED_EMPTY_INDEX_{index}_PATH="{path}"',
+            )
         for index, (name, package, version, _arch) in enumerate(self.debs, 1):
             lines.extend(
                 (
@@ -746,6 +777,36 @@ def assert_production_baseline_is_exact(temp_root: Path) -> None:
             encoding="utf-8",
         )
         run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
+        for old, new in (
+            (
+                'SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT="6"',
+                'SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT="5"',
+            ),
+            (
+                'SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE="20"',
+                'SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE="21"',
+            ),
+            (
+                f'SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256="{EMPTY_GZIP_SHA256}"',
+                'SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256="' + "0" * 64 + '"',
+            ),
+            (
+                f'SP11_APT_DECOMPRESSED_EMPTY_INDEX_1_PATH="{EMPTY_INDEX_PATHS[0]}"',
+                'SP11_APT_DECOMPRESSED_EMPTY_INDEX_1_PATH="../escape"',
+            ),
+        ):
+            tampered.write_text(original.replace(old, new), encoding="utf-8")
+            run(
+                ["bash", str(BASELINE_VALIDATOR), str(tampered)],
+                dict(os.environ),
+                expect=False,
+            )
+        tampered.write_text(
+            original
+            + 'SP11_APT_DECOMPRESSED_EMPTY_INDEX_7_PATH="resolute/main/source/Sources.gz"\n',
+            encoding="utf-8",
+        )
+        run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
     finally:
         tampered.unlink(missing_ok=True)
 
@@ -871,6 +932,216 @@ def assert_inrelease_empty_entry_contract(temp_root: Path) -> None:
         in result.stderr
     )
     assert fixture.call_log.read_text(encoding="utf-8") == ""
+
+
+def assert_decompressed_empty_index_contract(temp_root: Path) -> None:
+    def acquire_indexes(fixture: Fixture) -> subprocess.CompletedProcess[str]:
+        return run(
+            [
+                sys.executable,
+                str(WRITER),
+                "acquire-indexes",
+                "--baseline",
+                str(fixture.baseline),
+                "--lists-dir",
+                str(fixture.source_lists),
+                "--index-cache-dir",
+                str(fixture.index_cache),
+            ],
+            fixture.env(),
+            expect=False,
+        )
+
+    shape_fixture = Fixture(temp_root)
+    assert len([path for path in shape_fixture.source_lists.iterdir() if path.is_file()]) == 31
+    for full_path in EMPTY_INDEX_PATHS:
+        suite, relative = full_path.split("/", 1)
+        compressed = fixture_gzip(shape_fixture.index_raw[(suite, relative)])
+        assert len(compressed) == 20
+        assert digest(compressed) == EMPTY_GZIP_SHA256
+        list_name = (
+            "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_"
+            f"{suite}_{relative[:-3].replace('/', '_')}.lz4"
+        )
+        assert not (shape_fixture.source_lists / list_name).exists()
+
+    path_fixture = Fixture(temp_root)
+    baseline_text = path_fixture.baseline.read_text(encoding="utf-8")
+    path_fixture.baseline.write_text(
+        baseline_text.replace(
+            EMPTY_INDEX_PATHS[0], "resolute-backports/universe/binary-arm64/Packages.gz"
+        ),
+        encoding="utf-8",
+    )
+    result = acquire_indexes(path_fixture)
+    assert "decompressed-empty index paths do not match the reviewed sequence" in result.stderr
+    assert path_fixture.call_log.read_text(encoding="utf-8") == ""
+
+    declared_nonempty = Fixture(temp_root)
+    suite, relative = EMPTY_INDEX_PATHS[0].split("/", 1)
+    declared_nonempty.index_raw[(suite, relative)] = b"unexpected non-empty bytes\n"
+    declared_nonempty.rebuild_metadata()
+    declared_nonempty.write_baseline()
+    result = acquire_indexes(declared_nonempty)
+    assert (
+        "declared empty index has an unexpected signed gzip identity: "
+        f"{EMPTY_INDEX_PATHS[0]}" in result.stderr
+    )
+
+    undeclared_empty = Fixture(temp_root)
+    undeclared_path = "resolute-backports/universe/binary-arm64/Packages.gz"
+    suite, relative = undeclared_path.split("/", 1)
+    undeclared_empty.index_raw[(suite, relative)] = b""
+    undeclared_empty.rebuild_metadata()
+    undeclared_empty.write_baseline()
+    result = acquire_indexes(undeclared_empty)
+    assert (
+        "acquired index decompressed-empty state differs from baseline: "
+        f"{undeclared_path}" in result.stderr
+    )
+
+    placeholder = Fixture(temp_root)
+    suite, relative = EMPTY_INDEX_PATHS[0].split("/", 1)
+    placeholder_name = (
+        "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_"
+        f"{suite}_{relative[:-3].replace('/', '_')}.lz4"
+    )
+    (placeholder.source_lists / placeholder_name).write_bytes(b"")
+    result = acquire_indexes(placeholder)
+    assert "APT list target set differs from the baseline-derived set" in result.stderr
+    assert placeholder.call_log.read_text(encoding="utf-8") == ""
+
+    missing_view = Fixture(temp_root)
+    missing_name = (
+        "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_resolute_"
+        "main_binary-arm64_Packages.lz4"
+    )
+    (missing_view.source_lists / missing_name).unlink()
+    result = acquire_indexes(missing_view)
+    assert "APT list target set differs from the baseline-derived set" in result.stderr
+    assert missing_view.call_log.read_text(encoding="utf-8") == ""
+
+    malformed = Fixture(temp_root)
+    suite = "resolute"
+    relative = "main/source/Sources.gz"
+    inrelease = (
+        malformed.source_lists
+        / "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_resolute_InRelease"
+    )
+    original = inrelease.read_text(encoding="utf-8")
+    old_row = next(line for line in original.splitlines() if line.endswith(f" {relative}"))
+    malformed_gzip = b"not a gzip stream"
+    malformed_digest = digest(malformed_gzip)
+    new_row = f" {malformed_digest} {len(malformed_gzip)} {relative}"
+    inrelease.write_text(original.replace(old_row, new_row), encoding="utf-8")
+    (malformed.source_indexes / malformed_digest).write_bytes(malformed_gzip)
+    malformed.inrelease_hashes[suite] = digest(inrelease.read_bytes())
+    malformed.write_baseline()
+    result = acquire_indexes(malformed)
+    assert "could not decompress acquired authenticated index" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def assert_full_validator_signed_size_contract(temp_root: Path) -> None:
+    specification = importlib.util.spec_from_file_location(
+        "sp11_kernel_build_inputs_signed_size_fixture", ENVELOPE
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+    benign = f" {EMPTY_SHA256} 0 main/debian-installer/binary-arm64/Packages"
+    hostile_rows = (
+        f" {'f' * 64} 0 main/debian-installer/binary-arm64/Packages",
+        f" {EMPTY_SHA256} 1 main/debian-installer/binary-arm64/Packages",
+        f" {EMPTY_SHA256} \u0660 main/debian-installer/binary-arm64/Packages",
+        f" {EMPTY_SHA256} 00 main/debian-installer/binary-arm64/Packages",
+        f" {'f' * 64} {1 << 64} main/debian-installer/binary-arm64/Packages",
+        f" {'f' * 64} {'9' * 5000} main/debian-installer/binary-arm64/Packages",
+    )
+    valid_fixture = Fixture(temp_root)
+    valid_inrelease = (
+        valid_fixture.source_lists
+        / "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_resolute_InRelease"
+    )
+    assert module.clear_signed_sha256(valid_inrelease)[
+        "main/debian-installer/binary-arm64/Packages"
+    ] == (0, EMPTY_SHA256)
+    for hostile in hostile_rows:
+        fixture = Fixture(temp_root)
+        inrelease = (
+            fixture.source_lists
+            / "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_resolute_InRelease"
+        )
+        original = inrelease.read_text(encoding="utf-8")
+        inrelease.write_text(original.replace(benign, hostile), encoding="utf-8")
+        try:
+            module.clear_signed_sha256(inrelease)
+        except SystemExit as exc:
+            assert "invalid SHA256 row" in str(exc)
+        else:
+            raise AssertionError("full validator accepted a hostile signed size row")
+
+
+def assert_full_validator_decoder_contract(temp_root: Path) -> None:
+    specification = importlib.util.spec_from_file_location(
+        "sp11_kernel_build_inputs_decoder_fixture", ENVELOPE
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+    class SystemHelper:
+        def is_file(self) -> bool:
+            return True
+
+        def is_symlink(self) -> bool:
+            return False
+
+        def __str__(self) -> str:
+            return "/usr/lib/apt/apt-helper"
+
+    system_helper = SystemHelper()
+    real_path = Path
+    module.Path = lambda value: (
+        system_helper
+        if str(value) == "/usr/lib/apt/apt-helper"
+        else real_path(value)
+    )
+    executable = False
+    access_calls: list[tuple[object, int]] = []
+
+    def access(path: object, mode: int) -> bool:
+        access_calls.append((path, mode))
+        return executable
+
+    module.os = SimpleNamespace(environ={}, access=access, X_OK=os.X_OK)
+    decoder_lookup_calls: list[str] = []
+
+    def decoder_lookup(name: str) -> str:
+        decoder_lookup_calls.append(name)
+        return "/fixture/bin/lz4"
+
+    module.shutil = SimpleNamespace(which=decoder_lookup)
+    target = temp_root / "decoder-contract.lz4"
+    assert module.apt_list_decoder(target, {}) == [
+        "/fixture/bin/lz4",
+        "-d",
+        "-c",
+        str(target),
+    ]
+    assert access_calls == [(system_helper, os.X_OK)]
+    assert decoder_lookup_calls == ["lz4"]
+
+    executable = True
+    decoder_lookup_calls.clear()
+    assert module.apt_list_decoder(target, {}) == [
+        "/usr/lib/apt/apt-helper",
+        "cat-file",
+        str(target),
+    ]
+    assert access_calls[-1] == (system_helper, os.X_OK)
+    assert decoder_lookup_calls == []
 
 
 def assert_ordered_bootstrap_calls(fixture: Fixture) -> None:
@@ -1056,6 +1327,15 @@ def bootstrap_and_finalize(temp_root: Path) -> Fixture:
     sidecar = (fixture.artifacts / "sp11-kernel-apt-provenance.txt").read_text(
         encoding="utf-8"
     )
+    assert "Index count: 32\n" in sidecar
+    assert "APT list target count: 31\n" in sidecar
+    for full_path in EMPTY_INDEX_PATHS:
+        suite, relative = full_path.split("/", 1)
+        empty_list_name = (
+            "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_"
+            f"{suite}_{relative[:-3].replace('/', '_')}.lz4"
+        )
+        assert empty_list_name not in sidecar
     python_name, python_package, python_version, python_arch = fixture.python_deb
     python_bytes = fixture.deb_bytes[python_name]
     assert "Downloaded Deb count: 5\n" in sidecar
@@ -1091,6 +1371,16 @@ def writer_hostile_cases(fixture: Fixture) -> None:
     run(fixture.writer_command(fixture.artifacts / "missing-index.txt"), fixture.env(), expect=False)
     retained.write_bytes(original_retained)
 
+    extra_index_dir = fixture.index_cache / "unexpected-empty-directory"
+    extra_index_dir.mkdir()
+    extra_dir_result = run(
+        fixture.writer_command(fixture.artifacts / "extra-index-directory.txt"),
+        fixture.env(),
+        expect=False,
+    )
+    assert "APT index cache tree is not the exact reviewed 32-file layout" in extra_dir_result.stderr
+    extra_index_dir.rmdir()
+
     evil = fixture.archives / "evil_1_arm64.deb"
     evil.write_bytes(b"evil Deb not present in signed Packages.gz\n")
     run(fixture.writer_command(fixture.artifacts / "mutable-apt-cache.txt"), fixture.env(), expect=False)
@@ -1116,7 +1406,7 @@ def writer_hostile_cases(fixture: Fixture) -> None:
                 f"{component}/binary-arm64/Packages.gz",
                 f"{component}/source/Sources.gz",
             ):
-                compressed = gzip.compress(fixture.index_raw[(suite, relative)], mtime=0)
+                compressed = fixture_gzip(fixture.index_raw[(suite, relative)])
                 target = fixture.index_cache / suite / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(compressed)
@@ -1147,7 +1437,7 @@ def writer_hostile_cases(fixture: Fixture) -> None:
             ):
                 target = fixture.index_cache / suite / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(gzip.compress(fixture.index_raw[(suite, relative)], mtime=0))
+                target.write_bytes(fixture_gzip(fixture.index_raw[(suite, relative)]))
     run(fixture.writer_command(fixture.artifacts / "duplicate-conflict.txt"), fixture.env(), expect=False)
     assert sidecar.exists()
 
@@ -1172,7 +1462,7 @@ def envelope_cases(fixture: Fixture) -> None:
             ):
                 target = fixture.index_cache / suite / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(gzip.compress(fixture.index_raw[(suite, relative)], mtime=0))
+                target.write_bytes(fixture_gzip(fixture.index_raw[(suite, relative)]))
     sidecar = fixture.artifacts / "sp11-kernel-apt-provenance.txt"
     run(fixture.writer_command(sidecar), fixture.env())
 
@@ -1224,6 +1514,27 @@ def envelope_cases(fixture: Fixture) -> None:
     validate_command = base_command.copy()
     validate_command[2] = "validate"
     run(validate_command, fixture.env())
+    production_identity_baseline = fixture.root / "production-identity-baseline.env"
+    production_identity_baseline.write_text(
+        fixture.baseline.read_text(encoding="utf-8").replace(
+            'SP11_KERNEL_BASELINE_ID="fixture"',
+            'SP11_KERNEL_BASELINE_ID="7.2-rc5-jg-0"',
+        ),
+        encoding="utf-8",
+    )
+    production_identity_command = [
+        str(production_identity_baseline)
+        if value == str(fixture.baseline)
+        else value
+        for value in validate_command
+    ]
+    production_fixture_result = run(
+        production_identity_command, fixture.env(), expect=False
+    )
+    assert (
+        "fixture APT decoder is forbidden for a production baseline"
+        in production_fixture_result.stderr
+    )
     attached_command = [
         sys.executable,
         str(ENVELOPE),
@@ -1341,7 +1652,11 @@ def envelope_cases(fixture: Fixture) -> None:
 
         setattr(module, hook_name, mutating_hook)
         saved_arguments = sys.argv
+        saved_environment = dict(os.environ)
+        fixture_environment = fixture.env()
         sys.argv = [str(ENVELOPE), *command[2:]]
+        os.environ.clear()
+        os.environ.update(fixture_environment)
         try:
             try:
                 module.main()
@@ -1353,6 +1668,8 @@ def envelope_cases(fixture: Fixture) -> None:
                 )
         finally:
             sys.argv = saved_arguments
+            os.environ.clear()
+            os.environ.update(saved_environment)
             target.write_bytes(original_bytes)
         assert mutated
 
@@ -1394,6 +1711,24 @@ def envelope_cases(fixture: Fixture) -> None:
     sidecar.write_text(original_sidecar + "Unexpected field: rejected\n", encoding="utf-8")
     run(validate_command, fixture.env(), expect=False)
     run(attached_command, fixture.env(), expect=False)
+    sidecar.write_text(original_sidecar, encoding="utf-8")
+
+    sidecar.write_text(
+        original_sidecar.replace("Index 17 size: 20", "Index 17 size: 21"),
+        encoding="utf-8",
+    )
+    empty_size_result = run(attached_command, fixture.env(), expect=False)
+    assert "declared-empty gzip identity is invalid" in empty_size_result.stderr
+    sidecar.write_text(original_sidecar, encoding="utf-8")
+
+    sidecar.write_text(
+        original_sidecar.replace(
+            "APT list target count: 31", "APT list target count: 37"
+        ),
+        encoding="utf-8",
+    )
+    list_count_result = run(attached_command, fixture.env(), expect=False)
+    assert "APT sidecar list-target count is not exact" in list_count_result.stderr
     sidecar.write_text(original_sidecar, encoding="utf-8")
 
     uri_line = next(
@@ -1477,6 +1812,15 @@ def envelope_cases(fixture: Fixture) -> None:
     run(validate_command, fixture.env(), expect=False)
     retained_index.write_bytes(index_bytes)
 
+    extra_index_dir = fixture.index_cache / "unexpected-empty-directory"
+    extra_index_dir.mkdir()
+    extra_dir_result = run(validate_command, fixture.env(), expect=False)
+    assert (
+        "retained APT index tree is not the exact reviewed 32-file layout"
+        in extra_dir_result.stderr
+    )
+    extra_index_dir.rmdir()
+
     retained_list = next(
         path for path in fixture.retained_lists.iterdir() if path.name.endswith("main_binary-arm64_Packages.lz4")
     )
@@ -1484,6 +1828,16 @@ def envelope_cases(fixture: Fixture) -> None:
     retained_list.write_bytes(list_bytes + b"tamper")
     run(validate_command, fixture.env(), expect=False)
     retained_list.write_bytes(list_bytes)
+
+    empty_suite, empty_relative = EMPTY_INDEX_PATHS[0].split("/", 1)
+    forbidden_empty_view = fixture.retained_lists / (
+        "snapshot.ubuntu.com_ubuntu_20260807T000000Z_dists_"
+        f"{empty_suite}_{empty_relative[:-3].replace('/', '_')}.lz4"
+    )
+    forbidden_empty_view.write_bytes(b"")
+    empty_view_result = run(validate_command, fixture.env(), expect=False)
+    assert "retained APT list target set differs from reviewed set" in empty_view_result.stderr
+    forbidden_empty_view.unlink()
 
     pre_inventory = fixture.work / "sp11-apt-installed-pre.txt"
     inventory_bytes = pre_inventory.read_bytes()
@@ -1568,6 +1922,9 @@ def main() -> None:
         assert_path_guards(temp_root)
         assert_bootstrap_authentication_failures(temp_root)
         assert_inrelease_empty_entry_contract(temp_root)
+        assert_decompressed_empty_index_contract(temp_root)
+        assert_full_validator_signed_size_contract(temp_root)
+        assert_full_validator_decoder_contract(temp_root)
         fixture = bootstrap_and_finalize(temp_root)
         writer_hostile_cases(fixture)
         envelope_cases(fixture)

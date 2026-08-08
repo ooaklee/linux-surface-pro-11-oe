@@ -47,6 +47,15 @@ def write_apt_sidecar(path: Path, baseline: dict[str, str]) -> None:
     snapshot_id = required(baseline, "SP11_APT_SNAPSHOT_ID")
     snapshot_uri = required(baseline, "SP11_APT_SNAPSHOT_URI")
     architecture = required(baseline, "SP11_APT_SNAPSHOT_ARCHITECTURE")
+    empty_count = int(
+        required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT")
+    )
+    empty_paths = {
+        required(baseline, f"SP11_APT_DECOMPRESSED_EMPTY_INDEX_{index}_PATH")
+        for index in range(1, empty_count + 1)
+    }
+    empty_size = int(required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE"))
+    empty_digest = required(baseline, "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256")
     lines = [
         "APT provenance schema: sp11-kernel-apt-provenance-v1",
         f"Snapshot ID: {snapshot_id}",
@@ -94,14 +103,17 @@ def write_apt_sidecar(path: Path, baseline: dict[str, str]) -> None:
     ]
     lines.append(f"Index count: {len(index_rows)}")
     for index, (suite, relative) in enumerate(index_rows, 1):
-        digest = sha256_bytes(f"{suite}/{relative}\n".encode())
+        full_path = f"{suite}/{relative}"
+        is_empty = full_path in empty_paths
+        digest = empty_digest if is_empty else sha256_bytes(f"{full_path}\n".encode())
+        size = empty_size if is_empty else 2000 + index
         parent = relative.rsplit("/", 1)[0]
         lines.extend(
             (
                 f"Index {index} suite: {suite}",
                 f"Index {index} path: {relative}",
                 f"Index {index} retained path: {suite}/{relative}",
-                f"Index {index} size: {2000 + index}",
+                f"Index {index} size: {size}",
                 f"Index {index} SHA256: {digest}",
                 f"Index {index} URI: {snapshot_uri}dists/{suite}/{parent}"
                 f"/by-hash/SHA256/{digest}",
@@ -113,12 +125,14 @@ def write_apt_sidecar(path: Path, baseline: dict[str, str]) -> None:
         prefix = f"snapshot.ubuntu.com_ubuntu_{snapshot_id}_dists_{suite}"
         list_paths.append(f"{prefix}_InRelease")
         for component in COMPONENTS:
-            list_paths.extend(
-                (
-                    f"{prefix}_{component}_binary-{architecture}_Packages.lz4",
-                    f"{prefix}_{component}_source_Sources.lz4",
-                )
-            )
+            for relative in (
+                f"{component}/binary-{architecture}/Packages.gz",
+                f"{component}/source/Sources.gz",
+            ):
+                if f"{suite}/{relative}" not in empty_paths:
+                    list_paths.append(
+                        f"{prefix}_{relative[:-3].replace('/', '_')}.lz4"
+                    )
     list_paths.sort()
     lines.append(f"APT list target count: {len(list_paths)}")
     for index, list_path in enumerate(list_paths, 1):

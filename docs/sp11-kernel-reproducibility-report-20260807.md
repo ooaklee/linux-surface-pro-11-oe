@@ -364,8 +364,13 @@ bootstrap phase only: a metadata update followed by a download-only install.
 It verifies the signed `InRelease` identities before installing the four exact
 hash-pinned CA/OpenSSL packages, clears the lists, and then repeats the update
 with strict HTTPS. Every selected gzip index is fetched through its signed
-by-hash URI and retained. The acquired APT list view is cross-checked against
-those gzip bytes inside the container.
+by-hash URI and retained. Six positive-size `resolute-backports` gzip indexes
+in the pinned snapshot have an authenticated decompressed payload of exactly
+zero bytes, so the pinned APT does not emit local list views for them. The
+baseline binds their exact paths and compressed identities. Acquisition and
+finalization require those six views to remain absent, require views for the
+other 26 indexes, and cross-check every emitted view against its signed gzip
+payload. No placeholder list files are created.
 
 Every cached `.deb` is authenticated directly from the retained signed
 `Packages.gz` records. Identical records in `-updates` and `-security` are

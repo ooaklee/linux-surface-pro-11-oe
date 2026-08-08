@@ -13,11 +13,12 @@ container_image="ubuntu:26.04@$digest"
 source_url="https://github.com/example/linux.git"
 source_commit=""
 mock_bin=""
+apt_decoder_root=""
 
 cleanup() {
   [ -n "$temporary_root" ] || return 0
   case "$temporary_root" in
-    "$temporary_parent"/sp11-release-provenance.*)
+    "$temporary_parent"/sp11-apt-fixture.release-provenance.*)
       rm -rf -- "$temporary_root"
       ;;
     *)
@@ -37,8 +38,17 @@ for tool in awk cmp git grep mktemp python3 sed shasum stat xz; do
 done
 
 temporary_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
-temporary_root="$(mktemp -d "$temporary_parent/sp11-release-provenance.XXXXXX")"
+temporary_root="$(mktemp -d "$temporary_parent/sp11-apt-fixture.release-provenance.XXXXXX")"
 temporary_root="$(cd "$temporary_root" && pwd -P)"
+apt_decoder_root="$temporary_root"
+mkdir -p "$apt_decoder_root/mock-bin"
+cat > "$apt_decoder_root/mock-bin/apt-helper" <<'EOF_APT_HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 2 ] && [ "$1" = "cat-file" ] || exit 2
+cat "$2"
+EOF_APT_HELPER
+chmod 0755 "$apt_decoder_root/mock-bin/apt-helper"
 tree_state_root="$temporary_root/tree-state-root"
 tree_state_file="$temporary_root/tree-state.json"
 mkdir -p "$tree_state_root/nested"
@@ -398,7 +408,9 @@ make_provenance_work() {
     cp "$deb" "$provenance_work/artifacts/"
   done < <(find "$build_work/source" -maxdepth 1 -type f -name '*.deb' | LC_ALL=C sort)
   support_head="$(git -C "$support_dir" rev-parse 'HEAD^{commit}')"
-  python3 "$support_dir/scripts/sp11-kernel-build-inputs.py" write \
+  SP11_APT_FIXTURE_ROOT="$apt_decoder_root" \
+  SP11_APT_HELPER="$apt_decoder_root/mock-bin/apt-helper" \
+    python3 "$support_dir/scripts/sp11-kernel-build-inputs.py" write \
     --baseline "$support_dir/config/kernel-baselines/7.2-rc5-jg-0.env" \
     --work-dir "$provenance_work" \
     --support-head "$support_head" \
@@ -770,6 +782,8 @@ run_preparer() {
     FIXTURE_SOURCE_REPO="$source_repo" \
     FIXTURE_PUBLIC_SOURCE_URL="$source_url" \
     FIXTURE_REAL_PYTHON3="$real_python3" \
+    SP11_APT_FIXTURE_ROOT="$apt_decoder_root" \
+    SP11_APT_HELPER="$apt_decoder_root/mock-bin/apt-helper" \
     "$support_dir/scripts/prepare-sp11-kernel-release-assets.sh" \
       --kernel-debs-dir "$kernel_debs_dir" \
       --artifacts-dir "$artifacts_dir" \

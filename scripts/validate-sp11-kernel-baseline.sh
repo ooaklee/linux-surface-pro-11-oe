@@ -40,6 +40,15 @@ SP11_APT_INRELEASE_RESOLUTE_UPDATES_SHA256
 SP11_APT_INRELEASE_RESOLUTE_BACKPORTS_SHA256
 SP11_APT_INRELEASE_RESOLUTE_SECURITY_SHA256
 SP11_APT_AUTHENTICATED_INDEX_COUNT
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_1_PATH
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_2_PATH
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_3_PATH
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_4_PATH
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_5_PATH
+SP11_APT_DECOMPRESSED_EMPTY_INDEX_6_PATH
 SP11_APT_PYTHON_PACKAGE_SPEC
 SP11_APT_BOOTSTRAP_PACKAGE_COUNT
 SP11_APT_BOOTSTRAP_PACKAGE_1_SPEC
@@ -107,6 +116,37 @@ done
 
 [ "$SP11_APT_AUTHENTICATED_INDEX_COUNT" = "32" ] ||
   die "SP11_APT_AUTHENTICATED_INDEX_COUNT must cover the reviewed 4x4x2 index set"
+[ "$SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT" = "6" ] ||
+  die "SP11_APT_DECOMPRESSED_EMPTY_INDEX_COUNT must cover the reviewed six empty indexes"
+[ "$SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE" = "20" ] ||
+  die "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SIZE does not match the reviewed gzip identity"
+[ "$SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256" = \
+  "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64" ] ||
+  die "SP11_APT_DECOMPRESSED_EMPTY_INDEX_SHA256 does not match the reviewed gzip identity"
+
+reviewed_empty_index_paths=(
+  "resolute-backports/main/binary-arm64/Packages.gz"
+  "resolute-backports/main/source/Sources.gz"
+  "resolute-backports/restricted/binary-arm64/Packages.gz"
+  "resolute-backports/restricted/source/Sources.gz"
+  "resolute-backports/multiverse/binary-arm64/Packages.gz"
+  "resolute-backports/multiverse/source/Sources.gz"
+)
+for empty_index in "${!reviewed_empty_index_paths[@]}"; do
+  variable="SP11_APT_DECOMPRESSED_EMPTY_INDEX_$((empty_index + 1))_PATH"
+  [ "${!variable}" = "${reviewed_empty_index_paths[$empty_index]}" ] ||
+    die "$variable does not match the reviewed empty-index sequence"
+done
+empty_path_variables="$(
+  awk -F '=' '/^SP11_APT_DECOMPRESSED_EMPTY_INDEX_[0-9]+_PATH=/ { print $1 }' "$baseline"
+)"
+expected_empty_path_variables="$(
+  for empty_index in 1 2 3 4 5 6; do
+    printf 'SP11_APT_DECOMPRESSED_EMPTY_INDEX_%s_PATH\n' "$empty_index"
+  done
+)"
+[ "$empty_path_variables" = "$expected_empty_path_variables" ] ||
+  die "decompressed-empty index baseline path field set/order is not exact"
 [ "$SP11_APT_PYTHON_PACKAGE_SPEC" = "python3=3.14.3-0ubuntu2" ] ||
   die "SP11_APT_PYTHON_PACKAGE_SPEC does not match the reviewed snapshot"
 
