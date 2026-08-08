@@ -627,16 +627,21 @@ if [ "$work_parent_logical" != "$work_parent_physical" ]; then
   echo "Kernel work directory parent must not contain symlink components: $work_parent" >&2
   exit 1
 fi
+if [ "$work_parent_physical" = "/" ]; then
+  expected_work_dir="/$work_leaf"
+else
+  expected_work_dir="$work_parent_physical/$work_leaf"
+fi
 if [ -L "$WORK_DIR" ] ||
    { [ -e "$WORK_DIR" ] && [ ! -d "$WORK_DIR" ]; }; then
   echo "Kernel work directory must be a real, non-symlinked directory: $WORK_DIR" >&2
   exit 1
 fi
 if [ ! -e "$WORK_DIR" ]; then
-  mkdir "$work_parent_physical/$work_leaf"
+  mkdir "$expected_work_dir"
 fi
 work_dir="$(cd "$WORK_DIR" && pwd -P)"
-if [ "$work_dir" != "$work_parent_physical/$work_leaf" ]; then
+if [ "$work_dir" != "$expected_work_dir" ]; then
   echo "Kernel work directory resolves outside its requested managed path: $WORK_DIR" >&2
   exit 1
 fi

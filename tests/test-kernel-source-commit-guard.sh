@@ -4,8 +4,42 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 temporary_root=""
 temporary_parent=""
+root_parent_work=""
+root_parent_created="false"
+root_parent_identity=""
+
+directory_identity() {
+	local path="$1" identity=""
+
+	[ -d "$path" ] && [ ! -L "$path" ] || return 1
+	if identity="$(stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
+		printf '%s\n' "$identity"
+	elif identity="$(stat -f '%d:%i' "$path" 2>/dev/null)"; then
+		printf '%s\n' "$identity"
+	else
+		return 1
+	fi
+}
 
 cleanup() {
+	local current_identity=""
+
+	if [ "$root_parent_created" = "true" ] && [ -n "$root_parent_work" ]; then
+		case "$root_parent_work" in
+			/sp11-source-guard-root-*)
+				current_identity="$(directory_identity "$root_parent_work" || true)"
+				if [ "$(id -u)" -eq 0 ] && [ -n "$root_parent_identity" ] &&
+				   [ "$current_identity" = "$root_parent_identity" ]; then
+					rm -rf -- "$root_parent_work"
+				else
+					echo "warning: refusing to remove changed direct-root test path: $root_parent_work" >&2
+				fi
+				;;
+			*)
+				echo "warning: refusing to remove unexpected direct-root test path: $root_parent_work" >&2
+				;;
+		esac
+	fi
 	[ -n "$temporary_root" ] || return 0
 	case "$temporary_root" in
 		"$temporary_parent"/sp11-source-guard.*)
@@ -23,7 +57,7 @@ die() {
 	exit 1
 }
 
-for tool in cmp git grep mktemp; do
+for tool in cmp git grep mktemp stat; do
 	command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 
@@ -44,6 +78,7 @@ printf 'before\n' > "$fixture_repo/guard.txt"
 git -C "$fixture_repo" add guard.txt
 git -C "$fixture_repo" commit --quiet -m "Create source-guard fixture"
 actual_commit="$(git -C "$fixture_repo" rev-parse --verify 'HEAD^{commit}')"
+unexpected_commit="0000000000000000000000000000000000000000"
 
 printf '%s\n' \
 	'diff --git a/guard.txt b/guard.txt' \
@@ -52,6 +87,166 @@ printf '%s\n' \
 	'@@ -1 +1 @@' \
 	'-before' \
 	'+after' > "$patch_dir/0001-change-guard-marker.patch"
+
+run_path_guard() {
+	local candidate_work="$1"
+	local expected_commit="${2:-$actual_commit}"
+	"$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" \
+		--source git \
+		--git-url "$fixture_repo" \
+		--git-branch fixture \
+		--expected-source-commit "$expected_commit" \
+		--patch-dir "$patch_dir" \
+		--work-dir "$candidate_work" \
+		--prepare-only
+}
+
+# The Docker wrapper mounts its named Linux volume directly at /linux-work.
+# Exercise the same direct-root parent when already running as root; otherwise
+# retain exact lexical and production-contract regressions for Bash 3 hosts.
+root_parent="/"
+for root_leaf in linux-work work; do
+	if [ "$root_parent" = "/" ]; then
+		root_join="/$root_leaf"
+	else
+		root_join="$root_parent/$root_leaf"
+	fi
+	[ "$root_join" = "/$root_leaf" ] || die "direct-root work path was not canonical: /$root_leaf"
+	[ "$root_join" != "$root_parent/$root_leaf" ] ||
+		die "direct-root regression did not distinguish /$root_leaf from //$root_leaf"
+done
+grep -Fq 'if [ "$work_parent_physical" = "/" ]; then' \
+	"$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" ||
+	die "kernel builder does not distinguish the filesystem root from other parents"
+grep -Fq 'expected_work_dir="/$work_leaf"' \
+	"$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" ||
+	die "kernel builder does not form a canonical direct-root work child"
+grep -Fq 'expected_work_dir="$work_parent_physical/$work_leaf"' \
+	"$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" ||
+	die "kernel builder changed nested-parent work-child formation"
+grep -Fq 'mkdir "$expected_work_dir"' "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" ||
+	die "kernel builder does not create the exact expected work child"
+grep -Fq '[ "$work_dir" != "$expected_work_dir" ]' \
+	"$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" ||
+	die "kernel builder does not compare against the exact expected work child"
+
+can_run_direct_root="false"
+if [ "$(id -u)" -eq 0 ]; then
+	can_run_direct_root="true"
+fi
+if [ "$can_run_direct_root" = "true" ]; then
+	root_candidate="/sp11-source-guard-root-${temporary_root##*.}"
+	if ! mkdir "$root_candidate"; then
+		die "could not create private direct-root test path: $root_candidate"
+	fi
+	root_candidate_identity="$(directory_identity "$root_candidate" || true)"
+	if [ -z "$root_candidate_identity" ]; then
+		rmdir "$root_candidate"
+		die "could not capture private direct-root test identity: $root_candidate"
+	fi
+	root_parent_work="$root_candidate"
+	root_parent_identity="$root_candidate_identity"
+	root_parent_created="true"
+	if run_path_guard "$root_parent_work" "$unexpected_commit" \
+		> "$temporary_root/direct-root.log" 2>&1; then
+		cat "$temporary_root/direct-root.log" >&2
+		die "direct-root probe accepted an unexpected source commit"
+	fi
+	[ -d "$root_parent_work" ] && [ ! -L "$root_parent_work" ] ||
+		die "direct-root work directory was not retained as a real directory: $root_parent_work"
+	root_cloned_source="$root_parent_work/source/git-fixture"
+	[ -d "$root_cloned_source/.git" ] && [ ! -L "$root_cloned_source" ] &&
+		[ ! -L "$root_cloned_source/.git" ] || {
+		cat "$temporary_root/direct-root.log" >&2
+		die "direct-root probe did not retain a real cloned checkout"
+	}
+	grep -Fq 'Resolved kernel source does not match --expected-source-commit.' \
+		"$temporary_root/direct-root.log" || {
+		cat "$temporary_root/direct-root.log" >&2
+		die "direct-root probe did not reach the source-commit guard"
+	}
+	grep -Fq 'Refusing to apply patches or start a build from an unexpected source commit.' \
+		"$temporary_root/direct-root.log" || {
+		cat "$temporary_root/direct-root.log" >&2
+		die "direct-root probe did not report its fail-closed boundary"
+	}
+	if grep -Fq 'Kernel work directory resolves outside its requested managed path' \
+		"$temporary_root/direct-root.log"; then
+		cat "$temporary_root/direct-root.log" >&2
+		die "direct-root probe failed work-directory admission"
+	fi
+	[ "$(git -C "$root_cloned_source" rev-parse --verify 'HEAD^{commit}')" = "$actual_commit" ] ||
+		die "direct-root probe cloned an unexpected source commit"
+	git -C "$root_cloned_source" diff --quiet ||
+		die "direct-root source-commit guard allowed a worktree mutation"
+	git -C "$root_cloned_source" diff --cached --quiet ||
+		die "direct-root source-commit guard allowed an index mutation"
+	[ -z "$(git -C "$root_cloned_source" ls-files --others --exclude-standard)" ] ||
+		die "direct-root source-commit guard allowed an untracked mutation"
+	grep -Fxq 'before' "$root_cloned_source/guard.txt" ||
+		die "direct-root source-commit guard allowed the fixture patch"
+	[ ! -e "$root_parent_work/sp11-kernel-build-manifest.txt" ] ||
+		die "direct-root source-commit guard allowed manifest creation"
+	if grep -Fq 'Applying patches from' "$temporary_root/direct-root.log"; then
+		die "direct-root source-commit guard reached patch application"
+	fi
+	[ "$(directory_identity "$root_parent_work" || true)" = "$root_parent_identity" ] ||
+		die "direct-root work directory identity changed during prepare-only"
+	rm -rf -- "$root_parent_work"
+	root_parent_work=""
+	root_parent_created="false"
+	root_parent_identity=""
+fi
+
+path_victim="$temporary_root/work-path-victim"
+mkdir "$path_victim"
+printf 'work path victim must remain unchanged\n' > "$path_victim/sentinel"
+
+if run_path_guard / > "$temporary_root/root-work.log" 2>&1; then
+	die "kernel build accepted the filesystem root as its work directory"
+fi
+grep -Fq 'must use a dedicated canonical path' "$temporary_root/root-work.log" ||
+	die "filesystem-root work rejection was not explicit"
+
+for duplicate_root_work in //linux-work //work; do
+	duplicate_root_leaf="${duplicate_root_work##*/}"
+	if run_path_guard "$duplicate_root_work" \
+		> "$temporary_root/duplicate-root-$duplicate_root_leaf.log" 2>&1; then
+		die "kernel build accepted a duplicate-separator root child: $duplicate_root_work"
+	fi
+	grep -Fq 'must use a dedicated canonical path' \
+		"$temporary_root/duplicate-root-$duplicate_root_leaf.log" ||
+		die "duplicate-separator root-child rejection was not explicit: $duplicate_root_work"
+done
+
+if run_path_guard "$temporary_root/safe/../work-path-victim" \
+	> "$temporary_root/traversal-work.log" 2>&1; then
+	die "kernel build accepted parent traversal in its work directory"
+fi
+grep -Fq 'must use a dedicated canonical path' "$temporary_root/traversal-work.log" ||
+	die "work-directory traversal rejection was not explicit"
+grep -Fxq 'work path victim must remain unchanged' "$path_victim/sentinel" ||
+	die "work-directory traversal changed its victim"
+
+linked_work="$temporary_root/linked-work"
+ln -s "$path_victim" "$linked_work"
+if run_path_guard "$linked_work" > "$temporary_root/linked-work.log" 2>&1; then
+	die "kernel build accepted a symlink as its work directory"
+fi
+grep -Fq 'must be a real, non-symlinked directory' "$temporary_root/linked-work.log" ||
+	die "symlinked work-directory rejection was not explicit"
+grep -Fxq 'work path victim must remain unchanged' "$path_victim/sentinel" ||
+	die "symlinked work directory changed its victim"
+
+regular_work="$temporary_root/regular-work"
+printf 'regular work path must remain unchanged\n' > "$regular_work"
+if run_path_guard "$regular_work" > "$temporary_root/regular-work.log" 2>&1; then
+	die "kernel build accepted a regular file as its work directory"
+fi
+grep -Fq 'must be a real, non-symlinked directory' "$temporary_root/regular-work.log" ||
+	die "regular-file work-directory rejection was not explicit"
+grep -Fxq 'regular work path must remain unchanged' "$regular_work" ||
+	die "regular-file work-directory rejection changed its victim"
 
 victim_repo="$temporary_root/source-symlink-victim"
 symlink_work="$temporary_root/symlink-work"
@@ -99,7 +294,6 @@ for reset_mode in preserve reset; do
 		die "kernel build changed victim Git state in $reset_mode mode"
 done
 
-unexpected_commit="0000000000000000000000000000000000000000"
 if "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" \
 	--source git \
 	--git-url "$fixture_repo" \
