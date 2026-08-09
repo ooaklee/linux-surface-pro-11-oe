@@ -70,9 +70,10 @@ sp11-qcom-x1e-7.0.0-22.22-rfkill1
 Each binary release must include, at minimum:
 
 - the installable qcom-x1e `.deb` files;
-- `SHA256SUMS` covering every other uploaded asset exactly once; the checksum
-  file must not list itself, and a local `RELEASE-NOTES.md` used only as the
-  GitHub release body is neither uploaded nor listed;
+- for every new release prepared under the current gate, `SHA256SUMS` covering
+  every other uploaded asset exactly once; the checksum file must not list
+  itself, and a local `RELEASE-NOTES.md` used only as the GitHub release body
+  is neither uploaded nor listed;
 - a sanitized build manifest recording source mode, upstream URL, source ref,
   source commit, build target, patch list, repository commit, Docker image
   family or digest when available, and build command shape;
@@ -80,9 +81,12 @@ Each binary release must include, at minimum:
   without local workstation paths;
 - patch checksums for every project patch directory applied to the source (the
   original 7.0 release used `patches/ubuntu-qcom-x1e-7.0/`);
-- corresponding source sufficient for the binary release, either as source
-  package artifacts, a patched source archive, or immutable instructions and
-  links that retrieve the exact source commit plus the project patches used;
+- corresponding source sufficient for the binary release. For current
+  git-source builds this means a shipped `.tar.xz` archive whose reconstructed
+  Git tree ID exactly matches the schema-v2 `Patched tree ID`; immutable links
+  and build instructions remain useful provenance but are not a substitute
+  for the required archive. Debian source-package artifacts may satisfy the
+  same obligation when that build mode is supported by the release gate;
 - release notes that mark the artifacts as experimental, Surface Pro 11
   specific, unsigned, and optional.
 
@@ -93,12 +97,22 @@ Generated notes used as the GitHub body remain local input, while
 `SHA256SUMS` is appended to the upload list only after the other upload assets
 have been hashed.
 
-The raw local manifests under `build/.../artifacts/` are build outputs, not
-automatically public release manifests. They may contain absolute paths from
-the container, host, or device that built the packages. Public release
-manifests must be regenerated or sanitized before upload and should prefer
-package basenames, repository-relative paths, upstream URLs, commits, and
-checksums.
+The immutable historical `sp11v3-r1` release predates that exact-coverage
+rule. Its corresponding-source repair was an additive supplement:
+`SOURCE-NOTICE.md` was uploaded after the original assets and is intentionally
+absent from both the original `SHA256SUMS` and the supplemental
+`SOURCE-SHA256SUMS`. This narrow historical exception documents the published
+record; it is not a template for a new or recreated release.
+
+Legacy raw manifests under `build/.../artifacts/` are build outputs, not
+automatically public release manifests; they may contain absolute build paths.
+The current schema-v2 release-build manifest is deliberately path-sanitized and
+is different: the preparer snapshots the exact validated bytes, scans them for
+public-content leakage, attaches that manifest to the individual kernel
+release, and includes it in `SHA256SUMS`. This preserves the ordered patch,
+seven-output, and full package identity contract for offline audit. Generated
+public summaries should still prefer package basenames, repository-relative
+paths, upstream URLs, commits, and checksums.
 
 The project will provide a release-preparation helper that writes sanitized
 assets under ignored `build/release/<release-name>/` directories. That helper

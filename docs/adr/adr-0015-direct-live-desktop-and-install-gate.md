@@ -5,6 +5,17 @@ title: "ADR015: Direct Live Desktop and Install Gate"
 description: Architecture Decision Record (ADR) for treating direct GRUB boot as the verified live-USB path and allowing cautious installation only with pre-reboot installed-system support setup.
 ---
 
+## Status
+
+Partially superseded (2026-08-07).
+
+The verified direct live-USB decision remains current, including its separate
+`/dtb/sp11-denali.dtb` boot path. Later installed-system evidence showed that
+loose GRUB injection was not authoritative for the tested Stubble path.
+[ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md) retires that
+installed helper, its hooks, and generated-GRUB rewriting while preserving the
+historical installation observations below.
+
 ## Context
 
 [ADR014](adr-0014-direct-grub-autoboot-diagnostic.md) added a direct GRUB boot

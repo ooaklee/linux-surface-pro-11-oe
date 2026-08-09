@@ -5,6 +5,16 @@ title: "ADR025: rfkill-Capable DTB Selection"
 description: Architecture Decision Record (ADR) for preferring Surface Pro 11 Denali DTBs that contain disable-rfkill over newer unpatched fallback-kernel DTBs.
 ---
 
+## Status
+
+Superseded for the tested installed Stubble path (2026-08-07).
+
+The candidate-ranking defect and Wi-Fi conclusions remain historical
+evidence. Later device-side evidence showed that the shared loose file was not
+authoritative for the live FDT. [ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md)
+retires installed selection and injection; each tested packaged qcom-x1e
+Stubble kernel instead carries its exact embedded DTB.
+
 ## Context
 
 [ADR019](adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md) introduced a

@@ -158,7 +158,7 @@ audible music-playback regression; ADR-0046 adopts it as the default.
 ## References
 
 - [Surface Pro 11th Edition technical specifications](https://learn.microsoft.com/en-us/surface/tech-specs/surface-pro-snapdragon-tech-specs)
-- [Surface Pro 11 Qualcomm ACPI dump](https://github.com/linux-surface/acpidumps/tree/master/surface_pro_11_qcom)
+- [Pinned Surface Pro 11 Qualcomm ACPI dump](https://github.com/linux-surface/acpidumps/tree/1d0a2ce742b450fe3f65287adbe174ddccabe228/surface_pro_11_qcom)
 - [ADR-0033: Surface Pro 11 Audio Topology Gap](adr-0033-audio-topology-gap.md)
 - [ADR-0036: Right Speaker Audio via PipeWire audio.position Reorder](adr-0036-right-speaker-audio-position-reorder.md)
 - [ADR-0042: Surface Pro 11 Touchscreen Kernel Integration Troubleshooting](adr-0042-sp11-touchscreen-troubleshooting.md)

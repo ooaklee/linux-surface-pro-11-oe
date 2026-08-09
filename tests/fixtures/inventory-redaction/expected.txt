@@ -1,0 +1,14 @@
+MAC=<redacted-mac>
+IPv4=<redacted-ipv4>
+IPv6=<redacted-ipv6>
+LinuxPath=/home/<redacted-user>/private/report.txt
+MacPath=/Users/<redacted-user>/private/report.txt
+serial=<redacted-identifier>
+Serial Number: <redacted-identifier>
+UUID:<redacted-identifier>
+machine-id=<redacted-identifier>
+Scope=<redacted-uuid>
+UserPath=user-<redacted-id>.slice/user@<redacted-id>.service
+Owner=fsuid=<redacted-id> ouid=<redacted-id> gid=<redacted-id>
+Endpoint=<redacted-endpoint>
+Keep=Microsoft Surface G6 Touch

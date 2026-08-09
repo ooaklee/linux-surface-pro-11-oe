@@ -1,0 +1,14 @@
+MAC=02:00:5e:10:00:00
+IPv4=192.0.2.10
+IPv6=2001:db8::1
+LinuxPath=@LINUX_HOME@/private/report.txt
+MacPath=@MAC_HOME@/private/report.txt
+serial=EXAMPLE-SERIAL
+Serial Number: DEVICE-SECRET-123
+UUID:123e4567-e89b-12d3-a456-426614174000
+machine-id=0123456789abcdef
+Scope=123e4567-e89b-12d3-a456-426614174000
+UserPath=user-1000.slice/user@1000.service
+Owner=fsuid=1000 ouid=1000 gid=1000
+Endpoint=@REMOTE_ENDPOINT@
+Keep=Microsoft Surface G6 Touch

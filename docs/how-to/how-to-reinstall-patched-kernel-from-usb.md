@@ -97,6 +97,7 @@ git fetch https://github.com/ooaklee/linux-surface-pro-11-oe.git \
   "refs/tags/$TAG:refs/tags/$TAG"
 
 ./scripts/validate-sp11-touchscreen-release.sh \
+  --downloaded-release \
   --dir "$DEBS" \
   --tag "$TAG" \
   --remote https://github.com/ooaklee/linux-surface-pro-11-oe.git
@@ -104,9 +105,11 @@ git fetch https://github.com/ooaklee/linux-surface-pro-11-oe.git \
 
 The validator checks exact checksum and asset membership, package roles and
 ABI, module provenance and vermagic, the touchscreen device tree, and both the
-local and remote tag targets. Without `gh`, download every asset listed on the
-release page into one empty directory, fetch the tag as above, and run the same
-validator.
+local and remote tag targets. The explicit `--downloaded-release` authority
+mode validates transported bytes; it does not claim that the download
+directory carries the local preparer's transaction or publication marker.
+Without `gh`, download every asset listed on the release page into one empty
+directory, fetch the tag as above, and run the same validator.
 
 For an older non-touchscreen release, downloading only its `.deb` files and
 `SHA256SUMS` is sufficient for installation. In that narrower case,
@@ -134,28 +137,41 @@ cd "$SP11DATA/support"
 - refuses to install unless another qcom-x1e kernel ABI is present as a GRUB
   fallback (pass `--allow-no-fallback` only if you accept live-USB recovery as
   your fallback),
-- installs the kernel `.deb` packages with `apt`, then
-- runs `install-sp11-support.sh --installed-system`, which re-selects the
-  rfkill-capable Denali OLED DTB and re-injects it into GRUB and initramfs, and
+- validates any required touchscreen bundle before changing the target,
+- runs `install-sp11-support.sh --retire-loose-dtb-only` before package
+  installation, transactionally removing the three project-managed loose-DTB
+  artifacts and requiring a successful, verified live-root `update-grub`,
+- installs the kernel `.deb` packages with `apt` only after that retirement
+  succeeds,
+- runs the full `install-sp11-support.sh --installed-system` flow and requires
+  its final live-root GRUB regeneration to succeed, and
 - for `sp11v3`, refuses a missing or mismatched three-module touchscreen bundle
-  before package installation, then installs and verifies it in the exact
-  target initramfs.
+  and then installs and verifies it in the exact target initramfs.
 
 It elevates with `sudo` as needed. If `--work-dir` points to a directory under
 your home (e.g. `~/Downloads`), you may see a harmless `_apt` sandbox warning:
 `pkgAcquire::Run (13: Permission denied)`. apt falls back to running as root
-and the install completes normally. The DTB `postrm`/`postinst` hooks also run
-automatically during the `dpkg` step:
+and the install completes normally. Retirement must happen before `apt` because
+a legacy kernel post-install hook could otherwise run during package setup and
+rewrite generated GRUB configuration before the new installer removes it. Any
+initial retirement or GRUB-regeneration failure aborts before package
+installation. A failure in the full installer's final GRUB pass also fails the
+transaction instead of reporting success.
 
-```
-Setting up linux-image-7.0.0-22-qcom-x1e (7.0.0-22.22) ...
-/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb:
-Using Surface Pro 11 DTB: /usr/lib/firmware/7.0.0-22-qcom-x1e/device-tree/qcom/x1e80100-microsoft-denali-oled.dtb
-Injected Surface Pro 11 DTB into /boot/grub/grub.cfg
-...
-Found installed fallback qcom-x1e kernel ABI: 7.0.0-32-qcom-x1e
-Installed Surface Pro 11 support helpers into /
-```
+The retire-only transaction snapshots the three managed leaves, prior
+`grub.cfg`, `grubenv`, and historical loose-DTB identity before it changes boot
+state. If it fails, follow its stop message: do not reboot and do not run `apt`
+or `dpkg`. A complete rollback restores the prior managed leaves and
+`grub.cfg`; if a destination changed concurrently, the tool preserves that
+occupant and reports a private recovery backup containing the original. Resolve
+that conflict before continuing.
+
+On the tested installed qcom-x1e Stubble path, each kernel uses the Denali DTB
+embedded in its exact Stubble-wrapped EFI image. The support installer does
+not select, copy, or inject a shared loose DTB. If
+`/boot/sp11-denali.dtb` exists from an earlier release, it is left untouched
+as inert recovery evidence; its presence or contents do not establish
+live-FDT provenance.
 
 ### Minimal fallback (no repository checkout)
 
@@ -163,20 +179,38 @@ Do not use this fallback for an `sp11v3` touchscreen release: direct `dpkg`
 does not install or verify the required out-of-tree module bundle. Obtain the
 repository checkout and use the guarded flow above.
 
-If you only have the `.deb` files and not a checkout of this repo, install them
-directly only for a kernel-only release. This skips the fallback-kernel guard,
-so make sure a known-good qcom-x1e kernel is still installed first:
+If you only have the `.deb` files and not a checkout of this repo, direct
+`dpkg` is allowed only for a kernel-only release and only after verifying that
+all three former managed artifacts are absent. This skips the fallback-kernel
+guard, so first make sure a known-good qcom-x1e kernel is still installed:
 
 ```bash
+for path in \
+  /usr/local/sbin/sp11-grub-inject-dtb \
+  /etc/kernel/postinst.d/zzzz-surface-pro-11-dtb \
+  /etc/kernel/postrm.d/zzzz-surface-pro-11-dtb
+do
+  if sudo test -e "$path" || sudo test -L "$path"; then
+    echo "Refusing direct dpkg while legacy managed artifact exists: $path" >&2
+    exit 1
+  fi
+done
+
 sudo dpkg -i "$DEBS"/linux-*.deb
 ```
 
-The Denali DTB is re-injected automatically by the
-`/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb` hook that the support setup
-installed on first boot — you will see `Injected Surface Pro 11 DTB into
-/boot/grub/grub.cfg` in the output. If that hook is missing, install it by
-running `./scripts/install-sp11-support.sh --installed-system` from a repository
-checkout.
+On a legacy system where any managed artifact exists, do not run `dpkg` first.
+Obtain the current repository and use the guarded flow above, or run the
+reviewed retirement step and require it to succeed before package setup:
+
+```bash
+sudo ./scripts/install-sp11-support.sh --retire-loose-dtb-only
+```
+
+The reviewed retirement is preferred even when the three artifacts appear
+absent because it also regenerates GRUB and fails closed. Direct `dpkg` does
+not install or restore a loose-DTB injector. Do not treat an existing
+`/boot/sp11-denali.dtb` as a fallback or as evidence of the active device tree.
 
 ## 3. Reboot
 
@@ -228,5 +262,5 @@ protect the boot path.
 
 - [Build a Patched qcom-x1e Kernel](how-to-build-patched-qcom-x1e-kernel.md) —
   full Docker build from source, and the `--install-only` payload install.
-- [Wi-Fi RFkill Bring-Up Gate](/docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md) —
+- [Wi-Fi RFkill Bring-Up Gate](../adr/adr-0018-wifi-rfkill-bring-up-gate.md) —
   explanation of the hard-block issue.

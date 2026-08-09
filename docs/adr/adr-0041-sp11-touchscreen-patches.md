@@ -9,7 +9,14 @@ description: Architecture Decision Record (ADR) for the structure and sourcing o
 
 ## Status
 
-Accepted (2026-07-16).
+Accepted (2026-07-16); historical for the `sp11v3` release path as of
+2026-08-03.
+
+The `sp11v3` build in ADR0049 does not apply `patches/sp11-touchscreen/` and
+does not claim that this series' generic `spi-hid` driver binds. It uses a
+small Denali DTS patch plus the pinned geocausa GPI, GENI QSPI, and
+`mshw0485_touch` modules. This record remains relevant to the earlier 7.1.3
+experiment and to long-term upstream HID-over-SPI research.
 
 ## Context
 
@@ -17,13 +24,14 @@ The Surface Pro 11 touchscreen is a QSPI (Quad SPI) HID-over-SPI device
 attached to the Qualcomm Snapdragon X Elite's SPI10 (qup_se10) bus. The
 mainline `spi-geni-qcom` driver does not support QSPI 1-4-4 mode, the
 mainline `gpi` DMA driver does not handle QSPI protocol TRE construction,
-and no upstream HID-over-SPI transport driver exists.
+and the exact baseline contains no merged HID-over-SPI transport driver.
 
-Patches were sourced from the [x1e-nixos](https://github.com/x1e-nixos)
-project, which backported QSPI support from the Android `spi-msm-geni`
-driver and authored the `spi-hid` transport driver. These patches must be
-adapted for the Ubuntu `qcom-x1e-7.1.3-jg-0` kernel tree (Johan G.'s
-fork) and maintained alongside the repository's other patch sets.
+The QSPI/GPI adaptations were sourced through the
+[x1e-nixos](https://github.com/x1e-nixos) project and backport Android
+`spi-msm-geni` concepts. The `0003-01..11` files preserve Jingyuan Liang's
+public HID-over-SPI v4 series, rather than being authored by x1e-nixos. These
+patches were adapted for the Ubuntu `qcom-x1e-7.1.3-jg-0` kernel tree (Johan
+G.'s fork) and maintained alongside the repository's other patch sets.
 
 ## Decision
 
@@ -66,8 +74,9 @@ This approach preserves correct behaviour for QSPI NOR flash devices
 
 ### Patch Sourcing and Adaptation
 
-All patches originate from the x1e-nixos project. Adaptations required for
-the Ubuntu qcom-x1e kernel tree included:
+The QSPI patches came through x1e-nixos; the HID-over-SPI files retain the
+public v4 series' original authorship. Adaptations required for the Ubuntu
+qcom-x1e kernel tree included:
 
 - **0002**: the 7.1.3 kernel carries TPM SPI fragmentation patches that
   changed context around the QSPI lane flag insertion point. The patch was
@@ -121,8 +130,9 @@ driver lands upstream in a future kernel, the patches can be retired.
 
 ## Consequences
 
-- The touchscreen driver probes and the `spi-hid` driver binds to the
-  device. The sync byte is correctly validated at `0x5a`.
+- In the historical 7.1.3 experiment, the touchscreen node and `spi-hid`
+  series were intended to probe together and validate the `0x5a` sync byte.
+  This is not evidence about the separate `sp11v3` module path.
 
 - The 15 patches are validated against the exact kernel source they target
   (`jg/ubuntu-qcom-x1e-7.1.3-jg-0`). Changes to the kernel tree's

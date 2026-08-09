@@ -5,6 +5,15 @@ title: "ADR016: USB Data Mount and Installed-System Helpers"
 description: Architecture Decision Record (ADR) for explicitly mounting the SP11DATA USB partition and replacing fragile installed-system copy-paste commands with support helpers.
 ---
 
+## Status
+
+Partially superseded (2026-08-07).
+
+Superseded for the tested installed Stubble path by
+[ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md). The live-USB
+decision and the historical observations remain; the installed loose-DTB
+helper, kernel hooks, and generated-GRUB rewriting are retired.
+
 ## Context
 
 [ADR015](adr-0015-direct-live-desktop-and-install-gate.md) allows cautious
@@ -45,15 +54,20 @@ The project will ship installed-system helper scripts in the USB support
 payload:
 
 - `scripts/prepare-sp11-installed-system.sh` prepares `/target` before the
-  first USB-free boot. It installs support helpers into the target root, copies
-  the known USB Denali DTB into the target `/boot`, bind-mounts the required
-  pseudo-filesystems, regenerates GRUB, injects the DTB, refreshes initramfs,
-  and cleans up bind mounts on exit.
+  first USB-free boot. It installs support helpers into the target root,
+  retires the former project-managed loose-DTB helper and hooks, leaves any
+  existing loose DTB unchanged, bind-mounts the required pseudo-filesystems,
+  regenerates GRUB inside the target chroot, refreshes initramfs, and cleans up
+  bind mounts on exit.
 - `scripts/finish-sp11-installed-system.sh` runs after the first successful
   installed-system boot. It reinstalls support helpers, installs firmware from
   either public CAB downloads or a mounted Windows root, applies the temporary
   Wi-Fi board-file fixup, refreshes initramfs after a successful Wi-Fi fixup,
   and optionally reboots.
+
+The historical helper copied and injected a loose Denali DTB. Under ADR-0055,
+the exact Stubble-wrapped kernel image instead supplies the installed kernel's
+authoritative DTB.
 
 Firmware and Wi-Fi helper scripts will print explicit package-install guidance
 when required tools are missing, so users can recover without guessing package
@@ -75,9 +89,10 @@ The support helper scripts remain unavailable until `SP11DATA` is mounted. The
 README therefore keeps the mount commands inline rather than relying on a mount
 helper stored on the partition it would need to mount.
 
-The prepare helper copies the USB DTB into the installed `/boot` before GRUB
-injection. This reduces dependence on the installed kernel package already
-carrying the exact Denali DTB variant.
+The prepare helper leaves `/boot/sp11-denali.dtb` untouched if an earlier
+release created it. The file is inert evidence, not an installed fallback or
+proof of the active FDT; exact DTB pairing comes from each Stubble-wrapped
+kernel image.
 
 The finish helper may run `update-initramfs` more than once during a complete
 firmware and Wi-Fi setup. This costs time, but it keeps the final initramfs in

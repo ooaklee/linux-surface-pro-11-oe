@@ -1,5 +1,10 @@
 # Surface Pro 11 Wi-Fi rfkill Test After Patched qcom-x1e Boot - 2026-06-14
 
+> Historical note: this report preserves the configuration and conclusions
+> recorded at the time. Later evidence showed that the installed loose DTB was
+> not authoritative on the tested Stubble path. ADR-0055 retires that
+> mechanism; these commands are not current installation guidance.
+
 ## Context
 
 The Surface Pro 11 installed system had previously upgraded to

@@ -103,10 +103,11 @@ wpctl status
 This writes
 `~/.config/pipewire/pipewire.conf.d/50-sp11-speakers.conf`, wraps the verified
 ALSA speaker PCM (`hw:X1E80100Microso,1`), applies a channelmix matrix that
-sums stereo to mono on the audible left channels (ch0+ch1), and restarts the
-user PipeWire services. The right speaker (ch2+ch3) is silent at the kernel
-level. The matrix ensures no stereo content is lost. It is a stop-gap, not the
-final UCM fix. Remove it with:
+sums stereo to mono and reorders `audio.position` to `[ FL RL FR RR ]`, and
+restarts the user PipeWire services. The reordered positions route the mono
+sum to both speakers. This bypasses the kernel DAPM control gate; it does not
+fix that gate or provide stereo output. It is a stop-gap, not the final UCM
+fix. Remove it with:
 
 ```bash
 ./scripts/sp11-pipewire-speaker-sink.sh --remove
@@ -274,11 +275,11 @@ alter the Denali DMIC clock. The v3 kernel retains the v2 build's validated
 set. See [ADR-0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
 and [ADR-0049](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md).
 
-The 7.2-rc5 SP11 v2 and v3 kernels boot with the 2.4 MHz clock through the
-GRUB-injected `/boot/sp11-denali.dtb` (unlike the 7.1.3 v2 kernel, which carried
-the device tree embedded in the packaged Stubble image). The installer prefers
-the newest numeric `sp11vN` build's DTB and injects it into every GRUB kernel
-entry, so the live device-tree value reflects the injected file:
+The 7.2-rc5 SP11 v2 and v3 Stubble images each embed the 2.4 MHz Denali DTB.
+The installer does not select, copy, or inject a shared loose DTB. If
+`/boot/sp11-denali.dtb` exists from an earlier release, it remains untouched
+and inert; it is not a clock input, a fallback guarantee, or proof of live-FDT
+provenance. Read the active device tree to confirm the requested rate:
 
 ```bash
 uname -r
@@ -287,7 +288,9 @@ od -An -tu4 -N4 --endian=big \
 ```
 
 Expected output for the current bundle is
-`7.2-rc5-jg-0sp11v3-qcom-x1e` and `2400000`.
+`7.2-rc5-jg-0sp11v3-qcom-x1e` and `2400000`. This property is the rate
+requested by the active device tree; it is not a physical clock measurement at
+the microphone pins.
 
 ## References
 

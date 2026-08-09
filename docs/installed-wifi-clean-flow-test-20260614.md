@@ -1,5 +1,10 @@
 # Surface Pro 11 Wi-Fi Clean USB Flow Test - 2026-06-14
 
+> Historical note: this report preserves the configuration and conclusions
+> recorded at the time. Later evidence showed that the installed loose DTB was
+> not authoritative on the tested Stubble path. ADR-0055 retires that
+> mechanism; these commands are not current installation guidance.
+
 ## Context
 
 The first successful Wi-Fi test required a manually refreshed

@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Surface Pro 11 bring-up <noreply@example.invalid>
+Date: Fri, 7 Aug 2026 00:00:00 +0100
+Subject: [PATCH] debian.qcom-x1e: name SP11 v3 P0 canary build
+
+Give the Phase 0 recovery canary a distinct package version and ABI after the
+complete sp11v3 patch set has been applied. This changes package identity only,
+so the canary can prove the one-shot GRUB path without adding a hardware
+feature or replacing the known-good v3 packages.
+---
+ debian.qcom-x1e/changelog          | 4 ++--
+ debian.qcom-x1e/config/annotations | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/debian.qcom-x1e/changelog b/debian.qcom-x1e/changelog
+--- a/debian.qcom-x1e/changelog
++++ b/debian.qcom-x1e/changelog
+@@ -1,6 +1,6 @@
+-linux-qcom-x1e (7.2-rc5-jg-0sp11v3) resolute; urgency=medium
++linux-qcom-x1e (7.2-rc5-jg-0sp11v3p0canary1) resolute; urgency=medium
+ 
+-  * Surface Pro 11 v3: enable the MSHW0485 QSPI touchscreen.
++  * Surface Pro 11 v3 Phase 0 no-op recovery canary.
+ 
+  -- Surface Pro 11 bring-up <noreply@example.invalid>  Sun, 03 Aug 2026 00:00:00 +0100
+ 
+diff --git a/debian.qcom-x1e/config/annotations b/debian.qcom-x1e/config/annotations
+--- a/debian.qcom-x1e/config/annotations
++++ b/debian.qcom-x1e/config/annotations
+@@ -12882,2 +12882,2 @@
+-CONFIG_VERSION_SIGNATURE                        policy<{'arm64': '"Ubuntu 7.2-rc5-jg-0sp11v3-qcom-x1e 7.2-rc5"'}>
++CONFIG_VERSION_SIGNATURE                        policy<{'arm64': '"Ubuntu 7.2-rc5-jg-0sp11v3p0canary1-qcom-x1e 7.2-rc5"'}>
+ CONFIG_VETH                                     policy<{'arm64': 'm'}>
+-- 
+2.50.1

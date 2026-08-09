@@ -5,6 +5,17 @@ title: "ADR018: Wi-Fi rfkill Bring-Up Gate"
 description: Architecture Decision Record (ADR) for treating Surface Pro 11 Wi-Fi bring-up as blocked on ath12k rfkill handling rather than firmware or board-file installation.
 ---
 
+## Status
+
+Partially superseded (2026-08-07).
+
+The rfkill diagnosis and two-part kernel/device-tree requirement remain
+historical bring-up evidence. The proposed edit of an installed shared loose
+DTB is not current guidance: later evidence showed that file was not
+authoritative on the tested Stubble path, and
+[ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md) retires its
+selection and injection.
+
 ## Context
 
 [ADR004](adr-0004-firmware-extraction-policy.md) covers platform firmware

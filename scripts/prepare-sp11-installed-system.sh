@@ -20,9 +20,105 @@ Options:
 EOF
 }
 
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+canonical_directory() {
+  local path="$1"
+
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  (cd "$path" && pwd -P)
+}
+
+directory_identity() {
+  local path="$1" identity=""
+
+  if identity="$(stat -Lc '%d:%i' -- "$path" 2>/dev/null)"; then
+    :
+  elif identity="$(stat -f '%d:%i' "$path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  case "$identity" in
+    ""|*[!0-9:]*) return 1 ;;
+  esac
+  printf '%s\n' "$identity"
+}
+
+target_path() {
+  printf '%s/%s\n' "$TARGET" "$1"
+}
+
+validate_target_directory() {
+  local relative="$1" path resolved
+
+  path="$(target_path "$relative")"
+  if [ -L "$path" ]; then
+    die "installed target /$relative must not be a symlink: $path"
+  fi
+  if [ ! -e "$path" ]; then
+    die "installed target is missing the required /$relative directory: $path"
+  fi
+  if [ ! -d "$path" ]; then
+    die "installed target /$relative must be a real directory: $path"
+  fi
+  resolved="$(canonical_directory "$path")" ||
+    die "could not resolve installed target /$relative safely: $path"
+  if [ "$resolved" != "$path" ]; then
+    die "installed target /$relative resolves outside its exact path: $path"
+  fi
+}
+
+mount_matches_host_directory() {
+  local filesystem="$1" destination="$2" source_identity destination_identity
+
+  source_identity="$(directory_identity "/$filesystem")" || return 1
+  destination_identity="$(directory_identity "$destination")" || return 1
+  [ "$source_identity" = "$destination_identity" ]
+}
+
+validate_virtual_mount() {
+  local filesystem="$1" destination
+
+  destination="$(target_path "$filesystem")"
+  validate_target_directory "$filesystem"
+  if mountpoint -q -- "$destination" &&
+     ! mount_matches_host_directory "$filesystem" "$destination"; then
+    die "installed target /$filesystem is mounted from an unexpected source: $destination"
+  fi
+}
+
+validate_target_contract() {
+  local current_target relative
+
+  current_target="$(canonical_directory "$TARGET")" ||
+    die "installed Ubuntu root is no longer a real directory: $TARGET"
+  [ "$current_target" = "$TARGET" ] ||
+    die "installed Ubuntu root changed physical path: $TARGET"
+  mountpoint -q -- "$TARGET" ||
+    die "installed Ubuntu root must itself be a mounted filesystem: $TARGET"
+
+  validate_target_directory etc
+  for relative in dev proc sys run; do
+    validate_virtual_mount "$relative"
+  done
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --target|--root)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+        echo "$1 requires a directory." >&2
+        usage >&2
+        exit 2
+      fi
       TARGET="$2"
       shift 2
       ;;
@@ -43,39 +139,34 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+for tool in mount mountpoint stat umount chroot; do
+  require_tool "$tool"
+done
 
-find_usb_dtb() {
-  local candidate usb_dev usb_mount
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-  for candidate in \
-    "$repo_dir/../dtb/sp11-denali.dtb" \
-    "$repo_dir/dtb/sp11-denali.dtb"; do
-    if [ -f "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
+case "$TARGET" in
+  /*) ;;
+  *) die "--target must be an absolute path" ;;
+esac
+case "$TARGET" in
+  *[[:cntrl:]]*) die "--target must not contain control characters" ;;
+  *//*|*/./*|*/.|*/../*|*/..) die "--target must use a canonical absolute path" ;;
+esac
+[ "$TARGET" != "/" ] || die "refusing to prepare the running root as an installed target"
 
-  usb_dev="$(blkid -L SP11DATA 2>/dev/null || true)"
-  if [ -n "$usb_dev" ]; then
-    usb_mount="$(findmnt -rn -S "$usb_dev" -o TARGET 2>/dev/null | head -n 1 || true)"
-    if [ -n "$usb_mount" ] && [ -f "$usb_mount/dtb/sp11-denali.dtb" ]; then
-      printf '%s\n' "$usb_mount/dtb/sp11-denali.dtb"
-      return 0
-    fi
-  fi
-
-  return 1
-}
-
-if [ ! -d "$TARGET/etc" ]; then
-  echo "Installed Ubuntu root not found at $TARGET." >&2
-  echo "Mount the installed Ubuntu root there, or pass --target DIR." >&2
-  exit 1
+resolved_target="$(canonical_directory "$TARGET")" ||
+  die "installed Ubuntu root must be an existing real directory: $TARGET"
+if [ "$resolved_target" != "$TARGET" ]; then
+  die "--target must be its exact physical nonsymlink path: $TARGET"
 fi
+TARGET="$resolved_target"
 
-if [ ! -x "$repo_dir/scripts/install-sp11-support.sh" ]; then
+validate_target_contract
+
+if [ ! -f "$repo_dir/scripts/install-sp11-support.sh" ] ||
+   [ -L "$repo_dir/scripts/install-sp11-support.sh" ] ||
+   [ ! -x "$repo_dir/scripts/install-sp11-support.sh" ]; then
   echo "Missing support installer: $repo_dir/scripts/install-sp11-support.sh" >&2
   exit 1
 fi
@@ -83,41 +174,70 @@ fi
 echo "Installing Surface Pro 11 helpers into $TARGET..."
 "$repo_dir/scripts/install-sp11-support.sh" --installed-system --root "$TARGET"
 
-if usb_dtb="$(find_usb_dtb)"; then
-  echo "Copying Surface Pro 11 DTB into installed /boot..."
-  install -d -m 0755 "$TARGET/boot"
-  install -m 0644 "$usb_dtb" "$TARGET/boot/sp11-denali.dtb"
-else
-  echo "Warning: USB DTB not found; installed GRUB DTB injection will rely on target kernel DTBs." >&2
-fi
+validate_target_contract
 
-mkdir -p "$TARGET/dev" "$TARGET/proc" "$TARGET/sys" "$TARGET/run"
-
-mounted=()
+mounted_filesystems=()
+mounted_targets=()
 cleanup() {
-  local i fs
-  for ((i=${#mounted[@]} - 1; i >= 0; i--)); do
-    fs="${mounted[i]}"
-    umount "$TARGET/$fs" || true
+  local original_status="$?" cleanup_failed="false"
+  local i filesystem destination resolved
+
+  trap - EXIT HUP INT TERM
+
+  for ((i=${#mounted_targets[@]} - 1; i >= 0; i--)); do
+    filesystem="${mounted_filesystems[i]}"
+    destination="${mounted_targets[i]}"
+    resolved="$(canonical_directory "$destination" 2>/dev/null || true)"
+    if [ "$resolved" != "$destination" ] ||
+       ! mountpoint -q -- "$destination" ||
+       ! mount_matches_host_directory "$filesystem" "$destination"; then
+      echo "warning: refusing to unmount changed target path: $destination" >&2
+      cleanup_failed="true"
+      continue
+    fi
+    if ! umount -- "$destination"; then
+      echo "warning: could not unmount helper-created target: $destination" >&2
+      cleanup_failed="true"
+    fi
   done
+  mounted_filesystems=()
+  mounted_targets=()
+  if [ "$original_status" -ne 0 ]; then
+    exit "$original_status"
+  fi
+  if [ "$cleanup_failed" = "true" ]; then
+    exit 1
+  fi
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for fs in dev proc sys run; do
-  if ! mountpoint -q "$TARGET/$fs"; then
-    mount --bind "/$fs" "$TARGET/$fs"
-    mounted+=("$fs")
+  destination="$(target_path "$fs")"
+  validate_virtual_mount "$fs"
+  if ! mountpoint -q -- "$destination"; then
+    validate_target_directory "$fs"
+    mount --bind "/$fs" "$destination"
+    mounted_filesystems+=("$fs")
+    mounted_targets+=("$destination")
+    if ! mountpoint -q -- "$destination" ||
+       ! mount_matches_host_directory "$fs" "$destination"; then
+      die "bind mount verification failed for installed target /$fs"
+    fi
   fi
 done
 
+validate_target_contract
 echo "Generating installed GRUB config..."
 chroot "$TARGET" update-grub
 
-echo "Injecting Surface Pro 11 DTB into installed GRUB config..."
-chroot "$TARGET" /usr/local/sbin/sp11-grub-inject-dtb
-
+validate_target_contract
 echo "Refreshing installed initramfs..."
 chroot "$TARGET" update-initramfs -u -k all
+
+cleanup
 
 echo
 echo "Installed system prepared for first Surface Pro 11 NVMe boot."
