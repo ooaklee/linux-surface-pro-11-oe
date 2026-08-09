@@ -76,6 +76,10 @@ for patch_dir in $SP11_KERNEL_PATCH_DIRS; do
     [ -f "$patch" ] || continue
     patch_count=$((patch_count + 1))
     awk '
+      /^diff --git a\/[^[:space:]]+ b\/[^[:space:]]+$/ {
+        print substr($3, 3)
+        print substr($4, 3)
+      }
       /^(---|\+\+\+) [ab]\// {
         path = $2
         sub(/^[ab]\//, "", path)
@@ -111,6 +115,23 @@ for patch_dir in $SP11_KERNEL_PATCH_DIRS; do
     [ -f "$patch" ] || continue
     git -C "$source_dir" apply --check "$patch"
     git -C "$source_dir" apply "$patch"
+    if [ "${patch##*/}" = \
+         "0002-debian-remove-host-local-find-dtbs-symlink.patch" ]; then
+      removed_path="$source_dir/debian/scripts/misc/find-dtbs.py"
+      if [ -e "$removed_path" ] || [ -L "$removed_path" ]; then
+        die "host-local find-dtbs symlink deletion patch retained its path"
+      fi
+      reverse_payload_check_dir="$temporary_root/reverse-payload-check"
+      mkdir -p "$reverse_payload_check_dir/debian/scripts/misc"
+      # The fetched repository still has the deleted blob in its object store,
+      # which can make a payload-free deletion appear reversible.  Check in an
+      # object-free directory so success proves that patch bytes themselves
+      # embed a reverse payload.
+      if git -C "$reverse_payload_check_dir" apply --reverse --check "$patch" \
+          >/dev/null 2>&1; then
+        die "host-local symlink deletion patch unexpectedly retained a reverse payload"
+      fi
+    fi
     printf 'Applied %s/%s\n' "$patch_dir" "${patch##*/}"
   done
 done

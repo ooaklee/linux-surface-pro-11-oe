@@ -9,9 +9,12 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -721,37 +724,47 @@ def assert_wrapper_contract() -> None:
     inner = INNER_BUILDER.read_text(encoding="utf-8")
     apt_helper = APT_HELPER.read_text(encoding="utf-8")
     for required_text in (
-        "docker buildx imagetools inspect --raw",
+        '"$DOCKER_BIN" buildx imagetools inspect --raw',
         "/repo/scripts/sp11-immutable-apt.sh bootstrap",
         "/repo/scripts/sp11-immutable-apt.sh finalize",
         "SP11_IMMUTABLE_APT_REQUIRED=true",
         "sp11-kernel-apt-provenance.txt",
         "sp11-kernel-build-inputs.txt",
-        "Publication remains blocked: outer release validation",
+        "/usr/bin/python3 -I /repo/scripts/sp11-kernel-release-state.py seal",
     ):
         assert required_text in wrapper
     assert 'mk_build_deps_args+=(--remove)' in inner
     assert 'if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" != "true" ]' in inner
     assert wrapper.count('--baseline-sha256 "$KERNEL_BASELINE_SHA256"') == 2
-    assert wrapper.count('--build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256"') == 2
-    assert wrapper.count('--entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256"') == 2
+    assert wrapper.count('--build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256"') == 1
+    assert wrapper.count('--entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256"') == 1
     assert wrapper.count('--oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256"') == 2
     assert 'done < "$control_dir/docker-build-args.txt"' in wrapper
     assert '("$IMAGE" bash /sp11-control/docker-build-inside.sh)' in wrapper
     envelope_write = wrapper.index(
-        'python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" write'
+        "/usr/bin/python3 -I /repo/scripts/sp11-kernel-build-inputs.py write"
     )
     envelope_validate = wrapper.index(
-        'python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" validate',
+        "/usr/bin/python3 -I /repo/scripts/sp11-kernel-build-inputs.py validate",
         envelope_write,
     )
-    required_artifacts = wrapper.index(
-        'for required_artifact in "$completed_manifest" "$apt_provenance" "$build_inputs"',
+    state_seal = wrapper.index(
+        "/usr/bin/python3 -I /repo/scripts/sp11-kernel-release-state.py seal",
         envelope_validate,
     )
-    final_stability_check = wrapper.rindex("\nverify_release_support_stable")
-    assert envelope_write < envelope_validate < required_artifacts < final_stability_check
-    assert wrapper.rstrip().endswith("verify_release_support_stable")
+    supervised_build = wrapper.index("run-container", state_seal)
+    terminal_import = wrapper.index("    import-tar \\", supervised_build)
+    assert envelope_write < envelope_validate < state_seal < supervised_build < terminal_import
+    assert '    --container-platform "$PLATFORM" \\' in wrapper[terminal_import:]
+    for identity_option in (
+        "--build-args-identity",
+        "--entrypoint-identity",
+        "--oci-index-identity",
+    ):
+        assert identity_option in wrapper[terminal_import:]
+    release_branch_end = wrapper.index("\nfi\n", terminal_import)
+    terminal_branch = wrapper[terminal_import:release_branch_end]
+    assert terminal_branch.rstrip().endswith('-- "${release_exporter_args[@]}"')
 
     bootstrap = apt_helper[
         apt_helper.index("bootstrap() {") : apt_helper.index("\nfinalize() {")
@@ -783,12 +796,14 @@ def assert_wrapper_contract() -> None:
 
 
 def assert_production_baseline_is_exact(temp_root: Path) -> None:
-    original = (REPO / "config/kernel-baselines/7.2-rc5-jg-0.env").read_text(
+    original_path = REPO / "config/kernel-baselines/7.2-rc5-jg-0.env"
+    original = original_path.read_text(
         encoding="utf-8"
     )
     descriptor, temporary_name = tempfile.mkstemp(prefix="sp11-baseline.", dir=temp_root)
     os.close(descriptor)
     tampered = Path(temporary_name)
+    ordinary_symlink = temp_root / "sp11-baseline-symlink.env"
     try:
         tampered.write_text(
             original.replace(
@@ -883,7 +898,76 @@ def assert_production_baseline_is_exact(temp_root: Path) -> None:
         run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
         tampered.write_bytes(original.encode("utf-8")[:-1] + b"\x00\n")
         run(["bash", str(BASELINE_VALIDATOR), str(tampered)], dict(os.environ), expect=False)
+
+        ordinary_symlink.unlink(missing_ok=True)
+        ordinary_symlink.symlink_to(original_path)
+        run(
+            ["bash", str(BASELINE_VALIDATOR), str(ordinary_symlink)],
+            dict(os.environ),
+            expect=False,
+        )
+
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
+            descriptor = os.open(
+                original_path,
+                os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            try:
+                child = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-c",
+                        """
+import os
+import sys
+
+source = int(sys.argv[1], 10)
+os.dup2(source, 3, inheritable=True)
+os.set_inheritable(3, True)
+os.execve(
+    "/bin/bash",
+    [
+        "/bin/bash",
+        sys.argv[2],
+        "--repo-dir",
+        sys.argv[3],
+        "--emit-release-values",
+        "--baseline-fd",
+        "3",
+    ],
+    dict(os.environ),
+)
+""",
+                        str(descriptor),
+                        str(BASELINE_VALIDATOR),
+                        str(REPO),
+                    ],
+                    pass_fds=(descriptor,),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+            finally:
+                os.close(descriptor)
+            assert child.returncode == 0, child.stderr
+            assert (
+                f"SP11_KERNEL_BASELINE_ID\t" in child.stdout
+                and "SP11_KERNEL_SOURCE_DATE_EPOCH\t1785567085\n" in child.stdout
+            ), "held baseline validator did not emit the exact release values"
+            run(
+                [
+                    "bash",
+                    str(BASELINE_VALIDATOR),
+                    "--baseline-fd",
+                    "4",
+                ],
+                dict(os.environ),
+                expect=False,
+            )
     finally:
+        ordinary_symlink.unlink(missing_ok=True)
         tampered.unlink(missing_ok=True)
 
 
@@ -1518,7 +1602,243 @@ def writer_hostile_cases(fixture: Fixture) -> None:
     assert sidecar.exists()
 
 
+def apt_decoder_supervisor_cases(fixture: Fixture) -> None:
+    hostile_decoder = fixture.root / "hostile-apt-list-decoder.py"
+    hostile_decoder.write_text(
+        textwrap.dedent(
+            """\
+            import os
+            import sys
+            import time
+
+            mode = sys.argv[1]
+            if mode == "small-stderr":
+                os.write(2, b"legitimate decoder warning\\n")
+                os.write(1, b"x")
+            elif mode == "oversize":
+                os.write(1, b"xx")
+            elif mode == "infinite-stdout":
+                while True:
+                    os.write(1, b"x" * 65536)
+            elif mode == "stderr-flood":
+                os.write(1, b"x")
+                while True:
+                    os.write(2, b"e" * 65536)
+            elif mode == "total-timeout":
+                while True:
+                    os.write(2, b"progress")
+                    time.sleep(0.05)
+            elif mode in {"hang", "interrupt", "pending-signal"}:
+                while True:
+                    time.sleep(10)
+            elif mode in {"wait-return-signal", "internal-wait-signal"}:
+                os.write(1, b"x")
+            elif mode == "nonzero-after-eof":
+                os.write(1, b"x")
+                raise SystemExit(7)
+            elif mode == "digest-mismatch":
+                os.write(1, b"y")
+            else:
+                raise SystemExit(99)
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    harness = textwrap.dedent(
+        """\
+        import hashlib
+        import importlib.util
+        import os
+        from pathlib import Path
+        import signal
+        import subprocess
+        import sys
+
+        helper_path = Path(sys.argv[1])
+        decoder_path = Path(sys.argv[2])
+        target_path = Path(sys.argv[3])
+        mode = sys.argv[4]
+        pid_path = Path(sys.argv[5])
+        kill_marker = Path(sys.argv[6])
+        specification = importlib.util.spec_from_file_location(
+            "sp11_decoder_supervisor_fixture", helper_path
+        )
+        assert specification is not None and specification.loader is not None
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        module.APT_DECODER_STDERR_MAX = 4096
+        module.APT_DECODER_TOTAL_TIMEOUT_SECONDS = 0.8
+        module.APT_DECODER_IDLE_TIMEOUT_SECONDS = 0.2
+        module.APT_DECODER_STOP_TIMEOUT_SECONDS = 0.2
+        module.apt_list_decoder = lambda _path, _baseline: [
+            sys.executable,
+            str(decoder_path),
+            mode,
+        ]
+
+        original_popen = module.subprocess.Popen
+        def recording_popen(*arguments, **keywords):
+            child = original_popen(*arguments, **keywords)
+            descriptor = os.open(
+                pid_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            try:
+                os.write(descriptor, (str(child.pid) + "\\n").encode("ascii"))
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            if mode == "pending-signal":
+                # This signal is issued while apt_list_identity still has its
+                # CALL-to-owner-registration mask in force.
+                os.kill(os.getpid(), signal.SIGTERM)
+            elif mode == "wait-return-signal":
+                original_wait = child.wait
+                sent = False
+                def signalling_wait(*arguments, **keywords):
+                    nonlocal sent
+                    result = original_wait(*arguments, **keywords)
+                    if not sent:
+                        sent = True
+                        with kill_marker.open("a", encoding="ascii") as marker:
+                            marker.write("wait-return signal sent\\n")
+                        os.kill(os.getpid(), signal.SIGTERM)
+                    return result
+                child.wait = signalling_wait
+            elif mode == "internal-wait-signal":
+                def internal_wait(*_arguments, **_keywords):
+                    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, ())
+                    if signal.SIGTERM not in blocked:
+                        raise AssertionError("terminal wait signal mask was not blocked")
+                    waited_pid, wait_status = os.waitpid(child.pid, 0)
+                    if waited_pid != child.pid:
+                        raise AssertionError("waitpid returned an unexpected child")
+                    with kill_marker.open("a", encoding="ascii") as marker:
+                        marker.write("internal wait signal sent\\n")
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    child.returncode = os.waitstatus_to_exitcode(wait_status)
+                    return child.returncode
+                child.wait = internal_wait
+            return child
+        module.subprocess.Popen = recording_popen
+
+        if mode == "interrupt":
+            original_selector = module.selectors.DefaultSelector
+            class InterruptingSelector:
+                def __init__(self):
+                    self._selector = original_selector()
+                    self._sent = False
+                def __getattr__(self, name):
+                    return getattr(self._selector, name)
+                def select(self, timeout=None):
+                    if not self._sent:
+                        self._sent = True
+                        kill_marker.write_text("interrupt sent\\n")
+                        os.kill(os.getpid(), signal.SIGTERM)
+                    return self._selector.select(timeout)
+            module.selectors.DefaultSelector = InterruptingSelector
+
+        if mode in {
+            "wait-return-signal",
+            "internal-wait-signal",
+            "nonzero-after-eof",
+            "digest-mismatch",
+        }:
+            def forbidden_killpg(_pid, _signal):
+                with kill_marker.open("a", encoding="ascii") as marker:
+                    marker.write("killpg called after exact child reap\\n")
+            module.os.killpg = forbidden_killpg
+
+        expected = (1, hashlib.sha256(b"x").hexdigest())
+        try:
+            identity = module.apt_list_identity(target_path, {}, expected)
+        except SystemExit as exc:
+            if mode == "small-stderr":
+                raise
+            print("decoder-supervisor-refused:" + mode)
+            print(str(exc))
+        else:
+            if mode != "small-stderr" or identity != expected:
+                raise AssertionError("hostile decoder case was unexpectedly accepted")
+            print("decoder-supervisor-accepted-small-stderr")
+        """
+    )
+
+    # The decoder vector is replaced inside the isolated harness; this stable
+    # regular fixture path is only the diagnostic target argument.
+    target = fixture.baseline
+    failure_reasons = {
+        "oversize": "exceeded the signed size",
+        "infinite-stdout": "exceeded the signed size",
+        "stderr-flood": "diagnostics exceeded their limit",
+        "total-timeout": "exceeded its deadline",
+        "hang": "exceeded its deadline",
+        "interrupt": "interrupted by signal",
+        "pending-signal": "interrupted by signal",
+        "wait-return-signal": "interrupted by signal",
+        "internal-wait-signal": "interrupted by signal",
+        "nonzero-after-eof": "exited unsuccessfully",
+        "digest-mismatch": "differs from the signed index",
+    }
+    for mode in ("small-stderr", *failure_reasons):
+        pid_path = fixture.root / f"decoder-{mode}.pid"
+        kill_marker = fixture.root / f"decoder-{mode}.unexpected-killpg"
+        result = run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                harness,
+                str(ENVELOPE),
+                str(hostile_decoder),
+                str(target),
+                mode,
+                str(pid_path),
+                str(kill_marker),
+            ],
+            fixture.env(),
+        )
+        if mode == "small-stderr":
+            assert "decoder-supervisor-accepted-small-stderr" in result.stdout
+        else:
+            assert f"decoder-supervisor-refused:{mode}" in result.stdout, (
+                mode,
+                result.stdout,
+                result.stderr,
+            )
+            assert failure_reasons[mode] in result.stdout, (
+                mode,
+                result.stdout,
+                result.stderr,
+            )
+        assert pid_path.is_file() and not pid_path.is_symlink()
+        child_pid = int(pid_path.read_text(encoding="ascii").strip())
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            try:
+                os.killpg(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            raise AssertionError(f"APT decoder child was not reaped: {mode}")
+        if mode in {"nonzero-after-eof", "digest-mismatch"}:
+            assert not os.path.lexists(kill_marker)
+        elif mode == "wait-return-signal":
+            assert kill_marker.read_text(encoding="ascii") == (
+                "wait-return signal sent\n"
+            )
+        elif mode == "internal-wait-signal":
+            assert kill_marker.read_text(encoding="ascii") == (
+                "internal wait signal sent\n"
+            )
+
+
 def envelope_cases(fixture: Fixture) -> None:
+    apt_decoder_supervisor_cases(fixture)
     # Restore a non-duplicate signed set and regenerate the positive sidecar.
     fixture._initialize_index_content()
     fixture.rebuild_metadata()
@@ -1541,6 +1861,7 @@ def envelope_cases(fixture: Fixture) -> None:
                 target.write_bytes(fixture_gzip(fixture.index_raw[(suite, relative)]))
     sidecar = fixture.artifacts / "sp11-kernel-apt-provenance.txt"
     run(fixture.writer_command(sidecar), fixture.env())
+    (fixture.archives / "lock").write_bytes(b"")
 
     oci = fixture.work / "sp11-oci-index.json"
     oci.write_bytes(fixture.oci_raw)
@@ -1550,7 +1871,33 @@ def envelope_cases(fixture: Fixture) -> None:
     entrypoint.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     manifest = fixture.artifacts / "sp11-kernel-build-manifest.txt"
     write_exact_build_manifest(fixture, manifest)
+    manifest_lines = manifest.read_text(encoding="ascii").splitlines()
+    kernel_deb_names: list[str] = []
+    for index in range(1, 5):
+        path_prefix = f"Deb {index} path: "
+        path_line = next(line for line in manifest_lines if line.startswith(path_prefix))
+        name = path_line.removeprefix(path_prefix)
+        payload = f"fixture kernel Deb {index}\n".encode("ascii")
+        (fixture.artifacts / name).write_bytes(payload)
+        kernel_deb_names.append(name)
+        size_prefix = f"Deb {index} size: "
+        hash_prefix = f"Deb {index} SHA256: "
+        manifest_lines = [
+            f"{size_prefix}{len(payload)}"
+            if line.startswith(size_prefix)
+            else f"{hash_prefix}{digest(payload)}"
+            if line.startswith(hash_prefix)
+            else line
+            for line in manifest_lines
+        ]
+    manifest.write_text("\n".join(manifest_lines) + "\n", encoding="ascii")
+    (fixture.artifacts / "sp11-kernel-debs.txt").write_text(
+        "".join(name + "\n" for name in kernel_deb_names), encoding="ascii"
+    )
     envelope = fixture.artifacts / "sp11-kernel-build-inputs.txt"
+    attestation = fixture.work / "sp11-kernel-preseal-validation.txt"
+    bootstrap_state = fixture.work / "sp11-apt-bootstrap-state.txt"
+    assert bootstrap_state.is_file() and not bootstrap_state.is_symlink()
     base_command = [
         sys.executable,
         str(ENVELOPE),
@@ -1586,24 +1933,23 @@ def envelope_cases(fixture: Fixture) -> None:
         "--output",
         str(envelope),
     ]
-    run(base_command, fixture.env())
-    validate_command = base_command.copy()
-    validate_command[2] = "validate"
-    run(validate_command, fixture.env())
+
     baseline_sha256 = digest(fixture.baseline.read_bytes())
-    run(
-        validate_command + ["--baseline-sha256", baseline_sha256],
-        fixture.env(),
+    build_inputs_raw = ENVELOPE.read_bytes()
+    assert b'sys.platform != "darwin"' in build_inputs_raw
+    assert b'Linux production must attest the interpreter-provided exact vector' in (
+        build_inputs_raw
     )
-    wrong_baseline = run(
-        validate_command + ["--baseline-sha256", "0" * 64],
-        fixture.env(),
-        expect=False,
-    )
-    assert (
-        "baseline bytes do not match the committed snapshot SHA256"
-        in wrong_baseline.stderr
-    )
+    manifest_validator = REPO / "scripts/validate-sp11-image-release-manifests.py"
+    manifest_validator_raw = manifest_validator.read_bytes()
+    git_object_format = "sha1" if len(SUPPORT_HEAD) == 40 else "sha256"
+
+    def git_blob_id(raw: bytes) -> str:
+        framed = b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+        if git_object_format == "sha1":
+            return hashlib.sha1(framed).hexdigest()
+        return hashlib.sha256(framed).hexdigest()
+
     control_hash_options = [
         "--build-args-sha256",
         digest(build_args.read_bytes()),
@@ -1612,11 +1958,404 @@ def envelope_cases(fixture: Fixture) -> None:
         "--oci-index-sha256",
         digest(oci.read_bytes()),
     ]
-    run(validate_command + control_hash_options, fixture.env())
-    wrong_control_hashes = control_hash_options.copy()
-    wrong_control_hashes[1] = "0" * 64
+    validate_command = [
+        "/usr/bin/python3",
+        "-I",
+        str(ENVELOPE),
+        "validate",
+        *base_command[3:],
+        "--baseline-sha256",
+        baseline_sha256,
+        *control_hash_options,
+        "--apt-bootstrap-state",
+        str(bootstrap_state),
+        "--attestation-output",
+        str(attestation),
+        "--git-object-format",
+        git_object_format,
+        "--build-inputs-helper-sha256",
+        digest(build_inputs_raw),
+        "--build-inputs-helper-object-id",
+        git_blob_id(build_inputs_raw),
+        "--manifest-validator-sha256",
+        digest(manifest_validator_raw),
+        "--manifest-validator-object-id",
+        git_blob_id(manifest_validator_raw),
+    ]
+
+    def run_terminal_validate(
+        extra: list[str] | tuple[str, ...] = (),
+        *,
+        expect: bool = True,
+        retain_attestation: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        assert not os.path.lexists(attestation)
+        result = run(validate_command + list(extra), fixture.env(), expect=expect)
+        if expect:
+            assert attestation.is_file() and not attestation.is_symlink()
+            assert stat.S_IMODE(attestation.stat().st_mode) == 0o644
+            if not retain_attestation:
+                attestation.unlink()
+        else:
+            assert not os.path.lexists(attestation)
+        return result
+
+    def publication_metadata(path: Path) -> tuple[int, ...]:
+        metadata = path.lstat()
+        return (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mode,
+            metadata.st_uid,
+            metadata.st_gid,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+            metadata.st_nlink,
+        )
+
+    # Final-name acquisition is O_EXCL|O_NOFOLLOW at the held parent. Existing
+    # regular, FIFO, and symlink nodes are immutable tripwires, not replaceable
+    # destinations, and the producer must never block opening the FIFO.
+    existing_bytes = b"preexisting envelope victim must remain unchanged\n"
+    envelope.write_bytes(existing_bytes)
+    envelope.chmod(0o640)
+    existing_metadata = publication_metadata(envelope)
+    existing_result = run(base_command, fixture.env(), expect=False)
+    assert "could not exclusively create build-inputs output" in existing_result.stderr
+    assert envelope.read_bytes() == existing_bytes
+    assert publication_metadata(envelope) == existing_metadata
+    envelope.unlink()
+
+    symlink_victim = fixture.root / "build-inputs-symlink-victim"
+    symlink_victim.write_bytes(existing_bytes)
+    symlink_victim_metadata = publication_metadata(symlink_victim)
+    envelope.symlink_to(symlink_victim)
+    symlink_result = run(base_command, fixture.env(), expect=False)
+    assert "could not exclusively create build-inputs output" in symlink_result.stderr
+    assert envelope.is_symlink() and envelope.readlink() == symlink_victim
+    assert symlink_victim.read_bytes() == existing_bytes
+    assert publication_metadata(symlink_victim) == symlink_victim_metadata
+    envelope.unlink()
+
+    os.mkfifo(envelope, 0o600)
+    fifo_metadata = publication_metadata(envelope)
+    fifo_result = run(base_command, fixture.env(), expect=False)
+    assert "could not exclusively create build-inputs output" in fifo_result.stderr
+    assert stat.S_ISFIFO(envelope.lstat().st_mode)
+    assert publication_metadata(envelope) == fifo_metadata
+    envelope.unlink()
+
+    # Swap the exact artifacts parent after its real-directory check but at the
+    # held-parent open boundary. The victim remains untouched; no pathname
+    # cleanup follows the substituted parent.
+    module_name = "sp11_kernel_build_inputs_output_parent_fixture"
+    specification = importlib.util.spec_from_file_location(module_name, ENVELOPE)
+    assert specification is not None and specification.loader is not None
+    output_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(output_module)
+    original_open = output_module.os.open
+    preserved_artifacts = fixture.root / "preserved-artifacts-parent"
+    parent_victim = fixture.root / "output-parent-victim"
+    parent_victim.mkdir()
+    parent_sentinel = parent_victim / "sentinel"
+    parent_sentinel.write_bytes(existing_bytes)
+    parent_victim_metadata = publication_metadata(parent_victim)
+    parent_sentinel_metadata = publication_metadata(parent_sentinel)
+    swapped_parent = False
+
+    def swapping_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped_parent
+        if (
+            not swapped_parent
+            and path == envelope.name
+            and dir_fd is not None
+        ):
+            fixture.artifacts.rename(preserved_artifacts)
+            fixture.artifacts.symlink_to(parent_victim, target_is_directory=True)
+            swapped_parent = True
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    output_module.os.open = swapping_open
+    saved_arguments = sys.argv
+    saved_environment = dict(os.environ)
+    fixture_environment = fixture.env()
+    sys.argv = [str(ENVELOPE), *base_command[2:]]
+    os.environ.clear()
+    os.environ.update(fixture_environment)
+    try:
+        try:
+            output_module.main()
+        except SystemExit as exc:
+            assert "build-inputs output" in str(exc)
+        else:
+            raise AssertionError("output publication accepted a replaced parent")
+    finally:
+        output_module.os.open = original_open
+        sys.argv = saved_arguments
+        os.environ.clear()
+        os.environ.update(saved_environment)
+        if fixture.artifacts.is_symlink():
+            fixture.artifacts.unlink()
+        if preserved_artifacts.exists():
+            preserved_artifacts.rename(fixture.artifacts)
+    assert swapped_parent
+    assert publication_metadata(parent_victim) == parent_victim_metadata
+    assert parent_sentinel.read_bytes() == existing_bytes
+    assert publication_metadata(parent_sentinel) == parent_sentinel_metadata
+    assert list(parent_victim.iterdir()) == [parent_sentinel]
+    assert envelope.is_file() and not envelope.is_symlink()
+    assert envelope.stat().st_size == 0
+    envelope.unlink()
+
+    # Replace an ancestor after its exact descriptor has been acquired but
+    # before the next openat component. Traversal must remain on the held
+    # original tree, the final pathname mapping must reject, and neither the
+    # substituted victim nor its sentinel may be changed or removed.
+    ancestor_root = fixture.work
+    ancestor_envelope = envelope
+    ancestor_victim = fixture.root / "output-publication-work-victim"
+    ancestor_victim_parent = ancestor_victim / "artifacts"
+    ancestor_victim_parent.mkdir(parents=True)
+    ancestor_sentinel = ancestor_victim_parent / "sentinel"
+    ancestor_sentinel.write_bytes(existing_bytes)
+    ancestor_victim_metadata = publication_metadata(ancestor_victim)
+    ancestor_victim_parent_metadata = publication_metadata(ancestor_victim_parent)
+    ancestor_sentinel_metadata = publication_metadata(ancestor_sentinel)
+    preserved_ancestor = fixture.root / "preserved-output-publication-work"
+    module_name = "sp11_kernel_build_inputs_output_ancestor_fixture"
+    specification = importlib.util.spec_from_file_location(module_name, ENVELOPE)
+    assert specification is not None and specification.loader is not None
+    ancestor_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(ancestor_module)
+    original_open = ancestor_module.os.open
+    swapped_ancestor = False
+
+    def ancestor_swapping_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped_ancestor
+        if not swapped_ancestor and path == "artifacts" and dir_fd is not None:
+            ancestor_root.rename(preserved_ancestor)
+            ancestor_root.symlink_to(ancestor_victim, target_is_directory=True)
+            swapped_ancestor = True
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    ancestor_module.os.open = ancestor_swapping_open
+    saved_arguments = sys.argv
+    saved_environment = dict(os.environ)
+    fixture_environment = fixture.env()
+    sys.argv = [str(ENVELOPE), *base_command[2:]]
+    os.environ.clear()
+    os.environ.update(fixture_environment)
+    try:
+        try:
+            ancestor_module.main()
+        except SystemExit as exc:
+            assert "build-inputs output" in str(exc)
+        else:
+            raise AssertionError("output publication accepted an ancestor replacement")
+    finally:
+        ancestor_module.os.open = original_open
+        sys.argv = saved_arguments
+        os.environ.clear()
+        os.environ.update(saved_environment)
+        if ancestor_root.is_symlink():
+            ancestor_root.unlink()
+        if preserved_ancestor.exists():
+            preserved_ancestor.rename(ancestor_root)
+    assert swapped_ancestor
+    assert publication_metadata(ancestor_victim) == ancestor_victim_metadata
+    assert publication_metadata(ancestor_victim_parent) == ancestor_victim_parent_metadata
+    assert ancestor_sentinel.read_bytes() == existing_bytes
+    assert publication_metadata(ancestor_sentinel) == ancestor_sentinel_metadata
+    assert list(ancestor_victim_parent.iterdir()) == [ancestor_sentinel]
+    assert not ancestor_envelope.exists() and not ancestor_envelope.is_symlink()
+
+    # Mutate the held output itself immediately after its first fsync, before
+    # the publisher can accept its first intended-byte seal. Same-size hostile
+    # bytes must be compared with the independently rendered payload and the
+    # exact newly-created inode must remain as zero-length failure evidence.
+    module_name = "sp11_kernel_build_inputs_intended_bytes_fixture"
+    specification = importlib.util.spec_from_file_location(module_name, ENVELOPE)
+    assert specification is not None and specification.loader is not None
+    intended_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(intended_module)
+    original_fsync = intended_module.os.fsync
+    intended_bytes_mutated = False
+
+    def mutating_fsync(descriptor: int) -> None:
+        nonlocal intended_bytes_mutated
+        original_fsync(descriptor)
+        metadata = os.fstat(descriptor)
+        if (
+            not intended_bytes_mutated
+            and stat.S_ISREG(metadata.st_mode)
+            and metadata.st_size > 0
+        ):
+            first = os.pread(descriptor, 1, 0)
+            os.pwrite(descriptor, b"X" if first != b"X" else b"Y", 0)
+            intended_bytes_mutated = True
+
+    intended_module.os.fsync = mutating_fsync
+    saved_arguments = sys.argv
+    saved_environment = dict(os.environ)
+    fixture_environment = fixture.env()
+    sys.argv = [str(ENVELOPE), *base_command[2:]]
+    os.environ.clear()
+    os.environ.update(fixture_environment)
+    try:
+        try:
+            intended_module.main()
+        except SystemExit as exc:
+            assert "independently intended payload" in str(exc)
+        else:
+            raise AssertionError("output publication accepted non-intended bytes")
+    finally:
+        intended_module.os.fsync = original_fsync
+        sys.argv = saved_arguments
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    assert intended_bytes_mutated
+    assert envelope.is_file() and not envelope.is_symlink()
+    assert envelope.stat().st_size == 0
+    envelope.unlink()
+
+    run(base_command, fixture.env())
+
+    # A shell may have inherited SIGCHLD=SIG_IGN, which makes children
+    # auto-reap before Popen can own their exit status.  The real isolated CLI
+    # must reset that disposition before its first nested validator/decoder,
+    # then complete the exact terminal validation normally.
+    def ignore_sigchld_before_exec() -> None:
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+
+    ignored_sigchld_result = subprocess.run(
+        validate_command,
+        env=fixture.env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        preexec_fn=ignore_sigchld_before_exec,
+    )
+    assert ignored_sigchld_result.returncode == 0, (
+        ignored_sigchld_result.stdout,
+        ignored_sigchld_result.stderr,
+    )
+    assert "Validated immutable build-inputs envelope" in (
+        ignored_sigchld_result.stdout
+    )
+    assert attestation.is_file() and not attestation.is_symlink()
+    attestation.unlink()
+
+    # The terminal validator emits one complete O_EXCL attestation only after
+    # every semantic and stable-state check has succeeded.  Its argv rows are
+    # the exact isolated process vector, and the complete managed-state rows
+    # are bytewise sorted and include the exact six-field bootstrap state.
+    run_terminal_validate(retain_attestation=True)
+    attestation_lines = attestation.read_text(encoding="ascii").splitlines()
+    assert attestation_lines[0] == (
+        "Kernel pre-seal validation schema: sp11-kernel-preseal-validation-v1"
+    )
+    assert "Validator argv schema: sp11-kernel-build-inputs-validate-argv-v1" in (
+        attestation_lines
+    )
+    argv_count = attestation_lines.index(
+        f"Validator argv count: {len(validate_command)}"
+    )
+    assert attestation_lines[argv_count + 1 : argv_count + 1 + len(validate_command)] == [
+        f"Validator argv {index}: {argument}"
+        for index, argument in enumerate(validate_command, 1)
+    ]
+    validated_paths = [
+        line.split(": ", 1)[1]
+        for line in attestation_lines
+        if line.startswith("Validated input ") and " path: " in line
+    ]
+    assert validated_paths == sorted(validated_paths, key=lambda value: value.encode("ascii"))
+    assert len(validated_paths) == len(set(validated_paths))
+    assert "sp11-apt-bootstrap-state.txt" in validated_paths
+    bootstrap_row = next(
+        index
+        for index, line in enumerate(attestation_lines)
+        if line.endswith(" path: sp11-apt-bootstrap-state.txt")
+    )
+    assert attestation_lines[bootstrap_row + 1].endswith(" type: regular")
+    assert attestation_lines[bootstrap_row + 2].endswith(" mode: 0644")
+    assert attestation_lines[-1] == "Validation complete: true"
+
+    # A preexisting final name is an immutable tripwire.  It must be refused
+    # before validation without changing bytes or metadata.
+    attestation_bytes = attestation.read_bytes()
+    attestation_metadata = publication_metadata(attestation)
+    preexisting_attestation = run(validate_command, fixture.env(), expect=False)
+    assert "pre-seal validation attestation already exists" in (
+        preexisting_attestation.stderr
+    )
+    assert attestation.read_bytes() == attestation_bytes
+    assert publication_metadata(attestation) == attestation_metadata
+    attestation.unlink()
+
+    bootstrap_bytes = bootstrap_state.read_bytes()
+    bootstrap_state.write_bytes(
+        bootstrap_bytes.replace(b"Strict HTTPS recheck: true\n", b"Strict HTTPS recheck: false\n")
+    )
+    wrong_bootstrap_field = run(validate_command, fixture.env(), expect=False)
+    assert "APT bootstrap state does not match: Strict HTTPS recheck" in (
+        wrong_bootstrap_field.stderr
+    )
+    assert not os.path.lexists(attestation)
+    bootstrap_state.write_bytes(bootstrap_bytes)
+
+    bootstrap_state.write_bytes(bootstrap_bytes + b"Unexpected field: rejected\n")
+    extra_bootstrap_field = run(validate_command, fixture.env(), expect=False)
+    assert "APT bootstrap state field set/order mismatch" in extra_bootstrap_field.stderr
+    assert not os.path.lexists(attestation)
+    bootstrap_state.write_bytes(bootstrap_bytes)
+
+    pre_inventory = fixture.work / "sp11-apt-installed-pre.txt"
+    pre_inventory_bytes = pre_inventory.read_bytes()
+    pre_inventory.write_bytes(pre_inventory_bytes + b"drift:arm64=1\n")
+    bootstrap_inventory_drift = run(validate_command, fixture.env(), expect=False)
+    assert "APT bootstrap state does not match: Pre-install inventory size" in (
+        bootstrap_inventory_drift.stderr
+    )
+    assert not os.path.lexists(attestation)
+    pre_inventory.write_bytes(pre_inventory_bytes)
+
+    wrong_baseline = run(
+        [
+            "0" * 64 if value == baseline_sha256 else value
+            for value in validate_command
+        ],
+        fixture.env(),
+        expect=False,
+    )
+    assert (
+        "baseline bytes do not match the committed snapshot SHA256"
+        in wrong_baseline.stderr
+    )
+    run_terminal_validate()
+    wrong_control_hashes = validate_command.copy()
+    wrong_control_hashes[wrong_control_hashes.index("--build-args-sha256") + 1] = (
+        "0" * 64
+    )
     wrong_control = run(
-        validate_command + wrong_control_hashes,
+        wrong_control_hashes,
         fixture.env(),
         expect=False,
     )
@@ -1629,8 +2368,12 @@ def envelope_cases(fixture: Fixture) -> None:
 
     def reject_build_arguments(payload: bytes, expected_error: str) -> None:
         build_args.write_bytes(payload)
-        result = run(validate_command, fixture.env(), expect=False)
-        assert expected_error in result.stderr
+        semantic_command = validate_command.copy()
+        semantic_command[semantic_command.index("--build-args-sha256") + 1] = digest(
+            payload
+        )
+        result = run(semantic_command, fixture.env(), expect=False)
+        assert expected_error in result.stderr, result.stderr
         build_args.write_bytes(canonical_build_arguments)
 
     canonical_lines = canonical_build_arguments.decode("utf-8").splitlines()
@@ -1669,7 +2412,7 @@ def envelope_cases(fixture: Fixture) -> None:
         canonical_build_arguments + b"unsafe\x00argument\n",
         "contain a NUL or CR byte",
     )
-    run(validate_command, fixture.env())
+    run_terminal_validate()
     production_identity_baseline = fixture.root / "production-identity-baseline.env"
     production_identity_baseline.write_text(
         fixture.baseline.read_text(encoding="utf-8").replace(
@@ -1681,6 +2424,8 @@ def envelope_cases(fixture: Fixture) -> None:
     production_identity_command = [
         str(production_identity_baseline)
         if value == str(fixture.baseline)
+        else digest(production_identity_baseline.read_bytes())
+        if value == baseline_sha256
         else value
         for value in validate_command
     ]
@@ -1760,8 +2505,9 @@ def envelope_cases(fixture: Fixture) -> None:
     shutil.copy2(manifest, snapshot_manifest)
     shutil.copy2(sidecar, snapshot_sidecar)
     shutil.copy2(envelope, snapshot_envelope)
-    release_snapshot_command = validate_command.copy()
+    release_snapshot_command = base_command.copy()
     release_snapshot_command[2] = "validate-release-snapshot"
+    release_snapshot_command.extend(control_hash_options)
     for old_path, new_path in (
         (manifest, snapshot_manifest),
         (sidecar, snapshot_sidecar),
@@ -1788,6 +2534,8 @@ def envelope_cases(fixture: Fixture) -> None:
         hook_name: str,
         suffix: bytes,
         command: list[str] = validate_command,
+        *,
+        remove_before: bool = False,
     ) -> None:
         module_name = f"sp11_kernel_build_inputs_fixture_{hook_name}_{target.name.replace('.', '_')}"
         specification = importlib.util.spec_from_file_location(module_name, ENVELOPE)
@@ -1796,6 +2544,8 @@ def envelope_cases(fixture: Fixture) -> None:
         specification.loader.exec_module(module)
         original_hook = getattr(module, hook_name)
         original_bytes = target.read_bytes()
+        if remove_before:
+            target.unlink()
         mutated = False
 
         def mutating_hook(*args: object, **kwargs: object) -> object:
@@ -1807,10 +2557,17 @@ def envelope_cases(fixture: Fixture) -> None:
             return result
 
         setattr(module, hook_name, mutating_hook)
+        terminal_validate = command[:3] == [
+            "/usr/bin/python3",
+            "-I",
+            str(ENVELOPE),
+        ]
+        if terminal_validate:
+            module.exact_validator_argv = lambda: tuple(command)
         saved_arguments = sys.argv
         saved_environment = dict(os.environ)
         fixture_environment = fixture.env()
-        sys.argv = [str(ENVELOPE), *command[2:]]
+        sys.argv = command[2:] if terminal_validate else command[1:]
         os.environ.clear()
         os.environ.update(fixture_environment)
         try:
@@ -1842,6 +2599,11 @@ def envelope_cases(fixture: Fixture) -> None:
         envelope, "validate_envelope", b"mid-validation envelope mutation\n"
     )
     assert_mid_validation_mutation_rejected(
+        bootstrap_state,
+        "managed_state_snapshot",
+        b"mid-validation bootstrap-state mutation\n",
+    )
+    assert_mid_validation_mutation_rejected(
         snapshot_manifest,
         "validate_manifest",
         b"mid-attached-validation manifest mutation\n",
@@ -1861,6 +2623,7 @@ def envelope_cases(fixture: Fixture) -> None:
         "validate_envelope",
         b"post-write envelope mutation\n",
         base_command,
+        remove_before=True,
     )
 
     original_sidecar = sidecar.read_text(encoding="utf-8")
@@ -2018,22 +2781,168 @@ def envelope_cases(fixture: Fixture) -> None:
     duplicate_raw = json.dumps(duplicate_oci, separators=(",", ":")).encode()
     duplicate_path = fixture.work / "duplicate-oci.json"
     duplicate_path.write_bytes(duplicate_raw)
-    run(
-        [
-            sys.executable,
-            str(OCI_VALIDATOR),
-            "--raw-index",
-            str(duplicate_path),
-            "--index-ref",
-            f"ubuntu:26.04@sha256:{digest(duplicate_raw)}",
-            "--platform",
-            "linux/arm64/v8",
-            "--expected-platform-manifest",
-            CHILD_DIGEST,
-        ],
+    validator_arguments = [
+        str(OCI_VALIDATOR),
+        "--raw-index",
+        str(duplicate_path),
+        "--index-ref",
+        f"ubuntu:26.04@sha256:{digest(duplicate_raw)}",
+        "--platform",
+        "linux/arm64/v8",
+        "--expected-platform-manifest",
+        CHILD_DIGEST,
+    ]
+    nonisolated_validator = run(
+        [sys.executable, *validator_arguments],
         fixture.env(),
         expect=False,
     )
+    assert "OCI index validator requires isolated Python startup" in (
+        nonisolated_validator.stderr
+    )
+
+    hostile_python = fixture.root / "hostile-validator-python"
+    hostile_python.mkdir()
+    hostile_marker = fixture.root / "hostile-validator-python-imported"
+    (hostile_python / "sitecustomize.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        'Path(os.environ["SP11_HOSTILE_VALIDATOR_MARKER"]).write_text("loaded")\n',
+        encoding="utf-8",
+    )
+    isolated_environment = fixture.env()
+    isolated_environment.update(
+        {
+            "PYTHONPATH": str(hostile_python),
+            "PYTHONUSERBASE": str(hostile_python),
+            "SP11_HOSTILE_VALIDATOR_MARKER": str(hostile_marker),
+        }
+    )
+    isolated_validator = run(
+        [
+            sys.executable,
+            "-I",
+            *validator_arguments,
+        ],
+        isolated_environment,
+        expect=False,
+    )
+    assert "OCI index must contain exactly one linux/arm64/v8 descriptor" in (
+        isolated_validator.stderr
+    )
+    assert not hostile_marker.exists()
+    duplicate_path.unlink()
+
+    depth_root = fixture.artifacts / "validation-depth-bound"
+    depth_cursor = depth_root
+    for index in range(18):
+        depth_cursor = depth_cursor / f"d{index:02d}"
+    depth_cursor.mkdir(parents=True)
+    depth_result = run(validate_command, fixture.env(), expect=False)
+    assert "managed validation state exceeds its depth bound" in depth_result.stderr
+    assert not os.path.lexists(attestation)
+    shutil.rmtree(depth_root)
+
+    count_root = fixture.artifacts / "validation-count-bound"
+    count_root.mkdir()
+    for index in range(4096):
+        (count_root / f"f{index:04d}").write_bytes(b"")
+    count_result = run(validate_command, fixture.env(), expect=False)
+    assert "managed validation state exceeds its path/member bound" in (
+        count_result.stderr
+    )
+    assert not os.path.lexists(attestation)
+    shutil.rmtree(count_root)
+
+    # Exercise aggregate-byte refusal without allocating a multi-GiB fixture.
+    # The production value remains unchanged; only this imported module's cap
+    # is lowered before its bounded FD-relative walk starts.
+    bounds_name = "sp11_kernel_build_inputs_aggregate_bound_fixture"
+    bounds_specification = importlib.util.spec_from_file_location(bounds_name, ENVELOPE)
+    assert bounds_specification is not None and bounds_specification.loader is not None
+    bounds_module = importlib.util.module_from_spec(bounds_specification)
+    bounds_specification.loader.exec_module(bounds_module)
+    bounds_module.MAX_VALIDATED_INPUT_BYTES = 1
+    try:
+        bounds_module.managed_state_snapshot(fixture.work, attestation_present=False)
+    except SystemExit as exc:
+        assert "managed validation state exceeds its byte bound" in str(exc)
+    else:
+        raise AssertionError("managed validation accepted an over-budget aggregate")
+
+    # Exercise the full producer-to-sealer contract with live semantic
+    # validation and O_EXCL attestation generation.  The preceding subprocess
+    # already proved the real host argv capture.  Only argv[2]'s host path
+    # spelling is substituted here with its canonical in-container /repo path
+    # so the unmodified production sealer can enforce its exact vector.
+    module_name = "sp11_kernel_build_inputs_live_seal_fixture"
+    specification = importlib.util.spec_from_file_location(module_name, ENVELOPE)
+    assert specification is not None and specification.loader is not None
+    live_module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(live_module)
+    production_validator_argv = validate_command.copy()
+    production_validator_argv[2] = "/repo/scripts/sp11-kernel-build-inputs.py"
+    live_module.exact_validator_argv = lambda: tuple(production_validator_argv)
+    saved_arguments = sys.argv
+    saved_environment = dict(os.environ)
+    live_environment = fixture.env()
+    sys.argv = validate_command[2:]
+    os.environ.clear()
+    os.environ.update(live_environment)
+    try:
+        live_module.main()
+    finally:
+        sys.argv = saved_arguments
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    assert attestation.is_file() and not attestation.is_symlink()
+
+    validator_argv_sha256 = digest(
+        b"".join(argument.encode("ascii") + b"\0" for argument in production_validator_argv)
+    )
+    release_state = REPO / "scripts/sp11-kernel-release-state.py"
+    seal_command = [
+        "/usr/bin/python3",
+        "-I",
+        str(release_state),
+        "seal",
+        "--work-root",
+        str(fixture.work),
+        "--support-head",
+        SUPPORT_HEAD,
+        "--baseline-sha256",
+        baseline_sha256,
+        "--build-args-sha256",
+        digest(build_args.read_bytes()),
+        "--entrypoint-sha256",
+        digest(entrypoint.read_bytes()),
+        "--oci-index-sha256",
+        digest(oci.read_bytes()),
+        "--container-image",
+        f"ubuntu:26.04@sha256:{digest(oci.read_bytes())}",
+        "--container-platform",
+        "linux/arm64/v8",
+        "--git-object-format",
+        git_object_format,
+        "--validator-argv-sha256",
+        validator_argv_sha256,
+        "--build-inputs-helper-size",
+        str(len(build_inputs_raw)),
+        "--build-inputs-helper-sha256",
+        digest(build_inputs_raw),
+        "--build-inputs-helper-object-id",
+        git_blob_id(build_inputs_raw),
+        "--manifest-validator-size",
+        str(len(manifest_validator_raw)),
+        "--manifest-validator-sha256",
+        digest(manifest_validator_raw),
+        "--manifest-validator-object-id",
+        git_blob_id(manifest_validator_raw),
+    ]
+    run(seal_command, fixture.env())
+    staging = fixture.work / ".sp11-release-export-v1"
+    assert (staging / "catalog").is_file()
+    assert (staging / "files.nul").is_file()
 
 
 def emit_release_template(
@@ -2081,9 +2990,10 @@ def main() -> None:
         assert_decompressed_empty_index_contract(temp_root)
         assert_full_validator_signed_size_contract(temp_root)
         assert_full_validator_decoder_contract(temp_root)
-        fixture = bootstrap_and_finalize(temp_root)
-        writer_hostile_cases(fixture)
-        envelope_cases(fixture)
+        writer_fixture = bootstrap_and_finalize(temp_root)
+        writer_hostile_cases(writer_fixture)
+        envelope_fixture = bootstrap_and_finalize(temp_root)
+        envelope_cases(envelope_fixture)
         print("immutable APT provenance hostile fixtures passed")
     finally:
         for path in reversed(CREATED_FIXTURES):

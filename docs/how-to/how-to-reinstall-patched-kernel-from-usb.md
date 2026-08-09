@@ -97,6 +97,7 @@ git fetch https://github.com/ooaklee/linux-surface-pro-11-oe.git \
   "refs/tags/$TAG:refs/tags/$TAG"
 
 ./scripts/validate-sp11-touchscreen-release.sh \
+  --downloaded-release \
   --dir "$DEBS" \
   --tag "$TAG" \
   --remote https://github.com/ooaklee/linux-surface-pro-11-oe.git
@@ -104,9 +105,11 @@ git fetch https://github.com/ooaklee/linux-surface-pro-11-oe.git \
 
 The validator checks exact checksum and asset membership, package roles and
 ABI, module provenance and vermagic, the touchscreen device tree, and both the
-local and remote tag targets. Without `gh`, download every asset listed on the
-release page into one empty directory, fetch the tag as above, and run the same
-validator.
+local and remote tag targets. The explicit `--downloaded-release` authority
+mode validates transported bytes; it does not claim that the download
+directory carries the local preparer's transaction or publication marker.
+Without `gh`, download every asset listed on the release page into one empty
+directory, fetch the tag as above, and run the same validator.
 
 For an older non-touchscreen release, downloading only its `.deb` files and
 `SHA256SUMS` is sufficient for installation. In that narrower case,

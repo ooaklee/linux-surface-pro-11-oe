@@ -29,8 +29,11 @@ Scope: `7.2-rc5-jg-0sp11v3-qcom-x1e`, build pair A/B
 > [separate P0.4c evidence](sp11-kernel-immutable-build-evidence-20260808.md)
 > records the later build without treating it as a replay or a second member of
 > this pair. Release/image schema propagation is implemented and
-> hostile-fixture tested. Signing, licence, recovery/hardware evidence, and
-> explicit release authorization remain open.
+> hostile-fixture tested. Signing, recovery/hardware evidence,
+> corresponding-source/release-candidate review, and explicit release
+> authorization remain open. The final licence/UCM reviews recorded in
+> [`LEGAL.md`](../LEGAL.md) remain disclosures and file-level review work, not a
+> blanket stop on newly authored artifacts.
 
 ## Scope and method
 
@@ -412,9 +415,11 @@ release/image preparation paths validate and attach the exact v2 manifest, v1
 APT sidecar, and v1 build-inputs envelope, then attest their propagation in
 outer manifests. The envelope's literal incomplete state remains unchanged as
 a build-time fact. Publication remains closed because byte reproducibility,
-the release-signing model, independent licence/UCM gates, recovery/hardware
-evidence, corresponding-source/release-candidate review, and explicit release
-authorization remain open.
+the release-signing model, recovery/hardware evidence,
+corresponding-source/release-candidate review, and explicit release
+authorization remain open. The interim licence/UCM direction in
+[`LEGAL.md`](../LEGAL.md) is pending final review but is no longer an
+absence-of-decision publication blocker for newly authored material.
 
 ## Deterministic identity and raw matched-pair gate
 
@@ -439,9 +444,14 @@ No fresh clean C/D pair has yet exercised that foundation. Fixture success is
 tooling evidence, not a new build result: P0.4b remains failed/open, P0.4
 remains open overall, and P0.4c still consists of the single 2026-08-08 real
 immutable-input build. The signing model awaits an owner decision, and
-corresponding-source `git archive` normalization remains open. Licence/UCM,
-recovery/hardware evidence, corresponding-source/release-candidate review, and
-explicit release authorization remain **NO-PUBLISH** gates.
+the deterministic patched-source generator is implemented. Its real offline
+replay passed the immutable APT sub-gate but correctly rejected the retained
+2026-08-08 exact tree's escaping tracked symlink before installing an archive.
+A fresh corrected build and manifest are required. Recovery/hardware evidence,
+legal corresponding-source/release-candidate review, and explicit release
+authorization remain **NO-PUBLISH** gates. The pending final reviews recorded
+in [`LEGAL.md`](../LEGAL.md) still require per-file terms and attribution, but
+do not impose a blanket stop on newly authored artifacts.
 
 ## Required remediation before a byte-reproducible claim
 
@@ -466,8 +476,11 @@ explicit release authorization remain **NO-PUBLISH** gates.
 6. Repeat two clean builds after the signing decision. Require identical raw
    package hashes and all seven manifest output identities for a
    byte-reproducible pass.
-7. Normalize and validate corresponding-source `git archive` generation
-   separately before making a release-candidate source claim.
+7. Keep the historical four-patch tree as failed immutable evidence. Remove
+   its stale absolute symbolic link only through a new ordered source patch,
+   audit the exact post-patch Git tree before compilation, and validate repeated
+   deterministic archive bytes from a fresh build before making any source
+   release-candidate claim.
 
 ## Gate conclusion
 
@@ -487,11 +500,13 @@ historical pair's inputs or byte result.
 P0.4 remains open overall. Its P0.4a historical semantic-evidence facet is
 complete; P0.4b remains open because all four package byte identities differ;
 and P0.4c is complete for one real immutable-input build. Publication remains
-blocked on byte-reproducibility remediation, signing, the independent
-licence/UCM gates, corresponding-source and release-candidate review,
-recovery/hardware evidence, and explicit release authorization even though
-outer-schema propagation is implemented. The historical semantic result and
-the later immutable-input result support continued non-release development
-only. The deterministic identity and raw comparator are fixture-tested but
-have not yet produced a fresh C/D result; none of these facts is release
-authorization or proof that the historical A/B pair can be replayed immutably.
+blocked on byte-reproducibility remediation, signing, corresponding-source and
+release-candidate review, recovery/hardware evidence, and explicit release
+authorization even though outer-schema propagation is implemented. The
+historical semantic result and the later immutable-input result support
+continued non-release development only. The deterministic identity and raw
+comparator are fixture-tested but have not yet produced a fresh C/D result;
+none of these facts is release authorization or proof that the historical A/B
+pair can be replayed immutably. The final licence/UCM reviews remain disclosed
+under [`LEGAL.md`](../LEGAL.md), without acting as a blanket development or
+new-artifact publication gate.

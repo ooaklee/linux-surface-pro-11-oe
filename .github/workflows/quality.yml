@@ -42,6 +42,7 @@ jobs:
             scripts/build-sp11-qcom-x1e-kernel-docker.sh \
             scripts/build-sp11-touchscreen-modules.sh \
             scripts/collect-sp11-feature-parity-inventory.sh \
+            scripts/emit-sp11-kernel-release-state.sh \
             scripts/extract-sp11-image-bindings.sh \
             scripts/install-sp11-support.sh \
             scripts/install-sp11-touchscreen.sh \
@@ -65,6 +66,7 @@ jobs:
             tests/test-kernel-docker-wrapper-path-safety.sh \
             tests/test-kernel-source-commit-guard.sh \
             tests/test-kernel-source-archive-generation.sh \
+            tests/test-kernel-tree-symlink-safety.sh \
             tests/test-prepare-sp11-installed-system-path-safety.sh \
             tests/test-regenerate-qcom-x1e-annotations-path-safety.sh \
             tests/test-sp11-git-boundary-sanitization.sh \
@@ -81,7 +83,7 @@ jobs:
 
       - name: Check Python helper syntax
         run: |
-          python3 -c 'from pathlib import Path; [compile(path.read_text(), str(path), "exec") for path in (Path("scripts/compare-sp11-kernel-builds.py"), Path("scripts/compare-sp11-kernel-raw-builds.py"), Path("scripts/generate-sp11-kernel-source-archive.py"), Path("scripts/sp11-support-tree-manifest.py"), Path("scripts/sp11-release-tree-state.py"), Path("scripts/validate-sp11-image-build-manifest.py"), Path("scripts/validate-sp11-module-signatures.py"), Path("scripts/validate-sp11-source-archive.py"), Path("scripts/validate-sp11-image-release-manifests.py"), Path("scripts/validate-sp11-oci-index.py"), Path("scripts/write-sp11-apt-provenance.py"), Path("scripts/sp11-kernel-build-inputs.py"), Path("tests/test-sp11-immutable-apt-provenance.py"), Path("tests/test-sp11-kernel-build-comparison.py"), Path("tests/test-sp11-kernel-raw-build-comparison.py"))]'
+          python3 -c 'from pathlib import Path; [compile(path.read_text(), str(path), "exec") for path in (Path("scripts/compare-sp11-kernel-builds.py"), Path("scripts/compare-sp11-kernel-raw-builds.py"), Path("scripts/generate-sp11-kernel-source-archive.py"), Path("scripts/sp11-support-tree-manifest.py"), Path("scripts/sp11-release-tree-state.py"), Path("scripts/sp11-kernel-release-state.py"), Path("scripts/validate-sp11-image-build-manifest.py"), Path("scripts/validate-sp11-kernel-tree-symlinks.py"), Path("scripts/validate-sp11-module-signatures.py"), Path("scripts/validate-sp11-source-archive.py"), Path("scripts/validate-sp11-image-release-manifests.py"), Path("scripts/validate-sp11-oci-index.py"), Path("scripts/write-sp11-apt-provenance.py"), Path("scripts/sp11-kernel-build-inputs.py"), Path("tests/test-sp11-immutable-apt-provenance.py"), Path("tests/test-sp11-kernel-build-comparison.py"), Path("tests/test-sp11-kernel-raw-build-comparison.py"), Path("tests/test-sp11-kernel-release-state.py"))]'
 
       - name: Validate provenance ledger
         run: |
@@ -117,6 +119,12 @@ jobs:
 
       - name: Test deterministic kernel source archive generation
         run: ./tests/test-kernel-source-archive-generation.sh
+
+      - name: Test exact kernel-tree symlink containment preflight
+        run: ./tests/test-kernel-tree-symlink-safety.sh
+
+      - name: Test retained kernel release-state sealing and import
+        run: python3 -I ./tests/test-sp11-kernel-release-state.py
 
       - name: Test touchscreen module source and header provenance guard
         run: ./tests/test-touchscreen-module-source-provenance.sh
@@ -169,6 +177,9 @@ jobs:
       - name: Exercise pinned kernel build command
         run: |
           . config/kernel-baselines/7.2-rc5-jg-0.env
+          QUALITY_RELEASE_WORK=build/quality-kernel-release-dry-run
+          install -d -m 0700 "$QUALITY_RELEASE_WORK"
+          install -d -m 0700 "$QUALITY_RELEASE_WORK/artifacts"
           ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
             --source git \
             --git-url "$SP11_KERNEL_UPSTREAM_URL" \
@@ -178,5 +189,6 @@ jobs:
             --platform "$SP11_KERNEL_DOCKER_PLATFORM" \
             --patch-dirs "$SP11_KERNEL_PATCH_DIRS" \
             --build-target "$SP11_KERNEL_BUILD_TARGET" \
+            --work-dir "$QUALITY_RELEASE_WORK" \
             --release-build \
             --dry-run

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 sanitize_git_environment() {
   local variable_name
@@ -41,6 +42,8 @@ KERNEL_SOURCE_ASSET=""
 TOUCHSCREEN_SOURCE_ASSET=""
 KERNEL_SOURCE_ASSET_SHA256=""
 TOUCHSCREEN_SOURCE_ASSET_SHA256=""
+KERNEL_SOURCE_ASSET_SIZE=""
+TOUCHSCREEN_SOURCE_ASSET_SIZE=""
 TOUCHSCREEN_MODULES_DIR=""
 TOUCHSCREEN_SOURCE_URL=""
 TOUCHSCREEN_SOURCE_REF=""
@@ -51,19 +54,14 @@ TOUCHSCREEN_MODULE_FILES=(
   "mshw0485_touch.ko"
 )
 TOUCHSCREEN_MODULE_MANIFEST="sp11-touchscreen-modules-manifest.txt"
-SOURCE_SNAPSHOT_DIR=""
-PROVENANCE_SNAPSHOT_DIR=""
-OUTPUT_STAGING_DIR=""
 FINAL_OUT_DIR=""
-PREVIOUS_OUTPUT_CONTAINER=""
-PREVIOUS_OUTPUT_DIR=""
-PREVIOUS_OUTPUT_STATE=""
-PREVIOUS_OUTPUT_STATE_SIZE=""
-PREVIOUS_OUTPUT_STATE_SHA=""
-PREVIOUS_CONTAINER_IDENTITY=""
-PREVIOUS_OUTPUT_IDENTITY=""
-OUTPUT_INSTALL_PENDING="false"
-INSTALLED_OUTPUT_IDENTITY=""
+OUTPUT_ROOT_FD=52
+OUTPUT_ROOT_IDENTITY=""
+BUILD_WORK_ROOT_FD=53
+BUILD_WORK_ROOT_IDENTITY=""
+BUILD_ARTIFACTS_ROOT_FD=54
+BUILD_ARTIFACTS_ROOT_IDENTITY=""
+PREPARER_FIXTURE_HOOK=""
 
 usage() {
   cat <<EOF
@@ -116,6 +114,853 @@ require_tool() {
     echo "Missing required tool: $1" >&2
     exit 1
   fi
+}
+
+trusted_regular_file_fingerprint() {
+  local path="$1" maximum="$2"
+
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+try:
+    maximum = int(sys.argv[2], 10)
+    if maximum <= 0:
+        raise RuntimeError
+    descriptor = os.open(
+        sys.argv[1],
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+    )
+    before = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_size > maximum
+    ):
+        raise RuntimeError
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(descriptor, min(1048576, before.st_size - offset), offset)
+        if not chunk:
+            raise RuntimeError
+        digest.update(chunk)
+        offset += len(chunk)
+    after = os.fstat(descriptor)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    if stable(before) != stable(after):
+        raise RuntimeError
+    output = "%d %s\n" % (before.st_size, digest.hexdigest())
+except BaseException:
+    os.write(2, b"error: trusted regular-file fingerprint failed\n")
+    os._exit(1)
+finally:
+    descriptor = locals().get("descriptor")
+    if descriptor is not None:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+os.write(1, output.encode("ascii"))
+' "$path" "$maximum"
+}
+
+trusted_regular_file_sha256() {
+  local fingerprint fingerprint_re='^([0-9]+) ([0-9a-f]{64})$'
+
+  fingerprint="$(trusted_regular_file_fingerprint "$1" "$2")" || return 1
+  if ! [[ "$fingerprint" =~ $fingerprint_re ]]; then
+    echo "Trusted regular-file fingerprint is not canonical." >&2
+    return 1
+  fi
+  printf '%s\n' "${BASH_REMATCH[2]}"
+}
+
+trusted_baseline_container_authority() {
+  local path="$1" expected_sha256="$2"
+
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import re
+import stat
+import sys
+
+descriptor = None
+try:
+    if not re.fullmatch(r"[0-9a-f]{64}", sys.argv[2]):
+        raise RuntimeError
+    descriptor = os.open(
+        sys.argv[1],
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+    )
+    before = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_size <= 0
+        or before.st_size > 1048576
+    ):
+        raise RuntimeError
+    data = bytearray()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(descriptor, min(65536, before.st_size - offset), offset)
+        if not chunk:
+            raise RuntimeError
+        data.extend(chunk)
+        offset += len(chunk)
+    after = os.fstat(descriptor)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    if (
+        stable(before) != stable(after)
+        or hashlib.sha256(data).hexdigest() != sys.argv[2]
+    ):
+        raise RuntimeError
+    text = bytes(data).decode("ascii")
+    values = {}
+    assignment = re.compile(r"(SP11_KERNEL_DOCKER_(?:IMAGE|PLATFORM))=\"([^\"\\\r\n]+)\"\Z")
+    for line in text.splitlines():
+        match = assignment.fullmatch(line)
+        if match:
+            if match.group(1) in values:
+                raise RuntimeError
+            values[match.group(1)] = match.group(2)
+    image = values.get("SP11_KERNEL_DOCKER_IMAGE", "")
+    platform = values.get("SP11_KERNEL_DOCKER_PLATFORM", "")
+    if (
+        not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image)
+        or not re.fullmatch(r"linux/(?:amd64|arm64)(?:/v[0-9]+)?", platform)
+    ):
+        raise RuntimeError
+    output = image + "\t" + platform + "\n"
+except BaseException:
+    os.write(2, b"error: trusted baseline container authority failed\n")
+    raise SystemExit(1)
+finally:
+    if descriptor is not None:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+os.write(1, output.encode("ascii"))
+' "$path" "$expected_sha256"
+}
+
+copy_verified_regular_exclusive() {
+  local source_path="$1" destination_path="$2" expected_size="$3" expected_sha256="$4"
+
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import re
+import signal
+import stat
+import sys
+
+source = destination = parent = None
+registered = False
+committed = False
+handled = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, handled)
+try:
+    expected_size = int(sys.argv[3], 10)
+    expected_sha = sys.argv[4]
+    name = os.path.basename(sys.argv[2])
+    parent_path = os.path.dirname(sys.argv[2])
+    parent_descriptor = int(sys.argv[5], 10)
+    expected_parent = tuple(int(value, 10) for value in sys.argv[7:12])
+    if (
+        expected_size < 0
+        or expected_size > 17179869184
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+        or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+_~:@=-]{0,254}", name)
+        or parent_path != sys.argv[6]
+        or len(expected_parent) != 5
+    ):
+        raise RuntimeError
+    parent = os.dup(parent_descriptor)
+    parent_metadata = os.fstat(parent)
+    parent_mapped = os.stat(parent_path, follow_symlinks=False)
+    parent_identity = (
+        parent_metadata.st_dev,
+        parent_metadata.st_ino,
+        stat.S_IMODE(parent_metadata.st_mode),
+        parent_metadata.st_uid,
+        parent_metadata.st_gid,
+    )
+    mapped_identity = (
+        parent_mapped.st_dev,
+        parent_mapped.st_ino,
+        stat.S_IMODE(parent_mapped.st_mode),
+        parent_mapped.st_uid,
+        parent_mapped.st_gid,
+    )
+    if (
+        not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_identity != expected_parent
+        or mapped_identity != expected_parent
+    ):
+        raise RuntimeError
+    source = os.open(
+        sys.argv[1],
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+    )
+    source_before = os.fstat(source)
+    if (
+        not stat.S_ISREG(source_before.st_mode)
+        or source_before.st_nlink != 1
+        or source_before.st_size != expected_size
+    ):
+        raise RuntimeError
+    destination = os.open(
+        name,
+        os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=parent,
+    )
+    registered = True
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < expected_size:
+        chunk = os.pread(source, min(1048576, expected_size - offset), offset)
+        if not chunk:
+            raise RuntimeError
+        view = memoryview(chunk)
+        written = 0
+        while written < len(view):
+            count = os.write(destination, view[written:])
+            if count <= 0:
+                raise RuntimeError
+            written += count
+        digest.update(chunk)
+        offset += len(chunk)
+    os.fchmod(destination, 0o644)
+    os.fsync(destination)
+    source_after = os.fstat(source)
+    destination_after = os.fstat(destination)
+    destination_digest = hashlib.sha256()
+    destination_offset = 0
+    while destination_offset < expected_size:
+        chunk = os.pread(
+            destination,
+            min(1048576, expected_size - destination_offset),
+            destination_offset,
+        )
+        if not chunk:
+            raise RuntimeError
+        destination_digest.update(chunk)
+        destination_offset += len(chunk)
+    destination_final = os.fstat(destination)
+    parent_final = os.fstat(parent)
+    parent_mapped_final = os.stat(parent_path, follow_symlinks=False)
+    mapped = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    if (
+        stable(source_before) != stable(source_after)
+        or digest.hexdigest() != expected_sha
+        or destination_digest.hexdigest() != expected_sha
+        or stable(destination_after) != stable(destination_final)
+        or not stat.S_ISREG(destination_after.st_mode)
+        or destination_after.st_nlink != 1
+        or destination_after.st_size != expected_size
+        or (destination_after.st_dev, destination_after.st_ino)
+        != (mapped.st_dev, mapped.st_ino)
+        or (
+            parent_final.st_dev,
+            parent_final.st_ino,
+            stat.S_IMODE(parent_final.st_mode),
+            parent_final.st_uid,
+            parent_final.st_gid,
+        ) != expected_parent
+        or (
+            parent_mapped_final.st_dev,
+            parent_mapped_final.st_ino,
+            stat.S_IMODE(parent_mapped_final.st_mode),
+            parent_mapped_final.st_uid,
+            parent_mapped_final.st_gid,
+        ) != expected_parent
+    ):
+        raise RuntimeError
+    os.fsync(parent)
+    if signal.sigpending() & handled:
+        raise KeyboardInterrupt
+    for handled_signal in handled:
+        signal.signal(handled_signal, signal.SIG_IGN)
+    committed = True
+except BaseException:
+    if registered and destination is not None:
+        try:
+            os.ftruncate(destination, 0)
+            os.fsync(destination)
+        except OSError:
+            pass
+    os.write(2, b"error: exclusive verified release copy failed\n")
+    raise SystemExit(1)
+finally:
+    signal.pthread_sigmask(signal.SIG_BLOCK, handled)
+    for descriptor in (destination, source, parent):
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if not committed:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+' \
+    "$source_path" "$destination_path" "$expected_size" "$expected_sha256" \
+    "$OUTPUT_ROOT_FD" "$OUT_DIR" $OUTPUT_ROOT_IDENTITY
+}
+
+write_release_text_exclusive() {
+  local destination_name="$1" maximum_size="$2"
+
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import re
+import signal
+import stat
+import sys
+
+destination = parent = None
+registered = False
+committed = False
+handled = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, handled)
+try:
+    name = sys.argv[1]
+    maximum = int(sys.argv[2], 10)
+    parent_descriptor = int(sys.argv[3], 10)
+    parent_path = sys.argv[4]
+    expected_parent = tuple(int(value, 10) for value in sys.argv[5:10])
+    fixture_hook = sys.argv[10]
+    if (
+        not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+_~:@=-]{0,254}", name)
+        or not 0 < maximum <= 16777216
+        or len(expected_parent) != 5
+        or fixture_hook not in {
+            "",
+            "mutate-release-notes-before-register",
+            "mutate-output-terminal",
+            "mutate-evidence-terminal",
+            "mutate-control-terminal",
+            "inject-work-member-terminal",
+            "inject-artifact-member-terminal",
+            "remap-output-root-terminal",
+            "remap-work-root-terminal",
+            "remap-artifacts-root-terminal",
+            "pending-signal-terminal",
+            "fail-root-commit",
+            "signal-before-terminal-exec",
+        }
+    ):
+        raise RuntimeError
+    parent = os.dup(parent_descriptor)
+    held_parent = os.fstat(parent)
+    mapped_parent = os.stat(parent_path, follow_symlinks=False)
+    identity = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        stat.S_IMODE(value.st_mode),
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISDIR(held_parent.st_mode)
+        or identity(held_parent) != expected_parent
+        or identity(mapped_parent) != expected_parent
+    ):
+        raise RuntimeError
+    destination = os.open(
+        name,
+        os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=parent,
+    )
+    registered = True
+    digest = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = os.read(0, min(65536, maximum + 1 - size))
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > maximum:
+            raise RuntimeError
+        digest.update(chunk)
+        view = memoryview(chunk)
+        written = 0
+        while written < len(view):
+            count = os.write(destination, view[written:])
+            if count <= 0:
+                raise RuntimeError
+            written += count
+    os.fchmod(destination, 0o644)
+    os.fsync(destination)
+    before = os.fstat(destination)
+    mapped = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    observed = hashlib.sha256()
+    offset = 0
+    while offset < size:
+        chunk = os.pread(destination, min(65536, size - offset), offset)
+        if not chunk:
+            raise RuntimeError
+        observed.update(chunk)
+        offset += len(chunk)
+    after = os.fstat(destination)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    if (
+        size <= 0
+        or digest.digest() != observed.digest()
+        or stable(before) != stable(after)
+        or not stat.S_ISREG(after.st_mode)
+        or after.st_nlink != 1
+        or after.st_size != size
+        or (after.st_dev, after.st_ino) != (mapped.st_dev, mapped.st_ino)
+        or identity(os.fstat(parent)) != expected_parent
+        or identity(os.stat(parent_path, follow_symlinks=False)) != expected_parent
+    ):
+        raise RuntimeError
+    os.fsync(parent)
+    record = ("%d %s\n" % (size, digest.hexdigest())).encode("ascii")
+    if fixture_hook == "mutate-release-notes-before-register" and name == "RELEASE-NOTES.md":
+        if os.pwrite(destination, b"\0", 0) != 1:
+            raise RuntimeError
+        os.fsync(destination)
+    record_offset = 0
+    while record_offset < len(record):
+        count = os.write(1, record[record_offset:])
+        if count <= 0:
+            raise RuntimeError
+        record_offset += count
+    if signal.sigpending() & handled:
+        raise KeyboardInterrupt
+    for handled_signal in handled:
+        signal.signal(handled_signal, signal.SIG_IGN)
+    committed = True
+except BaseException:
+    if registered and destination is not None:
+        try:
+            os.ftruncate(destination, 0)
+            os.fsync(destination)
+        except OSError:
+            pass
+    os.write(2, b"error: exclusive release text publication failed\n")
+    raise SystemExit(1)
+finally:
+    signal.pthread_sigmask(signal.SIG_BLOCK, handled)
+    for descriptor in (destination, parent):
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if not committed:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+' \
+    "$destination_name" "$maximum_size" "$OUTPUT_ROOT_FD" "$OUT_DIR" \
+    $OUTPUT_ROOT_IDENTITY "$PREPARER_FIXTURE_HOOK"
+}
+
+committed_blob_sha256() {
+  local object_spec="$1"
+
+  /usr/bin/git cat-file blob "$object_spec" |
+    /usr/bin/python3 -I -c '
+import hashlib
+import os
+import sys
+
+data = sys.stdin.buffer.read(512 * 1024 + 1)
+if len(data) > 512 * 1024:
+    os.write(2, b"error: committed helper blob exceeds its bound\n")
+    raise SystemExit(1)
+os.write(1, (hashlib.sha256(data).hexdigest() + "\n").encode("ascii"))
+'
+}
+
+committed_blob_authority() {
+  local commit="$1" relative_path="$2" expected_mode="$3"
+  local record mode type object_id listed_path remainder size sha256
+
+  record="$(/usr/bin/git ls-tree "$commit" -- "$relative_path")" || return 1
+  IFS=$'\t' read -r record listed_path remainder <<< "$record"
+  [ -z "$remainder" ] && [ "$listed_path" = "$relative_path" ] || return 1
+  read -r mode type object_id remainder <<< "$record"
+  [ -z "$remainder" ] && [ "$mode" = "$expected_mode" ] &&
+    [ "$type" = blob ] &&
+    [[ "$object_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 1
+  size="$(/usr/bin/git cat-file -s "$object_id")" || return 1
+  [[ "$size" =~ ^[1-9][0-9]*$ ]] && [ "$size" -le 524288 ] || return 1
+  sha256="$(committed_blob_sha256 "$object_id")" || return 1
+  [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\t%s\t%s\n' "$size" "$sha256" "$object_id"
+}
+
+nul_argv_sha256() {
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import sys
+
+try:
+    arguments = sys.argv[1:]
+    if not 4 <= len(arguments) <= 128:
+        raise RuntimeError
+    digest = hashlib.sha256()
+    for argument in arguments:
+        encoded = argument.encode("ascii")
+        if not encoded or len(encoded) > 8192 or b"\0" in encoded:
+            raise RuntimeError
+        digest.update(encoded)
+        digest.update(b"\0")
+except BaseException:
+    os.write(2, b"error: canonical validator argv digest failed\n")
+    raise SystemExit(1)
+os.write(1, (digest.hexdigest() + "\n").encode("ascii"))
+' "$@"
+}
+
+private_empty_directory_identity() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+descriptor = None
+try:
+    descriptor = os.open(
+        sys.argv[1],
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    held = os.fstat(descriptor)
+    mapped = os.stat(sys.argv[1], follow_symlinks=False)
+    with os.scandir(descriptor) as entries:
+        if next(entries, None) is not None:
+            raise RuntimeError
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or stat.S_IMODE(held.st_mode) != 0o700
+        or held.st_uid != os.geteuid()
+        or (held.st_dev, held.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise RuntimeError
+    output = "%d %d %d %d %d\n" % (
+        held.st_dev,
+        held.st_ino,
+        stat.S_IMODE(held.st_mode),
+        held.st_uid,
+        held.st_gid,
+    )
+except BaseException:
+    os.write(2, b"error: release output root must be preexisting, private, and empty\n")
+    raise SystemExit(1)
+finally:
+    if descriptor is not None:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+os.write(1, output.encode("ascii"))
+' "$1"
+}
+
+private_directory_identity() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+descriptor = None
+try:
+    descriptor = os.open(
+        sys.argv[1],
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    held = os.fstat(descriptor)
+    mapped = os.stat(sys.argv[1], follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or stat.S_IMODE(held.st_mode) != 0o700
+        or held.st_uid != os.geteuid()
+        or (held.st_dev, held.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise RuntimeError
+    output = "%d %d %d %d %d\n" % (
+        held.st_dev,
+        held.st_ino,
+        stat.S_IMODE(held.st_mode),
+        held.st_uid,
+        held.st_gid,
+    )
+except BaseException:
+    os.write(2, b"error: retained build work root is not private and exact\n")
+    raise SystemExit(1)
+finally:
+    if descriptor is not None:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+os.write(1, output.encode("ascii"))
+' "$1"
+}
+
+verify_held_output_root() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+try:
+    descriptor = int(sys.argv[1], 10)
+    expected = tuple(int(value, 10) for value in sys.argv[3:8])
+    held = os.fstat(descriptor)
+    mapped = os.stat(sys.argv[2], follow_symlinks=False)
+    actual = (
+        held.st_dev,
+        held.st_ino,
+        stat.S_IMODE(held.st_mode),
+        held.st_uid,
+        held.st_gid,
+    )
+    mapped_identity = (
+        mapped.st_dev,
+        mapped.st_ino,
+        stat.S_IMODE(mapped.st_mode),
+        mapped.st_uid,
+        mapped.st_gid,
+    )
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or actual != expected
+        or mapped_identity != expected
+    ):
+        raise RuntimeError
+except BaseException:
+    os.write(2, b"error: held release output root changed\n")
+    raise SystemExit(1)
+' "$OUTPUT_ROOT_FD" "$OUT_DIR" $OUTPUT_ROOT_IDENTITY
+}
+
+verify_held_build_work_root() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+try:
+    descriptor = int(sys.argv[1], 10)
+    expected = tuple(int(value, 10) for value in sys.argv[3:8])
+    held = os.fstat(descriptor)
+    mapped = os.stat(sys.argv[2], follow_symlinks=False)
+    identity = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        stat.S_IMODE(value.st_mode),
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or identity(held) != expected
+        or identity(mapped) != expected
+    ):
+        raise RuntimeError
+except BaseException:
+    os.write(2, b"error: held retained build work root changed\n")
+    raise SystemExit(1)
+' "$BUILD_WORK_ROOT_FD" "$build_work_dir" $BUILD_WORK_ROOT_IDENTITY
+}
+
+verify_held_build_artifacts_root() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+try:
+    work = int(sys.argv[1], 10)
+    artifacts = int(sys.argv[2], 10)
+    artifacts_path = sys.argv[3]
+    expected = tuple(int(value, 10) for value in sys.argv[4:9])
+    held = os.fstat(artifacts)
+    mapped_path = os.stat(artifacts_path, follow_symlinks=False)
+    mapped_child = os.stat("artifacts", dir_fd=work, follow_symlinks=False)
+    identity = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        stat.S_IMODE(value.st_mode),
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or identity(held) != expected
+        or identity(mapped_path) != expected
+        or identity(mapped_child) != expected
+    ):
+        raise RuntimeError
+except BaseException:
+    os.write(2, b"error: held retained artifacts root changed\n")
+    raise SystemExit(1)
+' \
+    "$BUILD_WORK_ROOT_FD" "$BUILD_ARTIFACTS_ROOT_FD" "$artifacts_abs" \
+    $BUILD_ARTIFACTS_ROOT_IDENTITY
+}
+
+run_committed_python_helper() {
+  local relative_path="$1" expected_sha256="$2" expected_blob_id="$3"
+  shift 3
+
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import re
+import stat
+import sys
+
+try:
+    relative = sys.argv[2]
+    components = relative.split("/")
+    if (
+        len(components) != 2
+        or components[0] != "scripts"
+        or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}", components[1])
+        or not re.fullmatch(r"[0-9a-f]{64}", sys.argv[3])
+        or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", sys.argv[4])
+    ):
+        raise RuntimeError
+    root = os.open(
+        sys.argv[1],
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    scripts = os.open(
+        "scripts",
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=root,
+    )
+    source = os.open(
+        components[1],
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        dir_fd=scripts,
+    )
+    before = os.fstat(source)
+    mapped_before = os.stat(
+        components[1],
+        dir_fd=scripts,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or not stat.S_ISREG(mapped_before.st_mode)
+        or before.st_nlink != 1
+        or before.st_size > 512 * 1024
+        or (before.st_dev, before.st_ino)
+        != (mapped_before.st_dev, mapped_before.st_ino)
+    ):
+        raise RuntimeError
+    data = bytearray()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(source, min(65536, before.st_size - offset), offset)
+        if not chunk:
+            raise RuntimeError
+        data.extend(chunk)
+        offset += len(chunk)
+    after = os.fstat(source)
+    mapped_after = os.stat(
+        components[1],
+        dir_fd=scripts,
+        follow_symlinks=False,
+    )
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    if (
+        stable(before) != stable(after)
+        or (after.st_dev, after.st_ino)
+        != (mapped_after.st_dev, mapped_after.st_ino)
+        or hashlib.sha256(data).hexdigest() != sys.argv[3]
+    ):
+        raise RuntimeError
+    object_header = b"blob " + str(len(data)).encode("ascii") + b"\0"
+    object_hash = hashlib.sha1 if len(sys.argv[4]) == 40 else hashlib.sha256
+    if object_hash(object_header + data).hexdigest() != sys.argv[4]:
+        raise RuntimeError
+    code = compile(
+        bytes(data),
+        "<committed-python-helper>",
+        "exec",
+        dont_inherit=True,
+    )
+except BaseException:
+    os.write(2, b"error: committed Python helper authority failed\n")
+    os._exit(1)
+finally:
+    for descriptor_name in ("source", "scripts", "root"):
+        descriptor = locals().get(descriptor_name)
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+sys.argv = ["<committed-python-helper>", *sys.argv[5:]]
+namespace = {
+    "__name__": "__main__",
+    "__file__": "<committed-python-helper>",
+    "__package__": None,
+    "__spec__": None,
+}
+exec(code, namespace, namespace)
+' \
+    "$repo_dir" \
+    "$relative_path" \
+    "$expected_sha256" \
+    "$expected_blob_id" \
+    "$@"
 }
 
 require_arg() {
@@ -228,191 +1073,6 @@ file_size() {
     return 1
   fi
 }
-
-cleanup_source_snapshot() {
-  [ -n "$SOURCE_SNAPSHOT_DIR" ] || return 0
-  case "$SOURCE_SNAPSHOT_DIR" in
-    "${repo_dir:-}/build/release/.source-snapshot."*) rm -rf -- "$SOURCE_SNAPSHOT_DIR" ;;
-    *) echo "Warning: refusing to remove unexpected source snapshot: $SOURCE_SNAPSHOT_DIR" >&2 ;;
-  esac
-}
-cleanup_provenance_snapshot() {
-  [ -n "$PROVENANCE_SNAPSHOT_DIR" ] || return 0
-  case "$PROVENANCE_SNAPSHOT_DIR" in
-    "${repo_dir:-}/build/release/.provenance-snapshot."*) rm -rf -- "$PROVENANCE_SNAPSHOT_DIR" ;;
-    *) echo "Warning: refusing to remove unexpected provenance snapshot: $PROVENANCE_SNAPSHOT_DIR" >&2 ;;
-  esac
-}
-cleanup_output_staging() {
-  [ -n "$OUTPUT_STAGING_DIR" ] || return 0
-  case "$OUTPUT_STAGING_DIR" in
-    "${repo_dir:-}/build/release/."*.staging.*) rm -rf -- "$OUTPUT_STAGING_DIR" ;;
-    *) echo "Warning: refusing to remove unexpected release staging directory: $OUTPUT_STAGING_DIR" >&2 ;;
-  esac
-}
-directory_identity() {
-  local path="$1" identity
-
-  if identity="$(stat -c '%d:%i' -- "$path" 2>/dev/null)"; then
-    printf '%s\n' "$identity"
-  elif identity="$(stat -f '%d:%i' "$path" 2>/dev/null)"; then
-    printf '%s\n' "$identity"
-  else
-    return 1
-  fi
-}
-directory_mode() {
-  local path="$1" mode
-
-  if mode="$(stat -c '%a' -- "$path" 2>/dev/null)"; then
-    printf '%s\n' "$mode"
-  elif mode="$(stat -f '%Lp' "$path" 2>/dev/null)"; then
-    printf '%s\n' "$mode"
-  else
-    return 1
-  fi
-}
-verify_private_container() {
-  local root="$1" expected_identity="$2" child
-  local -a child_args=()
-  shift 2
-
-  [ -d "$root" ] && [ ! -L "$root" ] &&
-    [ "$(directory_identity "$root" 2>/dev/null || true)" = "$expected_identity" ] &&
-    [ "$(directory_mode "$root" 2>/dev/null || true)" = "700" ] || return 1
-  for child in "$@"; do
-    child_args+=(--child "$child")
-  done
-  if [ "${#child_args[@]}" -eq 0 ]; then
-    python3 "$release_tree_state_validator" validate-private \
-      --root "$root" >/dev/null || return 1
-  else
-    python3 "$release_tree_state_validator" validate-private \
-      --root "$root" "${child_args[@]}" >/dev/null || return 1
-  fi
-  [ -d "$root" ] && [ ! -L "$root" ] &&
-    [ "$(directory_identity "$root" 2>/dev/null || true)" = "$expected_identity" ] &&
-    [ "$(directory_mode "$root" 2>/dev/null || true)" = "700" ]
-}
-verify_previous_state_authority() {
-  local size sha
-
-  [ -n "$PREVIOUS_OUTPUT_STATE" ] &&
-    [ -f "$PREVIOUS_OUTPUT_STATE" ] && [ ! -L "$PREVIOUS_OUTPUT_STATE" ] || return 1
-  size="$(file_size "$PREVIOUS_OUTPUT_STATE")"
-  sha="$(shasum -a 256 "$PREVIOUS_OUTPUT_STATE" | awk '{print $1}')"
-  [ "$size" = "$PREVIOUS_OUTPUT_STATE_SIZE" ] &&
-    [ "$sha" = "$PREVIOUS_OUTPUT_STATE_SHA" ]
-}
-verify_previous_output_tree_at() {
-  local root="$1"
-
-  verify_previous_state_authority &&
-    [ "$(directory_identity "$root" 2>/dev/null || true)" = "$PREVIOUS_OUTPUT_IDENTITY" ] &&
-    python3 "$release_tree_state_validator" validate \
-      --root "$root" --snapshot "$PREVIOUS_OUTPUT_STATE" >/dev/null
-}
-verify_previous_output_backup() {
-  [ -n "$PREVIOUS_OUTPUT_CONTAINER" ] &&
-    verify_private_container "$PREVIOUS_OUTPUT_CONTAINER" \
-      "$PREVIOUS_CONTAINER_IDENTITY" original tree-state.json &&
-    [ -d "$PREVIOUS_OUTPUT_DIR" ] &&
-    [ ! -L "$PREVIOUS_OUTPUT_DIR" ] &&
-    verify_previous_output_tree_at "$PREVIOUS_OUTPUT_DIR"
-}
-rollback_output_install() {
-  local current_identity="" rollback_ok="true"
-  local failed_container="" failed_candidate="" failed_candidate_exact="false"
-  local failed_container_identity=""
-  local restored_previous="false"
-
-  [ "$OUTPUT_INSTALL_PENDING" = "true" ] || return 0
-  case "$FINAL_OUT_DIR" in
-    "${repo_dir:-}/build/release/"?*) ;;
-    *)
-      echo "Warning: refusing to remove unexpected failed release output: $FINAL_OUT_DIR" >&2
-      return 0
-      ;;
-  esac
-  if [ -e "$FINAL_OUT_DIR" ]; then
-    current_identity="$(directory_identity "$FINAL_OUT_DIR" 2>/dev/null || true)"
-    if [ -z "$INSTALLED_OUTPUT_IDENTITY" ] ||
-       [ "$current_identity" != "$INSTALLED_OUTPUT_IDENTITY" ]; then
-      echo "Warning: preserving unexpected output occupant during rollback: $FINAL_OUT_DIR" >&2
-      rollback_ok="false"
-    else
-      failed_container="$(mktemp -d "$release_root_abs/.${out_leaf}.failed.XXXXXX")"
-      chmod 700 "$failed_container"
-      failed_container_identity="$(directory_identity "$failed_container")"
-      failed_candidate="$failed_container/candidate"
-      if ! verify_private_container "$failed_container" \
-          "$failed_container_identity"; then
-        echo "Warning: failed-output recovery container is unsafe: $failed_container" >&2
-        rollback_ok="false"
-      elif ! mv "$FINAL_OUT_DIR" "$failed_candidate"; then
-        echo "Warning: could not move failed release output into private recovery: $FINAL_OUT_DIR" >&2
-        rollback_ok="false"
-      elif ! verify_private_container "$failed_container" \
-          "$failed_container_identity" candidate; then
-        echo "Warning: failed-output recovery container changed during recovery move: $failed_container" >&2
-        rollback_ok="false"
-      elif [ "$(directory_identity "$failed_candidate" 2>/dev/null || true)" != \
-             "$INSTALLED_OUTPUT_IDENTITY" ]; then
-        echo "Warning: failed release output identity changed during recovery move: $failed_candidate" >&2
-        rollback_ok="false"
-      elif verify_output_snapshot "$failed_candidate" >/dev/null 2>&1; then
-        failed_candidate_exact="true"
-      else
-        echo "Warning: preserving changed failed release output for recovery: $failed_candidate" >&2
-      fi
-    fi
-  fi
-  if [ -n "$PREVIOUS_OUTPUT_DIR" ] && [ -e "$PREVIOUS_OUTPUT_DIR" ]; then
-    if [ "$rollback_ok" = "true" ]; then
-      if ! verify_previous_output_backup; then
-        echo "Warning: preserving changed previous release output for recovery: $PREVIOUS_OUTPUT_CONTAINER" >&2
-        rollback_ok="false"
-      elif [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
-        echo "Warning: refusing to overwrite an occupied release output during rollback: $FINAL_OUT_DIR" >&2
-        rollback_ok="false"
-      elif ! mv "$PREVIOUS_OUTPUT_DIR" "$FINAL_OUT_DIR"; then
-        echo "Warning: could not restore previous release output: $PREVIOUS_OUTPUT_DIR" >&2
-        rollback_ok="false"
-      elif ! verify_previous_output_tree_at "$FINAL_OUT_DIR"; then
-        echo "Warning: restored previous release output failed its exact tree check: $FINAL_OUT_DIR" >&2
-        rollback_ok="false"
-      else
-        restored_previous="true"
-        if ! rm -f -- "$PREVIOUS_OUTPUT_STATE" ||
-           ! rmdir "$PREVIOUS_OUTPUT_CONTAINER"; then
-          echo "Warning: previous-output container contains unexpected recovery data: $PREVIOUS_OUTPUT_CONTAINER" >&2
-        fi
-      fi
-    fi
-  elif [ -n "$PREVIOUS_OUTPUT_CONTAINER" ]; then
-    echo "Warning: previous-output recovery container is incomplete: $PREVIOUS_OUTPUT_CONTAINER" >&2
-    rollback_ok="false"
-  fi
-  if [ "$rollback_ok" = "true" ]; then
-    if [ "$failed_candidate_exact" = "true" ]; then
-      if ! verify_private_container "$failed_container" \
-           "$failed_container_identity" candidate ||
-         [ "$(directory_identity "$failed_candidate" 2>/dev/null || true)" != \
-           "$INSTALLED_OUTPUT_IDENTITY" ] ||
-         ! verify_output_snapshot "$failed_candidate" >/dev/null 2>&1; then
-        echo "Warning: preserving changed failed release output for recovery: $failed_container" >&2
-      elif ! rm -rf -- "$failed_candidate" || ! rmdir "$failed_container"; then
-        echo "Warning: exact failed candidate could not be retired: $failed_container" >&2
-      fi
-    fi
-    if [ "$restored_previous" = "true" ]; then
-      PREVIOUS_OUTPUT_CONTAINER=""
-      PREVIOUS_OUTPUT_DIR=""
-    fi
-    OUTPUT_INSTALL_PENDING="false"
-  fi
-}
-trap 'rollback_output_install; cleanup_output_staging; cleanup_source_snapshot; cleanup_provenance_snapshot' EXIT
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -536,6 +1196,41 @@ fi
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_dir"
+requested_fixture_hook="${SP11_KERNEL_PREPARER_FIXTURE_HOOK:-}"
+requested_fixture_context="${SP11_KERNEL_PREPARER_TEST_FIXTURE:-}"
+unset SP11_KERNEL_PREPARER_FIXTURE_HOOK SP11_KERNEL_PREPARER_TEST_FIXTURE
+if [ -n "$requested_fixture_hook" ]; then
+  fixture_marker="$(/usr/bin/git -C "$repo_dir" show \
+    HEAD:.sp11-kernel-release-provenance-fixture 2>/dev/null || true)"
+  case "$repo_dir" in
+    */sp11-apt-fixture.release-provenance.*/support-*) fixture_path_shape=true ;;
+    *) fixture_path_shape=false ;;
+  esac
+  case "$requested_fixture_hook" in
+    mutate-release-notes-before-register|mutate-output-terminal|\
+    mutate-evidence-terminal|mutate-control-terminal|\
+    inject-work-member-terminal|inject-artifact-member-terminal|\
+    remap-output-root-terminal|remap-work-root-terminal|\
+    remap-artifacts-root-terminal|pending-signal-terminal|\
+    fail-root-commit|signal-before-terminal-exec) ;;
+    *) fixture_path_shape=false ;;
+  esac
+  if [ "$requested_fixture_context" != "sp11-kernel-release-provenance-v1" ] ||
+     [ "$fixture_marker" != "sp11-kernel-release-provenance-v1" ] ||
+     [ "$fixture_path_shape" != "true" ]; then
+    echo "Private release-preparer fixture authority was refused." >&2
+    exit 1
+  fi
+  PREPARER_FIXTURE_HOOK="$requested_fixture_hook"
+elif [ -n "$requested_fixture_context" ]; then
+  fixture_marker="$(/usr/bin/git -C "$repo_dir" show \
+    HEAD:.sp11-kernel-release-provenance-fixture 2>/dev/null || true)"
+  if [ "$requested_fixture_context" != "sp11-kernel-release-provenance-v1" ] ||
+     [ "$fixture_marker" != "sp11-kernel-release-provenance-v1" ]; then
+    echo "Private release-preparer fixture context was refused." >&2
+    exit 1
+  fi
+fi
 public_content_validator="$repo_dir/scripts/validate-sp11-public-content.sh"
 release_tree_state_validator="$repo_dir/scripts/sp11-release-tree-state.py"
 if [ ! -f "$release_tree_state_validator" ] || [ -L "$release_tree_state_validator" ]; then
@@ -975,6 +1670,22 @@ if [ "$release_root_abs" != "$expected_release_root" ]; then
 fi
 OUT_DIR="$release_root_abs/$out_leaf"
 OUT_DIR_DISPLAY="$release_root/$out_leaf"
+if [ ! -d "$OUT_DIR" ] || [ -L "$OUT_DIR" ]; then
+  echo "Release output must be a caller-created private empty directory: $OUT_DIR_DISPLAY" >&2
+  exit 1
+fi
+OUTPUT_ROOT_IDENTITY="$(private_empty_directory_identity "$OUT_DIR")" || exit 1
+output_previous_directory="$(pwd -P)"
+if ! cd "$OUT_DIR"; then
+  echo "Could not enter the preexisting release output directory." >&2
+  exit 1
+fi
+exec 52< .
+if ! cd "$output_previous_directory"; then
+  echo "Could not restore the support repository working directory." >&2
+  exit 1
+fi
+verify_held_output_root
 
 build_manifest="$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
 apt_provenance="$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
@@ -989,6 +1700,30 @@ if [ ! -f "$KERNEL_BASELINE" ] || [ -L "$KERNEL_BASELINE" ]; then
   echo "Missing regular reviewed kernel baseline: $KERNEL_BASELINE" >&2
   exit 1
 fi
+BUILD_WORK_ROOT_IDENTITY="$(private_directory_identity "$build_work_dir")" || exit 1
+build_work_previous_directory="$(pwd -P)"
+if ! cd "$build_work_dir"; then
+  echo "Could not enter the retained build work root." >&2
+  exit 1
+fi
+exec 53< .
+if ! cd "$build_work_previous_directory"; then
+  echo "Could not restore the support repository working directory." >&2
+  exit 1
+fi
+verify_held_build_work_root
+BUILD_ARTIFACTS_ROOT_IDENTITY="$(private_directory_identity "$artifacts_abs")" || exit 1
+build_artifacts_previous_directory="$(pwd -P)"
+if ! cd "$artifacts_abs"; then
+  echo "Could not enter the retained build artifacts root." >&2
+  exit 1
+fi
+exec 54< .
+if ! cd "$build_artifacts_previous_directory"; then
+  echo "Could not restore the support repository working directory." >&2
+  exit 1
+fi
+verify_held_build_artifacts_root
 for provenance_input in "$build_manifest" "$apt_provenance" "$build_inputs"; do
   if [ ! -f "$provenance_input" ] || [ -L "$provenance_input" ]; then
     echo "Refusing assets without a regular, non-symlinked immutable provenance input: $provenance_input" >&2
@@ -996,79 +1731,345 @@ for provenance_input in "$build_manifest" "$apt_provenance" "$build_inputs"; do
   fi
 done
 
-require_tool python3
-build_support_head="$(required_manifest_value "$build_manifest" "Support start HEAD")"
-build_support_end="$(required_manifest_value "$build_manifest" "Support end HEAD")"
-repo_commit="$(git rev-parse 'HEAD^{commit}')"
-repo_commit="$(printf '%s' "$repo_commit" | tr '[:upper:]' '[:lower:]')"
-build_support_head="$(printf '%s' "$build_support_head" | tr '[:upper:]' '[:lower:]')"
-build_support_end="$(printf '%s' "$build_support_end" | tr '[:upper:]' '[:lower:]')"
-if [ "$build_support_head" != "$build_support_end" ] ||
-   [ "$build_support_head" != "$repo_commit" ]; then
-  echo "Immutable build inputs do not bind the current stable support repository commit." >&2
+repo_commit="$(/usr/bin/git rev-parse --verify 'HEAD^{commit}')"
+if ! [[ "$repo_commit" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+  echo "Trusted Git authority returned a noncanonical support commit." >&2
   exit 1
 fi
 
-build_inputs_validator="$repo_dir/scripts/sp11-kernel-build-inputs.py"
-if [ ! -f "$build_inputs_validator" ] || [ -L "$build_inputs_validator" ]; then
-  echo "Missing regular immutable build-input validator." >&2
+release_state_validator="$repo_dir/scripts/sp11-kernel-release-state.py"
+if [ ! -f "$release_state_validator" ] || [ -L "$release_state_validator" ]; then
+  echo "Missing regular retained release-evidence validator." >&2
   exit 1
 fi
-PROVENANCE_SNAPSHOT_DIR="$(mktemp -d "$release_root_abs/.provenance-snapshot.XXXXXX")"
-for provenance_name in \
-  sp11-kernel-build-manifest.txt \
-  sp11-kernel-apt-provenance.txt \
-  sp11-kernel-build-inputs.txt; do
-  provenance_input="$artifacts_abs/$provenance_name"
-  provenance_before_sha="$(shasum -a 256 "$provenance_input" | awk '{print $1}')"
-  provenance_before_size="$(file_size "$provenance_input")"
-  cp -p "$provenance_input" "$PROVENANCE_SNAPSHOT_DIR/$provenance_name"
-  provenance_after_sha="$(shasum -a 256 "$provenance_input" | awk '{print $1}')"
-  provenance_after_size="$(file_size "$provenance_input")"
-  provenance_snapshot_sha="$(shasum -a 256 "$PROVENANCE_SNAPSHOT_DIR/$provenance_name" | awk '{print $1}')"
-  provenance_snapshot_size="$(file_size "$PROVENANCE_SNAPSHOT_DIR/$provenance_name")"
-  if [ "$provenance_before_sha" != "$provenance_after_sha" ] ||
-     [ "$provenance_before_sha" != "$provenance_snapshot_sha" ] ||
-     [ "$provenance_before_size" != "$provenance_after_size" ] ||
-     [ "$provenance_before_size" != "$provenance_snapshot_size" ]; then
-    echo "Immutable provenance input changed while its validation snapshot was created: $provenance_name" >&2
+if [ ! -x /usr/bin/python3 ]; then
+  echo "Missing trusted isolated Python interpreter at /usr/bin/python3." >&2
+  exit 1
+fi
+retained_evidence_tar="$build_work_dir/sp11-kernel-retained-evidence.tar"
+if [ ! -f "$retained_evidence_tar" ] || [ -L "$retained_evidence_tar" ]; then
+  echo "Missing required regular retained release-evidence tar." >&2
+  exit 1
+fi
+
+release_state_relative="scripts/sp11-kernel-release-state.py"
+adapter_repo_commit="$(/usr/bin/git rev-parse --verify 'HEAD^{commit}')"
+if [ "$adapter_repo_commit" != "$repo_commit" ]; then
+  echo "Trusted Git authority disagrees with the retained support commit." >&2
+  exit 1
+fi
+release_state_committed_sha="$(
+  committed_blob_sha256 "$adapter_repo_commit:$release_state_relative"
+)"
+release_state_blob_id="$(
+  /usr/bin/git rev-parse --verify "$adapter_repo_commit:$release_state_relative"
+)"
+if ! [[ "$release_state_committed_sha" =~ ^[0-9a-f]{64}$ ]] ||
+   ! [[ "$release_state_blob_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+  echo "Could not bind the retained release-evidence validator to the support commit." >&2
+  exit 1
+fi
+kernel_baseline_sha="$(
+  trusted_regular_file_sha256 "$repo_dir/$KERNEL_BASELINE" 1048576
+)"
+kernel_baseline_record="$(
+  committed_blob_authority "$repo_commit" "$KERNEL_BASELINE" 100644
+)" || {
+  echo "Could not bind the reviewed kernel baseline to the support commit." >&2
+  exit 1
+}
+IFS=$'\t' read -r \
+  kernel_baseline_committed_size kernel_baseline_committed_sha \
+  kernel_baseline_object_id kernel_baseline_remainder <<< "$kernel_baseline_record"
+if [ -n "$kernel_baseline_remainder" ] ||
+   [ "$kernel_baseline_sha" != "$kernel_baseline_committed_sha" ]; then
+  echo "Reviewed kernel baseline differs from the exact support commit." >&2
+  exit 1
+fi
+build_args_fingerprint="$(
+  trusted_regular_file_fingerprint "$build_work_dir/docker-build-args.txt" 67108864
+)" || exit 1
+entrypoint_fingerprint="$(
+  trusted_regular_file_fingerprint "$build_work_dir/docker-build-inside.sh" 67108864
+)" || exit 1
+oci_index_fingerprint="$(
+  trusted_regular_file_fingerprint "$build_work_dir/sp11-oci-index.json" 67108864
+)" || exit 1
+IFS=' ' read -r build_args_size build_args_sha build_args_remainder \
+  <<< "$build_args_fingerprint"
+IFS=' ' read -r entrypoint_size entrypoint_sha entrypoint_remainder \
+  <<< "$entrypoint_fingerprint"
+IFS=' ' read -r oci_index_size oci_index_sha oci_index_remainder \
+  <<< "$oci_index_fingerprint"
+if [ -n "$build_args_remainder" ] || [ -n "$entrypoint_remainder" ] ||
+   [ -n "$oci_index_remainder" ]; then
+  echo "Retained release-evidence control fingerprint is not canonical." >&2
+  exit 1
+fi
+for retained_digest in \
+  "$kernel_baseline_sha" \
+  "$build_args_sha" \
+  "$entrypoint_sha" \
+  "$oci_index_sha"; do
+  if ! [[ "$retained_digest" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Retained release-evidence authority contains a noncanonical SHA-256." >&2
+    exit 1
+  fi
+done
+for retained_size in "$build_args_size" "$entrypoint_size" "$oci_index_size"; do
+  if ! [[ "$retained_size" =~ ^[1-9][0-9]*$ ]] ||
+     [ "$retained_size" -gt 67108864 ]; then
+    echo "Retained release-evidence control size is not canonical." >&2
     exit 1
   fi
 done
 
-python3 "$build_inputs_validator" validate-release-snapshot \
-  --baseline "$repo_dir/$KERNEL_BASELINE" \
-  --work-dir "$build_work_dir" \
-  --support-head "$repo_commit" \
-  --build-args "$build_work_dir/docker-build-args.txt" \
-  --entrypoint "$build_work_dir/docker-build-inside.sh" \
-  --oci-index "$build_work_dir/sp11-oci-index.json" \
-  --build-manifest "$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-manifest.txt" \
-  --apt-provenance "$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-apt-provenance.txt" \
-  --apt-archives-dir "$build_work_dir/apt-archives" \
-  --apt-lists-dir "$build_work_dir/apt-lists" \
-  --apt-index-cache-dir "$build_work_dir/apt-indexes" \
-  --apt-local-build-deps-dir "$artifacts_abs" \
-  --apt-pre-inventory "$build_work_dir/sp11-apt-installed-pre.txt" \
-  --apt-post-inventory "$build_work_dir/sp11-apt-installed-post.txt" \
-  --output "$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-inputs.txt"
+case "${#repo_commit}" in
+  40) release_git_object_format=sha1 ;;
+  64) release_git_object_format=sha256 ;;
+  *)
+    echo "Retained support commit has an unsupported Git object format." >&2
+    exit 1
+    ;;
+esac
+build_inputs_helper_relative="scripts/sp11-kernel-build-inputs.py"
+manifest_validator_relative="scripts/validate-sp11-image-release-manifests.py"
+build_inputs_helper_record="$(
+  committed_blob_authority \
+    "$repo_commit" "$build_inputs_helper_relative" 100755
+)" || {
+  echo "Could not bind the committed build-inputs helper authority." >&2
+  exit 1
+}
+IFS=$'\t' read -r \
+  build_inputs_helper_size build_inputs_helper_sha build_inputs_helper_object_id \
+  build_inputs_helper_remainder <<< "$build_inputs_helper_record"
+[ -z "$build_inputs_helper_remainder" ] || {
+  echo "Committed build-inputs helper authority is not canonical." >&2
+  exit 1
+}
+manifest_validator_record="$(
+  committed_blob_authority \
+    "$repo_commit" "$manifest_validator_relative" 100644
+)" || {
+  echo "Could not bind the committed manifest-validator authority." >&2
+  exit 1
+}
+IFS=$'\t' read -r \
+  manifest_validator_size manifest_validator_sha manifest_validator_object_id \
+  manifest_validator_remainder <<< "$manifest_validator_record"
+[ -z "$manifest_validator_remainder" ] || {
+  echo "Committed manifest-validator authority is not canonical." >&2
+  exit 1
+}
 
-build_manifest="$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-manifest.txt"
-apt_provenance="$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-apt-provenance.txt"
-build_inputs="$PROVENANCE_SNAPSHOT_DIR/sp11-kernel-build-inputs.txt"
-build_manifest_snapshot_sha="$(shasum -a 256 "$build_manifest" | awk '{print $1}')"
-build_manifest_snapshot_size="$(file_size "$build_manifest")"
-apt_provenance_snapshot_sha="$(shasum -a 256 "$apt_provenance" | awk '{print $1}')"
-apt_provenance_snapshot_size="$(file_size "$apt_provenance")"
-build_inputs_snapshot_sha="$(shasum -a 256 "$build_inputs" | awk '{print $1}')"
-build_inputs_snapshot_size="$(file_size "$build_inputs")"
+baseline_container_authority="$(
+  trusted_baseline_container_authority \
+    "$repo_dir/$KERNEL_BASELINE" "$kernel_baseline_sha"
+)" || {
+  echo "Could not derive the exact baseline container authority." >&2
+  exit 1
+}
+IFS=$'\t' read -r evidence_container_image evidence_container_platform \
+  baseline_container_remainder <<< "$baseline_container_authority"
+[ -z "$baseline_container_remainder" ] &&
+  [ -n "$evidence_container_image" ] &&
+  [ -n "$evidence_container_platform" ] || {
+  echo "Baseline container authority is not canonical." >&2
+  exit 1
+}
+release_validator_argv=(
+  /usr/bin/python3
+  -I
+  /repo/scripts/sp11-kernel-build-inputs.py
+  validate
+  --baseline /sp11-control/kernel-baseline.env
+  --baseline-sha256 "$kernel_baseline_sha"
+  --build-args-sha256 "$build_args_sha"
+  --entrypoint-sha256 "$entrypoint_sha"
+  --oci-index-sha256 "$oci_index_sha"
+  --work-dir /work
+  --support-head "$repo_commit"
+  --build-args /work/docker-build-args.txt
+  --entrypoint /work/docker-build-inside.sh
+  --oci-index /work/sp11-oci-index.json
+  --build-manifest /work/artifacts/sp11-kernel-build-manifest.txt
+  --apt-provenance /work/artifacts/sp11-kernel-apt-provenance.txt
+  --apt-archives-dir /work/apt-archives
+  --apt-lists-dir /work/apt-lists
+  --apt-index-cache-dir /work/apt-indexes
+  --apt-local-build-deps-dir /work/artifacts
+  --apt-pre-inventory /work/sp11-apt-installed-pre.txt
+  --apt-post-inventory /work/sp11-apt-installed-post.txt
+  --output /work/artifacts/sp11-kernel-build-inputs.txt
+  --apt-bootstrap-state /work/sp11-apt-bootstrap-state.txt
+  --attestation-output /work/sp11-kernel-preseal-validation.txt
+  --git-object-format "$release_git_object_format"
+  --build-inputs-helper-sha256 "$build_inputs_helper_sha"
+  --build-inputs-helper-object-id "$build_inputs_helper_object_id"
+  --manifest-validator-sha256 "$manifest_validator_sha"
+  --manifest-validator-object-id "$manifest_validator_object_id"
+)
+release_validator_argv_sha="$(nul_argv_sha256 "${release_validator_argv[@]}")" || {
+  echo "Could not derive the exact retained validation argv authority." >&2
+  exit 1
+}
+[[ "$release_validator_argv_sha" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "Retained validation argv authority is not canonical." >&2
+  exit 1
+}
 
-python3 "$build_inputs_validator" validate-attached \
-  --baseline "$repo_dir/$KERNEL_BASELINE" \
-  --support-head "$repo_commit" \
-  --build-manifest "$build_manifest" \
-  --apt-provenance "$apt_provenance" \
-  --output "$build_inputs"
+if ! evidence_validation="$(
+  run_committed_python_helper \
+    "$release_state_relative" \
+    "$release_state_committed_sha" \
+    "$release_state_blob_id" \
+    verify-evidence-tar \
+    --work-root "$build_work_dir" \
+    --support-head "$repo_commit" \
+    --baseline-sha256 "$kernel_baseline_sha" \
+    --build-args-sha256 "$build_args_sha" \
+    --entrypoint-sha256 "$entrypoint_sha" \
+    --oci-index-sha256 "$oci_index_sha" \
+    --container-image "$evidence_container_image" \
+    --container-platform "$evidence_container_platform" \
+    --git-object-format "$release_git_object_format" \
+    --validator-argv-sha256 "$release_validator_argv_sha" \
+    --build-inputs-helper-size "$build_inputs_helper_size" \
+    --build-inputs-helper-sha256 "$build_inputs_helper_sha" \
+    --build-inputs-helper-object-id "$build_inputs_helper_object_id" \
+    --manifest-validator-size "$manifest_validator_size" \
+    --manifest-validator-sha256 "$manifest_validator_sha" \
+    --manifest-validator-object-id "$manifest_validator_object_id"
+)"; then
+  echo "Retained release-evidence tar validation failed." >&2
+  exit 1
+fi
+
+retained_flat_names=()
+retained_flat_sizes=()
+retained_flat_shas=()
+evidence_record_state=0
+evidence_record_index=1
+evidence_record_count=""
+evidence_previous_name=""
+evidence_tar_re='^Verified retained evidence tar: ([0-9]+) ([0-9a-f]{64})$'
+evidence_count_re='^Verified flat file count: ([1-9][0-9]?)$'
+evidence_flat_re='^Verified flat file ([1-9][0-9]*): ([0-9A-Za-z][0-9A-Za-z.+_~:@=-]{0,254}) ([0-9]+) ([0-9a-f]{64})$'
+while IFS= read -r evidence_line; do
+  case "$evidence_record_state" in
+    0)
+      [ "$evidence_line" = "Verified retained evidence schema: sp11-kernel-evidence-verification-v1" ] || break
+      evidence_record_state=1
+      ;;
+    1)
+      if ! [[ "$evidence_line" =~ $evidence_tar_re ]]; then break; fi
+      retained_evidence_size="${BASH_REMATCH[1]}"
+      retained_evidence_sha256="${BASH_REMATCH[2]}"
+      evidence_record_state=2
+      ;;
+    2)
+      if ! [[ "$evidence_line" =~ $evidence_count_re ]]; then break; fi
+      evidence_record_count="${BASH_REMATCH[1]}"
+      if [ "$evidence_record_count" -gt 70 ]; then break; fi
+      evidence_record_state=3
+      ;;
+    3)
+      if [ "$evidence_record_index" -le "$evidence_record_count" ]; then
+        if ! [[ "$evidence_line" =~ $evidence_flat_re ]] ||
+           [ "${BASH_REMATCH[1]}" -ne "$evidence_record_index" ]; then
+          break
+        fi
+        evidence_name="${BASH_REMATCH[2]}"
+        if [ -n "$evidence_previous_name" ] &&
+           [[ "$evidence_name" < "$evidence_previous_name" || "$evidence_name" = "$evidence_previous_name" ]]; then
+          break
+        fi
+        retained_flat_names+=("$evidence_name")
+        retained_flat_sizes+=("${BASH_REMATCH[3]}")
+        retained_flat_shas+=("${BASH_REMATCH[4]}")
+        evidence_previous_name="$evidence_name"
+        evidence_record_index=$((evidence_record_index + 1))
+      elif [ "$evidence_line" = "Verified retained evidence complete: true" ]; then
+        evidence_record_state=4
+      else
+        break
+      fi
+      ;;
+    *)
+      evidence_record_state=5
+      break
+      ;;
+  esac
+done <<< "$evidence_validation"
+if [ "$evidence_record_state" -ne 4 ] ||
+   [ "$evidence_record_index" -ne $((evidence_record_count + 1)) ] ||
+   [ "${#retained_flat_names[@]}" -ne "$evidence_record_count" ]; then
+  echo "Retained release-evidence validator returned a noncanonical record." >&2
+  exit 1
+fi
+
+retained_flat_expected() {
+  local expected_name="$1" index=0
+  RETAINED_FLAT_SIZE=""
+  RETAINED_FLAT_SHA256=""
+  while [ "$index" -lt "${#retained_flat_names[@]}" ]; do
+    if [ "${retained_flat_names[$index]}" = "$expected_name" ]; then
+      RETAINED_FLAT_SIZE="${retained_flat_sizes[$index]}"
+      RETAINED_FLAT_SHA256="${retained_flat_shas[$index]}"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+  echo "Retained release evidence omits an expected flat file." >&2
+  return 1
+}
+
+verify_retained_flat_file() {
+  local path="$1" expected_name="$2" actual fingerprint_re='^([0-9]+) ([0-9a-f]{64})$'
+  retained_flat_expected "$expected_name" || return 1
+  actual="$(trusted_regular_file_fingerprint "$path" 4294967296)" || return 1
+  if ! [[ "$actual" =~ $fingerprint_re ]] ||
+     [ "${BASH_REMATCH[1]}" != "$RETAINED_FLAT_SIZE" ] ||
+     [ "${BASH_REMATCH[2]}" != "$RETAINED_FLAT_SHA256" ]; then
+    echo "Retained flat release artifact differs from verified evidence." >&2
+    return 1
+  fi
+}
+
+verify_all_retained_flat_files() {
+  local root="$1" index=0
+  while [ "$index" -lt "${#retained_flat_names[@]}" ]; do
+    verify_retained_flat_file \
+      "$root/${retained_flat_names[$index]}" \
+      "${retained_flat_names[$index]}" || return 1
+    index=$((index + 1))
+  done
+}
+
+verify_retained_evidence_tar() {
+  local actual fingerprint_re='^([0-9]+) ([0-9a-f]{64})$'
+  actual="$(trusted_regular_file_fingerprint "$retained_evidence_tar" 17179869184)" || return 1
+  if ! [[ "$actual" =~ $fingerprint_re ]] ||
+     [ "${BASH_REMATCH[1]}" != "$retained_evidence_size" ] ||
+     [ "${BASH_REMATCH[2]}" != "$retained_evidence_sha256" ]; then
+    echo "Retained release-evidence tar changed after validation." >&2
+    return 1
+  fi
+}
+
+build_manifest="$artifacts_abs/sp11-kernel-build-manifest.txt"
+apt_provenance="$artifacts_abs/sp11-kernel-apt-provenance.txt"
+build_inputs="$artifacts_abs/sp11-kernel-build-inputs.txt"
+verify_retained_flat_file "$build_manifest" "sp11-kernel-build-manifest.txt"
+build_manifest_snapshot_size="$RETAINED_FLAT_SIZE"
+build_manifest_snapshot_sha="$RETAINED_FLAT_SHA256"
+verify_retained_flat_file "$apt_provenance" "sp11-kernel-apt-provenance.txt"
+apt_provenance_snapshot_size="$RETAINED_FLAT_SIZE"
+apt_provenance_snapshot_sha="$RETAINED_FLAT_SHA256"
+verify_retained_flat_file "$build_inputs" "sp11-kernel-build-inputs.txt"
+build_inputs_snapshot_size="$RETAINED_FLAT_SIZE"
+build_inputs_snapshot_sha="$RETAINED_FLAT_SHA256"
 if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   [ -x "$public_content_validator" ] && [ ! -L "$public_content_validator" ] || {
     echo "Missing executable public-content validator." >&2
@@ -1402,6 +2403,8 @@ if [ "$manifest_deb_count" -ne "${#debs[@]}" ]; then
   echo "Build manifest package count does not match the release package directory." >&2
   exit 1
 fi
+actual_deb_sizes=()
+actual_deb_shas=()
 actual_index=0
 while [ "$actual_index" -lt "${#debs[@]}" ]; do
   actual_deb="${debs[$actual_index]}"
@@ -1416,6 +2419,8 @@ while [ "$actual_index" -lt "${#debs[@]}" ]; do
   actual_architecture="$(dpkg-deb -f "$actual_deb" Architecture)"
   actual_size="$(file_size "$actual_deb")"
   actual_sha="$(shasum -a 256 "$actual_deb" | awk '{ print $1 }')"
+  actual_deb_sizes+=("$actual_size")
+  actual_deb_shas+=("$actual_sha")
   if [ "$actual_package" != "${actual_base%%_*}" ]; then
     echo "Package field $actual_package does not match release filename $actual_base." >&2
     exit 1
@@ -1505,7 +2510,10 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
     echo "Missing regular schema-v2 build-manifest validator." >&2
     exit 1
   fi
-  python3 "$build_manifest_validator" \
+  run_committed_python_helper \
+    "$manifest_validator_relative" \
+    "$manifest_validator_sha" \
+    "$manifest_validator_object_id" \
     --build-only \
     --require-current-head \
     --repo-dir "$repo_dir" \
@@ -1671,30 +2679,30 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
     exit 1
   fi
 
-  SOURCE_SNAPSHOT_DIR="$(mktemp -d "$release_root_abs/.source-snapshot.XXXXXX")"
-  snapshot_source_assets=()
-  source_snapshot_inputs=("$KERNEL_SOURCE_ASSET")
-  if [ -n "$TOUCHSCREEN_SOURCE_ASSET" ]; then
-    source_snapshot_inputs+=("$TOUCHSCREEN_SOURCE_ASSET")
-  fi
-  for source_asset in "${source_snapshot_inputs[@]}"; do
-    source_asset_base="$(basename "$source_asset")"
-    source_before_sha="$(shasum -a 256 "$source_asset" | awk '{print $1}')"
-    cp -p "$source_asset" "$SOURCE_SNAPSHOT_DIR/$source_asset_base"
-    source_after_sha="$(shasum -a 256 "$source_asset" | awk '{print $1}')"
-    snapshot_sha="$(shasum -a 256 "$SOURCE_SNAPSHOT_DIR/$source_asset_base" | awk '{print $1}')"
-    if [ "$source_before_sha" != "$source_after_sha" ] || [ "$source_before_sha" != "$snapshot_sha" ]; then
-      echo "Source asset changed while its immutable validation snapshot was created: $source_asset_base" >&2
+  source_asset_sizes=()
+  source_asset_shas=()
+  source_fingerprint_re='^([1-9][0-9]*) ([0-9a-f]{64})$'
+  for source_asset in "${SOURCE_ASSETS[@]}"; do
+    source_fingerprint="$(
+      trusted_regular_file_fingerprint "$source_asset" 17179869184
+    )" || {
+      echo "Could not bind the corresponding-source input bytes." >&2
+      exit 1
+    }
+    if ! [[ "$source_fingerprint" =~ $source_fingerprint_re ]]; then
+      echo "Corresponding-source input fingerprint is not canonical." >&2
       exit 1
     fi
-    snapshot_source_assets+=("$SOURCE_SNAPSHOT_DIR/$source_asset_base")
+    source_asset_sizes+=("${BASH_REMATCH[1]}")
+    source_asset_shas+=("${BASH_REMATCH[2]}")
     if [ "$source_asset" = "$KERNEL_SOURCE_ASSET" ]; then
-      KERNEL_SOURCE_ASSET="$SOURCE_SNAPSHOT_DIR/$source_asset_base"
+      KERNEL_SOURCE_ASSET_SIZE="${BASH_REMATCH[1]}"
+      KERNEL_SOURCE_ASSET_SHA256="${BASH_REMATCH[2]}"
     else
-      TOUCHSCREEN_SOURCE_ASSET="$SOURCE_SNAPSHOT_DIR/$source_asset_base"
+      TOUCHSCREEN_SOURCE_ASSET_SIZE="${BASH_REMATCH[1]}"
+      TOUCHSCREEN_SOURCE_ASSET_SHA256="${BASH_REMATCH[2]}"
     fi
   done
-  SOURCE_ASSETS=("${snapshot_source_assets[@]}")
 
   if ! python3 -I "$source_archive_validator" kernel \
       --archive "$KERNEL_SOURCE_ASSET" \
@@ -1713,16 +2721,21 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
       exit 1
     fi
   fi
-  KERNEL_SOURCE_ASSET_SHA256="$(shasum -a 256 "$KERNEL_SOURCE_ASSET" | awk '{print $1}')"
-  if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
-    TOUCHSCREEN_SOURCE_ASSET_SHA256="$(shasum -a 256 "$TOUCHSCREEN_SOURCE_ASSET" | awk '{print $1}')"
-  fi
-
-  for source_asset in "${SOURCE_ASSETS[@]}"; do
-    if [ ! -f "$source_asset" ] || [ -L "$source_asset" ]; then
-      echo "Source asset must be a regular, non-symlinked file: $source_asset" >&2
+  source_index=0
+  while [ "$source_index" -lt "${#SOURCE_ASSETS[@]}" ]; do
+    source_asset="${SOURCE_ASSETS[$source_index]}"
+    source_fingerprint="$(
+      trusted_regular_file_fingerprint "$source_asset" 17179869184
+    )" || {
+      echo "Corresponding-source input changed during semantic validation." >&2
+      exit 1
+    }
+    if [ "$source_fingerprint" != \
+         "${source_asset_sizes[$source_index]} ${source_asset_shas[$source_index]}" ]; then
+      echo "Corresponding-source input changed during semantic validation." >&2
       exit 1
     fi
+    source_index=$((source_index + 1))
   done
 fi
 
@@ -1797,45 +2810,65 @@ checksummed_assets=()
 expected_output_names=()
 expected_output_sizes=()
 expected_output_shas=()
-trusted_checksum_file=""
+trusted_checksum_contents=""
 
-append_expected_output() {
-  local root="$1" name="$2" path
-  local size_before size_after sha_before sha_after
+register_expected_output() {
+  local name="$1" size="$2" sha256="$3" index=0
 
-  path="$root/$name"
-
-  if [ ! -f "$path" ] || [ -L "$path" ]; then
-    echo "Cannot anchor missing or unsafe prepared output: $name" >&2
+  if ! [[ "$name" =~ ^[0-9A-Za-z][0-9A-Za-z.+_~:@=-]{0,254}$ ]] ||
+     ! [[ "$size" =~ ^[0-9]+$ ]] || [ "$size" -gt 17179869184 ] ||
+     ! [[ "$sha256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Cannot register a noncanonical prepared output authority." >&2
     return 1
   fi
-  size_before="$(file_size "$path")"
-  sha_before="$(shasum -a 256 "$path" | awk '{print $1}')"
-  size_after="$(file_size "$path")"
-  sha_after="$(shasum -a 256 "$path" | awk '{print $1}')"
-  if [ "$size_before" != "$size_after" ] || [ "$sha_before" != "$sha_after" ]; then
-    echo "Prepared output changed while its expected bytes were captured: $name" >&2
-    return 1
-  fi
+  while [ "$index" -lt "${#expected_output_names[@]}" ]; do
+    if [ "${expected_output_names[$index]}" = "$name" ]; then
+      echo "Prepared output authority was registered more than once." >&2
+      return 1
+    fi
+    index=$((index + 1))
+  done
   expected_output_names+=("$name")
-  expected_output_sizes+=("$size_before")
-  expected_output_shas+=("$sha_before")
+  expected_output_sizes+=("$size")
+  expected_output_shas+=("$sha256")
+}
+
+register_written_output() {
+  local name="$1" record="$2"
+  local record_re='^([1-9][0-9]*) ([0-9a-f]{64})$'
+
+  if ! [[ "$record" =~ $record_re ]]; then
+    echo "Generated output writer returned a noncanonical intended-byte record." >&2
+    return 1
+  fi
+  register_expected_output "$name" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+expected_output_checksum_line() {
+  local name="$1" index=0
+
+  while [ "$index" -lt "${#expected_output_names[@]}" ]; do
+    if [ "${expected_output_names[$index]}" = "$name" ]; then
+      printf '%s  %s\n' "${expected_output_shas[$index]}" "$name"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+  echo "Checksummed asset lacks an intended-byte authority." >&2
+  return 1
 }
 
 verify_expected_output_bytes() {
-  local root="$1" index=0 name path size sha
+  local root="$1" index=0 name path fingerprint
+  local fingerprint_re='^([0-9]+) ([0-9a-f]{64})$'
 
   while [ "$index" -lt "${#expected_output_names[@]}" ]; do
     name="${expected_output_names[$index]}"
     path="$root/$name"
-    if [ ! -f "$path" ] || [ -L "$path" ]; then
-      echo "Prepared output is missing an expected regular file: $name" >&2
-      return 1
-    fi
-    size="$(file_size "$path")"
-    sha="$(shasum -a 256 "$path" | awk '{print $1}')"
-    if [ "$size" != "${expected_output_sizes[$index]}" ] ||
-       [ "$sha" != "${expected_output_shas[$index]}" ]; then
+    fingerprint="$(trusted_regular_file_fingerprint "$path" 17179869184)" || return 1
+    if ! [[ "$fingerprint" =~ $fingerprint_re ]] ||
+       [ "${BASH_REMATCH[1]}" != "${expected_output_sizes[$index]}" ] ||
+       [ "${BASH_REMATCH[2]}" != "${expected_output_shas[$index]}" ]; then
       echo "Prepared output differs from its independently captured bytes: $name" >&2
       return 1
     fi
@@ -1843,18 +2876,624 @@ verify_expected_output_bytes() {
   done
 }
 
+verify_current_output_membership() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+try:
+    descriptor = int(sys.argv[1], 10)
+    root_path = sys.argv[2]
+    expected_root = tuple(int(value, 10) for value in sys.argv[3:8])
+    expected = sys.argv[8:]
+    if not 1 <= len(expected) <= 70 or len(set(expected)) != len(expected):
+        raise RuntimeError
+    root = os.dup(descriptor)
+    identity = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        stat.S_IMODE(value.st_mode),
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        identity(os.fstat(root)) != expected_root
+        or identity(os.stat(root_path, follow_symlinks=False)) != expected_root
+    ):
+        raise RuntimeError
+    observed = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if len(observed) >= len(expected) + 1:
+                raise RuntimeError
+            observed.append(entry.name)
+    if len(observed) != len(expected) or set(observed) != set(expected):
+        raise RuntimeError
+except BaseException:
+    os.write(2, b"error: prepared output membership differs from its exact plan\n")
+    raise SystemExit(1)
+finally:
+    root = locals().get("root")
+    if root is not None:
+        try:
+            os.close(root)
+        except OSError:
+            pass
+' "$OUTPUT_ROOT_FD" "$OUT_DIR" $OUTPUT_ROOT_IDENTITY \
+    "${expected_output_names[@]}"
+}
+
+verify_held_output_group() {
+  local completion_mode="$1" index=0
+  local -a output_args=() artifact_args=()
+
+  while [ "$index" -lt "${#expected_output_names[@]}" ]; do
+    output_args+=(
+      "${expected_output_names[$index]}"
+      "${expected_output_sizes[$index]}"
+      "${expected_output_shas[$index]}"
+    )
+    index=$((index + 1))
+  done
+  index=0
+  while [ "$index" -lt "${#retained_flat_names[@]}" ]; do
+    artifact_args+=("${retained_flat_names[$index]}")
+    index=$((index + 1))
+  done
+  exec /usr/bin/python3 -I -c '
+import hashlib
+import os
+import re
+import signal
+import stat
+import sys
+
+root = work = artifacts = evidence = None
+opened = []
+controls = []
+committed = False
+handled = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+signal.pthread_sigmask(signal.SIG_BLOCK, handled)
+for handled_signal in handled:
+    signal.signal(handled_signal, signal.SIG_DFL)
+try:
+    descriptor = int(sys.argv[1], 10)
+    root_path = sys.argv[2]
+    expected_root = tuple(int(value, 10) for value in sys.argv[3:8])
+    evidence_path = sys.argv[8]
+    evidence_size = int(sys.argv[9], 10)
+    evidence_sha = sys.argv[10]
+    count = int(sys.argv[11], 10)
+    control_base = 12 + count * 3
+    work_descriptor = int(sys.argv[control_base], 10)
+    work_path = sys.argv[control_base + 1]
+    expected_work = tuple(
+        int(value, 10) for value in sys.argv[control_base + 2 : control_base + 7]
+    )
+    control_authorities = (
+        ("docker-build-args.txt", int(sys.argv[control_base + 7], 10), sys.argv[control_base + 8]),
+        ("docker-build-inside.sh", int(sys.argv[control_base + 9], 10), sys.argv[control_base + 10]),
+        ("sp11-oci-index.json", int(sys.argv[control_base + 11], 10), sys.argv[control_base + 12]),
+    )
+    artifacts_base = control_base + 13
+    artifacts_descriptor = int(sys.argv[artifacts_base], 10)
+    artifacts_path = sys.argv[artifacts_base + 1]
+    expected_artifacts = tuple(
+        int(value, 10) for value in sys.argv[artifacts_base + 2 : artifacts_base + 7]
+    )
+    artifact_count = int(sys.argv[artifacts_base + 7], 10)
+    artifact_names = sys.argv[artifacts_base + 8 : artifacts_base + 8 + artifact_count]
+    completion_mode = sys.argv[artifacts_base + 8 + artifact_count]
+    fixture_hook = sys.argv[artifacts_base + 9 + artifact_count]
+    completion = {
+        "draft-both": (
+            b"Prepared verified release assets.\n\n"
+            b"NO-PUBLISH: kernel-release propagation is complete, but independent release gates remain open.\n"
+            b"This is a local draft only.\n"
+            b"Rerun with --source-asset and from a clean support repository before publishing binaries.\n"
+        ),
+        "draft-dirty": (
+            b"Prepared verified release assets.\n\n"
+            b"NO-PUBLISH: kernel-release propagation is complete, but independent release gates remain open.\n"
+            b"This is a local draft only.\n"
+            b"Rerun from a clean support repository before publishing binaries.\n"
+        ),
+        "draft-source": (
+            b"Prepared verified release assets.\n\n"
+            b"NO-PUBLISH: kernel-release propagation is complete, but independent release gates remain open.\n"
+            b"This is a local draft only.\n"
+            b"Rerun with --source-asset before publishing binaries.\n"
+        ),
+        "offline-review": (
+            b"Prepared verified release assets.\n\n"
+            b"NO-PUBLISH: kernel-release propagation is complete, but independent release gates remain open.\n"
+            b"The source-bound candidate is ready for offline review only; no publication command was generated.\n"
+        ),
+    }.get(completion_mode)
+    if completion is None:
+        raise RuntimeError
+    if (
+        not 1 <= count <= 70
+        or not 1 <= artifact_count <= 70
+        or len(set(artifact_names)) != artifact_count
+        or not 0 < evidence_size <= 17179869184
+        or not re.fullmatch(r"[0-9a-f]{64}", evidence_sha)
+        or fixture_hook not in {
+            "",
+            "mutate-release-notes-before-register",
+            "mutate-output-terminal",
+            "mutate-evidence-terminal",
+            "mutate-control-terminal",
+            "inject-work-member-terminal",
+            "inject-artifact-member-terminal",
+            "remap-output-root-terminal",
+            "remap-work-root-terminal",
+            "remap-artifacts-root-terminal",
+            "pending-signal-terminal",
+            "fail-root-commit",
+            "signal-before-terminal-exec",
+        }
+        or len(sys.argv) != artifacts_base + 10 + artifact_count
+    ):
+        raise RuntimeError
+    root = os.dup(descriptor)
+    root_identity = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        stat.S_IMODE(value.st_mode),
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        root_identity(os.fstat(root)) != expected_root
+        or root_identity(os.stat(root_path, follow_symlinks=False)) != expected_root
+    ):
+        raise RuntimeError
+    work = os.dup(work_descriptor)
+    if (
+        root_identity(os.fstat(work)) != expected_work
+        or root_identity(os.stat(work_path, follow_symlinks=False)) != expected_work
+    ):
+        raise RuntimeError
+    artifacts = os.dup(artifacts_descriptor)
+    mapped_artifacts = os.stat("artifacts", dir_fd=work, follow_symlinks=False)
+    if (
+        root_identity(os.fstat(artifacts)) != expected_artifacts
+        or root_identity(os.stat(artifacts_path, follow_symlinks=False)) != expected_artifacts
+        or root_identity(mapped_artifacts) != expected_artifacts
+    ):
+        raise RuntimeError
+    observed_work = []
+    with os.scandir(work) as entries:
+        for entry in entries:
+            if len(observed_work) >= 6:
+                raise RuntimeError
+            observed_work.append(entry.name)
+    if set(observed_work) != {
+        "artifacts",
+        "docker-build-args.txt",
+        "docker-build-inside.sh",
+        "sp11-kernel-retained-evidence.tar",
+        "sp11-oci-index.json",
+    } or len(observed_work) != 5:
+        raise RuntimeError
+    observed_artifacts = []
+    with os.scandir(artifacts) as entries:
+        for entry in entries:
+            if len(observed_artifacts) >= artifact_count + 1:
+                raise RuntimeError
+            observed_artifacts.append(entry.name)
+    if len(observed_artifacts) != artifact_count or set(observed_artifacts) != set(artifact_names):
+        raise RuntimeError
+    for name, size, digest in control_authorities:
+        if (
+            not 0 < size <= 67108864
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise RuntimeError
+        child = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=work,
+        )
+        metadata = os.fstat(child)
+        mapped = os.stat(name, dir_fd=work, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size != size
+            or (metadata.st_dev, metadata.st_ino) != (mapped.st_dev, mapped.st_ino)
+        ):
+            os.close(child)
+            raise RuntimeError
+        controls.append((name, child, metadata, size, digest))
+    evidence_name = os.path.basename(evidence_path)
+    if evidence_name != "sp11-kernel-retained-evidence.tar" or evidence_path != os.path.join(work_path, evidence_name):
+        raise RuntimeError
+    evidence = os.open(
+        evidence_name,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        dir_fd=work,
+    )
+    evidence_original = os.fstat(evidence)
+    evidence_mapped = os.stat(evidence_name, dir_fd=work, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(evidence_original.st_mode)
+        or stat.S_IMODE(evidence_original.st_mode) != 0o644
+        or evidence_original.st_nlink != 1
+        or evidence_original.st_size != evidence_size
+        or (evidence_original.st_dev, evidence_original.st_ino)
+        != (evidence_mapped.st_dev, evidence_mapped.st_ino)
+    ):
+        raise RuntimeError
+    expected_names = []
+    for index in range(count):
+        base = 12 + index * 3
+        name = sys.argv[base]
+        size = int(sys.argv[base + 1], 10)
+        digest = sys.argv[base + 2]
+        if (
+            not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+_~:@=-]{0,254}", name)
+            or name in expected_names
+            or not 0 <= size <= 17179869184
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise RuntimeError
+        expected_names.append(name)
+        child = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=root,
+        )
+        metadata = os.fstat(child)
+        mapped = os.stat(name, dir_fd=root, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o644
+            or metadata.st_nlink != 1
+            or metadata.st_size != size
+            or (metadata.st_dev, metadata.st_ino) != (mapped.st_dev, mapped.st_ino)
+        ):
+            os.close(child)
+            raise RuntimeError
+        opened.append((name, child, metadata, size, digest))
+    observed_names = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if len(observed_names) >= count + 1:
+                raise RuntimeError
+            observed_names.append(entry.name)
+    if set(observed_names) != set(expected_names) or len(observed_names) != count:
+        raise RuntimeError
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    root_original = os.fstat(root)
+    work_original = os.fstat(work)
+    artifacts_original = os.fstat(artifacts)
+    for _pass in range(2):
+        digest = hashlib.sha256()
+        offset = 0
+        while offset < evidence_size:
+            chunk = os.pread(evidence, min(1048576, evidence_size - offset), offset)
+            if not chunk:
+                raise RuntimeError
+            digest.update(chunk)
+            offset += len(chunk)
+        evidence_current = os.fstat(evidence)
+        evidence_mapped = os.stat(evidence_name, dir_fd=work, follow_symlinks=False)
+        if (
+            digest.hexdigest() != evidence_sha
+            or stable(evidence_current) != stable(evidence_original)
+            or (evidence_current.st_dev, evidence_current.st_ino)
+            != (evidence_mapped.st_dev, evidence_mapped.st_ino)
+        ):
+            raise RuntimeError
+        for name, child, original, size, expected_digest in controls:
+            digest = hashlib.sha256()
+            offset = 0
+            while offset < size:
+                chunk = os.pread(child, min(1048576, size - offset), offset)
+                if not chunk:
+                    raise RuntimeError
+                digest.update(chunk)
+                offset += len(chunk)
+            current = os.fstat(child)
+            mapped = os.stat(name, dir_fd=work, follow_symlinks=False)
+            if (
+                digest.hexdigest() != expected_digest
+                or stable(current) != stable(original)
+                or (current.st_dev, current.st_ino) != (mapped.st_dev, mapped.st_ino)
+            ):
+                raise RuntimeError
+        for name, child, original, size, expected_digest in opened:
+            digest = hashlib.sha256()
+            offset = 0
+            while offset < size:
+                chunk = os.pread(child, min(1048576, size - offset), offset)
+                if not chunk:
+                    raise RuntimeError
+                digest.update(chunk)
+                offset += len(chunk)
+            current = os.fstat(child)
+            mapped = os.stat(name, dir_fd=root, follow_symlinks=False)
+            if (
+                digest.hexdigest() != expected_digest
+                or stable(current) != stable(original)
+                or (current.st_dev, current.st_ino) != (mapped.st_dev, mapped.st_ino)
+            ):
+                raise RuntimeError
+    if fixture_hook == "mutate-output-terminal":
+        name, child, _original, _size, _digest = next(
+            item for item in opened if item[0] == "RELEASE-NOTES.md"
+        )
+        mutation = os.open(
+            name,
+            os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=root,
+        )
+        try:
+            metadata = os.fstat(mutation)
+            held = os.fstat(child)
+            if (
+                (metadata.st_dev, metadata.st_ino) != (held.st_dev, held.st_ino)
+                or os.pwrite(mutation, b"\0", 0) != 1
+            ):
+                raise RuntimeError
+            os.fsync(mutation)
+        finally:
+            os.close(mutation)
+    elif fixture_hook == "mutate-evidence-terminal":
+        mutation = os.open(
+            evidence_name,
+            os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=work,
+        )
+        try:
+            metadata = os.fstat(mutation)
+            held = os.fstat(evidence)
+            if (
+                (metadata.st_dev, metadata.st_ino) != (held.st_dev, held.st_ino)
+                or os.pwrite(mutation, b"\0", 0) != 1
+            ):
+                raise RuntimeError
+            os.fsync(mutation)
+        finally:
+            os.close(mutation)
+    elif fixture_hook == "mutate-control-terminal":
+        name, child, _original, _size, _digest = controls[0]
+        mutation = os.open(
+            name,
+            os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=work,
+        )
+        try:
+            metadata = os.fstat(mutation)
+            held = os.fstat(child)
+            if (
+                (metadata.st_dev, metadata.st_ino) != (held.st_dev, held.st_ino)
+                or os.pwrite(mutation, b"\0", 0) != 1
+            ):
+                raise RuntimeError
+            os.fsync(mutation)
+        finally:
+            os.close(mutation)
+    elif fixture_hook == "inject-work-member-terminal":
+        mutation = os.open(
+            ".sp11-terminal-injected",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=work,
+        )
+        os.fsync(mutation)
+        os.close(mutation)
+        os.fsync(work)
+    elif fixture_hook == "inject-artifact-member-terminal":
+        mutation = os.open(
+            ".sp11-terminal-injected",
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=artifacts,
+        )
+        os.fsync(mutation)
+        os.close(mutation)
+        os.fsync(artifacts)
+    elif fixture_hook in {
+        "remap-output-root-terminal",
+        "remap-work-root-terminal",
+        "remap-artifacts-root-terminal",
+    }:
+        if fixture_hook == "remap-output-root-terminal":
+            mapped_path = root_path
+            held_path = root_path + ".fixture-held"
+            victim_path = root_path + ".fixture-victim"
+        elif fixture_hook == "remap-work-root-terminal":
+            mapped_path = work_path
+            held_path = work_path + ".fixture-held"
+            victim_path = work_path + ".fixture-victim"
+        else:
+            mapped_path = artifacts_path
+            held_path = work_path + ".artifacts-held"
+            victim_path = work_path + ".artifacts-victim"
+        victim = os.stat(victim_path, follow_symlinks=False)
+        if not stat.S_ISDIR(victim.st_mode) or stat.S_IMODE(victim.st_mode) != 0o700:
+            raise RuntimeError
+        try:
+            os.stat(held_path, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise RuntimeError
+        os.rename(mapped_path, held_path)
+        os.rename(victim_path, mapped_path)
+    observed_names = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if len(observed_names) >= count + 1:
+                raise RuntimeError
+            observed_names.append(entry.name)
+    if set(observed_names) != set(expected_names) or len(observed_names) != count:
+        raise RuntimeError
+    evidence_current = os.fstat(evidence)
+    evidence_mapped = os.stat(evidence_name, dir_fd=work, follow_symlinks=False)
+    if (
+        stable(evidence_current) != stable(evidence_original)
+        or (evidence_current.st_dev, evidence_current.st_ino)
+        != (evidence_mapped.st_dev, evidence_mapped.st_ino)
+    ):
+        raise RuntimeError
+    for name, child, original, _size, _digest in controls:
+        current = os.fstat(child)
+        mapped = os.stat(name, dir_fd=work, follow_symlinks=False)
+        if (
+            stable(current) != stable(original)
+            or (current.st_dev, current.st_ino) != (mapped.st_dev, mapped.st_ino)
+        ):
+            raise RuntimeError
+    observed_work = []
+    with os.scandir(work) as entries:
+        for entry in entries:
+            if len(observed_work) >= 6:
+                raise RuntimeError
+            observed_work.append(entry.name)
+    if set(observed_work) != {
+        "artifacts",
+        "docker-build-args.txt",
+        "docker-build-inside.sh",
+        "sp11-kernel-retained-evidence.tar",
+        "sp11-oci-index.json",
+    } or len(observed_work) != 5:
+        raise RuntimeError
+    observed_artifacts = []
+    with os.scandir(artifacts) as entries:
+        for entry in entries:
+            if len(observed_artifacts) >= artifact_count + 1:
+                raise RuntimeError
+            observed_artifacts.append(entry.name)
+    if len(observed_artifacts) != artifact_count or set(observed_artifacts) != set(artifact_names):
+        raise RuntimeError
+    for name, child, original, _size, _digest in opened:
+        current = os.fstat(child)
+        mapped = os.stat(name, dir_fd=root, follow_symlinks=False)
+        if (
+            stable(current) != stable(original)
+            or (current.st_dev, current.st_ino) != (mapped.st_dev, mapped.st_ino)
+        ):
+            raise RuntimeError
+    if (
+        stable(os.fstat(root)) != stable(root_original)
+        or stable(os.fstat(work)) != stable(work_original)
+        or stable(os.fstat(artifacts)) != stable(artifacts_original)
+        or root_identity(os.fstat(root)) != expected_root
+        or root_identity(os.stat(root_path, follow_symlinks=False)) != expected_root
+        or root_identity(os.fstat(work)) != expected_work
+        or root_identity(os.stat(work_path, follow_symlinks=False)) != expected_work
+        or root_identity(os.fstat(artifacts)) != expected_artifacts
+        or root_identity(os.stat(artifacts_path, follow_symlinks=False)) != expected_artifacts
+        or root_identity(os.stat("artifacts", dir_fd=work, follow_symlinks=False)) != expected_artifacts
+    ):
+        raise RuntimeError
+    os.fsync(root)
+    if fixture_hook == "pending-signal-terminal":
+        os.write(2, b"fixture: pending-signal-terminal triggered\n")
+        os.kill(os.getpid(), signal.SIGTERM)
+    if signal.sigpending() & handled:
+        raise KeyboardInterrupt
+    # A private 0700 root is an incomplete forensic candidate.  This held-FD
+    # chmod is the sole irreversible commit point; every operation after it is
+    # best effort and cannot turn the committed 0500 root back into a failure.
+    if fixture_hook == "fail-root-commit":
+        os.write(2, b"fixture: fail-root-commit triggered\n")
+        os.close(root)
+        root = -1
+    os.fchmod(root, 0o500)
+    committed = True
+    for handled_signal in (*handled, signal.SIGPIPE):
+        try:
+            signal.signal(handled_signal, signal.SIG_IGN)
+        except BaseException:
+            pass
+    try:
+        os.fsync(root)
+    except OSError:
+        pass
+    try:
+        os.set_blocking(1, False)
+        offset = 0
+        while offset < len(completion):
+            try:
+                written = os.write(1, completion[offset:])
+            except (BrokenPipeError, BlockingIOError, OSError):
+                break
+            if written <= 0:
+                break
+            offset += written
+    except BaseException:
+        pass
+except BaseException:
+    if not committed:
+        try:
+            os.write(2, b"error: prepared output group changed before commit\n")
+        except OSError:
+            pass
+finally:
+    for _name, child, _metadata, _size, _digest in reversed(opened):
+        try:
+            os.close(child)
+        except OSError:
+            pass
+    for _name, child, _metadata, _size, _digest in reversed(controls):
+        try:
+            os.close(child)
+        except OSError:
+            pass
+    if evidence is not None:
+        try:
+            os.close(evidence)
+        except OSError:
+            pass
+    if root is not None:
+        try:
+            os.close(root)
+        except OSError:
+            pass
+    if work is not None:
+        try:
+            os.close(work)
+        except OSError:
+            pass
+    if artifacts is not None:
+        try:
+            os.close(artifacts)
+        except OSError:
+            pass
+if not committed:
+    raise SystemExit(1)
+' "$OUTPUT_ROOT_FD" "$OUT_DIR" $OUTPUT_ROOT_IDENTITY \
+    "$retained_evidence_tar" "$retained_evidence_size" \
+    "$retained_evidence_sha256" "${#expected_output_names[@]}" \
+    "${output_args[@]}" \
+    "$BUILD_WORK_ROOT_FD" "$build_work_dir" $BUILD_WORK_ROOT_IDENTITY \
+    "$build_args_size" "$build_args_sha" \
+    "$entrypoint_size" "$entrypoint_sha" \
+    "$oci_index_size" "$oci_index_sha" \
+    "$BUILD_ARTIFACTS_ROOT_FD" "$artifacts_abs" \
+    $BUILD_ARTIFACTS_ROOT_IDENTITY "${#artifact_args[@]}" \
+    "${artifact_args[@]}" "$completion_mode" "$PREPARER_FIXTURE_HOOK"
+}
+
 validate_prepared_semantics() {
   local root="$1"
-  local expected_payload="$PROVENANCE_SNAPSHOT_DIR/expected-kernel-payload.txt"
-  local index=0 expected_deb_list deb
+  local index=0 payload_path payload_fingerprint fingerprint_re='^([0-9]+) ([0-9a-f]{64})$'
   local -a validator_args public_output_args
-
-  python3 "$build_inputs_validator" validate-attached \
-    --baseline "$repo_dir/$KERNEL_BASELINE" \
-    --support-head "$repo_commit" \
-    --build-manifest "$root/sp11-kernel-build-manifest.txt" \
-    --apt-provenance "$root/sp11-kernel-apt-provenance.txt" \
-    --output "$root/sp11-kernel-build-inputs.txt" >/dev/null
 
   if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
     validator_args=(
@@ -1865,7 +3504,8 @@ validate_prepared_semantics() {
       --apt-provenance "$root/sp11-kernel-apt-provenance.txt"
       --build-inputs "$root/sp11-kernel-build-inputs.txt"
       --kernel-source "$root/$(basename "$KERNEL_SOURCE_ASSET")"
-      --expected-payload-out "$expected_payload"
+      --retained-evidence "$retained_evidence_tar"
+      --no-expected-payload-output
     )
     if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
       validator_args+=(
@@ -1876,28 +3516,24 @@ validate_prepared_semantics() {
     else
       validator_args+=(--kernel-release-only)
     fi
-    python3 "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
+    run_committed_python_helper \
+      "$manifest_validator_relative" \
+      "$manifest_validator_sha" \
+      "$manifest_validator_object_id" \
       "${validator_args[@]}" >/dev/null
-  else
-    : > "$expected_payload"
-    while [ "$index" -lt "${#manifest_deb_paths[@]}" ]; do
-      printf '%s  %s\n' \
-        "${manifest_deb_sha256s[$index]}" "${manifest_deb_paths[$index]}" \
-        >> "$expected_payload"
-      index=$((index + 1))
-    done
   fi
-  (cd "$root" && shasum -a 256 -c "$expected_payload" >/dev/null)
 
-  expected_deb_list="$PROVENANCE_SNAPSHOT_DIR/expected-kernel-debs.txt"
-  : > "$expected_deb_list"
-  for deb in "${debs[@]}"; do
-    basename "$deb" >> "$expected_deb_list"
+  while [ "$index" -lt "${#manifest_deb_paths[@]}" ]; do
+    payload_path="$root/${manifest_deb_paths[$index]}"
+    payload_fingerprint="$(trusted_regular_file_fingerprint "$payload_path" 4294967296)" || return 1
+    if ! [[ "$payload_fingerprint" =~ $fingerprint_re ]] ||
+       [ "${BASH_REMATCH[1]}" != "${manifest_deb_sizes[$index]}" ] ||
+       [ "${BASH_REMATCH[2]}" != "${manifest_deb_sha256s[$index]}" ]; then
+      echo "Prepared kernel payload differs from exact build provenance." >&2
+      return 1
+    fi
+    index=$((index + 1))
   done
-  if ! cmp -s "$expected_deb_list" "$root/sp11-kernel-debs.txt"; then
-    echo "Prepared kernel package list differs from exact build provenance." >&2
-    return 1
-  fi
 
   public_output_args=(
     --file "$root/sp11-kernel-build-manifest.txt"
@@ -1914,43 +3550,19 @@ validate_prepared_semantics() {
 }
 
 verify_output_snapshot() {
-  local root="$1" actual_path actual_name expected_name matched actual_count=0
-  local expected_count="${#expected_output_names[@]}"
+  local root="$1"
 
-  while IFS= read -r actual_path; do
-    actual_name="$(basename "$actual_path")"
-    if [ ! -f "$actual_path" ] || [ -L "$actual_path" ]; then
-      echo "Prepared output contains a directory, symlink, or special entry: $actual_name" >&2
-      return 1
-    fi
-    matched="false"
-    for expected_name in "${expected_output_names[@]}"; do
-      [ "$actual_name" = "$expected_name" ] && matched="true"
-    done
-    if [ "$matched" != "true" ]; then
-      echo "Prepared output contains an unexpected file: $actual_name" >&2
-      return 1
-    fi
-    actual_count=$((actual_count + 1))
-  done < <(find "$root" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)
-  if [ "$actual_count" -ne "$expected_count" ]; then
-    echo "Prepared output does not contain the exact expected file count." >&2
-    return 1
-  fi
-
+  verify_current_output_membership
   verify_expected_output_bytes "$root"
-  if ! cmp -s "$trusted_checksum_file" "$root/SHA256SUMS"; then
-    echo "Prepared SHA256SUMS bytes or row order changed after capture." >&2
-    return 1
-  fi
-  (cd "$root" && shasum -a 256 -c SHA256SUMS >/dev/null)
 }
 
 verify_prepared_output() {
   local root="$1"
 
   verify_output_snapshot "$root"
+  verify_all_retained_flat_files "$root"
   validate_prepared_semantics "$root"
+  verify_all_retained_flat_files "$root"
   verify_output_snapshot "$root"
 }
 
@@ -1981,45 +3593,68 @@ append_upload_asset "sp11-kernel-apt-provenance.txt" "immutable APT provenance"
 append_upload_asset "sp11-kernel-build-inputs.txt" "immutable build-input envelope"
 
 FINAL_OUT_DIR="$OUT_DIR"
-OUTPUT_STAGING_DIR="$(mktemp -d "$release_root_abs/.${out_leaf}.staging.XXXXXX")"
-OUT_DIR="$OUTPUT_STAGING_DIR"
+verify_held_output_root
 
-mv "$build_manifest" "$OUT_DIR/sp11-kernel-build-manifest.txt"
+verify_retained_flat_file "$build_manifest" "sp11-kernel-build-manifest.txt"
+copy_verified_regular_exclusive \
+  "$build_manifest" "$OUT_DIR/sp11-kernel-build-manifest.txt" \
+  "$RETAINED_FLAT_SIZE" "$RETAINED_FLAT_SHA256"
+register_expected_output \
+  sp11-kernel-build-manifest.txt \
+  "$RETAINED_FLAT_SIZE" "$RETAINED_FLAT_SHA256"
 build_manifest="$OUT_DIR/sp11-kernel-build-manifest.txt"
-if [ "$(shasum -a 256 "$build_manifest" | awk '{print $1}')" != "$build_manifest_snapshot_sha" ]; then
+if ! verify_retained_flat_file "$build_manifest" "sp11-kernel-build-manifest.txt"; then
   echo "Staged kernel build manifest changed after provenance validation." >&2
   exit 1
 fi
-mv "$apt_provenance" "$OUT_DIR/sp11-kernel-apt-provenance.txt"
+copy_verified_regular_exclusive \
+  "$apt_provenance" "$OUT_DIR/sp11-kernel-apt-provenance.txt" \
+  "$apt_provenance_snapshot_size" "$apt_provenance_snapshot_sha"
+register_expected_output \
+  sp11-kernel-apt-provenance.txt \
+  "$apt_provenance_snapshot_size" "$apt_provenance_snapshot_sha"
 apt_provenance="$OUT_DIR/sp11-kernel-apt-provenance.txt"
-if [ "$(shasum -a 256 "$apt_provenance" | awk '{print $1}')" != "$apt_provenance_snapshot_sha" ]; then
+if ! verify_retained_flat_file "$apt_provenance" "sp11-kernel-apt-provenance.txt"; then
   echo "Staged APT provenance changed after validation." >&2
   exit 1
 fi
-mv "$build_inputs" "$OUT_DIR/sp11-kernel-build-inputs.txt"
+copy_verified_regular_exclusive \
+  "$build_inputs" "$OUT_DIR/sp11-kernel-build-inputs.txt" \
+  "$build_inputs_snapshot_size" "$build_inputs_snapshot_sha"
+register_expected_output \
+  sp11-kernel-build-inputs.txt \
+  "$build_inputs_snapshot_size" "$build_inputs_snapshot_sha"
 build_inputs="$OUT_DIR/sp11-kernel-build-inputs.txt"
-if [ "$(shasum -a 256 "$build_inputs" | awk '{print $1}')" != "$build_inputs_snapshot_sha" ]; then
+if ! verify_retained_flat_file "$build_inputs" "sp11-kernel-build-inputs.txt"; then
   echo "Staged build-input envelope changed after validation." >&2
   exit 1
 fi
 
-python3 "$build_inputs_validator" validate-attached \
-  --baseline "$repo_dir/$KERNEL_BASELINE" \
-  --support-head "$repo_commit" \
-  --build-manifest "$build_manifest" \
-  --apt-provenance "$apt_provenance" \
-  --output "$build_inputs"
-
 for deb in "${debs[@]}"; do
-  cp "$deb" "$OUT_DIR/"
+  deb_name="$(basename "$deb")"
+  verify_retained_flat_file "$deb" "$deb_name"
+  copy_verified_regular_exclusive \
+    "$deb" "$OUT_DIR/$deb_name" \
+    "$RETAINED_FLAT_SIZE" "$RETAINED_FLAT_SHA256"
+  register_expected_output \
+    "$deb_name" "$RETAINED_FLAT_SIZE" "$RETAINED_FLAT_SHA256"
 done
 
 if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   staged_source_assets=()
+  source_index=0
   for source_asset in "${SOURCE_ASSETS[@]}"; do
     staged_source="$OUT_DIR/$(basename "$source_asset")"
-    mv "$source_asset" "$staged_source"
+    copy_verified_regular_exclusive \
+      "$source_asset" "$staged_source" \
+      "${source_asset_sizes[$source_index]}" \
+      "${source_asset_shas[$source_index]}"
+    register_expected_output \
+      "$(basename "$source_asset")" \
+      "${source_asset_sizes[$source_index]}" \
+      "${source_asset_shas[$source_index]}"
     staged_source_assets+=("$staged_source")
+    source_index=$((source_index + 1))
   done
   SOURCE_ASSETS=("${staged_source_assets[@]}")
   KERNEL_SOURCE_ASSET="$OUT_DIR/$(basename "$KERNEL_SOURCE_ASSET")"
@@ -2029,8 +3664,17 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
 fi
 
 if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
-  for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
-    cp "$TOUCHSCREEN_MODULES_DIR/$module_file" "$OUT_DIR/"
+  module_index=0
+  while [ "$module_index" -lt "${#TOUCHSCREEN_MODULE_FILES[@]}" ]; do
+    module_file="${TOUCHSCREEN_MODULE_FILES[$module_index]}"
+    copy_verified_regular_exclusive \
+      "$TOUCHSCREEN_MODULES_DIR/$module_file" "$OUT_DIR/$module_file" \
+      "${touchscreen_module_sizes[$module_index]}" \
+      "${touchscreen_module_shas[$module_index]}"
+    register_expected_output \
+      "$module_file" "${touchscreen_module_sizes[$module_index]}" \
+      "${touchscreen_module_shas[$module_index]}"
+    module_index=$((module_index + 1))
   done
 fi
 
@@ -2080,6 +3724,7 @@ fi
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  touchscreen_manifest_record="$(
   {
     echo "Generated: $generated_at"
     echo "Release: $RELEASE_NAME"
@@ -2115,9 +3760,13 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
       echo "Module $module_file srcversion: ${touchscreen_module_srcversions[$module_index]}"
       module_index=$((module_index + 1))
     done
-  } > "$OUT_DIR/$TOUCHSCREEN_MODULE_MANIFEST"
+  } | write_release_text_exclusive "$TOUCHSCREEN_MODULE_MANIFEST" 1048576
+  )" || exit 1
+  register_written_output \
+    "$TOUCHSCREEN_MODULE_MANIFEST" "$touchscreen_manifest_record"
 fi
 
+release_manifest_record="$(
 {
   echo "Generated: $generated_at"
   echo "Release: $RELEASE_NAME"
@@ -2140,6 +3789,11 @@ fi
   echo "Build inputs SHA256: $build_inputs_snapshot_sha"
   echo "Build envelope creation propagation: $build_envelope_creation_propagation"
   echo "Kernel release propagation: complete"
+  echo "Retained evidence schema: sp11-kernel-retained-evidence-v1"
+  echo "Retained evidence tar: sp11-kernel-retained-evidence.tar"
+  echo "Retained evidence tar size: $retained_evidence_size"
+  echo "Retained evidence tar SHA256: $retained_evidence_sha256"
+  echo "Retained evidence disposition: local-validation-input"
   echo "OCI index image: $oci_index_image"
   echo "OCI index digest: $oci_index_digest"
   echo "OCI platform: $oci_platform"
@@ -2172,7 +3826,7 @@ fi
   package_index=0
   while [ "$package_index" -lt "${#debs[@]}" ]; do
     echo "Package $((package_index + 1)) file: $(basename "${debs[$package_index]}")"
-    echo "Package $((package_index + 1)) SHA256: $(shasum -a 256 "$OUT_DIR/$(basename "${debs[$package_index]}")" | awk '{print $1}')"
+    echo "Package $((package_index + 1)) SHA256: ${actual_deb_shas[$package_index]}"
     package_index=$((package_index + 1))
   done
   if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
@@ -2199,13 +3853,23 @@ fi
       done
     fi
   fi
-} > "$OUT_DIR/sp11-kernel-release-manifest.txt"
+} | write_release_text_exclusive sp11-kernel-release-manifest.txt 4194304
+)" || exit 1
+register_written_output \
+  sp11-kernel-release-manifest.txt "$release_manifest_record"
 
-for deb in "${debs[@]}"; do
-  basename "$deb"
-done > "$OUT_DIR/sp11-kernel-debs.txt"
+deb_list_record="$(
+{
+  for deb in "${debs[@]}"; do
+    basename "$deb"
+  done
+} | write_release_text_exclusive sp11-kernel-debs.txt 1048576
+)" || exit 1
+register_written_output sp11-kernel-debs.txt "$deb_list_record"
 
-cat > "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+release_notes_record="$(
+{
+cat <<EOF
 # Surface Pro 11 qcom-x1e Kernel Packages
 
 Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11.
@@ -2225,7 +3889,7 @@ Download \`SHA256SUMS\` and every asset named in it, then run:
 EOF
 
 if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
-  cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+  cat <<EOF
 ## Install Flow
 
 The kernel packages and touchscreen modules are one ABI-matched set. Install
@@ -2248,7 +3912,7 @@ after it completes, then test both the new kernel and touchscreen.
 
 EOF
 else
-  cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+  cat <<EOF
 ## Install Flow
 
 1. Copy the verified \`.deb\` files into local \`payload/kernel-debs/\`.
@@ -2264,7 +3928,7 @@ sudo ./scripts/build-sp11-qcom-x1e-kernel.sh \\
 EOF
 fi
 
-cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+cat <<EOF
 ## Provenance
 
 See \`sp11-kernel-release-manifest.txt\` for package hashes, source metadata,
@@ -2278,127 +3942,72 @@ Recorded source:
 - Source HEAD: \`${source_head:-unknown}\`
 EOF
 
-echo "- Docker image: \`$DOCKER_IMAGE\`" >> "$OUT_DIR/RELEASE-NOTES.md"
-echo "- Container platform: \`$manifest_container_platform\`" >> "$OUT_DIR/RELEASE-NOTES.md"
-echo "- Patched tree ID: \`$patched_tree_id\`" >> "$OUT_DIR/RELEASE-NOTES.md"
-echo "- Patched diff SHA256: \`$patched_diff_sha256\`" >> "$OUT_DIR/RELEASE-NOTES.md"
-echo "- APT snapshot: \`$apt_snapshot_id\`" >> "$OUT_DIR/RELEASE-NOTES.md"
-echo "- OCI platform manifest: \`$oci_platform_manifest\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+echo "- Docker image: \`$DOCKER_IMAGE\`"
+echo "- Container platform: \`$manifest_container_platform\`"
+echo "- Patched tree ID: \`$patched_tree_id\`"
+echo "- Patched diff SHA256: \`$patched_diff_sha256\`"
+echo "- APT snapshot: \`$apt_snapshot_id\`"
+echo "- OCI platform manifest: \`$oci_platform_manifest\`"
 
-echo "- Ordered patch count: \`$patch_count\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+echo "- Ordered patch count: \`$patch_count\`"
 
 if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
-  cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+  cat <<EOF
 - Touchscreen source URL: \`$TOUCHSCREEN_SOURCE_URL\`
 - Touchscreen source commit: \`$TOUCHSCREEN_SOURCE_REF\`
 - Touchscreen manifest: \`$TOUCHSCREEN_MODULE_MANIFEST\`
 EOF
 fi
 
-cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
+cat <<EOF
 
 These artifacts were built from recorded inputs; they are not claimed to be
 bit-for-bit reproducible. Kernel-release provenance propagation is complete,
-but publication remains blocked by the independent real-build, signing, and
-licence gates. This preparer deliberately emits no publication command.
+but publication remains blocked by the independent real-build, signing,
+recovery, corresponding-source, and release-authorization gates. The interim
+licence/UCM direction is recorded in LEGAL.md with final reviews pending; those
+reviews are disclosure obligations rather than a blanket block on newly
+authored artifacts. This preparer deliberately emits no publication command.
 EOF
+} | write_release_text_exclusive RELEASE-NOTES.md 1048576
+)" || exit 1
+register_written_output RELEASE-NOTES.md "$release_notes_record"
 
 checksummed_assets=("${upload_assets[@]}")
-for asset in "${upload_assets[@]}"; do
-  if [ ! -f "$OUT_DIR/$asset" ]; then
-    echo "Expected upload asset was not generated: $asset" >&2
-    exit 1
-  fi
-done
-if [ ! -f "$OUT_DIR/RELEASE-NOTES.md" ] || [ -L "$OUT_DIR/RELEASE-NOTES.md" ]; then
-  echo "Expected regular release notes were not generated." >&2
-  exit 1
-fi
-
-for asset in "${checksummed_assets[@]}" RELEASE-NOTES.md; do
-  append_expected_output "$OUT_DIR" "$asset"
-done
 validate_prepared_semantics "$OUT_DIR"
 verify_expected_output_bytes "$OUT_DIR"
 
-trusted_checksum_file="$PROVENANCE_SNAPSHOT_DIR/expected-kernel-SHA256SUMS"
-(
-  cd "$OUT_DIR"
-  shasum -a 256 "${checksummed_assets[@]}"
-) > "$trusted_checksum_file"
-cp "$trusted_checksum_file" "$OUT_DIR/SHA256SUMS"
-append_expected_output "$OUT_DIR" SHA256SUMS
+trusted_checksum_contents="$(
+  for asset in "${checksummed_assets[@]}"; do
+    expected_output_checksum_line "$asset"
+  done
+)"
+checksum_record="$(
+  printf '%s\n' "$trusted_checksum_contents" |
+    write_release_text_exclusive SHA256SUMS 1048576
+)" || exit 1
+register_written_output SHA256SUMS "$checksum_record"
 
 verify_final_support_state
 verify_prepared_output "$OUT_DIR"
-INSTALLED_OUTPUT_IDENTITY="$(directory_identity "$OUTPUT_STAGING_DIR")"
-OUTPUT_INSTALL_PENDING="true"
-if [ -e "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
-  if [ ! -d "$FINAL_OUT_DIR" ] || [ -L "$FINAL_OUT_DIR" ]; then
-    echo "Existing release output must be a real directory before replacement." >&2
-    exit 1
-  fi
-  PREVIOUS_OUTPUT_CONTAINER="$(mktemp -d "$release_root_abs/.${out_leaf}.previous.XXXXXX")"
-  chmod 700 "$PREVIOUS_OUTPUT_CONTAINER"
-  PREVIOUS_CONTAINER_IDENTITY="$(directory_identity "$PREVIOUS_OUTPUT_CONTAINER")"
-  PREVIOUS_OUTPUT_DIR="$PREVIOUS_OUTPUT_CONTAINER/original"
-  PREVIOUS_OUTPUT_STATE="$PREVIOUS_OUTPUT_CONTAINER/tree-state.json"
-  PREVIOUS_OUTPUT_IDENTITY="$(directory_identity "$FINAL_OUT_DIR")"
-  python3 "$release_tree_state_validator" snapshot \
-    --root "$FINAL_OUT_DIR" --snapshot "$PREVIOUS_OUTPUT_STATE" >/dev/null
-  PREVIOUS_OUTPUT_STATE_SIZE="$(file_size "$PREVIOUS_OUTPUT_STATE")"
-  PREVIOUS_OUTPUT_STATE_SHA="$(shasum -a 256 "$PREVIOUS_OUTPUT_STATE" | awk '{print $1}')"
-  if ! mv "$FINAL_OUT_DIR" "$PREVIOUS_OUTPUT_DIR"; then
-    echo "Could not retain the previous prepared release directory." >&2
-    exit 1
-  fi
-  if ! verify_previous_output_backup; then
-    echo "Previous release output changed while it was retained privately: $PREVIOUS_OUTPUT_CONTAINER" >&2
-    exit 1
-  fi
-fi
-if ! mv "$OUTPUT_STAGING_DIR" "$FINAL_OUT_DIR"; then
-  echo "Could not atomically install the prepared release directory." >&2
-  exit 1
-fi
-OUT_DIR="$FINAL_OUT_DIR"
-if [ "$(directory_identity "$OUT_DIR")" != "$INSTALLED_OUTPUT_IDENTITY" ]; then
-  echo "Installed release directory identity changed during atomic installation." >&2
-  exit 1
-fi
-verify_prepared_output "$OUT_DIR"
 verify_final_support_state
 verify_prepared_output "$OUT_DIR"
-
-OUTPUT_INSTALL_PENDING="false"
-INSTALLED_OUTPUT_IDENTITY=""
-OUTPUT_STAGING_DIR=""
-if [ -n "$PREVIOUS_OUTPUT_CONTAINER" ]; then
-  if ! verify_previous_output_backup; then
-    echo "The new release output is committed, but changed previous output was preserved for recovery: $PREVIOUS_OUTPUT_CONTAINER" >&2
-    exit 1
-  fi
-  if ! rm -rf -- "$PREVIOUS_OUTPUT_DIR" ||
-     ! rm -f -- "$PREVIOUS_OUTPUT_STATE" ||
-     ! rmdir "$PREVIOUS_OUTPUT_CONTAINER"; then
-    echo "The new release output is committed, but the retained previous output could not be removed: $PREVIOUS_OUTPUT_CONTAINER" >&2
-    exit 1
-  fi
-  PREVIOUS_OUTPUT_CONTAINER=""
-  PREVIOUS_OUTPUT_DIR=""
-fi
-
-echo "Prepared release assets in $OUT_DIR_DISPLAY"
-echo
-echo "NO-PUBLISH: kernel-release propagation is complete, but independent release gates remain open."
-if [ "$SOURCE_ASSET_COUNT" -eq 0 ] || [ "$dirty" = "true" ]; then
-  echo "This is a local draft only."
-  if [ "$SOURCE_ASSET_COUNT" -eq 0 ]; then
-    echo "Rerun with --source-asset before publishing binaries."
-  fi
-  if [ "$dirty" = "true" ]; then
-    echo "Rerun from a clean support repository before publishing binaries."
-  fi
+verify_retained_evidence_tar
+if [ "$SOURCE_ASSET_COUNT" -eq 0 ] && [ "$dirty" = "true" ]; then
+  completion_mode=draft-both
+elif [ "$SOURCE_ASSET_COUNT" -eq 0 ]; then
+  completion_mode=draft-source
+elif [ "$dirty" = "true" ]; then
+  completion_mode=draft-dirty
 else
-  echo "The source-bound candidate is ready for offline review only; no publication command was generated."
+  completion_mode=offline-review
 fi
+trap 'exit 130' HUP INT TERM
+trap '' PIPE
+if [ "$PREPARER_FIXTURE_HOOK" = signal-before-terminal-exec ]; then
+  printf 'fixture: signal-before-terminal-exec triggered\n' >&2
+  kill -TERM "$$"
+  exit 1
+fi
+verify_held_output_group "$completion_mode"
+exit 1

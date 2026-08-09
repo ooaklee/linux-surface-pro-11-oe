@@ -60,6 +60,57 @@ HOME="$hostile_home" GIT_CONFIG_GLOBAL="$hostile_home/.gitconfig" \
 grep -Fq "Kernel tree ID: $kernel_tree" "$temporary_root/kernel-valid.log" ||
   die "valid raw kernel tree identity was not reported"
 
+# A Git archive containing a tracked-link chain and a contained dangling link
+# proves that component expansion is precise rather than a blanket link ban.
+safe_chain_repo="$temporary_root/kernel-safe-chain"
+mkdir -p "$safe_chain_repo/dir"
+git -C "$safe_chain_repo" init --quiet --initial-branch=fixture
+git -C "$safe_chain_repo" config user.name 'SP11 source fixture'
+git -C "$safe_chain_repo" config user.email 'sp11-source@example.invalid'
+printf 'safe chain target\n' > "$safe_chain_repo/dir/target"
+ln -s dir "$safe_chain_repo/a"
+ln -s a/target "$safe_chain_repo/b"
+ln -s missing/child "$safe_chain_repo/dangling"
+ln -s a/../a/target "$safe_chain_repo/repeated"
+git -C "$safe_chain_repo" add .
+safe_chain_tree="$(git -C "$safe_chain_repo" write-tree)"
+safe_chain_archive="$temporary_root/safe-chain-patched-source.tar.xz"
+git -C "$safe_chain_repo" archive \
+  --format=tar --prefix=safe-chain-source/ "$safe_chain_tree" |
+  xz --threads=1 -6 > "$safe_chain_archive"
+run_validator kernel --archive "$safe_chain_archive" \
+  --expected-tree "$safe_chain_tree" > "$temporary_root/safe-chain-valid.log"
+grep -Fq "Kernel tree ID: $safe_chain_tree" \
+  "$temporary_root/safe-chain-valid.log" ||
+  die "safe symbolic-link composition failed archive validation"
+
+limit_chain_repo="$temporary_root/kernel-limit-chain"
+mkdir "$limit_chain_repo"
+git -C "$limit_chain_repo" init --quiet --initial-branch=fixture
+git -C "$limit_chain_repo" config user.name 'SP11 source fixture'
+git -C "$limit_chain_repo" config user.email 'sp11-source@example.invalid'
+printf 'limit target\n' > "$limit_chain_repo/target"
+for ((index = 0; index <= 256; index++)); do
+  next=$((index + 1))
+  if [ "$index" -eq 256 ]; then
+    destination=target
+  else
+    destination="link-$(printf '%03d' "$next")"
+  fi
+  ln -s "$destination" "$limit_chain_repo/link-$(printf '%03d' "$index")"
+done
+git -C "$limit_chain_repo" add .
+limit_chain_tree="$(git -C "$limit_chain_repo" write-tree)"
+limit_chain_archive="$temporary_root/limit-chain-patched-source.tar.xz"
+git -C "$limit_chain_repo" archive \
+  --format=tar --prefix=limit-chain-source/ "$limit_chain_tree" |
+  xz --threads=1 -6 > "$limit_chain_archive"
+run_validator kernel --archive "$limit_chain_archive" \
+  --expected-tree "$limit_chain_tree" > "$temporary_root/limit-chain-valid.log"
+grep -Fq "Kernel tree ID: $limit_chain_tree" \
+  "$temporary_root/limit-chain-valid.log" ||
+  die "exact symbolic-link expansion limit failed archive validation"
+
 if python3 "$validator" kernel --archive "$kernel_archive" \
     --expected-tree "$kernel_tree" > "$temporary_root/nonisolated.log" 2>&1; then
   die "source archive validator accepted non-isolated Python startup"
@@ -247,6 +298,31 @@ archive("symlink-parent-patched-source.tar.xz", [
     ("symlink", "source/link", "target"),
     ("file", "source/link/child", "unsafe"),
 ])
+archive("symlink-composed-escape-patched-source.tar.xz", [
+    ("dir", "source", ""),
+    ("symlink", "source/a", "."),
+    ("dir", "source/x", ""),
+    ("symlink", "source/x/s", "../a/../outside"),
+])
+archive("symlink-cycle-patched-source.tar.xz", [
+    ("dir", "source", ""),
+    ("symlink", "source/a", "b"),
+    ("symlink", "source/b", "a"),
+])
+over_limit_links = [("dir", "source", ""), ("file", "source/target", "target")]
+for index in range(258):
+    destination = "target" if index == 257 else f"link-{index + 1:03d}"
+    over_limit_links.append(
+        ("symlink", f"source/link-{index:03d}", destination)
+    )
+archive("symlink-over-limit-patched-source.tar.xz", over_limit_links)
+many_dot_links = [("dir", "source", "")]
+many_dot_target = "./" * 2047 + "x"
+for index in range(300):
+    many_dot_links.append(
+        ("symlink", f"source/work-{index:03d}", many_dot_target)
+    )
+archive("symlink-many-dot-work-patched-source.tar.xz", many_dot_links)
 archive("dot-git-patched-source.tar.xz", [
     ("dir", "source", ""),
     ("dir", "source/.git", ""),
@@ -470,6 +546,10 @@ expect_kernel_failure "$temporary_root/traversal-patched-source.tar.xz" path
 expect_kernel_failure "$temporary_root/multi-root-patched-source.tar.xz" top-level
 expect_kernel_failure "$temporary_root/symlink-escape-patched-source.tar.xz" escapes
 expect_kernel_failure "$temporary_root/symlink-parent-patched-source.tar.xz" symlink
+expect_kernel_failure "$temporary_root/symlink-composed-escape-patched-source.tar.xz" escapes
+expect_kernel_failure "$temporary_root/symlink-cycle-patched-source.tar.xz" cycle
+expect_kernel_failure "$temporary_root/symlink-over-limit-patched-source.tar.xz" 'expansion limit'
+expect_kernel_failure "$temporary_root/symlink-many-dot-work-patched-source.tar.xz" 'aggregate work limit'
 expect_kernel_failure "$temporary_root/dot-git-patched-source.tar.xz" .git
 expect_kernel_failure "$temporary_root/hardlink-patched-source.tar.xz" non-file
 expect_kernel_failure "$temporary_root/untrusted-pax-patched-source.tar.xz" pax

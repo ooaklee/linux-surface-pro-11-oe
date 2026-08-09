@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import hashlib
 import lzma
 import os
@@ -27,6 +28,9 @@ MAX_PATH_COMPONENTS = 64
 MAX_TOTAL_PATH_COMPONENTS = 1_000_000
 MAX_TOTAL_PATH_AND_LINK_BYTES = 64 * 1024 * 1024
 MAX_TREE_CONTENT_BYTES = 32 * 1024 * 1024
+MAX_SYMLINK_EXPANSIONS = 256
+MAX_SYMLINK_RESOLUTION_STEPS = 1_000_000
+MAX_SYMLINK_LIVE_BYTES = 4096
 COPY_CHUNK_BYTES = 1024 * 1024
 MAX_ZERO_TAIL_BYTES = 1024 * 1024
 MAX_XZ_DECODER_MEMORY = 256 * 1024 * 1024
@@ -298,6 +302,153 @@ def canonical_member_name(raw_name: str) -> tuple[str, tuple[str, ...]]:
     return name, parts
 
 
+def component_byte_size(component: str) -> int:
+    return len(component.encode("utf-8", "surrogateescape"))
+
+
+def validate_raw_symlink_containment(
+    member: ArchiveMember,
+    parent: tuple[str, ...],
+    aggregate_steps: list[int],
+) -> tuple[tuple[str, ...], int]:
+    assert member.linkname is not None
+    if member.linkname.startswith("/"):
+        raise ValidationError(
+            f"archive symlink escapes the top-level root: {member.name}"
+        )
+    target_components = tuple(member.linkname.split("/"))
+    resolved = list(parent)
+    for component in target_components:
+        aggregate_steps[0] += 1
+        if aggregate_steps[0] > MAX_SYMLINK_RESOLUTION_STEPS:
+            raise ValidationError(
+                "archive symbolic-link resolution exceeded its aggregate work limit"
+            )
+        if component in ("", "."):
+            continue
+        if component == "..":
+            if not resolved:
+                raise ValidationError(
+                    f"archive symlink escapes the top-level root: {member.name}"
+                )
+            resolved.pop()
+        else:
+            resolved.append(component)
+    return target_components, sum(component_byte_size(item) for item in target_components)
+
+
+def validate_composed_symlink_containment(
+    member: ArchiveMember,
+    namespace: dict[tuple[str, ...], ArchiveMember],
+    link_targets: dict[tuple[str, ...], tuple[tuple[str, ...], int]],
+    aggregate_steps: list[int],
+) -> None:
+    """Expand archive-member symlinks using only the validated archive namespace."""
+
+    assert member.linkname is not None
+    resolved = list(member.parts[1:-1])
+    target_components, target_component_bytes = link_targets[member.parts[1:]]
+    pending = deque(target_components)
+    resolved_component_bytes = sum(component_byte_size(item) for item in resolved)
+    pending_component_bytes = target_component_bytes
+    pending_component_count = len(target_components)
+    active_links: set[tuple[str, ...]] = set()
+    expansions = 0
+
+    while pending:
+        aggregate_steps[0] += 1
+        if aggregate_steps[0] > MAX_SYMLINK_RESOLUTION_STEPS:
+            raise ValidationError(
+                "archive symbolic-link resolution exceeded its aggregate work limit"
+            )
+        live_components = len(resolved) + pending_component_count
+        live_bytes = (
+            resolved_component_bytes
+            + pending_component_bytes
+            + max(live_components - 1, 0)
+        )
+        if len(resolved) > MAX_PATH_COMPONENTS or live_bytes > MAX_SYMLINK_LIVE_BYTES:
+            raise ValidationError(
+                f"archive symbolic-link resolution exceeded its path limit: {member.name}"
+            )
+
+        component = pending.popleft()
+        if isinstance(component, tuple):
+            active_links.remove(component)
+            continue
+        pending_component_count -= 1
+        pending_component_bytes -= component_byte_size(component)
+        if component in ("", "."):
+            continue
+        if component == "..":
+            if not resolved:
+                raise ValidationError(
+                    f"archive symlink escapes the top-level root: {member.name}"
+                )
+            removed = resolved.pop()
+            resolved_component_bytes -= component_byte_size(removed)
+            continue
+
+        candidate_parts = (*resolved, component)
+        if len(candidate_parts) > MAX_PATH_COMPONENTS:
+            raise ValidationError(
+                f"archive symbolic-link resolution exceeded its path limit: {member.name}"
+            )
+        candidate = namespace.get(candidate_parts)
+        if candidate is not None and candidate.kind == "symlink":
+            assert candidate.linkname is not None
+            if candidate_parts in active_links:
+                raise ValidationError(
+                    f"archive symbolic-link resolution contains a cycle: {member.name}"
+                )
+            active_links.add(candidate_parts)
+            expansions += 1
+            if expansions > MAX_SYMLINK_EXPANSIONS:
+                raise ValidationError(
+                    f"archive symbolic-link resolution exceeded its expansion limit: {member.name}"
+                )
+            nested_components, nested_component_bytes = link_targets[candidate_parts]
+            pending.appendleft(candidate_parts)
+            pending.extendleft(reversed(nested_components))
+            pending_component_count += len(nested_components)
+            pending_component_bytes += nested_component_bytes
+            continue
+
+        # Missing members and known non-directories stop real path lookup. The
+        # preceding raw lexical pass proves their remaining text cannot leave
+        # the archive root without expanding another tracked symbolic link.
+        if candidate is None or candidate.kind != "directory":
+            return
+        resolved.append(component)
+        resolved_component_bytes += component_byte_size(component)
+
+    if len(resolved) > MAX_PATH_COMPONENTS:
+        raise ValidationError(
+            f"archive symbolic-link resolution exceeded its path limit: {member.name}"
+        )
+
+
+def validate_archive_symlink_containment(
+    members: list[ArchiveMember], root: str
+) -> None:
+    namespace = {
+        member.parts[1:]: member
+        for member in members
+        if member.name != root
+    }
+    links = [member for member in members if member.kind == "symlink"]
+    link_targets = {}
+    aggregate_steps = [0]
+    for member in links:
+        link_targets[member.parts[1:]] = validate_raw_symlink_containment(
+            member, member.parts[1:-1], aggregate_steps
+        )
+    for member in links:
+        validate_composed_symlink_containment(
+            member, namespace, link_targets, aggregate_steps
+        )
+
+
 def allowed_global_pax_headers(headers: dict[str, str], expected_comment: str | None) -> bool:
     if expected_comment is None:
         return not headers
@@ -503,11 +654,7 @@ def read_members(
                 raise ValidationError(f"archive member traverses a symlink parent: {name}")
             if kinds.get(parent) != "directory":
                 raise ValidationError(f"archive member has a non-directory parent: {name}")
-        if member.kind == "symlink":
-            assert member.linkname is not None
-            target = posixpath.normpath(posixpath.join(posixpath.dirname(name), member.linkname))
-            if target != root and not target.startswith(root + "/"):
-                raise ValidationError(f"archive symlink escapes the top-level root: {name}")
+    validate_archive_symlink_containment(members, root)
 
     for member in members:
         name = member.name

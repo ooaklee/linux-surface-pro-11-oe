@@ -8,6 +8,8 @@ import hashlib
 import ipaddress
 import os
 import re
+import signal
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -61,6 +63,8 @@ BUILD_INPUT_ROLES = (
     "apt-provenance-v1",
 )
 ATTACHED_BASELINE = "config/kernel-baselines/7.2-rc5-jg-0.env"
+FIXED_BUILD_ONLY_GIT = "/usr/bin/git"
+GIT_EXECUTABLE = "git"
 
 
 class ValidationError(Exception):
@@ -243,10 +247,28 @@ def isolated_git_environment() -> dict[str, str]:
     return environment
 
 
+def establish_child_wait_authority() -> None:
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, ValueError) as exc:
+        raise ValidationError(
+            "could not establish manifest-validator child wait authority"
+        ) from exc
+    require_child_wait_authority()
+
+
+def require_child_wait_authority() -> None:
+    require(
+        signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
+        "manifest-validator child wait authority changed",
+    )
+
+
 def run_git(repo: Path, arguments: list[str], *, binary: bool = False) -> bytes | str:
+    require_child_wait_authority()
     try:
         result = subprocess.run(
-            ["git", "-c", f"safe.directory={repo}", "-C", str(repo), *arguments],
+            [GIT_EXECUTABLE, "-c", f"safe.directory={repo}", "-C", str(repo), *arguments],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -294,10 +316,12 @@ def validate_attached_build_inputs(
     baseline = repo / ATTACHED_BASELINE
     regular_input(helper, "attached build-input validator")
     regular_input(baseline, "kernel baseline")
+    require_child_wait_authority()
     try:
         result = subprocess.run(
             [
                 sys.executable,
+                "-I",
                 str(helper),
                 "validate-attached",
                 "--baseline",
@@ -711,6 +735,7 @@ def validate_release(
     build_inputs: Path,
     kernel_source: Path,
     touchscreen_source: Path | None,
+    retained_evidence: Path | None = None,
 ) -> dict[str, str]:
     debs = build["debs"]
     assert isinstance(debs, list)
@@ -771,6 +796,20 @@ def validate_release(
         "OCI platform manifest",
         "Publication state",
     }
+    retained_evidence_labels = {
+        "Retained evidence schema",
+        "Retained evidence tar",
+        "Retained evidence tar size",
+        "Retained evidence tar SHA256",
+        "Retained evidence disposition",
+    }
+    has_retained_evidence = bool(retained_evidence_labels & manifest.top_labels)
+    if has_retained_evidence:
+        require(
+            retained_evidence_labels <= manifest.top_labels,
+            "kernel release manifest has an incomplete retained-evidence record",
+        )
+        scalar_labels.update(retained_evidence_labels)
     dynamic_labels = {
         label
         for index in range(1, len(debs) + 1)
@@ -816,6 +855,19 @@ def validate_release(
         "Build inputs SHA256",
         "Build envelope creation propagation",
         "Kernel release propagation",
+    ]
+    if has_retained_evidence:
+        ordered_labels.extend(
+            (
+                "Retained evidence schema",
+                "Retained evidence tar",
+                "Retained evidence tar size",
+                "Retained evidence tar SHA256",
+                "Retained evidence disposition",
+            )
+        )
+    ordered_labels.extend(
+        [
         "OCI index image",
         "OCI index digest",
         "OCI platform",
@@ -845,7 +897,8 @@ def validate_release(
         "Signing certificate fingerprint",
         "Signing certificate serial",
         "Package count",
-    ]
+        ]
+    )
     for index in range(1, len(debs) + 1):
         ordered_labels.extend((f"Package {index} file", f"Package {index} SHA256"))
     ordered_labels.extend(
@@ -934,6 +987,30 @@ def validate_release(
         "OCI platform manifest": attached["oci_platform_manifest"],
         "Publication state": "blocked",
     }
+    if has_retained_evidence:
+        evidence_size = manifest.one("Retained evidence tar size")
+        evidence_sha = manifest.one("Retained evidence tar SHA256")
+        require(
+            evidence_size.isdigit()
+            and int(evidence_size, 10) > 0
+            and bool(SHA256.fullmatch(evidence_sha)),
+            "kernel release retained-evidence fingerprint is invalid",
+        )
+        comparisons.update(
+            {
+                "Retained evidence schema": "sp11-kernel-retained-evidence-v1",
+                "Retained evidence tar": "sp11-kernel-retained-evidence.tar",
+                "Retained evidence disposition": "local-validation-input",
+            }
+        )
+        if retained_evidence is not None:
+            regular_input(retained_evidence, "retained release evidence tar")
+            comparisons.update(
+                {
+                    "Retained evidence tar size": str(retained_evidence.stat().st_size),
+                    "Retained evidence tar SHA256": sha256_file(retained_evidence),
+                }
+            )
     if touchscreen_source is not None:
         comparisons.update(
             {
@@ -1145,6 +1222,20 @@ def regular_input(path: Path, label: str) -> None:
     )
 
 
+def require_fixed_build_only_git() -> None:
+    try:
+        metadata = os.lstat(FIXED_BUILD_ONLY_GIT)
+    except OSError as exc:
+        raise ValidationError(f"fixed build-only Git executable is unavailable: {exc}") from exc
+    require(
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == 0
+        and stat.S_IMODE(metadata.st_mode) & 0o111 != 0
+        and stat.S_IMODE(metadata.st_mode) & 0o022 == 0,
+        "fixed build-only Git executable has an unsafe identity or mode",
+    )
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-dir", required=True, type=Path)
@@ -1160,13 +1251,25 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--build-inputs", type=Path)
     parser.add_argument("--touchscreen-module-manifest", type=Path)
     parser.add_argument("--kernel-source", type=Path)
+    parser.add_argument("--retained-evidence", type=Path)
     parser.add_argument("--touchscreen-source", type=Path)
     parser.add_argument("--expected-payload-out", type=Path)
+    parser.add_argument("--no-expected-payload-output", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
+    global GIT_EXECUTABLE
+
+    require(
+        sys.flags.isolated == 1,
+        "manifest validation requires isolated Python startup",
+    )
+    establish_child_wait_authority()
     args = parse_arguments()
+    if args.build_only:
+        require_fixed_build_only_git()
+        GIT_EXECUTABLE = FIXED_BUILD_ONLY_GIT
     support_commit = args.support_commit.lower()
     require(bool(OID.fullmatch(support_commit)), "support commit is not an exact Git object ID")
     regular_input(args.kernel_build_manifest, "kernel build manifest")
@@ -1222,10 +1325,12 @@ def main() -> int:
             require(path is not None, f"{label} is required")
             assert path is not None
             regular_input(path, label)
-        require(args.expected_payload_out is not None, "expected payload output is required")
+        require(
+            (args.expected_payload_out is not None) != args.no_expected_payload_output,
+            "choose exactly one expected-payload output mode",
+        )
         assert args.kernel_release_manifest is not None
         assert args.kernel_source is not None
-        assert args.expected_payload_out is not None
         validate_release(
             Manifest(args.kernel_release_manifest),
             build,
@@ -1235,8 +1340,10 @@ def main() -> int:
             args.build_inputs,
             args.kernel_source,
             None,
+            args.retained_evidence,
         )
-        write_expected_payload(args.expected_payload_out, build)
+        if args.expected_payload_out is not None:
+            write_expected_payload(args.expected_payload_out, build)
         print("Validated complete schema-v2 kernel release manifest bindings.")
         return 0
 
@@ -1257,12 +1364,14 @@ def main() -> int:
         require(path is not None, f"{label} is required")
         assert path is not None
         regular_input(path, label)
-    require(args.expected_payload_out is not None, "expected payload output is required")
+    require(
+        (args.expected_payload_out is not None) != args.no_expected_payload_output,
+        "choose exactly one expected-payload output mode",
+    )
     assert args.kernel_release_manifest is not None
     assert args.touchscreen_module_manifest is not None
     assert args.kernel_source is not None
     assert args.touchscreen_source is not None
-    assert args.expected_payload_out is not None
     release = validate_release(
         Manifest(args.kernel_release_manifest),
         build,
@@ -1272,6 +1381,7 @@ def main() -> int:
         args.build_inputs,
         args.kernel_source,
         args.touchscreen_source,
+        args.retained_evidence,
     )
     module_shas = validate_module(
         Manifest(args.touchscreen_module_manifest),
@@ -1279,12 +1389,13 @@ def main() -> int:
         release,
         support_commit,
     )
-    write_expected_payload(
-        args.expected_payload_out,
-        build,
-        module_shas,
-        args.touchscreen_module_manifest,
-    )
+    if args.expected_payload_out is not None:
+        write_expected_payload(
+            args.expected_payload_out,
+            build,
+            module_shas,
+            args.touchscreen_module_manifest,
+        )
     print("Validated complete schema-v2 image release manifest bindings.")
     return 0
 

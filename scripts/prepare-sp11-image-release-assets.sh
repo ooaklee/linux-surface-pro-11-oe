@@ -52,6 +52,9 @@ PREVIOUS_OUTPUT_PATH=""
 PREVIOUS_OUTPUT_IDENTITY=""
 PREVIOUS_OUTPUT_TREE=""
 SOURCE_BINDING_IMAGE="ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03"
+KERNEL_CANDIDATE_ROOT_FD=55
+KERNEL_CANDIDATE_ROOT=""
+KERNEL_CANDIDATE_ROOT_STATE=""
 
 MANIFEST_NAME="sp11-live-image-release-manifest.txt"
 OUTLINE_NAME="sp11-live-image-outline.txt"
@@ -127,6 +130,106 @@ require_arg() {
     usage >&2
     exit 2
   fi
+}
+
+kernel_candidate_root_state() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+descriptor = os.open(
+    sys.argv[1],
+    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+)
+try:
+    held = os.fstat(descriptor)
+    mapped = os.stat(sys.argv[1], follow_symlinks=False)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or stat.S_IMODE(held.st_mode) != 0o500
+        or held.st_uid != os.geteuid()
+        or stable(held) != stable(mapped)
+    ):
+        raise RuntimeError
+    print(*stable(held))
+finally:
+    os.close(descriptor)
+' "$1"
+}
+
+verify_kernel_candidate_root() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+expected = tuple(int(value, 10) for value in sys.argv[3:12])
+held = os.fstat(int(sys.argv[1], 10))
+mapped = os.stat(sys.argv[2], follow_symlinks=False)
+stable = lambda value: (
+    value.st_dev,
+    value.st_ino,
+    value.st_mode,
+    value.st_size,
+    value.st_mtime_ns,
+    value.st_ctime_ns,
+    value.st_nlink,
+    value.st_uid,
+    value.st_gid,
+)
+if (
+    not stat.S_ISDIR(held.st_mode)
+    or stat.S_IMODE(held.st_mode) != 0o500
+    or held.st_uid != os.geteuid()
+    or stable(held) != expected
+    or stable(mapped) != expected
+):
+    raise SystemExit(1)
+' "$KERNEL_CANDIDATE_ROOT_FD" "$KERNEL_CANDIDATE_ROOT" \
+    $KERNEL_CANDIDATE_ROOT_STATE
+}
+
+verify_kernel_candidate_member() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+root = int(sys.argv[1], 10)
+root_path = sys.argv[2]
+path = sys.argv[3]
+name = os.path.basename(path)
+if not name or path != os.path.join(root_path, name):
+    raise SystemExit(1)
+descriptor = os.open(
+    name,
+    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+    dir_fd=root,
+)
+try:
+    held = os.fstat(descriptor)
+    mapped = os.stat(path, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(held.st_mode)
+        or held.st_nlink != 1
+        or (held.st_dev, held.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise RuntimeError
+finally:
+    os.close(descriptor)
+' "$KERNEL_CANDIDATE_ROOT_FD" "$KERNEL_CANDIDATE_ROOT" "$1"
 }
 
 file_size() {
@@ -766,6 +869,58 @@ if [ "$binding_complete" = "true" ]; then
   done
 fi
 
+if [ "$source_complete" = "true" ] && [ "$binding_complete" = "true" ]; then
+  kernel_candidate_inputs=(
+    "$KERNEL_SOURCE_ASSET"
+    "$TOUCHSCREEN_SOURCE_ASSET"
+    "$KERNEL_BUILD_MANIFEST"
+    "$KERNEL_RELEASE_MANIFEST"
+    "$APT_PROVENANCE"
+    "$BUILD_INPUTS"
+    "$TOUCHSCREEN_MODULE_MANIFEST"
+  )
+  KERNEL_CANDIDATE_ROOT="$(dirname "${kernel_candidate_inputs[0]}")"
+  for kernel_candidate_input in "${kernel_candidate_inputs[@]}"; do
+    if [ "$(dirname "$kernel_candidate_input")" != "$KERNEL_CANDIDATE_ROOT" ]; then
+      echo "Kernel candidate inputs must share one committed release root." >&2
+      exit 1
+    fi
+  done
+  KERNEL_CANDIDATE_ROOT_STATE="$(
+    kernel_candidate_root_state "$KERNEL_CANDIDATE_ROOT"
+  )" || {
+    echo "Kernel candidate root must be an exact host-owned mode-0500 directory." >&2
+    exit 1
+  }
+  kernel_candidate_previous_directory="$(pwd -P)"
+  cd "$KERNEL_CANDIDATE_ROOT" || {
+    echo "Could not enter the committed kernel candidate root." >&2
+    exit 1
+  }
+  exec 55< .
+  cd "$kernel_candidate_previous_directory" || {
+    echo "Could not restore the image-release preparer directory." >&2
+    exit 1
+  }
+  verify_kernel_candidate_root || {
+    echo "Committed kernel candidate root mapping changed during acquisition." >&2
+    exit 1
+  }
+  for kernel_candidate_input in "${kernel_candidate_inputs[@]}"; do
+    verify_kernel_candidate_member "$kernel_candidate_input" || {
+      echo "Kernel candidate input is not bound to its committed release root." >&2
+      exit 1
+    }
+  done
+  kernel_release_validator="$repo_dir/scripts/validate-sp11-touchscreen-release.sh"
+  if [ ! -f "$kernel_release_validator" ] || [ -L "$kernel_release_validator" ] ||
+     ! "$kernel_release_validator" --local-prepared-candidate \
+       --dir "$KERNEL_CANDIDATE_ROOT" >/dev/null; then
+    echo "Committed local kernel candidate failed full release validation." >&2
+    exit 1
+  fi
+fi
+
 if [ ! -s "$IMAGE" ] || [ ! -f "$IMAGE" ] || [ -L "$IMAGE" ]; then
   echo "Image must be a non-empty, regular, non-symlinked file: $IMAGE" >&2
   exit 1
@@ -1022,6 +1177,19 @@ if [ "$source_complete" = "true" ] || [ "$binding_complete" = "true" ]; then
   fi
 fi
 
+if [ "$source_complete" = "true" ] && [ "$binding_complete" = "true" ]; then
+  verify_kernel_candidate_root || {
+    echo "Committed kernel candidate root changed during snapshot acquisition." >&2
+    exit 1
+  }
+  for kernel_candidate_input in "${kernel_candidate_inputs[@]}"; do
+    verify_kernel_candidate_member "$kernel_candidate_input" || {
+      echo "Committed kernel candidate input changed during snapshot acquisition." >&2
+      exit 1
+    }
+  done
+fi
+
 if [ "$source_complete" = "true" ]; then
   kernel_source_snapshot_sha="$(shasum -a 256 "$KERNEL_SOURCE_ASSET" | awk '{print $1}')"
   touchscreen_source_snapshot_sha="$(shasum -a 256 "$TOUCHSCREEN_SOURCE_ASSET" | awk '{print $1}')"
@@ -1086,7 +1254,7 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   expected_embedded_iso_sha="$(required_manifest_value "$IMAGE_BUILD_MANIFEST" "Embedded ISO SHA256")"
   expected_embedded_dtb_sha="$(required_manifest_value "$IMAGE_BUILD_MANIFEST" "Embedded DTB SHA256")"
   manifest_expected_payload="$SOURCE_SNAPSHOT_DIR/manifest-expected-payload-sha256"
-  if ! python3 "$release_manifest_validator" \
+  if ! python3 -I "$release_manifest_validator" \
       --require-current-head \
       --repo-dir "$repo_dir" \
       --support-commit "$repo_commit" \
@@ -1994,7 +2162,10 @@ Publication remains blocked. $(if [ "$VALIDATE_IMAGE" = "true" ] &&
 else
   printf '%s' 'This local draft has incomplete kernel-provenance propagation, and'
 fi) this preparation does not waive the independent real-build, signing,
-licensing, or release-authorization gates.
+recovery, corresponding-source, or release-authorization gates. The interim
+licence/UCM direction is recorded in LEGAL.md with final reviews pending; those
+reviews are disclosure obligations rather than a blanket block on newly
+authored artifacts.
 RELEASE_NOTES_END
 release_notes_sha="$(shasum -a 256 "$OUT_DIR/RELEASE-NOTES.md" | awk '{print $1}')"
 
@@ -2348,7 +2519,7 @@ verify_prepared_output() {
 
   if [ "$VALIDATE_IMAGE" = "true" ]; then
     final_expected_payload="$SOURCE_SNAPSHOT_DIR/final-expected-payload-sha256"
-    if ! python3 "$release_manifest_validator" \
+    if ! python3 -I "$release_manifest_validator" \
         --require-current-head \
         --repo-dir "$repo_dir" \
         --support-commit "$repo_commit" \
@@ -2435,6 +2606,18 @@ OUTPUT_STAGING_TREE="$(stable_directory_tree_identity "$OUTPUT_STAGING_DIR")" ||
   echo "Could not capture a stable prepared image tree before installation." >&2
   exit 1
 }
+if [ "$source_complete" = "true" ] && [ "$binding_complete" = "true" ]; then
+  verify_kernel_candidate_root || {
+    echo "Committed kernel candidate root changed before image-release installation." >&2
+    exit 1
+  }
+  for kernel_candidate_input in "${kernel_candidate_inputs[@]}"; do
+    verify_kernel_candidate_member "$kernel_candidate_input" || {
+      echo "Committed kernel candidate input changed before image-release installation." >&2
+      exit 1
+    }
+  done
+fi
 INSTALLED_OUTPUT_IDENTITY="$OUTPUT_STAGING_IDENTITY"
 INSTALLED_OUTPUT_TREE="$OUTPUT_STAGING_TREE"
 
@@ -2558,4 +2741,4 @@ if [ "$VALIDATE_IMAGE" != "true" ] || [ "$source_complete" != "true" ] ||
 else
   echo "Validated preparation only: immutable kernel provenance propagation is complete."
 fi
-echo "NO-PUBLISH: independent real-build, signing, licensing, and release-authorization gates remain open."
+echo "NO-PUBLISH: independent real-build, signing, recovery, corresponding-source, and release-authorization gates remain open; final licence/UCM reviews remain disclosed in LEGAL.md."

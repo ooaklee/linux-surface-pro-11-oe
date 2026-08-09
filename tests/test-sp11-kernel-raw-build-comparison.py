@@ -9,16 +9,18 @@ import io
 import lzma
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import threading
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import ModuleType
-from typing import Iterator
+from typing import Callable, Iterator
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -180,6 +182,7 @@ def run(
     env: dict[str, str],
     expected: int = 0,
     cwd: Path | None = None,
+    preexec_fn: Callable[[], None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         command,
@@ -189,6 +192,7 @@ def run(
         text=True,
         timeout=180,
         cwd=cwd,
+        preexec_fn=preexec_fn,
     )
     if completed.returncode != expected:
         print(completed.stdout, end="", file=sys.stderr)
@@ -214,10 +218,11 @@ def replaced_environment(environment: dict[str, str]) -> Iterator[None]:
 def invoke_loaded_main(
     comparator: ModuleType, command: list[str], environment: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
+    assert command[0] == sys.executable and command[1] == "-I"
     stdout = io.StringIO()
     stderr = io.StringIO()
     with replaced_environment(environment), redirect_stdout(stdout), redirect_stderr(stderr):
-        return_code = comparator.main(command[2:])
+        return_code = comparator.main(command[3:])
     return subprocess.CompletedProcess(
         command, return_code, stdout.getvalue(), stderr.getvalue()
     )
@@ -465,12 +470,33 @@ class PairFixture:
         output_override: dict[str, tuple[int, str]] | None = None,
         scalar_override: dict[str, str] | None = None,
     ) -> None:
+        envelope = work / "artifacts/sp11-kernel-build-inputs.txt"
+        if os.path.lexists(envelope):
+            metadata = envelope.lstat()
+            assert stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1
+            assert work == self.apt.work or work.parent == self.root
+            # The clone belongs wholly to this fixture.  Retire only its exact
+            # creation-owned envelope before intentionally asking the O_EXCL
+            # writer to regenerate it; no product cleanup or overwrite path is
+            # weakened by this test plumbing.
+            envelope.unlink()
         self.write_manifest(
             work,
             output_override=output_override,
             scalar_override=scalar_override,
         )
-        run(self.envelope_command(work), env=self.env())
+        command = self.envelope_command(work)
+        run(command, env=self.env())
+        metadata = envelope.lstat()
+        assert (
+            stat.S_ISREG(metadata.st_mode)
+            and stat.S_IMODE(metadata.st_mode) == 0o644
+            and metadata.st_nlink == 1
+            and metadata.st_size > 0
+        )
+        attached = command.copy()
+        attached[2] = "validate-attached"
+        run(attached, env=self.env())
 
     def prepare_work(self, work: Path) -> None:
         self.install_kernel_debs(work)
@@ -486,6 +512,7 @@ class PairFixture:
     def command(self, build_a: Path, build_b: Path) -> list[str]:
         return [
             sys.executable,
+            "-I",
             str(self.comparator),
             "--baseline",
             str(self.baseline),
@@ -962,6 +989,7 @@ def baseline_report_sanitization_cases(fixture: PairFixture) -> None:
         support_head = git(support, "rev-parse", "--verify", "HEAD^{commit}")
         command = [
             sys.executable,
+            "-I",
             str(support / "scripts/compare-sp11-kernel-raw-builds.py"),
             "--baseline",
             str(baseline),
@@ -1386,13 +1414,32 @@ def failed_setup_subtree_preservation_cases(fixture: PairFixture) -> None:
 
     def invoke_fifo_case() -> None:
         try:
-            fifo_results.append(
-                invoke_loaded_main(
-                    fifo_comparator,
-                    fixture.command(fixture.build_a, fixture.build_b),
-                    fixture.env(),
-                )
-            )
+            command = fixture.command(fixture.build_a, fixture.build_b)
+            with replaced_environment(fixture.env()):
+                try:
+                    unexpected = fifo_comparator.compare_pair(
+                        fixture.baseline,
+                        fixture.support,
+                        fixture.support_head,
+                        fixture.build_a,
+                        fixture.build_b,
+                    )
+                except Exception:
+                    fifo_results.append(
+                        subprocess.CompletedProcess(
+                            command,
+                            2,
+                            "",
+                            GENERIC_ERROR,
+                        )
+                    )
+                else:
+                    try:
+                        fifo_comparator.close_comparison(unexpected)
+                    finally:
+                        raise AssertionError(
+                            "expected-name FIFO fixture was accepted"
+                        )
         except BaseException as exc:
             fifo_errors.append(exc)
 
@@ -1822,10 +1869,308 @@ def real_zstd_and_path_binding_cases(fixture: PairFixture) -> None:
             shutil.rmtree(preserved_original)
 
 
+def external_decoder_supervisor_cases(fixture: PairFixture) -> None:
+    tool_root = fixture.root / "hostile-comparator-decoder"
+    tool_root.mkdir()
+    decoder = tool_root / "decoder"
+    decoder.write_text(
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import os
+            import sys
+            import time
+
+            mode = os.environ["SP11_DECODER_BEHAVIOR"]
+            if mode == "small-stderr":
+                os.write(2, b"legitimate decoder warning\\n")
+                os.write(1, b"x")
+            elif mode == "oversize":
+                os.write(1, b"xx")
+            elif mode == "infinite-stdout":
+                while True:
+                    os.write(1, b"x" * 65536)
+            elif mode == "stderr-flood":
+                os.write(1, b"x")
+                while True:
+                    os.write(2, b"e" * 65536)
+            elif mode == "total-timeout":
+                while True:
+                    os.write(2, b"progress")
+                    time.sleep(0.05)
+            elif mode in {{"hang", "pending-signal"}}:
+                while True:
+                    time.sleep(10)
+            elif mode == "interrupt":
+                os.write(1, b"x")
+                while True:
+                    time.sleep(10)
+            elif mode in {{"wait-return-signal", "internal-wait-signal"}}:
+                os.write(1, b"x")
+            elif mode == "nonzero-after-eof":
+                os.write(1, b"x")
+                raise SystemExit(7)
+            elif mode == "digest-mismatch":
+                os.write(1, b"y")
+            else:
+                raise SystemExit(99)
+            """
+        ),
+        encoding="utf-8",
+    )
+    decoder.chmod(0o500)
+    target = next(
+        path for path in (fixture.build_a / "apt-lists").iterdir() if path.is_file()
+    )
+
+    harness = textwrap.dedent(
+        """\
+        import hashlib
+        import importlib.util
+        import io
+        import os
+        from pathlib import Path
+        import signal
+        import sys
+        from types import SimpleNamespace
+
+        comparator_path = Path(sys.argv[1])
+        tool_root = Path(sys.argv[2])
+        build_root = Path(sys.argv[3])
+        target = Path(sys.argv[4])
+        mode = sys.argv[5]
+        pid_path = Path(sys.argv[6])
+        signal_marker = Path(sys.argv[7])
+        kind, behavior = mode.split("-", 1)
+        specification = importlib.util.spec_from_file_location(
+            "sp11_comparator_decoder_supervisor_fixture", comparator_path
+        )
+        assert specification is not None and specification.loader is not None
+        comparator = importlib.util.module_from_spec(specification)
+        sys.modules[specification.name] = comparator
+        specification.loader.exec_module(comparator)
+        comparator.EXTERNAL_DECODER_STDERR_MAX = 4096
+        comparator.EXTERNAL_DECODER_TOTAL_TIMEOUT_SECONDS = 0.8
+        comparator.EXTERNAL_DECODER_IDLE_TIMEOUT_SECONDS = 0.2
+        comparator.EXTERNAL_DECODER_STOP_TIMEOUT_SECONDS = 0.2
+
+        child_environment = {
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "SP11_DECODER_BEHAVIOR": behavior,
+        }
+        comparator.verify_bound_tool = lambda _tool: None
+        comparator.private_tool_launch_barrier = lambda _tool: None
+        comparator.bound_tool_environment = lambda _tool: dict(child_environment)
+
+        original_popen = comparator.subprocess.Popen
+        def recording_popen(*arguments, **keywords):
+            child = original_popen(*arguments, **keywords)
+            descriptor = os.open(
+                pid_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            try:
+                os.write(descriptor, (str(child.pid) + "\\n").encode("ascii"))
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            if behavior == "pending-signal":
+                signal_marker.write_text("pending signal sent\\n", encoding="ascii")
+                os.kill(os.getpid(), signal.SIGTERM)
+            elif behavior == "wait-return-signal":
+                original_wait = child.wait
+                sent = False
+                def signalling_wait(*wait_arguments, **wait_keywords):
+                    nonlocal sent
+                    result = original_wait(*wait_arguments, **wait_keywords)
+                    if not sent:
+                        sent = True
+                        with signal_marker.open("a", encoding="ascii") as marker:
+                            marker.write("wait-return signal sent\\n")
+                        os.kill(os.getpid(), signal.SIGTERM)
+                    return result
+                child.wait = signalling_wait
+            elif behavior == "internal-wait-signal":
+                def internal_wait(*_arguments, **_keywords):
+                    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, ())
+                    if signal.SIGTERM not in blocked:
+                        raise AssertionError("terminal wait signal mask was not blocked")
+                    waited_pid, wait_status = os.waitpid(child.pid, 0)
+                    if waited_pid != child.pid:
+                        raise AssertionError("waitpid returned an unexpected child")
+                    with signal_marker.open("a", encoding="ascii") as marker:
+                        marker.write("internal wait signal sent\\n")
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    child.returncode = os.waitstatus_to_exitcode(wait_status)
+                    return child.returncode
+                child.wait = internal_wait
+            return child
+        comparator.subprocess.Popen = recording_popen
+
+        if behavior == "interrupt":
+            original_selector = comparator.selectors.DefaultSelector
+            class InterruptingSelector:
+                def __init__(self):
+                    self._selector = original_selector()
+                    self._sent = False
+                def __getattr__(self, name):
+                    return getattr(self._selector, name)
+                def select(self, timeout=None):
+                    if not self._sent:
+                        self._sent = True
+                        events = self._selector.select(timeout)
+                        signal_marker.write_text(
+                            "selector interrupt sent\\n", encoding="ascii"
+                        )
+                        os.kill(os.getpid(), signal.SIGTERM)
+                        return events
+                    return self._selector.select(timeout)
+            comparator.selectors.DefaultSelector = InterruptingSelector
+
+        if behavior in {
+            "wait-return-signal",
+            "internal-wait-signal",
+            "nonzero-after-eof",
+            "digest-mismatch",
+        }:
+            def forbidden_killpg(_pid, _signal):
+                with signal_marker.open("a", encoding="ascii") as marker:
+                    marker.write("killpg called after exact child reap\\n")
+            comparator.os.killpg = forbidden_killpg
+
+        tool_descriptor = os.open(tool_root, os.O_RDONLY | os.O_DIRECTORY)
+        build_descriptor = os.open(build_root, os.O_RDONLY | os.O_DIRECTORY)
+        tool = SimpleNamespace(
+            relative="./decoder",
+            root_descriptor=tool_descriptor,
+        )
+        expected = (1, hashlib.sha256(b"x").hexdigest())
+        try:
+            if kind == "apt":
+                result = comparator.bound_apt_list_identity(
+                    target,
+                    {},
+                    SimpleNamespace(tools={"lz4": tool}),
+                    SimpleNamespace(root_descriptor=build_descriptor),
+                    expected,
+                )
+            elif kind == "zstd":
+                with comparator.bounded_zstd_stream(
+                    io.BytesIO(b"compressed fixture"), tool, 1
+                ) as stream:
+                    result = stream.read()
+            else:
+                raise AssertionError("unknown comparator decoder fixture kind")
+        except comparator.ValidationError:
+            if behavior == "small-stderr":
+                raise
+            print("comparator-decoder-refused:" + mode)
+        else:
+            wanted = expected if kind == "apt" else b"x"
+            if behavior != "small-stderr" or result != wanted:
+                raise AssertionError("hostile comparator decoder was accepted")
+            print("comparator-decoder-accepted-small-stderr:" + kind)
+        finally:
+            os.close(build_descriptor)
+            os.close(tool_descriptor)
+        """
+    )
+
+    modes = (
+        "apt-small-stderr",
+        "apt-oversize",
+        "apt-infinite-stdout",
+        "apt-stderr-flood",
+        "apt-total-timeout",
+        "apt-hang",
+        "apt-interrupt",
+        "apt-pending-signal",
+        "apt-wait-return-signal",
+        "apt-internal-wait-signal",
+        "apt-nonzero-after-eof",
+        "apt-digest-mismatch",
+        "zstd-small-stderr",
+        "zstd-oversize",
+        "zstd-stderr-flood",
+        "zstd-hang",
+        "zstd-interrupt",
+        "zstd-pending-signal",
+        "zstd-wait-return-signal",
+        "zstd-internal-wait-signal",
+        "zstd-nonzero-after-eof",
+    )
+    for mode in modes:
+        pid_path = fixture.root / f"comparator-decoder-{mode}.pid"
+        signal_marker = fixture.root / f"comparator-decoder-{mode}.signals"
+        result = run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                harness,
+                str(fixture.comparator),
+                str(tool_root),
+                str(fixture.build_a),
+                str(target),
+                mode,
+                str(pid_path),
+                str(signal_marker),
+            ],
+            env=fixture.env(),
+        )
+        kind, behavior = mode.split("-", 1)
+        if behavior == "small-stderr":
+            assert f"comparator-decoder-accepted-small-stderr:{kind}" in (
+                result.stdout
+            )
+        else:
+            assert f"comparator-decoder-refused:{mode}" in result.stdout
+        assert pid_path.is_file() and not pid_path.is_symlink()
+        child_pid = int(pid_path.read_text(encoding="ascii").strip())
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            try:
+                os.killpg(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            raise AssertionError(f"comparator decoder child was not reaped: {mode}")
+        if behavior in {"nonzero-after-eof", "digest-mismatch"}:
+            assert not os.path.lexists(signal_marker)
+        elif behavior == "wait-return-signal":
+            assert signal_marker.read_text(encoding="ascii") == (
+                "wait-return signal sent\n"
+            )
+        elif behavior == "internal-wait-signal":
+            assert signal_marker.read_text(encoding="ascii") == (
+                "internal wait signal sent\n"
+            )
+        elif behavior == "interrupt":
+            assert signal_marker.read_text(encoding="ascii") == (
+                "selector interrupt sent\n"
+            )
+        elif behavior == "pending-signal":
+            assert signal_marker.read_text(encoding="ascii") == (
+                "pending signal sent\n"
+            )
+
+
 def decoder_bound_cases(fixture: PairFixture) -> None:
+    external_decoder_supervisor_cases(fixture)
     comparator = load_module(
         fixture.comparator, "_sp11_raw_pair_decoder_bound_fixture_target"
     )
+    comparator_raw = fixture.comparator.read_text(encoding="utf-8")
+    retained_validator_block = comparator_raw.split(
+        "def validate_retained_inputs(", 1
+    )[1].split("def safe_artifact_name(", 1)[0]
+    assert '"validate-release-snapshot",' in retained_validator_block
+    assert '\n        "validate",\n' not in retained_validator_block
     compressed = lzma.compress(b"bounded decoder fixture\n", format=lzma.FORMAT_XZ)
     original_limit = comparator.MAX_CONTROL_DECODE_MEMORY
     comparator.MAX_CONTROL_DECODE_MEMORY = 1024 * 1024
@@ -1860,7 +2205,9 @@ def decoder_bound_cases(fixture: PairFixture) -> None:
     comparator.zstd_command = lambda _program: ["/usr/bin/true"]
     try:
         try:
-            with comparator.bounded_zstd_stream(RaisingReader(), None) as stream:
+            with comparator.bounded_zstd_stream(
+                RaisingReader(), None, 1024
+            ) as stream:
                 stream.read()
         except comparator.ValidationError:
             pass
@@ -1873,8 +2220,24 @@ def decoder_bound_cases(fixture: PairFixture) -> None:
 
 
 def cli_shape_case(fixture: PairFixture) -> None:
-    version = run(
+    def ignore_sigchld_before_exec() -> None:
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+
+    ignored_sigchld = run(
+        fixture.command(fixture.build_a, fixture.build_b),
+        env=fixture.env(),
+        preexec_fn=ignore_sigchld_before_exec,
+    )
+    assert ignored_sigchld.stdout.endswith("Comparison completed: true\n")
+    assert ignored_sigchld.stderr == ""
+    nonisolated = run(
         [sys.executable, str(fixture.comparator), "--version"],
+        env=fixture.env(),
+        expected=2,
+    )
+    assert_sanitized_failure(nonisolated, fixture)
+    version = run(
+        [sys.executable, "-I", str(fixture.comparator), "--version"],
         env=fixture.env(),
     )
     assert (
@@ -1883,12 +2246,15 @@ def cli_shape_case(fixture: PairFixture) -> None:
     )
     assert version.stderr == ""
     missing_flag = run(
-        [sys.executable, str(fixture.comparator)], env=fixture.env(), expected=2
+        [sys.executable, "-I", str(fixture.comparator)],
+        env=fixture.env(),
+        expected=2,
     )
     assert_sanitized_failure(missing_flag, fixture)
     unknown_private = run(
         [
             sys.executable,
+            "-I",
             str(fixture.comparator),
             "--private-path-sentinel-option",
             str(fixture.root),

@@ -103,10 +103,11 @@ wpctl status
 This writes
 `~/.config/pipewire/pipewire.conf.d/50-sp11-speakers.conf`, wraps the verified
 ALSA speaker PCM (`hw:X1E80100Microso,1`), applies a channelmix matrix that
-sums stereo to mono on the audible left channels (ch0+ch1), and restarts the
-user PipeWire services. The right speaker (ch2+ch3) is silent at the kernel
-level. The matrix ensures no stereo content is lost. It is a stop-gap, not the
-final UCM fix. Remove it with:
+sums stereo to mono and reorders `audio.position` to `[ FL RL FR RR ]`, and
+restarts the user PipeWire services. The reordered positions route the mono
+sum to both speakers. This bypasses the kernel DAPM control gate; it does not
+fix that gate or provide stereo output. It is a stop-gap, not the final UCM
+fix. Remove it with:
 
 ```bash
 ./scripts/sp11-pipewire-speaker-sink.sh --remove

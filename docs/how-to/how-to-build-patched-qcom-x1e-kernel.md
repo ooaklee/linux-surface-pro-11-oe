@@ -237,6 +237,16 @@ exact platform as well as its image digest, start with a clean repository, and
 choose a new work directory and Docker volume:
 
 ```bash
+RELEASE_CHECK_WORK=build/docker-sp11-qcom-x1e-kernel-release-check
+test ! -e "$RELEASE_CHECK_WORK"
+install -d -m 0700 "$RELEASE_CHECK_WORK"
+install -d -m 0700 "$RELEASE_CHECK_WORK/artifacts"
+ARTIFACTS_FIRST_ENTRY="$(
+  find "$RELEASE_CHECK_WORK/artifacts" \
+    -mindepth 1 -maxdepth 1 -print -quit
+)" || exit 1
+test -z "$ARTIFACTS_FIRST_ENTRY"
+
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
@@ -246,7 +256,7 @@ choose a new work directory and Docker volume:
   --platform linux/arm64/v8 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
   --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-release-check \
+  --work-dir "$RELEASE_CHECK_WORK" \
   --linux-work-volume sp11-qcom-x1e-kernel-release-check \
   --reset-source \
   --release-build \
@@ -256,8 +266,13 @@ choose a new work directory and Docker volume:
 Release mode refuses `--apt-sources`. It uses the exact
 `20260807T000000Z` Ubuntu snapshot and retains the authenticated APT cache,
 signed indexes, acquired list targets, and pre/post installed-package
-inventories beneath the managed work directory. A successful run requires all
-three files below:
+inventories in the private daemon-owned release-state volume. After the build
+container has stopped, a separate network-disabled container mounts that volume
+read-only and exports the bounded canonical host record
+`sp11-kernel-retained-evidence.tar`. The host work directory therefore contains
+that tar, three bound controller files, and the flat `artifacts/` directory; it
+does not recreate the retained APT directory trees. A successful run requires
+all three files below in `artifacts/`:
 
 The pinned snapshot contains six signed, positive-size backports indexes whose
 decompressed payload is empty. APT legitimately emits no local list view for
@@ -271,16 +286,36 @@ artifacts/sp11-kernel-apt-provenance.txt
 artifacts/sp11-kernel-build-inputs.txt
 ```
 
-This P0.4c path is implemented, fixture-tested, and verified by the
-[2026-08-08 real immutable-input build](../sp11-kernel-immutable-build-evidence-20260808.md).
-That is one provenance-validated build, not a byte-reproducibility result. The
-last envelope deliberately records publication schema propagation as
-incomplete because that is its immutable build-time state. The kernel and image
+Require the imported record and its three host controls as well:
+
+```bash
+test -s "$RELEASE_CHECK_WORK/sp11-kernel-retained-evidence.tar"
+test -s "$RELEASE_CHECK_WORK/docker-build-args.txt"
+test -s "$RELEASE_CHECK_WORK/docker-build-inside.sh"
+test -s "$RELEASE_CHECK_WORK/sp11-oci-index.json"
+```
+
+Preserve `sp11-kernel-retained-evidence.tar` together with those three files.
+The release preparer validates and cross-binds the tar, the flat artifacts, and
+the controller files before it creates a local review candidate.
+
+The underlying immutable-input build and validation path has one real result in
+the [2026-08-08 build evidence](../sp11-kernel-immutable-build-evidence-20260808.md).
+That run predates the daemon-owned volume, read-only exporter, and canonical
+evidence-tar handoff described above; the new handoff has no real integration
+result yet and still requires a fresh end-to-end run. The historical result is
+one provenance-validated build, not a byte-reproducibility result. Its last
+envelope deliberately records publication schema propagation as incomplete
+because that is its immutable build-time state. The kernel and image
 preparation paths consume and validate the exact trio and record their
 propagation completion in outer manifests while keeping overall publication
 blocked. Preserve all three files byte-for-byte. Byte reproducibility, the
-release-signing decision, licence/UCM gates, recovery/hardware evidence, and
-explicit release authorization remain open.
+release-signing decision, recovery/hardware evidence, corresponding-source
+review, and explicit release authorization remain open. [`LEGAL.md`](../../LEGAL.md)
+records the interim MIT direction for project-authored code and the upstream
+ALSA/local-hardware-configuration basis for SP11 UCM; both final reviews remain
+pending, but that pending status alone does not block ordinary development or
+publication of newly authored material.
 
 #### Deterministic identity and the next raw comparison
 
@@ -298,7 +333,7 @@ retained work directories without normalization:
 ```bash
 REPO_ROOT="$(pwd -P)"
 SUPPORT_HEAD="$(git rev-parse --verify HEAD)"
-python3 ./scripts/compare-sp11-kernel-raw-builds.py \
+python3 -I ./scripts/compare-sp11-kernel-raw-builds.py \
   --baseline "$REPO_ROOT/config/kernel-baselines/7.2-rc5-jg-0.env" \
   --support-repo "$REPO_ROOT" \
   --support-head "$SUPPORT_HEAD" \
@@ -317,9 +352,46 @@ unauthorized.
 No fresh C/D pair has been built or compared since the deterministic identity
 was added. P0.4b and P0.4 overall therefore remain open, while P0.4c remains
 the single earlier real immutable-input build. The signing model still awaits
-an owner decision, and corresponding-source `git archive` normalization is a
-separate open requirement. Licence/UCM, recovery/hardware evidence, and
-explicit authorization remain **NO-PUBLISH** gates.
+an owner decision. The deterministic patched-source generator is implemented,
+but the retained 2026-08-08 exact four-patch tree was correctly rejected for an
+escaping tracked symlink; a corrected fresh build and new manifest are required
+before archive validation can resume. Recovery/hardware evidence, legal
+corresponding-source review, and explicit authorization remain **NO-PUBLISH**
+gates. The interim licence/UCM direction in [`LEGAL.md`](../../LEGAL.md) does
+not replace third-party per-file terms or the pending final reviews, but those
+reviews are no longer blanket publication gates for newly authored artifacts.
+
+The exact-tree preflight treats the digest-pinned OCI/APT toolchain as trusted
+build authority. It is not a sandbox against source rules that can mutate a
+root-writable container runtime; that stronger threat model requires a separate
+non-root or read-only-root-filesystem build design.
+
+The host-side Docker launch assumes an exclusive, trusted host controller from
+before private control/output-root creation or acquisition through bind-source
+resolution and use. After a root is acquired, release-mode writes are confined
+to held directory and creation-owned file descriptors; collisions, links,
+special nodes, persistent mapping drift, and pathname deletion or overwrite are
+rejected. This flow does not claim integrity, availability, or victim
+preservation against a concurrent process with the same host credentials
+racing root creation/acquisition or substituting a validated bind source. That
+stronger guarantee requires privilege separation or a separately reviewed
+supervisor and daemon-owned, content-addressed inputs.
+
+That trusted-controller boundary also requires exclusive use of the selected
+Docker context, socket, and daemon credentials, with no concurrent read-write
+mount or mutation of the named release-state volume from creation through
+evidence import. A daemon-owned volume is not itself immutable or
+content-addressed. Any later forensic use of the retained volume requires the
+same exclusive custody and a fresh validation; the imported evidence tar is
+the bounded host-side record of the accepted run.
+
+Host-side orchestration also assumes an exclusive trusted checkout and a
+non-hostile process environment, system toolchain, and `PATH`; it does not
+claim resistance to a malicious replacement of ordinary host utilities.
+Security-critical retained release-evidence helpers use absolute isolated
+interpreter authority and commit-bound code, while legacy orchestration
+utilities remain inside this
+explicit host-toolchain boundary.
 
 The kernel ABI carries the touchscreen device tree, but the runtime QSPI
 support ships as out-of-tree modules from the geocausa Phase 91 baseline

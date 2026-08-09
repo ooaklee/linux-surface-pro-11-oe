@@ -11,6 +11,9 @@ kernel_release_name="$release_prefix-kernel-bound"
 cleanup() {
   local recovery_dir
 
+  if [ -e "$test_root" ] && [ ! -L "$test_root" ]; then
+    chmod -R u+w -- "$test_root" 2>/dev/null || true
+  fi
   rm -rf \
     "$test_root" \
     "$repo_dir/build/$release_prefix-fixture.img" \
@@ -317,6 +320,20 @@ grep -F 'NO-PUBLISH:' "$helper" >/dev/null
 grep -F -- '--image "$IMAGE_SNAPSHOT"' "$helper" >/dev/null
 grep -F -- '-v "$IMAGE_SNAPSHOT:/image/source.img:ro"' "$helper" >/dev/null
 grep -F 'zstd -T0 -6 --force -o "$compressed_tmp" "$IMAGE_SNAPSHOT"' "$helper" >/dev/null
+[ "$(grep -Fc 'python3 -I "$release_manifest_validator"' "$helper")" -eq 2 ] || {
+  echo 'Image preparer manifest-validation calls are not exactly isolated.' >&2
+  exit 1
+}
+touchscreen_validator="$repo_dir/scripts/validate-sp11-touchscreen-release.sh"
+[ "$(grep -Fc 'python3 -I "$validator"' "$touchscreen_validator")" -eq 2 ] || {
+  echo 'Release validator manifest-validation calls are not exactly isolated.' >&2
+  exit 1
+}
+grep -F 'python3 -I "$build_inputs_validator" validate-attached' \
+  "$touchscreen_validator" >/dev/null || {
+  echo 'Release validator build-input validation is not isolated.' >&2
+  exit 1
+}
 
 kernel_repo="$test_root/kernel-repo"
 touch_repo="$test_root/touch-repo"
@@ -1116,8 +1133,7 @@ export FIXTURE_REAL_MV="$real_mv"
 export FIXTURE_REAL_RM="$real_rm"
 export FIXTURE_REAL_RMDIR="$real_rmdir"
 
-if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
-  cp "$kernel_build_manifest" "$standalone_release/sp11-kernel-build-manifest.txt"
+cp "$kernel_build_manifest" "$standalone_release/sp11-kernel-build-manifest.txt"
   cp "$kernel_release_manifest" "$standalone_release/sp11-kernel-release-manifest.txt"
   cp "$apt_provenance" "$standalone_release/sp11-kernel-apt-provenance.txt"
   cp "$build_inputs" "$standalone_release/sp11-kernel-build-inputs.txt"
@@ -1135,22 +1151,42 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     (cd "$standalone_release" && shasum -a 256 "${checksum_files[@]}" > SHA256SUMS)
   }
   write_standalone_checksums
-  validator_env=(
+validator_env=(
     PATH="$mock_bin:$PATH"
     FIXTURE_KERNEL_ABI="$kernel_abi"
     FIXTURE_PACKAGE_VERSION="$package_version"
   )
+if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+  if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+      --dir "$standalone_release" > "$test_root/standalone-missing-authority.log" 2>&1; then
+    echo 'Standalone validator accepted an omitted authority mode.' >&2
+    exit 1
+  fi
+  grep -F 'choose exactly one authority mode: --local-prepared-candidate or --downloaded-release' \
+    "$test_root/standalone-missing-authority.log" >/dev/null
+
+  if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+      --local-prepared-candidate --downloaded-release --dir "$standalone_release" \
+      > "$test_root/standalone-conflicting-authority.log" 2>&1; then
+    echo 'Standalone validator accepted conflicting authority modes.' >&2
+    exit 1
+  fi
+  grep -F 'choose exactly one authority mode: --local-prepared-candidate or --downloaded-release' \
+    "$test_root/standalone-conflicting-authority.log" >/dev/null
+
   if ! env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
-      --dir "$standalone_release" > "$test_root/standalone-valid.log" 2>&1; then
+      --downloaded-release --dir "$standalone_release" > "$test_root/standalone-valid.log" 2>&1; then
     cat "$test_root/standalone-valid.log" >&2
     echo 'Standalone validator rejected a complete flat schema-v2 touchscreen release.' >&2
     exit 1
   fi
+  grep -Fx 'Validation authority: downloaded-content-only; no local commit or publication authority.' \
+    "$test_root/standalone-valid.log" >/dev/null
 
   printf 'checksummed but not manifest-bound\n' > "$standalone_release/unexpected.txt"
   write_standalone_checksums
   if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
-      --dir "$standalone_release" > "$test_root/standalone-extra-asset.log" 2>&1; then
+      --downloaded-release --dir "$standalone_release" > "$test_root/standalone-extra-asset.log" 2>&1; then
     echo 'Standalone validator accepted an unexpected checksummed schema-v2 asset.' >&2
     exit 1
   fi
@@ -1167,7 +1203,7 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     > "$standalone_release/sp11-kernel-release-manifest.txt"
   write_standalone_checksums
   if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
-      --dir "$standalone_release" > "$test_root/standalone-source-tamper.log" 2>&1; then
+      --downloaded-release --dir "$standalone_release" > "$test_root/standalone-source-tamper.log" 2>&1; then
     echo 'Standalone validator accepted a recomputed-checksum source binding tamper.' >&2
     exit 1
   fi
@@ -1177,7 +1213,7 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   printf 'different gpi payload\n' > "$standalone_release/gpi.ko"
   write_standalone_checksums
   if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
-      --dir "$standalone_release" > "$test_root/standalone-payload-tamper.log" 2>&1; then
+      --downloaded-release --dir "$standalone_release" > "$test_root/standalone-payload-tamper.log" 2>&1; then
     echo 'Standalone validator accepted a recomputed-checksum payload tamper.' >&2
     exit 1
   fi
@@ -1185,6 +1221,16 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
 else
   printf 'Skipping standalone touchscreen release round trip: Bash 4+ is exercised in Linux CI.\n'
 fi
+
+write_standalone_checksums
+chmod 0500 "$standalone_release"
+bound_kernel_source="$standalone_release/$(basename "$bound_kernel_source")"
+bound_touch_source="$standalone_release/$(basename "$bound_touch_source")"
+kernel_build_manifest="$standalone_release/sp11-kernel-build-manifest.txt"
+kernel_release_manifest="$standalone_release/sp11-kernel-release-manifest.txt"
+apt_provenance="$standalone_release/sp11-kernel-apt-provenance.txt"
+build_inputs="$standalone_release/sp11-kernel-build-inputs.txt"
+module_manifest="$standalone_release/sp11-touchscreen-modules-manifest.txt"
 
 common_publish_args=(
   --image "${image#"$repo_dir"/}"
@@ -1652,50 +1698,105 @@ grep -Fxq 'prior output sentinel' "$retirement_previous_dir/original/prior-outpu
 "$real_rm" -rf -- "$retirement_previous_dir"
 
 expect_provenance_failure() {
-  local label="$1" expected="$2" candidate_apt="$3" candidate_inputs="$4"
-  local candidate_release="$5" output status
+  local label="$1" expected="$2" candidate_root="$3" output status
   set +e
   output="$(env "${fixture_binding_env[@]}" "$helper" \
     --image "${image#"$repo_dir"/}" \
     --release-name "$release_prefix-$label" \
     --allow-dirty \
     --part-size-bytes 1024 \
-    --kernel-source-asset "${bound_kernel_source#"$repo_dir"/}" \
-    --touchscreen-source-asset "${bound_touch_source#"$repo_dir"/}" \
+    --kernel-source-asset "${candidate_root#"$repo_dir"/}/$(basename "$bound_kernel_source")" \
+    --touchscreen-source-asset "${candidate_root#"$repo_dir"/}/$(basename "$bound_touch_source")" \
     --source-notice "${bound_notice#"$repo_dir"/}" \
-    --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
-    --kernel-release-manifest "${candidate_release#"$repo_dir"/}" \
-    --apt-provenance "${candidate_apt#"$repo_dir"/}" \
-    --build-inputs "${candidate_inputs#"$repo_dir"/}" \
-    --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
+    --kernel-build-manifest "${candidate_root#"$repo_dir"/}/sp11-kernel-build-manifest.txt" \
+    --kernel-release-manifest "${candidate_root#"$repo_dir"/}/sp11-kernel-release-manifest.txt" \
+    --apt-provenance "${candidate_root#"$repo_dir"/}/sp11-kernel-apt-provenance.txt" \
+    --build-inputs "${candidate_root#"$repo_dir"/}/sp11-kernel-build-inputs.txt" \
+    --touchscreen-module-manifest "${candidate_root#"$repo_dir"/}/sp11-touchscreen-modules-manifest.txt" \
     --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
   status=$?
   set -e
-  [ "$status" -eq 1 ]
-  printf '%s\n' "$output" | grep -F "$expected" >/dev/null
-  [ ! -e "$repo_dir/build/release/$release_prefix-$label" ]
+  if [ "$status" -ne 1 ]; then
+    printf '%s\n' "$output" >&2
+    echo "Kernel candidate $label returned unexpected status $status." >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$output" | grep -F "$expected" >/dev/null; then
+    printf '%s\n' "$output" >&2
+    echo "Kernel candidate $label omitted its expected refusal: $expected" >&2
+    exit 1
+  fi
+  [ ! -e "$repo_dir/build/release/$release_prefix-$label" ] || {
+    echo "Kernel candidate $label left an unexpected release output." >&2
+    exit 1
+  }
 }
 
-apt_tamper_dir="$test_root/apt-tamper"
-mkdir "$apt_tamper_dir"
-cp "$apt_provenance" "$apt_tamper_dir/sp11-kernel-apt-provenance.txt"
+clone_kernel_candidate() {
+  local label="$1" candidate_root
+  candidate_root="$test_root/kernel-candidate-$label"
+  cp -R "$standalone_release" "$candidate_root"
+  chmod 0700 "$candidate_root"
+  printf '%s\n' "$candidate_root"
+}
+
+write_candidate_checksums() {
+  local candidate_root="$1" checksum_files=() checksum_file
+  while IFS= read -r checksum_file; do
+    checksum_files+=("$checksum_file")
+  done < <(
+    find "$candidate_root" -mindepth 1 -maxdepth 1 -type f \
+      ! -name SHA256SUMS -exec basename {} \; | LC_ALL=C sort
+  )
+  (cd "$candidate_root" && shasum -a 256 "${checksum_files[@]}" > SHA256SUMS)
+}
+
+uncommitted_candidate_dir="$(clone_kernel_candidate uncommitted-root)"
+expect_provenance_failure uncommitted-root \
+  'Kernel candidate root must be an exact host-owned mode-0500 directory.' \
+  "$uncommitted_candidate_dir"
+
+mixed_candidate_dir="$(clone_kernel_candidate mixed-root)"
+chmod 0500 "$mixed_candidate_dir"
+set +e
+mixed_candidate_output="$(env "${fixture_binding_env[@]}" "$helper" \
+  --image "${image#"$repo_dir"/}" \
+  --release-name "$release_prefix-mixed-root" \
+  --allow-dirty \
+  --part-size-bytes 1024 \
+  --kernel-source-asset "${mixed_candidate_dir#"$repo_dir"/}/$(basename "$bound_kernel_source")" \
+  --touchscreen-source-asset "${mixed_candidate_dir#"$repo_dir"/}/$(basename "$bound_touch_source")" \
+  --source-notice "${bound_notice#"$repo_dir"/}" \
+  --kernel-build-manifest "${mixed_candidate_dir#"$repo_dir"/}/sp11-kernel-build-manifest.txt" \
+  --kernel-release-manifest "${mixed_candidate_dir#"$repo_dir"/}/sp11-kernel-release-manifest.txt" \
+  --apt-provenance "${apt_provenance#"$repo_dir"/}" \
+  --build-inputs "${mixed_candidate_dir#"$repo_dir"/}/sp11-kernel-build-inputs.txt" \
+  --touchscreen-module-manifest "${mixed_candidate_dir#"$repo_dir"/}/sp11-touchscreen-modules-manifest.txt" \
+  --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
+mixed_candidate_status=$?
+set -e
+[ "$mixed_candidate_status" -eq 1 ]
+printf '%s\n' "$mixed_candidate_output" |
+  grep -F 'Kernel candidate inputs must share one committed release root.' >/dev/null
+[ ! -e "$repo_dir/build/release/$release_prefix-mixed-root" ]
+
+apt_tamper_dir="$(clone_kernel_candidate apt-tamper)"
 printf 'Unexpected field: rejected\n' >> "$apt_tamper_dir/sp11-kernel-apt-provenance.txt"
+write_candidate_checksums "$apt_tamper_dir"
+chmod 0500 "$apt_tamper_dir"
 expect_provenance_failure apt-tamper \
   'attached immutable build inputs failed flat validation' \
-  "$apt_tamper_dir/sp11-kernel-apt-provenance.txt" "$build_inputs" \
-  "$kernel_release_manifest"
+  "$apt_tamper_dir"
 
-inputs_tamper_dir="$test_root/inputs-tamper"
-mkdir "$inputs_tamper_dir"
-cp "$build_inputs" "$inputs_tamper_dir/sp11-kernel-build-inputs.txt"
+inputs_tamper_dir="$(clone_kernel_candidate inputs-tamper)"
 printf 'Unexpected field: rejected\n' >> "$inputs_tamper_dir/sp11-kernel-build-inputs.txt"
+write_candidate_checksums "$inputs_tamper_dir"
+chmod 0500 "$inputs_tamper_dir"
 expect_provenance_failure inputs-tamper \
   'attached immutable build inputs failed flat validation' \
-  "$apt_provenance" "$inputs_tamper_dir/sp11-kernel-build-inputs.txt" \
-  "$kernel_release_manifest"
+  "$inputs_tamper_dir"
 
-apt_mismatch_dir="$test_root/apt-mismatch"
-mkdir "$apt_mismatch_dir"
+apt_mismatch_dir="$(clone_kernel_candidate apt-mismatch)"
 awk 'BEGIN { changed = 0 }
      /^APT list target 1 SHA256: / && changed == 0 {
        print "APT list target 1 SHA256: 0000000000000000000000000000000000000000000000000000000000000000"
@@ -1704,25 +1805,34 @@ awk 'BEGIN { changed = 0 }
      }
      { print }
      END { if (changed == 0) exit 1 }' \
-  "$apt_provenance" > "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt"
+  "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt" \
+  > "$apt_mismatch_dir/sp11-kernel-apt-provenance.changed"
+mv "$apt_mismatch_dir/sp11-kernel-apt-provenance.changed" \
+  "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt"
 mismatch_apt_sha="$(shasum -a 256 "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt" | awk '{print $1}')"
 awk -v digest="$mismatch_apt_sha" '
      /^Input 5 SHA256: / { print "Input 5 SHA256: " digest; next }
-     { print }' "$build_inputs" > "$apt_mismatch_dir/sp11-kernel-build-inputs.txt"
+     { print }' "$apt_mismatch_dir/sp11-kernel-build-inputs.txt" \
+  > "$apt_mismatch_dir/sp11-kernel-build-inputs.changed"
+mv "$apt_mismatch_dir/sp11-kernel-build-inputs.changed" \
+  "$apt_mismatch_dir/sp11-kernel-build-inputs.txt"
+write_candidate_checksums "$apt_mismatch_dir"
+chmod 0500 "$apt_mismatch_dir"
 expect_provenance_failure apt-mismatch \
   'kernel release field does not match build: APT provenance SHA256' \
-  "$apt_mismatch_dir/sp11-kernel-apt-provenance.txt" \
-  "$apt_mismatch_dir/sp11-kernel-build-inputs.txt" "$kernel_release_manifest"
+  "$apt_mismatch_dir"
 
-release_order_dir="$test_root/release-order"
-mkdir "$release_order_dir"
+release_order_dir="$(clone_kernel_candidate release-order)"
 awk 'NR == 4 { held = $0; next }
      NR == 5 { print; print held; next }
-     { print }' "$kernel_release_manifest" \
-  > "$release_order_dir/sp11-kernel-release-manifest.txt"
-expect_provenance_failure release-order \
-  'field order does not match its schema' "$apt_provenance" "$build_inputs" \
+     { print }' "$release_order_dir/sp11-kernel-release-manifest.txt" \
+  > "$release_order_dir/sp11-kernel-release-manifest.changed"
+mv "$release_order_dir/sp11-kernel-release-manifest.changed" \
   "$release_order_dir/sp11-kernel-release-manifest.txt"
+write_candidate_checksums "$release_order_dir"
+chmod 0500 "$release_order_dir"
+expect_provenance_failure release-order \
+  'field order does not match its schema' "$release_order_dir"
 
 set +e
 private_notice_output="$(env "${fixture_binding_env[@]}" "$helper" \
@@ -1745,85 +1855,31 @@ set -e
 printf '%s\n' "$private_notice_output" |
   grep -F 'public content contains a private-path' >/dev/null
 
-private_manifest_dir="$test_root/private-manifest"
-mkdir "$private_manifest_dir"
-cp "$module_manifest" "$private_manifest_dir/sp11-touchscreen-modules-manifest.txt"
+private_manifest_dir="$(clone_kernel_candidate private-manifest)"
 printf '%s\n' "Private path: $private_path_prefix/release-manifest" \
   >> "$private_manifest_dir/sp11-touchscreen-modules-manifest.txt"
-set +e
-private_manifest_output="$(env "${fixture_binding_env[@]}" "$helper" \
-    --image "${image#"$repo_dir"/}" \
-    --release-name "$release_prefix-private-manifest" \
-    --allow-dirty \
-    --part-size-bytes 1024 \
-    --kernel-source-asset "${bound_kernel_source#"$repo_dir"/}" \
-    --touchscreen-source-asset "${bound_touch_source#"$repo_dir"/}" \
-    --source-notice "${bound_notice#"$repo_dir"/}" \
-    --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
-    --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
-    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
-    --build-inputs "${build_inputs#"$repo_dir"/}" \
-    --touchscreen-module-manifest \
-      "${private_manifest_dir#"$repo_dir"/}/sp11-touchscreen-modules-manifest.txt" \
-    --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
-private_manifest_status=$?
-set -e
-[ "$private_manifest_status" -eq 1 ]
-printf '%s\n' "$private_manifest_output" |
-  grep -F 'public content contains a private-path' >/dev/null
+write_candidate_checksums "$private_manifest_dir"
+chmod 0500 "$private_manifest_dir"
+expect_provenance_failure private-manifest \
+  'public content contains a private-path' "$private_manifest_dir"
 
-non_schema_dir="$test_root/non-schema-release"
-mkdir "$non_schema_dir"
-cp "$kernel_release_manifest" "$non_schema_dir/sp11-kernel-release-manifest.txt"
+non_schema_dir="$(clone_kernel_candidate non-schema-release)"
 printf '%s\n' '## Packages' '- altered-package.deb' \
   >> "$non_schema_dir/sp11-kernel-release-manifest.txt"
-set +e
-non_schema_output="$(env "${fixture_binding_env[@]}" "$helper" \
-    --image "${image#"$repo_dir"/}" \
-    --release-name "$release_prefix-non-schema" \
-    --allow-dirty \
-    --part-size-bytes 1024 \
-    --kernel-source-asset "${bound_kernel_source#"$repo_dir"/}" \
-    --touchscreen-source-asset "${bound_touch_source#"$repo_dir"/}" \
-    --source-notice "${bound_notice#"$repo_dir"/}" \
-    --kernel-build-manifest "${kernel_build_manifest#"$repo_dir"/}" \
-    --kernel-release-manifest \
-      "${non_schema_dir#"$repo_dir"/}/sp11-kernel-release-manifest.txt" \
-    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
-    --build-inputs "${build_inputs#"$repo_dir"/}" \
-    --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
-    --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
-non_schema_status=$?
-set -e
-[ "$non_schema_status" -eq 1 ]
-printf '%s\n' "$non_schema_output" |
-  grep -F 'contains a non-schema line' >/dev/null
+write_candidate_checksums "$non_schema_dir"
+chmod 0500 "$non_schema_dir"
+expect_provenance_failure non-schema \
+  'contains a non-schema line' "$non_schema_dir"
 
-invalid_build_dir="$test_root/invalid-build"
-mkdir "$invalid_build_dir"
-sed '/^Output 7 role:/d' "$kernel_build_manifest" \
-  > "$invalid_build_dir/sp11-kernel-build-manifest.txt"
-set +e
-missing_role_output="$(env "${fixture_binding_env[@]}" "$helper" \
-    --image "${image#"$repo_dir"/}" \
-    --release-name "$release_prefix-missing-role" \
-    --allow-dirty \
-    --part-size-bytes 1024 \
-    --kernel-source-asset "${bound_kernel_source#"$repo_dir"/}" \
-    --touchscreen-source-asset "${bound_touch_source#"$repo_dir"/}" \
-    --source-notice "${bound_notice#"$repo_dir"/}" \
-    --kernel-build-manifest "${invalid_build_dir#"$repo_dir"/}/sp11-kernel-build-manifest.txt" \
-    --kernel-release-manifest "${kernel_release_manifest#"$repo_dir"/}" \
-    --apt-provenance "${apt_provenance#"$repo_dir"/}" \
-    --build-inputs "${build_inputs#"$repo_dir"/}" \
-    --touchscreen-module-manifest "${module_manifest#"$repo_dir"/}" \
-    --image-build-manifest "${image_build_manifest#"$repo_dir"/}" 2>&1)"
-missing_role_status=$?
-set -e
-[ "$missing_role_status" -eq 1 ]
-printf '%s\n' "$missing_role_output" |
-  grep -F 'missing required top-level field: Output 7 role' >/dev/null
-[ ! -e "$repo_dir/build/release/$release_prefix-missing-role" ]
+invalid_build_dir="$(clone_kernel_candidate invalid-build)"
+sed '/^Output 7 role:/d' "$invalid_build_dir/sp11-kernel-build-manifest.txt" \
+  > "$invalid_build_dir/sp11-kernel-build-manifest.changed"
+mv "$invalid_build_dir/sp11-kernel-build-manifest.changed" \
+  "$invalid_build_dir/sp11-kernel-build-manifest.txt"
+write_candidate_checksums "$invalid_build_dir"
+chmod 0500 "$invalid_build_dir"
+expect_provenance_failure missing-role \
+  'missing required top-level field: Output 7 role' "$invalid_build_dir"
 
 expect_image_manifest_failure() {
   local label="$1" candidate="$2" expected="$3" output status
@@ -1844,9 +1900,20 @@ expect_image_manifest_failure() {
     --image-build-manifest "${candidate#"$repo_dir"/}" 2>&1)"
   status=$?
   set -e
-  [ "$status" -eq 1 ]
-  printf '%s\n' "$output" | grep -F "$expected" >/dev/null
-  [ ! -e "$repo_dir/build/release/$release_prefix-$label" ]
+  if [ "$status" -ne 1 ]; then
+    printf '%s\n' "$output" >&2
+    echo "Image manifest $label returned unexpected status $status." >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$output" | grep -F "$expected" >/dev/null; then
+    printf '%s\n' "$output" >&2
+    echo "Image manifest $label omitted its expected refusal: $expected" >&2
+    exit 1
+  fi
+  [ ! -e "$repo_dir/build/release/$release_prefix-$label" ] || {
+    echo "Image manifest $label left an unexpected release output." >&2
+    exit 1
+  }
 }
 
 bad_image_manifests="$test_root/bad-image-manifests"
@@ -1936,6 +2003,175 @@ expect_image_manifest_failure iso-url-localhost \
   "$bad_image_manifests/iso-url-localhost/sp11-live-image-build-manifest.txt" \
   'input ISO URL is not public HTTPS'
 
+# Isolation is a validator-wide startup authority, including the full image
+# mode that launches both Git and the attached build-input helper.  Enter
+# through an inherited SIGCHLD=SIG_IGN parent and a hostile sitecustomize path:
+# the real validator must restore exact child-wait ownership, pass -I to its
+# nested helper, and complete without importing attacker-controlled Python.
+release_manifest_validator="$repo_dir/scripts/validate-sp11-image-release-manifests.py"
+release_manifest_validator_args=(
+  --repo-dir "$repo_dir"
+  --support-commit "$support_commit"
+  --release-name "$release_prefix-validator-authority"
+  --kernel-build-manifest "$kernel_build_manifest"
+  --kernel-release-manifest "$kernel_release_manifest"
+  --apt-provenance "$apt_provenance"
+  --build-inputs "$build_inputs"
+  --touchscreen-module-manifest "$module_manifest"
+  --kernel-source "$bound_kernel_source"
+  --touchscreen-source "$bound_touch_source"
+  --no-expected-payload-output
+)
+if /usr/bin/python3 "$release_manifest_validator" \
+    "${release_manifest_validator_args[@]}" \
+    > "$test_root/manifest-validator-nonisolated.log" 2>&1; then
+  echo 'Full image manifest validator accepted nonisolated Python startup.' >&2
+  exit 1
+fi
+grep -F 'manifest validation requires isolated Python startup' \
+  "$test_root/manifest-validator-nonisolated.log" >/dev/null
+
+hostile_python_root="$test_root/manifest-validator-hostile-python"
+hostile_python_marker="$test_root/manifest-validator-hostile-python-imported"
+mkdir "$hostile_python_root"
+cat > "$hostile_python_root/sitecustomize.py" <<'EOF_HOSTILE_PYTHON'
+import os
+from pathlib import Path
+
+Path(os.environ["SP11_HOSTILE_MANIFEST_PYTHON_MARKER"]).write_text("imported")
+EOF_HOSTILE_PYTHON
+if ! PYTHONPATH="$hostile_python_root" \
+    PYTHONUSERBASE="$hostile_python_root" \
+    SP11_HOSTILE_MANIFEST_PYTHON_MARKER="$hostile_python_marker" \
+    /usr/bin/python3 -I -c '
+import os
+import signal
+import sys
+
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+os.execve(sys.argv[1], sys.argv[1:], os.environ)
+' /usr/bin/python3 -I "$release_manifest_validator" \
+      "${release_manifest_validator_args[@]}" \
+      > "$test_root/manifest-validator-wait-authority.log" 2>&1; then
+  cat "$test_root/manifest-validator-wait-authority.log" >&2
+  echo 'Full manifest validator failed under inherited SIGCHLD ignore.' >&2
+  exit 1
+fi
+grep -F 'Validated complete schema-v2 image release manifest bindings.' \
+  "$test_root/manifest-validator-wait-authority.log" >/dev/null
+[ ! -e "$hostile_python_marker" ] || {
+  echo 'Manifest validator or its attached helper imported hostile Python.' >&2
+  exit 1
+}
+
+manifest_nonzero_git_bin="$test_root/manifest-validator-nonzero-git-bin"
+manifest_nonzero_git_state="$test_root/manifest-validator-nonzero-git-state"
+mkdir "$manifest_nonzero_git_bin" "$manifest_nonzero_git_state"
+cat > "$manifest_nonzero_git_bin/git" <<'EOF_NONZERO_GIT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$$" > "$SP11_MANIFEST_NONZERO_GIT_STATE/producer-pid"
+case " $* " in
+  *" rev-parse --verify $SP11_MANIFEST_NONZERO_GIT_COMMIT^{commit} "*)
+    printf '%s\n' "$SP11_MANIFEST_NONZERO_GIT_COMMIT"
+    exit 47
+    ;;
+esac
+printf 'unexpected manifest-validator Git vector\n' >&2
+exit 98
+EOF_NONZERO_GIT
+chmod +x "$manifest_nonzero_git_bin/git"
+if PATH="$manifest_nonzero_git_bin:/usr/bin:/bin" \
+    SP11_MANIFEST_NONZERO_GIT_STATE="$manifest_nonzero_git_state" \
+    SP11_MANIFEST_NONZERO_GIT_COMMIT="$support_commit" \
+    /usr/bin/python3 -I -c '
+import os
+import signal
+import sys
+
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+os.execve(sys.argv[1], sys.argv[1:], os.environ)
+' /usr/bin/python3 -I "$release_manifest_validator" \
+      "${release_manifest_validator_args[@]}" \
+      > "$test_root/manifest-validator-nonzero-git.log" 2>&1; then
+  echo 'Manifest validator accepted plausible stdout from nonzero Git.' >&2
+  exit 1
+fi
+grep -F 'could not verify committed support provenance' \
+  "$test_root/manifest-validator-nonzero-git.log" >/dev/null
+[ -f "$manifest_nonzero_git_state/producer-pid" ] || {
+  echo 'Nonzero manifest-validator Git did not record its process identity.' >&2
+  exit 1
+}
+manifest_nonzero_git_pid="$(cat "$manifest_nonzero_git_state/producer-pid")"
+[[ "$manifest_nonzero_git_pid" =~ ^[0-9]+$ ]] || {
+  echo 'Nonzero manifest-validator Git recorded an invalid process identity.' >&2
+  exit 1
+}
+if kill -0 "$manifest_nonzero_git_pid" 2>/dev/null; then
+  echo 'Nonzero manifest-validator Git child was not exactly reaped.' >&2
+  exit 1
+fi
+if grep -Fq 'Validated complete schema-v2 image release manifest bindings.' \
+    "$test_root/manifest-validator-nonzero-git.log"; then
+  echo 'Nonzero manifest-validator Git failure printed terminal success.' >&2
+  exit 1
+fi
+
+# If in-process state changes the disposition after startup, each subprocess
+# boundary must refuse before calling Popen. Exercise both finite child sites
+# with a forbidden subprocess stub so generic validation failure cannot pass.
+/usr/bin/python3 -I - "$release_manifest_validator" <<'PY_REDRIFT'
+import importlib.util
+import signal
+import sys
+from pathlib import Path
+
+validator_path = Path(sys.argv[1])
+specification = importlib.util.spec_from_file_location(
+    "sp11_manifest_validator_sigchld_redrift", validator_path
+)
+assert specification is not None and specification.loader is not None
+module = importlib.util.module_from_spec(specification)
+specification.loader.exec_module(module)
+calls = []
+
+def forbidden_run(*arguments, **keywords):
+    calls.append((arguments, keywords))
+    raise AssertionError("subprocess started after SIGCHLD authority drift")
+
+module.subprocess.run = forbidden_run
+
+module.establish_child_wait_authority()
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+try:
+    module.run_git(Path("/fixture/repo"), ["status"])
+except module.ValidationError as error:
+    assert "child wait authority changed" in str(error)
+else:
+    raise AssertionError("Git spawn accepted SIGCHLD authority drift")
+assert calls == []
+
+module.establish_child_wait_authority()
+module.regular_input = lambda *_arguments, **_keywords: None
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+try:
+    module.validate_attached_build_inputs(
+        Path("/fixture/repo"),
+        "0" * 40,
+        Path("/fixture/build-manifest"),
+        Path("/fixture/apt-provenance"),
+        Path("/fixture/build-inputs"),
+    )
+except module.ValidationError as error:
+    assert "child wait authority changed" in str(error)
+else:
+    raise AssertionError("attached-helper spawn accepted SIGCHLD authority drift")
+assert calls == []
+module.establish_child_wait_authority()
+PY_REDRIFT
+
 url_contract_labels=(scheme global-ip short-ip root port unsafe-char overlong localhost-prefix)
 url_contract_values=(
   HTTPS://fixtures.example.com/source.git
@@ -1955,7 +2191,8 @@ for url_contract_index in "${!url_contract_labels[@]}"; do
   mkdir "$url_contract_dir"
   sed "s#^Source URL: .*#Source URL: $url_contract_value#" \
     "$kernel_build_manifest" > "$url_contract_dir/sp11-kernel-build-manifest.txt"
-  if python3 "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
+  if /usr/bin/python3 -I \
+      "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
       --repo-dir "$repo_dir" \
       --support-commit "$support_commit" \
       --build-only \
@@ -1969,7 +2206,8 @@ for url_contract_index in "${!url_contract_labels[@]}"; do
 
   sed "s#^Touchscreen source URL: .*#Touchscreen source URL: $url_contract_value#" \
     "$module_manifest" > "$url_contract_dir/sp11-touchscreen-modules-manifest.txt"
-  if python3 "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
+  if /usr/bin/python3 -I \
+      "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
       --repo-dir "$repo_dir" \
       --support-commit "$support_commit" \
       --release-name "$release_prefix-cross-$url_contract_label" \

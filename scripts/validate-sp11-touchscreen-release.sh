@@ -27,19 +27,30 @@ REMOTE=""
 ERROR_COUNT=0
 CHECK_COUNT=0
 TEMP_DIRS=()
+RELEASE_ROOT_FD=52
+RELEASE_ROOT_STATE=""
+LOCAL_PREPARED_CANDIDATE="false"
+DOWNLOADED_RELEASE="false"
 
 usage() {
   cat <<EOF
-Usage: $0 --dir DIR [--tag TAG] [--remote REMOTE]
+Usage: $0 --dir DIR (--local-prepared-candidate | --downloaded-release)
+          [--tag TAG] [--remote REMOTE]
 
-Validates a prepared or downloaded Surface Pro 11 qcom-x1e kernel release
-directory without changing it.
+Validates a local-prepared or downloaded Surface Pro 11 qcom-x1e kernel
+release directory without changing it.  The authority mode is mandatory.
 
 Options:
   --dir DIR        Flat directory containing the release assets (required).
   --tag TAG        Compare the manifest support commit with this Git tag.
   --remote REMOTE  Also compare with TAG on this Git remote name or URL.
                    Requires --tag.
+  --local-prepared-candidate
+                   Require the held local preparer commit marker (mode 0500).
+                   Do not use for downloaded release directories.
+  --downloaded-release
+                   Validate transported release bytes without claiming local
+                   preparer transaction or publication authority.
   -h, --help       Show this help.
 EOF
 }
@@ -68,6 +79,72 @@ require_arg() {
 
 have_tool() {
   command -v "$1" >/dev/null 2>&1
+}
+
+committed_release_root_state() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+descriptor = os.open(
+    sys.argv[1],
+    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+)
+try:
+    held = os.fstat(descriptor)
+    mapped = os.stat(sys.argv[1], follow_symlinks=False)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or stat.S_IMODE(held.st_mode) != 0o500
+        or stable(held) != stable(mapped)
+    ):
+        raise RuntimeError
+    print(*stable(held))
+finally:
+    os.close(descriptor)
+' "$1"
+}
+
+verify_committed_release_root() {
+  /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+expected = tuple(int(value, 10) for value in sys.argv[3:12])
+held = os.fstat(int(sys.argv[1], 10))
+mapped = os.stat(sys.argv[2], follow_symlinks=False)
+stable = lambda value: (
+    value.st_dev,
+    value.st_ino,
+    value.st_mode,
+    value.st_size,
+    value.st_mtime_ns,
+    value.st_ctime_ns,
+    value.st_nlink,
+    value.st_uid,
+    value.st_gid,
+)
+if (
+    not stat.S_ISDIR(held.st_mode)
+    or stat.S_IMODE(held.st_mode) != 0o500
+    or stable(held) != expected
+    or stable(mapped) != expected
+):
+    raise SystemExit(1)
+' "$RELEASE_ROOT_FD" "$RELEASE_DIR" $RELEASE_ROOT_STATE
 }
 
 cleanup() {
@@ -181,7 +258,7 @@ validate_schema_v2_touchscreen_bindings() {
   TEMP_DIRS+=("$binding_dir")
   expected_payload="$binding_dir/expected-payload"
   actual_payload="$binding_dir/actual-payload"
-  if ! python3 "$validator" \
+  if ! python3 -I "$validator" \
       --repo-dir "$repo_dir" \
       --support-commit "$support_commit" \
       --release-name "$manifest_release" \
@@ -290,7 +367,7 @@ validate_schema_v2_kernel_bindings() {
   TEMP_DIRS+=("$binding_dir")
   expected_payload="$binding_dir/expected-payload"
   actual_payload="$binding_dir/actual-payload"
-  if ! python3 "$validator" \
+  if ! python3 -I "$validator" \
       --kernel-release-only \
       --repo-dir "$repo_dir" \
       --support-commit "$support_commit" \
@@ -426,6 +503,14 @@ while [ "$#" -gt 0 ]; do
       REMOTE="$2"
       shift 2
       ;;
+    --local-prepared-candidate)
+      LOCAL_PREPARED_CANDIDATE="true"
+      shift
+      ;;
+    --downloaded-release)
+      DOWNLOADED_RELEASE="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -440,11 +525,24 @@ done
 
 [ -n "$RELEASE_DIR" ] || die "--dir is required."
 [ -z "$REMOTE" ] || [ -n "$TAG" ] || die "--remote requires --tag."
+if [ "$LOCAL_PREPARED_CANDIDATE" = "$DOWNLOADED_RELEASE" ]; then
+  die "choose exactly one authority mode: --local-prepared-candidate or --downloaded-release"
+fi
 [ -d "$RELEASE_DIR" ] || die "release directory not found: $RELEASE_DIR"
 [ ! -L "$RELEASE_DIR" ] || die "release directory must not be a symlink: $RELEASE_DIR"
 
 if ! RELEASE_DIR="$(cd "$RELEASE_DIR" 2>/dev/null && pwd -P)"; then
   die "could not resolve release directory: $RELEASE_DIR"
+fi
+if [ "$LOCAL_PREPARED_CANDIDATE" = "true" ]; then
+  RELEASE_ROOT_STATE="$(committed_release_root_state "$RELEASE_DIR")" ||
+    die "release directory is not an exact committed mode-0500 root"
+  release_previous_directory="$(pwd -P)"
+  cd "$RELEASE_DIR" || die "could not enter the committed release directory"
+  exec 52< .
+  cd "$release_previous_directory" || die "could not restore the validator directory"
+  verify_committed_release_root ||
+    die "committed release root mapping changed during acquisition"
 fi
 
 for tool in awk basename find grep sort; do
@@ -816,7 +914,7 @@ else
         error "strict immutable build-input validator is missing."
       elif [ ! -f "$kernel_baseline" ] || [ -L "$kernel_baseline" ]; then
         error "reviewed immutable kernel baseline is missing."
-      elif ! python3 "$build_inputs_validator" validate-attached \
+      elif ! python3 -I "$build_inputs_validator" validate-attached \
           --baseline "$kernel_baseline" \
           --support-head "$support_commit" \
           --build-manifest "$build_manifest" \
@@ -1175,16 +1273,22 @@ if [ "$schema_v2" = "true" ]; then
   validate_schema_v2_asset_inventory
 fi
 
-echo "Validated directory: $RELEASE_DIR"
-if [ -n "$kernel_abi" ]; then
-  echo "Kernel ABI: $kernel_abi"
-  echo "Package version: $package_version"
+if [ "$LOCAL_PREPARED_CANDIDATE" = "true" ] && ! verify_committed_release_root; then
+  error "committed release root changed during validation"
 fi
-echo "Successful checks: $CHECK_COUNT"
 
 if [ "$ERROR_COUNT" -ne 0 ]; then
   echo "Release validation failed with $ERROR_COUNT error(s)." >&2
   exit 1
 fi
 
+echo "Validated directory: $RELEASE_DIR"
+if [ -n "$kernel_abi" ]; then
+  echo "Kernel ABI: $kernel_abi"
+  echo "Package version: $package_version"
+fi
+echo "Successful checks: $CHECK_COUNT"
+if [ "$DOWNLOADED_RELEASE" = "true" ]; then
+  echo "Validation authority: downloaded-content-only; no local commit or publication authority."
+fi
 echo "Release validation passed."

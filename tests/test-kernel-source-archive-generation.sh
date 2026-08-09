@@ -27,6 +27,18 @@ run_generator() {
     --scratch-parent "${GENERATOR_SCRATCH_PARENT:-$scratch_parent}" "$@"
 }
 
+run_generator_with_ignored_sigchld() {
+  "$python_path" -I -c '
+import os
+import signal
+import sys
+
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+os.execv(sys.argv[1], sys.argv[1:])
+' "$python_path" -I "$generator_script" \
+    --scratch-parent "${GENERATOR_SCRATCH_PARENT:-$scratch_parent}" "$@"
+}
+
 run_validator() {
   "$python_path" -I "$validator" "$@"
 }
@@ -76,6 +88,7 @@ upstream_repo="$temporary_root/upstream"
 source_repo="$temporary_root/source"
 output_a="$temporary_root/output-a"
 output_b="$temporary_root/output-b"
+output_sigchld="$temporary_root/output-sigchld"
 output_no_shallow="$temporary_root/output-no-shallow"
 output_wrong_shallow="$temporary_root/output-wrong-shallow"
 output_mixed_shallow="$temporary_root/output-mixed-shallow"
@@ -86,7 +99,7 @@ hostile_python="$temporary_root/hostile-python"
 hostile_tmp="$source_repo/hostile-tmp"
 scratch_parent="$temporary_root/scratch"
 mkdir -p \
-  "$upstream_repo" "$output_a" "$output_b" "$output_no_shallow" \
+  "$upstream_repo" "$output_a" "$output_b" "$output_sigchld" "$output_no_shallow" \
   "$output_wrong_shallow" "$output_mixed_shallow" "$output_commit_graph" \
   "$hostile_home" "$hostile_bin" "$hostile_python" "$scratch_parent"
 
@@ -222,6 +235,137 @@ fi
 grep -Fq 'Python isolated mode (-I)' "$temporary_root/nonisolated.log" ||
   die "non-isolated Python rejection was not explicit"
 
+# A hostile parent may have inherited SIGCHLD=SIG_IGN.  The generator must
+# restore waitable-child semantics before any tool launch, retain a real
+# nonzero status even when stdout looks plausible, and never kill after reap.
+if ! "$python_path" -I -c '
+import importlib.util
+import os
+from pathlib import Path
+import signal
+import sys
+
+generator_path = Path(sys.argv[1])
+kill_marker = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "sp11_source_generator_sigchld_fixture", generator_path
+)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.require_release_signal_mask_support()
+module.install_release_signal_handlers()
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+module.establish_child_reaping_contract()
+assert signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL
+captured = []
+original_popen = module.subprocess.Popen
+
+def recording_popen(*arguments, **keywords):
+    child = original_popen(*arguments, **keywords)
+    captured.append(child)
+    child.kill = lambda: kill_marker.write_text("unsafe post-reap kill\n")
+    return child
+
+module.subprocess.Popen = recording_popen
+try:
+    module.run_text(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import os; os.write(1, b\"plausible output\\n\"); raise SystemExit(7)",
+        ],
+        {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        "plausible nonzero child",
+    )
+except module.GenerationError as exc:
+    assert "plausible nonzero child failed" in str(exc)
+else:
+    raise AssertionError("nonzero source-archive child was accepted")
+finally:
+    module.subprocess.Popen = original_popen
+assert len(captured) == 1
+child = captured[0]
+assert child.returncode == 7
+try:
+    os.waitpid(child.pid, os.WNOHANG)
+except ChildProcessError:
+    pass
+else:
+    raise AssertionError("nonzero source-archive child was not exactly reaped")
+assert not kill_marker.exists()
+
+# The invariant is checked again at each spawn, not merely once at startup.
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+called = False
+
+def forbidden_popen(*_arguments, **_keywords):
+    global called
+    called = True
+    raise AssertionError("spawn occurred with ignored SIGCHLD")
+
+module.subprocess.Popen = forbidden_popen
+try:
+    module.run_text(
+        [sys.executable, "-I", "-c", "pass"],
+        {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        "unwaitable child",
+    )
+except module.GenerationError as exc:
+    assert "would not remain waitable" in str(exc)
+else:
+    raise AssertionError("per-spawn SIGCHLD invariant was not enforced")
+assert not called
+
+# A release signal queued after raw waitpid has reaped the child but before
+# Popen.returncode registration must be delivered only after terminal owner
+# state is visible. It must never authorize a kill of the reusable PID/PGID.
+module.subprocess.Popen = original_popen
+module.establish_child_reaping_contract()
+wait_child = original_popen(
+    [sys.executable, "-I", "-c", "pass"],
+    stdout=module.subprocess.PIPE,
+    stderr=module.subprocess.PIPE,
+)
+wait_kill_marker = kill_marker.with_name(kill_marker.name + "-wait")
+wait_child.kill = lambda: wait_kill_marker.write_text("unsafe post-waitpid kill\n")
+
+def raw_wait_then_signal(*_arguments, **_keywords):
+    current_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    assert module.RELEASE_SIGNAL_SET <= current_mask
+    waited_pid, status = os.waitpid(wait_child.pid, 0)
+    assert waited_pid == wait_child.pid
+    os.kill(os.getpid(), signal.SIGTERM)
+    wait_child.returncode = os.waitstatus_to_exitcode(status)
+    return wait_child.returncode
+
+wait_child.wait = raw_wait_then_signal
+try:
+    module.wait_registered(wait_child)
+except KeyboardInterrupt:
+    pass
+else:
+    raise AssertionError("pending TERM was not delivered after wait registration")
+assert wait_child.returncode == 0
+try:
+    os.waitpid(wait_child.pid, os.WNOHANG)
+except ChildProcessError:
+    pass
+else:
+    raise AssertionError("raw-wait source-archive child was not exactly reaped")
+assert not wait_kill_marker.exists()
+print("source-archive SIGCHLD child ownership fixtures passed")
+' "$generator_script" "$temporary_root/sigchld-unsafe-kill" \
+    > "$temporary_root/sigchld-owner.log" 2>&1; then
+  sed -n '1,40p' "$temporary_root/sigchld-owner.log" >&2
+  die "source-archive SIGCHLD child ownership fixture failed"
+fi
+grep -Fq 'source-archive SIGCHLD child ownership fixtures passed' \
+  "$temporary_root/sigchld-owner.log" ||
+  die "source-archive SIGCHLD fixture omitted its completion marker"
+
 "$python_path" -I - "$generator_script" <<'PY_PRIVATE_GIT_CONFIG'
 import runpy
 import sys
@@ -280,6 +424,7 @@ trace_victim_sha="$(shasum -a 256 "$trace_victim" | awk '{print $1}')"
 archive_name="fixture-patched-source.tar.xz"
 archive_a="$output_a/$archive_name"
 archive_b="$output_b/$archive_name"
+archive_sigchld="$output_sigchld/$archive_name"
 mkdir "$temporary_root/cwd-a" "$temporary_root/cwd-b"
 (
   umask 077
@@ -314,8 +459,17 @@ mkdir "$temporary_root/cwd-a" "$temporary_root/cwd-b"
       --output "$archive_b" > "$temporary_root/generation-b.log"
 )
 
+run_generator_with_ignored_sigchld \
+  --baseline "$baseline" \
+  --build-manifest "$manifest" \
+  --source-repo "$source_repo" \
+  --toolchain-contract "$contract" \
+  --output "$archive_sigchld" > "$temporary_root/generation-sigchld.log"
+
 cmp -s "$archive_a" "$archive_b" ||
   die "repeated generation in distinct paths did not produce identical bytes"
+cmp -s "$archive_a" "$archive_sigchld" ||
+  die "inherited SIGCHLD disposition changed generated archive bytes"
 archive_sha256="$(shasum -a 256 "$archive_a" | awk '{print $1}')"
 grep -Fq "Archive SHA256: $archive_sha256" "$temporary_root/generation-a.log" ||
   die "generator did not report the exact output SHA-256"
@@ -623,6 +777,73 @@ fi
 ! grep -Fq 'Generated deterministic' "$temporary_root/failure.stdout" ||
   die "post-Popen SIGINT fixture emitted a success claim"
 
+for release_signal in HUP TERM; do
+  for delivery in pending delivered; do
+    child_signal_output="$output_a/validator-${delivery}-${release_signal}-patched-source.tar.xz"
+    child_signal_stdout="$temporary_root/validator-${delivery}-${release_signal}.stdout"
+    child_signal_stderr="$temporary_root/validator-${delivery}-${release_signal}.stderr"
+    if run_generator "--fixture-${delivery}-signal-validator-child" "$release_signal" \
+        --baseline "$baseline" --build-manifest "$manifest" \
+        --source-repo "$source_repo" --toolchain-contract "$contract" \
+        --output "$child_signal_output" \
+        > "$child_signal_stdout" 2> "$child_signal_stderr"; then
+      die "generator accepted $delivery $release_signal during child ownership"
+    fi
+    grep -Fqi 'interrupted safely' "$child_signal_stderr" ||
+      die "$delivery $release_signal child interruption was not explicit"
+    child_signal_pid="$(sed -n \
+      's/^Fixture source-archive child reaped PID: \([0-9][0-9]*\)$/\1/p' \
+      "$child_signal_stderr")"
+    [ -n "$child_signal_pid" ] ||
+      die "$delivery $release_signal child fixture did not report exact reap"
+    if kill -0 "$child_signal_pid" 2>/dev/null; then
+      die "$delivery $release_signal child fixture left its process alive"
+    fi
+    [ ! -e "$child_signal_output" ] && [ ! -L "$child_signal_output" ] ||
+      die "$delivery $release_signal child fixture installed an output"
+    ! grep -Fq 'Generated deterministic' "$child_signal_stdout" ||
+      die "$delivery $release_signal child fixture emitted success"
+  done
+done
+
+# Exercise the same ownership fences on a child whose stdout is the exact
+# creation-owned raw-tar FD. The delivered case waits for nonzero bytes while
+# the Git writer is still live; cleanup must reap it and truncate+fsync every
+# retained scratch file before the failure returns.
+for release_signal in HUP TERM; do
+  for delivery in pending delivered; do
+    writer_signal_output="$output_a/writer-${delivery}-${release_signal}-patched-source.tar.xz"
+    writer_signal_stdout="$temporary_root/writer-${delivery}-${release_signal}.stdout"
+    writer_signal_stderr="$temporary_root/writer-${delivery}-${release_signal}.stderr"
+    if run_generator "--fixture-${delivery}-signal-writer-child" "$release_signal" \
+        --baseline "$baseline" --build-manifest "$manifest" \
+        --source-repo "$source_repo" --toolchain-contract "$contract" \
+        --output "$writer_signal_output" \
+        > "$writer_signal_stdout" 2> "$writer_signal_stderr"; then
+      die "generator accepted $delivery $release_signal from an owned-file writer"
+    fi
+    if [ "$delivery" = delivered ]; then
+      grep -Fq "Fixture source-archive writer signal delivered: SIG$release_signal" \
+        "$writer_signal_stderr" ||
+        die "delivered $release_signal writer fixture never observed an active writer"
+    fi
+    writer_signal_pid="$(sed -n \
+      's/^Fixture source-archive writer child reaped PID: \([0-9][0-9]*\)$/\1/p' \
+      "$writer_signal_stderr")"
+    [ -n "$writer_signal_pid" ] ||
+      die "$delivery $release_signal writer fixture did not report exact reap"
+    if kill -0 "$writer_signal_pid" 2>/dev/null; then
+      die "$delivery $release_signal writer fixture left its child alive"
+    fi
+    grep -Fqi 'interrupted safely' "$writer_signal_stderr" ||
+      die "$delivery $release_signal writer interruption was not explicit"
+    [ ! -e "$writer_signal_output" ] && [ ! -L "$writer_signal_output" ] ||
+      die "$delivery $release_signal writer fixture installed an output"
+    ! grep -Fq 'Generated deterministic' "$writer_signal_stdout" ||
+      die "$delivery $release_signal writer fixture emitted success"
+  done
+done
+
 unexpected_output="$output_a/unexpected-copy-patched-source.tar.xz"
 if run_generator --fixture-raise-after-destination-copy \
     --baseline "$baseline" --build-manifest "$manifest" \
@@ -664,6 +885,83 @@ grep -Fqi 'interrupted safely' "$temporary_root/transfer-sigint.stderr" ||
   die "install-transfer SIGINT did not scrub the exact output inode"
 [ "$(shasum -a 256 "$transfer_sigint_victim" | awk '{print $1}')" = \
   "$transfer_sigint_victim_sha" ] || die "install-transfer SIGINT changed a victim"
+
+for release_signal in HUP TERM; do
+  for delivery in pending delivered; do
+    install_signal_output="$output_a/install-${delivery}-${release_signal}-patched-source.tar.xz"
+    install_signal_stdout="$temporary_root/install-${delivery}-${release_signal}.stdout"
+    install_signal_stderr="$temporary_root/install-${delivery}-${release_signal}.stderr"
+    install_signal_victim="$temporary_root/install-${delivery}-${release_signal}-victim"
+    printf 'preserve install signal victim\n' > "$install_signal_victim"
+    install_signal_victim_sha="$(shasum -a 256 "$install_signal_victim" | awk '{print $1}')"
+    if [ "$delivery" = pending ]; then
+      install_signal_option=--fixture-pending-signal-before-install-registration
+      install_signal_marker='Fixture source-archive install registration signal queued:'
+    else
+      install_signal_option=--fixture-delivered-signal-during-install
+      install_signal_marker='Fixture source-archive install signal delivered:'
+    fi
+    if run_generator "$install_signal_option" "$release_signal" \
+        --baseline "$baseline" --build-manifest "$manifest" \
+        --source-repo "$source_repo" --toolchain-contract "$contract" \
+        --output "$install_signal_output" \
+        > "$install_signal_stdout" 2> "$install_signal_stderr"; then
+      die "generator accepted $delivery $release_signal during install ownership"
+    fi
+    grep -Fq "$install_signal_marker SIG$release_signal" "$install_signal_stderr" ||
+      die "$delivery $release_signal install fixture did not trigger exactly"
+    grep -Fqi 'interrupted safely' "$install_signal_stderr" ||
+      die "$delivery $release_signal install interruption was not explicit"
+    [ -f "$install_signal_output" ] && [ ! -L "$install_signal_output" ] &&
+      [ ! -s "$install_signal_output" ] ||
+      die "$delivery $release_signal install output was not scrubbed to zero"
+    [ "$(shasum -a 256 "$install_signal_victim" | awk '{print $1}')" = \
+      "$install_signal_victim_sha" ] ||
+      die "$delivery $release_signal install fixture changed a victim"
+    ! grep -Fq 'Generated deterministic' "$install_signal_stdout" ||
+      die "$delivery $release_signal install fixture emitted success"
+  done
+
+  final_signal_output="$output_a/final-${release_signal}-patched-source.tar.xz"
+  final_signal_stdout="$temporary_root/final-${release_signal}.stdout"
+  final_signal_stderr="$temporary_root/final-${release_signal}.stderr"
+  if run_generator --fixture-signal-before-final-commit "$release_signal" \
+      --baseline "$baseline" --build-manifest "$manifest" \
+      --source-repo "$source_repo" --toolchain-contract "$contract" \
+      --output "$final_signal_output" \
+      > "$final_signal_stdout" 2> "$final_signal_stderr"; then
+    die "generator accepted pending $release_signal at the terminal commit fence"
+  fi
+  grep -Fq "Fixture source-archive final signal queued: SIG$release_signal" \
+    "$final_signal_stderr" ||
+    die "terminal $release_signal fixture did not reach the exact final fence"
+  grep -Fqi 'interrupted safely' "$final_signal_stderr" ||
+    die "terminal $release_signal interruption was not explicit"
+  [ -f "$final_signal_output" ] && [ ! -L "$final_signal_output" ] &&
+    [ ! -s "$final_signal_output" ] ||
+    die "terminal $release_signal output was not scrubbed to zero"
+  ! grep -Fq 'Generated deterministic' "$final_signal_stdout" ||
+    die "terminal $release_signal fixture emitted success"
+done
+
+python3 - "$scratch_parent" <<'PY_SIGNAL_SCRATCH'
+import pathlib
+import stat
+import sys
+
+parent = pathlib.Path(sys.argv[1])
+for scratch in parent.glob(".sp11-source-archive.*"):
+    metadata = scratch.lstat()
+    assert stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode)
+    entries = list(scratch.rglob("*"))
+    assert len(entries) <= 32
+    for entry in entries:
+        entry_metadata = entry.lstat()
+        assert not stat.S_ISLNK(entry_metadata.st_mode)
+        assert stat.S_ISDIR(entry_metadata.st_mode) or (
+            stat.S_ISREG(entry_metadata.st_mode) and entry_metadata.st_size == 0
+        ), (entry, oct(entry_metadata.st_mode), entry_metadata.st_size)
+PY_SIGNAL_SCRATCH
 
 destination_drift_output="$output_a/destination-drift-patched-source.tar.xz"
 run_generator --fixture-pause-after-destination-copy \

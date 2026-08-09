@@ -36,18 +36,21 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
 > build-time state; the outer manifest records kernel-release propagation as
 > complete while keeping `Publication state: blocked`. The preparer emits
 > **NO-PUBLISH** and no publication command. One real immutable-input build is
-> now recorded, but byte reproducibility, the signing policy, P0.3's
-> project-code licence and UCM provenance decisions, recovery/hardware
-> evidence, corresponding-source/release-candidate review, and explicit release
-> authorization remain independent blockers.
+> now recorded, but byte reproducibility, the signing policy,
+> recovery/hardware evidence, corresponding-source/release-candidate review,
+> and explicit release authorization remain open and still block this kernel
+> release candidate. P0.3's final file-level licence/UCM reviews also remain
+> open. [`LEGAL.md`](../../LEGAL.md) records the interim owner direction; those
+> pending reviews alone no longer block pushes, merges, or publication of newly
+> authored artifacts.
 
 ## Prerequisites
 
 - A clean repository checkout on the release branch.
 - Enough disk space and an ARM64 Docker environment for the fresh release-mode
   build performed below. Its package set, v2 kernel manifest, v1 APT sidecar,
-  v1 build-inputs envelope, and retained APT inputs must all come from the same
-  `--release-build` run.
+  v1 build-inputs envelope, and canonical retained-evidence tar representing
+  the full APT state must all come from the same `--release-build` run.
 - A patched source archive for the current, Git-source schema-v2 release path.
   Debian source-package artifacts remain a possible future corresponding-source
   route, but the current release-build and preparation gates do not accept an
@@ -118,6 +121,12 @@ if docker volume inspect "$LINUX_WORK_VOLUME" >/dev/null 2>&1; then
   echo "Choose a new LINUX_WORK_VOLUME; this one already exists." >&2
   exit 1
 fi
+install -d -m 0700 "$RELEASE_WORK_DIR"
+install -d -m 0700 "$ARTIFACTS_DIR"
+ARTIFACTS_FIRST_ENTRY="$(
+  find "$ARTIFACTS_DIR" -mindepth 1 -maxdepth 1 -print -quit
+)" || exit 1
+test -z "$ARTIFACTS_FIRST_ENTRY"
 mkdir -p "$RELEASE_SOURCE_DIR"
 
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
@@ -136,9 +145,14 @@ mkdir -p "$RELEASE_SOURCE_DIR"
   --jobs 8
 ```
 
-After the build, require and inspect the complete provenance trio:
+After the build, require the retained evidence record, its controller files,
+and the complete flat provenance trio:
 
 ```bash
+test -s "$RELEASE_WORK_DIR/sp11-kernel-retained-evidence.tar"
+test -s "$RELEASE_WORK_DIR/docker-build-args.txt"
+test -s "$RELEASE_WORK_DIR/docker-build-inside.sh"
+test -s "$RELEASE_WORK_DIR/sp11-oci-index.json"
 test -f "$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
 test -f "$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
 test -f "$ARTIFACTS_DIR/sp11-kernel-build-inputs.txt"
@@ -155,7 +169,8 @@ as complete. That completion closes the propagation gap only; it does not open
 publication.
 
 Do not reuse either path from a prior build. The release gate rejects stale
-package output, and the source archive must come from this same volume.
+package output, and the source archive must come from this same Linux
+source/build volume rather than from the separate retained-state volume.
 Inspect the newly generated package set in the same artifact directory:
 
 ```bash
@@ -166,44 +181,73 @@ test -s "$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
 Expect exactly one common-headers, architecture-headers, image, and modules
 package, plus at most one manifest-recorded `modules-extra` package.
 
-For a git-source release, create the source archive from the exact Git tree
-object recorded as `Patched tree ID` in that fresh schema-v2 manifest. Do not
-use `git ls-files`: that lists the checkout/index and can omit ignored files
-added by a patch even though those files are part of the recorded tree. Do not
-archive the whole post-build directory either, because it contains generated
-objects and packaging output.
+For a git-source release, use the committed deterministic generator with the
+exact Git tree recorded as `Patched tree ID` in a fresh schema-v2 manifest. Do
+not substitute a raw `git archive` pipeline, `git ls-files`, the whole post-build
+directory, or any rewritten/postprocessed archive. Those alternatives bypass
+the generator's toolchain, repeatability, exact-tree, metadata, resource, and
+exclusive-output checks.
 
-The Docker workflow above leaves the patched source on its case-sensitive Linux
-volume. Create the archive from the exact tree object there, mounting the volume
-read-only and writing only to the host release-source directory:
+Run the generator only inside a fresh network-disabled container after replaying
+and revalidating the retained immutable APT inputs and exact pre/post package
+inventories. Mount the support checkout, build manifest, and named-volume source
+read-only; mount only the release-source destination read-write; and provide a
+fresh private `/tmp` tmpfs. Inside that already validated toolchain envelope,
+the generator invocation is:
 
 ```bash
-BUILD_MANIFEST="$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
-SOURCE_DIR_IN_VOLUME=/linux-work/source/git-jg-ubuntu-qcom-x1e-7.2-rc5-jg-0
-ARCHIVE_ROOT=sp11-qcom-x1e-future-sp11v3-patched-source
-PATCHED_TREE_ID="$(sed -n 's/^Patched tree ID: //p' "$BUILD_MANIFEST")"
-
-test "$(sed -n 's/^Provenance schema: //p' "$BUILD_MANIFEST")" = \
-  sp11-kernel-build-v2
-test "$(sed -n 's/^Release build: //p' "$BUILD_MANIFEST")" = true
-test "$(grep -c '^Patched tree ID: ' "$BUILD_MANIFEST")" = 1
-test -n "$PATCHED_TREE_ID"
-docker run --rm --platform linux/arm64/v8 \
-  -e "ARCHIVE_ROOT=$ARCHIVE_ROOT" \
-  -e "PATCHED_TREE_ID=$PATCHED_TREE_ID" \
-  -e "SOURCE_DIR_IN_VOLUME=$SOURCE_DIR_IN_VOLUME" \
-  -v "$LINUX_WORK_VOLUME:/linux-work:ro" \
-  -v "$PWD/$RELEASE_SOURCE_DIR:/release-source" \
-  "$BUILD_IMAGE" \
-  bash -ceu '
-    apt-get update >/dev/null
-    apt-get install --yes --no-install-recommends git xz-utils >/dev/null
-    git -C "$SOURCE_DIR_IN_VOLUME" cat-file -e "$PATCHED_TREE_ID^{tree}"
-    git -C "$SOURCE_DIR_IN_VOLUME" archive \
-      --format=tar --prefix="$ARCHIVE_ROOT/" "$PATCHED_TREE_ID" | \
-      xz --threads=1 -6 > "/release-source/$ARCHIVE_ROOT.tar.xz"
-  '
+/usr/bin/python3 -I /repo/scripts/generate-sp11-kernel-source-archive.py \
+  --baseline /repo/config/kernel-baselines/7.2-rc5-jg-0.env \
+  --toolchain-contract /repo/config/kernel-source-archive-v1.env \
+  --build-manifest /artifacts/sp11-kernel-build-manifest.txt \
+  --source-repo \
+    /linux-work/source/git-jg-ubuntu-qcom-x1e-7.2-rc5-jg-0 \
+  --scratch-parent /tmp \
+  --output \
+    /release-source/sp11-qcom-x1e-future-sp11v3-patched-source.tar.xz
 ```
+
+The retained 2026-08-08 four-patch tree cannot satisfy this gate: independent
+validation correctly rejected its tracked `debian/scripts/misc/find-dtbs.py`
+symbolic link because the target escapes the archive root. No archive was
+installed. Do not weaken the validator or rewrite that tree under its existing
+manifest. Only a fresh build whose ordered patches remove the stale link and
+whose exact-tree symlink-containment preflight passes may continue through this
+procedure.
+
+That build-time preflight proves only bounded symlink containment in the exact
+Git namespace under the pinned OCI/APT toolchain and trusted build-controller
+envelope. It is not a sandbox against malicious or concurrent same-container
+root/source-rule mutation, and it does not claim that every in-tree link
+resolves. The independent generator and archive validator must still recompute
+the exact tree and containment result before an archive candidate is accepted.
+
+The host-side Docker launch assumes an exclusive, trusted host controller from
+before private control/output-root creation or acquisition through bind-source
+resolution and use. After a root is acquired, release-mode writes are confined
+to held directory and creation-owned file descriptors; collisions, links,
+special nodes, persistent mapping drift, and pathname deletion or overwrite are
+rejected. This flow does not claim integrity, availability, or victim
+preservation against a concurrent process with the same host credentials
+racing root creation/acquisition or substituting a validated bind source. That
+stronger guarantee requires privilege separation or a separately reviewed
+supervisor and daemon-owned, content-addressed inputs.
+
+That trusted-controller boundary also requires exclusive use of the selected
+Docker context, socket, and daemon credentials, with no concurrent read-write
+mount or mutation of the named release-state volume from creation through
+evidence import. A daemon-owned volume is not itself immutable or
+content-addressed. Any later forensic use of the retained volume requires the
+same exclusive custody and a fresh validation; the imported evidence tar is
+the bounded host-side record of the accepted run.
+
+Host-side orchestration, including the release preparer, also assumes an
+exclusive trusted checkout and a non-hostile process environment, system
+toolchain, and `PATH`; it does not claim resistance to a malicious replacement
+of ordinary host utilities. Security-critical retained release-evidence
+helpers use absolute isolated interpreter authority and commit-bound code,
+while legacy preparer utilities remain inside this explicit host-toolchain
+boundary.
 
 The release helper parses the archive without extracting host paths, rejects
 malformed, multi-root, traversal, symlink-escape, unsafe-header, and appended
@@ -291,16 +335,40 @@ headers and configuration.
 
 4. Prepare a local review candidate.
 
-The preparer snapshots the exact v2 build manifest, v1 APT sidecar, and v1
-build-inputs envelope, revalidates them against the retained build controls and
-APT inputs, and attaches all three. It rejects missing, changed, extra, and
-legacy publishable inputs. Legacy r1 output remains immutable and cannot be
-passed back through this gate. An `sp11vN` candidate must also supply the
-ABI-matched module directory and both validated source archives. This example
-uses a new candidate name and build directory:
+The preparer validates the canonical
+`sp11-kernel-retained-evidence.tar`, the exact v2 build manifest, v1 APT
+sidecar, v1 build-inputs envelope, and their bound controller files. The full
+APT cache, indexes, list targets, and package inventories remain represented by
+that tar rather than recreated as host directory trees. The preparer attaches
+the three flat provenance files and records the retained tar identity in the
+outer release manifest. It rejects missing, changed, extra, and legacy
+publishable inputs. Legacy r1 output remains immutable and cannot be passed
+back through this gate. An `sp11vN` candidate must also supply the ABI-matched
+module directory and both validated source archives.
+
+The output directory is publication authority, so create the exact private,
+empty mode-`0700` directory before invoking the preparer. The preparer fills it
+with exclusive no-follow writes and refuses an existing member instead of
+overwriting or deleting it. Mode `0700` explicitly means incomplete. Only the
+terminal descriptor-held commit changes the directory to mode `0500`, after
+all bytes, membership, provenance, and pending-signal checks pass. Any run that
+fails before that terminal commit may retain forensic files, but its directory
+remains mode `0700`; never reuse, validate, or publish from that directory. A
+successful mode change is the authoritative commit even if a later uncatchable
+process or host failure prevents the best-effort success text or normal exit.
+Mode `0500` is necessary but not sufficient for a candidate: exclusive custody
+and the complete checksum and semantic validation below still apply. This
+example uses a new candidate name and output directory:
 
 ```bash
 TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
+RELEASE_OUT="build/release/$TAG"
+test ! -e "$RELEASE_OUT"
+install -d -m 0700 "$RELEASE_OUT"
+RELEASE_FIRST_ENTRY="$(
+  find "$RELEASE_OUT" -mindepth 1 -maxdepth 1 -print -quit
+)" || exit 1
+test -z "$RELEASE_FIRST_ENTRY"
 
 ./scripts/prepare-sp11-kernel-release-assets.sh \
   --kernel-debs-dir "$ARTIFACTS_DIR" \
@@ -308,6 +376,7 @@ TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
   --patch-dir patches/jglathe-qcom-x1e-7.2-rc5 \
   --patch-dir patches/sp11-qcom-x1e-7.2-rc5-v3 \
   --release-name "$TAG" \
+  --out-dir "$RELEASE_OUT" \
   --source-asset "$RELEASE_SOURCE_DIR/sp11-qcom-x1e-future-sp11v3-patched-source.tar.xz" \
   --source-asset "$RELEASE_SOURCE_DIR/sp11-touchscreen-modules-source-6bbcf7a4759a73014047a57e819219dd7f34951a.tar.xz" \
   --touchscreen-modules-dir "$TOUCH_MODULES_DIR" \
@@ -327,7 +396,7 @@ committed patch paths and hashes must match every entry in its schema-v2
 manifest. Supplying an incomplete directory list makes the source provenance
 fail closed.
 
-The helper writes an ignored directory under:
+The helper writes only into the caller-created ignored directory under:
 
 ```text
 build/release/<release-name>/
@@ -337,6 +406,31 @@ It refuses to prepare a source-less source-bound candidate. Use
 `--allow-missing-source` only for a local draft rehearsal.
 
 5. Review the generated release directory.
+
+First require the terminal mode-`0500` commit marker. The preparer emits its
+success text only after that transition while all output and evidence
+descriptors are still held:
+
+```bash
+case "$(uname -s)" in
+  Darwin)
+    test "$(stat -f '%Lp' "$RELEASE_OUT")" = 500
+    test "$(stat -f '%u' "$RELEASE_OUT")" = "$(id -u)"
+    ;;
+  *)
+    test "$(stat -c '%a' -- "$RELEASE_OUT")" = 500
+    test "$(stat -c '%u' -- "$RELEASE_OUT")" = "$(id -u)"
+    ;;
+esac
+```
+
+The mode is not an immutability claim. Continue with the exact file and content
+checks; any mismatch rejects the directory even when its mode is `0500`. This
+is a local prepublication-candidate contract. Individually downloaded release
+assets do not carry their parent directory mode. The explicit
+`--downloaded-release` mode validates transported content only and confers no
+local preparer transaction or publication authority; it cannot manufacture
+the mode-`0500` local commit marker. Do not silently relax this local gate.
 
 ```bash
 TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
@@ -379,8 +473,22 @@ same digest-pinned ARM64 build image rather than directly under macOS Bash 3.2:
 validate_release_dir() {
   local release_dir="$1"
   shift
-  local release_abs
+  local release_abs release_mode release_owner
+  test -d "$release_dir"
+  test ! -L "$release_dir"
   release_abs="$(cd "$release_dir" && pwd -P)"
+  case "$(uname -s)" in
+    Darwin)
+      release_mode="$(stat -f '%Lp' "$release_abs")"
+      release_owner="$(stat -f '%u' "$release_abs")"
+      ;;
+    *)
+      release_mode="$(stat -c '%a' -- "$release_abs")"
+      release_owner="$(stat -c '%u' -- "$release_abs")"
+      ;;
+  esac
+  test "$release_mode" = 500
+  test "$release_owner" = "$(id -u)"
   docker run --rm --platform linux/arm64/v8 \
     -v "$PWD:/repo:ro" \
     -v "$release_abs:/release:ro" \
@@ -391,20 +499,30 @@ validate_release_dir() {
       apt-get install --yes --no-install-recommends \
         coreutils device-tree-compiler dpkg git kmod python3 tar xz-utils \
         >/dev/null
-      ./scripts/validate-sp11-touchscreen-release.sh --dir /release "$@"
+      ./scripts/validate-sp11-touchscreen-release.sh \
+        --local-prepared-candidate --dir /release "$@"
     ' bash "$@"
 }
 
 validate_release_dir "build/release/$TAG"
 ```
 
+The explicit `--local-prepared-candidate` mode requires the mode-`0500`
+transaction marker in addition to complete content validation. The validator's
+host-side precheck also requires a real, non-symlinked directory owned by the
+current user. Downloaded-release mode intentionally does not treat directory
+mode as transported provenance, because individual downloaded assets do not
+preserve their original parent-directory metadata. Changing a downloaded
+directory to mode `0500` does not turn it into a locally prepared candidate.
+
 7. Review the explicit **NO-PUBLISH** result.
 
 The helper emits no publication command. Confirm the outer manifest says
 `Kernel release propagation: complete` and `Publication state: blocked`, and
 confirm the release notes disclose the byte-reproducibility, signing,
-licence/UCM, recovery/hardware, corresponding-source, and authorization gates.
-Do not add, remove, or regenerate files after validation.
+recovery/hardware, corresponding-source, and authorization gates, plus the
+pending final licence/UCM reviews recorded in [`LEGAL.md`](../../LEGAL.md). Do
+not add, remove, or regenerate files after validation.
 
 8. Record the offline review result.
 

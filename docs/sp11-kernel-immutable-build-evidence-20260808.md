@@ -13,9 +13,11 @@ Ubuntu snapshot.
 > **P0.4 remains OPEN overall.** This is one immutable-input provenance result,
 > not a two-build or byte-reproducibility result. P0.4b remains failed/open.
 >
-> **NO-PUBLISH.** Signing policy, project-code licence and UCM provenance,
-> corresponding-source and release-candidate review, target/recovery evidence,
-> hardware validation, and explicit release authorization remain open.
+> **NO-PUBLISH.** Signing policy, corresponding-source and release-candidate
+> review, target/recovery evidence, hardware validation, and explicit release
+> authorization remain open. The interim project-code licence and SP11 UCM
+> basis is now recorded in [`LEGAL.md`](../LEGAL.md), with final reviews pending;
+> that pending status alone is not a blanket block on newly authored artifacts.
 
 ## Exact build identity
 
@@ -123,6 +125,33 @@ copied artifacts, Deb metadata, or module scan. The host review did not open the
 private Linux build volume to re-hash its seven manifest-bound intermediate
 outputs, so this report does not claim an independent second observation of
 those volume-resident files.
+
+## Offline patched-source follow-up
+
+Later deterministic archive tooling at support commit
+[`4c644d57121de1b1b59f9721bb003cb666e86dab`](https://github.com/ooaklee/linux-surface-pro-11-oe/commit/4c644d57121de1b1b59f9721bb003cb666e86dab)
+passed its exact-head [push run](https://github.com/ooaklee/linux-surface-pro-11-oe/actions/runs/31277808526)
+and [pull-request run](https://github.com/ooaklee/linux-surface-pro-11-oe/actions/runs/31277810128).
+An offline, network-disabled replay then reauthenticated all 334 retained Debs
+and the local build-dependencies Deb and reproduced the exact 87-package to
+415-package inventory transition. That is a passed APT replay sub-gate, not a
+completed source-archive integration.
+
+The independent archive validator correctly rejected the historical patched
+tree because its tracked `debian/scripts/misc/find-dtbs.py` symbolic link has
+an absolute developer-workstation target outside the archive root. No archive
+was installed, the two release-source output directories remained empty, and
+the second independent outer run did not start. The retained four-patch tree
+`c8fc15ee7b216f10b48d70e521e23b7c16ab88bc` is therefore **NO-GO** for a
+patched-source archive or release-asset claim. It must not be rewritten or
+postprocessed under its existing manifest.
+
+A future candidate requires an ordered source patch that removes the stale
+link, an exact-tree symlink-containment preflight, a fresh release build and
+manifest, and a fresh offline repeated-generation and independent-validation
+run. The fork now carries the deletion and preflight tooling, but no fresh real
+build has exercised them. This technical follow-up does not establish
+corresponding-source legal sufficiency or authorize publication.
 
 This result closes only P0.4c's one-real-build verification scope. It does not
 retroactively make the historical A/B pair immutable, provide a second build

@@ -5,12 +5,18 @@ baseline with this repository's Docker kernel builder.
 
 The upstream tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` already carries
 the Surface Pro 11 Wi-Fi `disable-rfkill` kernel and Denali DTB changes, and
-its `debian/rules.d` already uses the packaged `/usr/lib/stubble` and
-`/usr/share/stubble` paths, so no rfkill, Denali DTB, or stubble-paths patches
-are needed here.
+its `debian/rules.d` already invokes the packaged
+`/usr/libexec/stubble/finddtbs.py` with `/usr/share/stubble/hwids`, so no
+rfkill, Denali DTB, or Stubble path rewrite is needed here.
 
-This directory only carries build policy compatibility patches needed by
-Ubuntu's `check-config` step, if any.
+This directory carries two compatibility changes:
+
+- the Ubuntu `check-config` annotation update; and
+- removal of the stale `debian/scripts/misc/find-dtbs.py` symlink, whose target
+  was an absolute developer-workstation path. The active package rules use the
+  `finddtbs.py` installed by the Ubuntu `stubble` package instead. Its patch is
+  intentionally an irreversible binary deletion, so it does not republish the
+  stale target bytes as reverse-patch data.
 
 ## Build environment
 

@@ -27,8 +27,18 @@ PLATFORM="linux/arm64"
 PLATFORM_EXPLICIT="false"
 WORK_DIR="build/docker-sp11-qcom-x1e-kernel"
 WORK_ROOT_IDENTITY=""
+WORK_ROOT_FD=52
+WORK_ROOT_FD_OPEN="false"
+WORK_ROOT_IMPORT_IDENTITY=()
 RELEASE_WORK_DIR_NAMES=()
 RELEASE_WORK_DIR_IDENTITIES=()
+RELEASE_ARTIFACTS_FD=58
+RELEASE_ARTIFACTS_FD_OPEN="false"
+RELEASE_ARTIFACTS_IDENTITY=""
+RELEASE_ARTIFACTS_IMPORT_IDENTITY=()
+RELEASE_BUILD_ARGS_IMPORT_IDENTITY=()
+RELEASE_ENTRYPOINT_IMPORT_IDENTITY=()
+RELEASE_OCI_INDEX_IMPORT_IDENTITY=()
 CONTAINER_WORK_DIR="/linux-work"
 LINUX_WORK_VOLUME="sp11-qcom-x1e-kernel-build"
 METADATA=""
@@ -55,14 +65,23 @@ SUPPORT_HEAD_START=""
 CONTROL_DIR=""
 PAYLOAD_STAGE=""
 KERNEL_BASELINE=""
+KERNEL_BASELINE_ACCESS=""
+KERNEL_BASELINE_FD=53
+KERNEL_BASELINE_FD_OPEN="false"
 KERNEL_BASELINE_REL="config/kernel-baselines/7.2-rc5-jg-0.env"
 KERNEL_BASELINE_VALIDATOR_REL="scripts/validate-sp11-kernel-baseline.sh"
 BASELINE_CONTROL_DIR=""
 BASELINE_CONTROL_PARENT=""
 BASELINE_CONTROL_IDENTITY=""
+BASELINE_CONTROL_FD=50
+BASELINE_CONTROL_FD_OPEN="false"
+BASELINE_CONTROL_ACCESS_DIR=""
 BASELINE_CONTROL_INITIAL_STATE=""
 BASELINE_CONTROL_FINAL_STATE=""
 KERNEL_BASELINE_VALIDATOR=""
+KERNEL_BASELINE_VALIDATOR_ACCESS=""
+KERNEL_BASELINE_VALIDATOR_FD=54
+KERNEL_BASELINE_VALIDATOR_FD_OPEN="false"
 KERNEL_BASELINE_STATE=""
 KERNEL_BASELINE_VALIDATOR_STATE=""
 KERNEL_BASELINE_SHA256=""
@@ -75,11 +94,40 @@ EXPECTED_RELEASE_ENTRYPOINT_SHA256=""
 RELEASE_OCI_INDEX_STATE=""
 RELEASE_OCI_INDEX_SHA256=""
 EXPECTED_RELEASE_OCI_INDEX_SHA256=""
+RELEASE_STATE_VOLUME_NAME=""
+RELEASE_STATE_VOLUME_TOKEN=""
+DOCKER_BIN=""
+RELEASE_PYTHON_BIN="/usr/bin/python3"
+RELEASE_PYTHON_IDENTITY=""
+RELEASE_OCI_VALIDATOR_IDENTITY=""
+RELEASE_OCI_VALIDATOR_SHA256=""
+RELEASE_OCI_VALIDATOR_OBJECT_ID=""
+RELEASE_OCI_VALIDATOR_MODE=""
+RELEASE_OCI_VALIDATOR_SIZE=""
+RELEASE_STATE_HELPER_IDENTITY=""
+RELEASE_STATE_HELPER_SHA256=""
+RELEASE_STATE_HELPER_OBJECT_ID=""
+RELEASE_STATE_HELPER_MODE=""
+RELEASE_STATE_HELPER_SIZE=""
+RELEASE_BUILD_INPUTS_HELPER_SHA256=""
+RELEASE_BUILD_INPUTS_HELPER_OBJECT_ID=""
+RELEASE_BUILD_INPUTS_HELPER_MODE=""
+RELEASE_BUILD_INPUTS_HELPER_SIZE=""
+RELEASE_MANIFEST_VALIDATOR_SHA256=""
+RELEASE_MANIFEST_VALIDATOR_OBJECT_ID=""
+RELEASE_MANIFEST_VALIDATOR_MODE=""
+RELEASE_MANIFEST_VALIDATOR_SIZE=""
+RELEASE_GIT_OBJECT_FORMAT=""
+RELEASE_VALIDATOR_ARGV_SHA256=""
 SUPPORT_SNAPSHOT_ROOT=""
 SUPPORT_SNAPSHOT_PARENT=""
 SUPPORT_SNAPSHOT_ROOT_IDENTITY=""
+SUPPORT_SNAPSHOT_FD=51
+SUPPORT_SNAPSHOT_FD_OPEN="false"
+SUPPORT_SNAPSHOT_ACCESS_ROOT=""
 SUPPORT_SNAPSHOT_ROOT_STATE=""
 COMMITTED_SUPPORT_DIR=""
+COMMITTED_SUPPORT_ACCESS_DIR=""
 SUPPORT_SNAPSHOT_TREE=""
 SUPPORT_SNAPSHOT_PATHS=()
 SUPPORT_SNAPSHOT_TYPES=()
@@ -133,6 +181,9 @@ Options:
                          exact Git source commit, and clean stable support HEAD.
   --work-dir DIR         Dedicated host control/artifact directory beneath this
                          repository's build/, default $WORK_DIR.
+                         Release mode requires DIR and DIR/artifacts to
+                         preexist as real, empty, mode-0700 directories owned
+                         by the invoking uid.
   --container-work-dir DIR
                          Container build directory, default $CONTAINER_WORK_DIR.
                          The default is backed by a Docker Linux volume so the
@@ -173,6 +224,91 @@ require_tool() {
   fi
 }
 
+release_python_identity_record() {
+  "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+if sys.flags.isolated != 1 or path != "/usr/bin/python3":
+    raise SystemExit(1)
+descriptor = os.open(
+    path,
+    os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+)
+try:
+    before = os.fstat(descriptor)
+    mapped = os.lstat(path)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or not stat.S_ISREG(mapped.st_mode)
+        or before.st_uid != 0
+        or stat.S_IMODE(before.st_mode) & 0o022
+        or not stat.S_IMODE(before.st_mode) & 0o111
+        or before.st_size <= 0
+        or before.st_size > 256 * 1024 * 1024
+        or (before.st_dev, before.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise SystemExit(1)
+    if not os.pread(descriptor, 1, 0):
+        raise SystemExit(1)
+    after = os.fstat(descriptor)
+    remapped = os.lstat(path)
+    fields = (
+        before.st_dev,
+        before.st_ino,
+        stat.S_IMODE(before.st_mode),
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+        before.st_nlink,
+        before.st_uid,
+        before.st_gid,
+    )
+    if (
+        fields
+        != (
+            after.st_dev,
+            after.st_ino,
+            stat.S_IMODE(after.st_mode),
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_nlink,
+            after.st_uid,
+            after.st_gid,
+        )
+        or (after.st_dev, after.st_ino) != (remapped.st_dev, remapped.st_ino)
+    ):
+        raise SystemExit(1)
+    print(*fields)
+finally:
+    os.close(descriptor)
+' "$RELEASE_PYTHON_BIN"
+}
+
+capture_release_python_authority() {
+  local release_python_fields=()
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  RELEASE_PYTHON_IDENTITY="$(release_python_identity_record)" || {
+    echo "Release mode requires the trusted real /usr/bin/python3 toolchain authority." >&2
+    return 1
+  }
+  read -r -a release_python_fields <<< "$RELEASE_PYTHON_IDENTITY"
+  [ "${#release_python_fields[@]}" -eq 9 ] || return 1
+}
+
+verify_release_python_authority() {
+  local current
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ -n "$RELEASE_PYTHON_IDENTITY" ] || return 1
+  current="$(release_python_identity_record)" || return 1
+  [ "$current" = "$RELEASE_PYTHON_IDENTITY" ]
+}
+
 require_apt_list_decoder() {
   if [ -f /usr/lib/apt/apt-helper ] &&
      [ -x /usr/lib/apt/apt-helper ] &&
@@ -192,6 +328,10 @@ require_arg() {
 
 cleanup_control_dir() {
   [ -n "$CONTROL_DIR" ] || return 0
+  # Release controls live in BASELINE_CONTROL_DIR and are deliberately
+  # retained.  This name-based cleanup is only for the nonrelease staging
+  # directory created later in the script.
+  [ "$RELEASE_BUILD" != "true" ] || return 0
   case "$CONTROL_DIR" in
     "$work_abs"/.sp11-docker-control.*)
       if [ -d "$CONTROL_DIR" ] && [ ! -L "$CONTROL_DIR" ]; then
@@ -212,6 +352,9 @@ cleanup_control_dir() {
 
 cleanup_payload_stage() {
   [ -n "$PAYLOAD_STAGE" ] || return 0
+  # Release mode rejects --copy-to-payload after complete option parsing, so
+  # this pathname cleanup is reachable only for the legacy nonrelease copy.
+  [ "$RELEASE_BUILD" != "true" ] || return 0
   if [ -z "${payload_abs:-}" ]; then
     echo "warning: refusing to clean a payload stage without a validated payload root" >&2
     return 0
@@ -229,6 +372,34 @@ cleanup_payload_stage() {
       echo "warning: refusing to clean unexpected payload staging directory: $PAYLOAD_STAGE" >&2
       ;;
   esac
+}
+
+cleanup_held_release_roots() {
+  # Closing an inherited directory handle cannot traverse a replaced name.
+  if [ "$RELEASE_ARTIFACTS_FD_OPEN" = "true" ]; then
+    exec 58<&-
+    RELEASE_ARTIFACTS_FD_OPEN="false"
+  fi
+  if [ "$KERNEL_BASELINE_VALIDATOR_FD_OPEN" = "true" ]; then
+    exec 54<&-
+    KERNEL_BASELINE_VALIDATOR_FD_OPEN="false"
+  fi
+  if [ "$KERNEL_BASELINE_FD_OPEN" = "true" ]; then
+    exec 53<&-
+    KERNEL_BASELINE_FD_OPEN="false"
+  fi
+  if [ "$WORK_ROOT_FD_OPEN" = "true" ]; then
+    exec 52<&-
+    WORK_ROOT_FD_OPEN="false"
+  fi
+  if [ "$BASELINE_CONTROL_FD_OPEN" = "true" ]; then
+    exec 50<&-
+    BASELINE_CONTROL_FD_OPEN="false"
+  fi
+  if [ "$SUPPORT_SNAPSHOT_FD_OPEN" = "true" ]; then
+    exec 51<&-
+    SUPPORT_SNAPSHOT_FD_OPEN="false"
+  fi
 }
 
 baseline_control_identity() {
@@ -272,6 +443,897 @@ baseline_control_directory_state() {
   esac
   [ "$before" = "$after" ] || return 1
   printf '%s\n' "$before"
+}
+
+verify_held_release_directory() {
+  local descriptor="$1" path="$2" expected_identity="$3"
+
+  "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+descriptor = int(sys.argv[1], 10)
+path = sys.argv[2]
+expected = sys.argv[3]
+held = os.fstat(descriptor)
+mapped = os.lstat(path)
+
+def identity(metadata):
+    return ":".join(str(value) for value in (
+        metadata.st_dev,
+        metadata.st_ino,
+        format(stat.S_IMODE(metadata.st_mode), "o"),
+        metadata.st_uid,
+        metadata.st_gid,
+    ))
+
+if (
+    not stat.S_ISDIR(held.st_mode)
+    or stat.S_ISLNK(mapped.st_mode)
+    or identity(held) != expected
+    or identity(mapped) != expected
+    or (held.st_dev, held.st_ino) != (mapped.st_dev, mapped.st_ino)
+):
+    raise SystemExit(1)
+' "$descriptor" "$path" "$expected_identity"
+}
+
+held_release_directory_identity_fields() {
+  local descriptor="$1"
+
+  "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+metadata = os.fstat(int(sys.argv[1], 10))
+if not stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit(1)
+print(
+    metadata.st_dev,
+    metadata.st_ino,
+    stat.S_IMODE(metadata.st_mode),
+    metadata.st_uid,
+    metadata.st_gid,
+)
+' "$descriptor"
+}
+
+held_release_companion_identity_fields() {
+  local name="$1" expected_digest="$2"
+
+  "$RELEASE_PYTHON_BIN" -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+parent = int(sys.argv[1], 10)
+name = sys.argv[2]
+expected_digest = sys.argv[3]
+if (
+    not name
+    or name in (".", "..")
+    or "/" in name
+    or len(expected_digest) != 64
+    or any(character not in "0123456789abcdef" for character in expected_digest)
+):
+    raise SystemExit(1)
+descriptor = os.open(
+    name,
+    os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+    dir_fd=parent,
+)
+try:
+    before = os.fstat(descriptor)
+    mapped = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or not stat.S_ISREG(mapped.st_mode)
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or before.st_size <= 0
+        or before.st_size > 64 * 1024 * 1024
+        or before.st_nlink != 1
+        or (before.st_dev, before.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise SystemExit(1)
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(descriptor, min(65536, before.st_size - offset), offset)
+        if not chunk:
+            raise SystemExit(1)
+        digest.update(chunk)
+        offset += len(chunk)
+    after = os.fstat(descriptor)
+    remapped = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if (
+        os.pread(descriptor, 1, before.st_size)
+        or digest.hexdigest() != expected_digest
+        or (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+            before.st_nlink,
+        )
+        != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            after.st_nlink,
+        )
+        or (after.st_dev, after.st_ino) != (remapped.st_dev, remapped.st_ino)
+    ):
+        raise SystemExit(1)
+    print(
+        after.st_dev,
+        after.st_ino,
+        stat.S_IMODE(after.st_mode),
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+        after.st_nlink,
+        after.st_uid,
+        after.st_gid,
+    )
+finally:
+    os.close(descriptor)
+' "$WORK_ROOT_FD" "$name" "$expected_digest"
+}
+
+capture_release_companion_import_identities() {
+  local build_args_record entrypoint_record oci_index_record value
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  verify_release_work_root_binding || return 1
+  verify_release_work_root_prebuild_membership || return 1
+  build_args_record="$(held_release_companion_identity_fields \
+    docker-build-args.txt "$RELEASE_BUILD_ARGS_SHA256")" || {
+      echo "Could not capture the held release build-arguments identity." >&2
+      return 1
+    }
+  entrypoint_record="$(held_release_companion_identity_fields \
+    docker-build-inside.sh "$RELEASE_ENTRYPOINT_SHA256")" || {
+      echo "Could not capture the held release entrypoint identity." >&2
+      return 1
+    }
+  oci_index_record="$(held_release_companion_identity_fields \
+    sp11-oci-index.json "$RELEASE_OCI_INDEX_SHA256")" || {
+      echo "Could not capture the held release OCI-index identity." >&2
+      return 1
+    }
+  read -r -a RELEASE_BUILD_ARGS_IMPORT_IDENTITY <<< "$build_args_record"
+  read -r -a RELEASE_ENTRYPOINT_IMPORT_IDENTITY <<< "$entrypoint_record"
+  read -r -a RELEASE_OCI_INDEX_IMPORT_IDENTITY <<< "$oci_index_record"
+  for value in \
+    "${RELEASE_BUILD_ARGS_IMPORT_IDENTITY[@]}" \
+    "${RELEASE_ENTRYPOINT_IMPORT_IDENTITY[@]}" \
+    "${RELEASE_OCI_INDEX_IMPORT_IDENTITY[@]}"; do
+    [[ "$value" =~ ^[0-9]+$ ]] || {
+      echo "Release companion import identity is malformed." >&2
+      return 1
+    }
+  done
+  [ "${#RELEASE_BUILD_ARGS_IMPORT_IDENTITY[@]}" -eq 9 ] &&
+    [ "${#RELEASE_ENTRYPOINT_IMPORT_IDENTITY[@]}" -eq 9 ] &&
+    [ "${#RELEASE_OCI_INDEX_IMPORT_IDENTITY[@]}" -eq 9 ] || {
+      echo "Release companion import identity field count is not exact." >&2
+      return 1
+    }
+  verify_release_work_root_binding || return 1
+  verify_release_work_root_prebuild_membership || return 1
+}
+
+verify_held_release_file() {
+  local descriptor="$1" path="$2" expected_digest="$3" expected_mode="$4"
+
+  "$RELEASE_PYTHON_BIN" -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+descriptor = int(sys.argv[1], 10)
+path = sys.argv[2]
+expected_digest = sys.argv[3]
+expected_mode = int(sys.argv[4], 8)
+held = os.fstat(descriptor)
+mapped = os.lstat(path)
+if (
+    not stat.S_ISREG(held.st_mode)
+    or not stat.S_ISREG(mapped.st_mode)
+    or stat.S_IMODE(held.st_mode) != expected_mode
+    or held.st_nlink != 1
+    or held.st_size <= 0
+    or held.st_size > 4 * 1024 * 1024
+    or (held.st_dev, held.st_ino) != (mapped.st_dev, mapped.st_ino)
+):
+    raise SystemExit(1)
+digest = hashlib.sha256()
+offset = 0
+while offset < held.st_size:
+    chunk = os.pread(descriptor, min(65536, held.st_size - offset), offset)
+    if not chunk:
+        raise SystemExit(1)
+    digest.update(chunk)
+    offset += len(chunk)
+if os.pread(descriptor, 1, held.st_size) or digest.hexdigest() != expected_digest:
+    raise SystemExit(1)
+after = os.fstat(descriptor)
+remapped = os.lstat(path)
+if (
+    (held.st_dev, held.st_ino, held.st_size, held.st_mtime_ns, held.st_ctime_ns)
+    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+    or (after.st_dev, after.st_ino) != (remapped.st_dev, remapped.st_ino)
+):
+    raise SystemExit(1)
+' "$descriptor" "$path" "$expected_digest" "$expected_mode"
+}
+
+held_release_directory_access_path() {
+  local descriptor="$1" path="$2" expected_identity="$3"
+
+  if [ "$(uname -s)" = Linux ] &&
+     verify_held_release_directory "$descriptor" "$path" "$expected_identity" &&
+     [ -d "/proc/self/fd/$descriptor" ]; then
+    printf '/proc/self/fd/%s\n' "$descriptor"
+  else
+    # Darwin /dev/fd entries cannot be traversed as directory roots. Docker
+    # Desktop/remote daemons likewise consume bind sources by pathname, not by
+    # a transferable client FD; those mounts remain an explicitly rechecked
+    # controller/daemon trust boundary.
+    printf '%s\n' "$path"
+  fi
+}
+
+create_release_file_exclusive() {
+  local parent="$1" parent_identity="$2" parent_fd="$3"
+  local name="$4" maximum="$5" operation="$6"
+  shift 6
+
+  [ "$RELEASE_BUILD" = "true" ] || return 1
+  "$RELEASE_PYTHON_BIN" -I -c '
+import hashlib
+import os
+import selectors
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+parent_path, expected_parent_identity = sys.argv[1:3]
+parent_descriptor = int(sys.argv[3], 10)
+name = sys.argv[4]
+maximum = int(sys.argv[5], 10)
+operation = sys.argv[6]
+arguments = sys.argv[7:]
+if (
+    not name
+    or len(name) > 128
+    or name in (".", "..")
+    or "/" in name
+    or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    or maximum <= 0
+    or maximum > 64 * 1024 * 1024
+    or operation not in ("stdin", "copy", "command")
+):
+    raise SystemExit(1)
+
+output_flags = (
+    os.O_RDWR
+    | os.O_CREAT
+    | os.O_EXCL
+    | os.O_NOFOLLOW
+    | os.O_NONBLOCK
+    | os.O_CLOEXEC
+)
+
+def stable(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+    )
+
+def directory_identity(metadata):
+    return ":".join(str(value) for value in (
+        metadata.st_dev,
+        metadata.st_ino,
+        format(stat.S_IMODE(metadata.st_mode), "o"),
+        metadata.st_uid,
+        metadata.st_gid,
+    ))
+
+def verify_parent(descriptor, held_identity):
+    current = os.fstat(descriptor)
+    mapped = os.lstat(parent_path)
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or stat.S_ISLNK(mapped.st_mode)
+        or directory_identity(current) != expected_parent_identity
+        or directory_identity(current) != held_identity
+        or (current.st_dev, current.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise OSError("unsafe release parent")
+
+def write_all(descriptor, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("short release write")
+        view = view[written:]
+
+parent = -1
+output = -1
+source = -1
+producer = None
+created = False
+release_signals = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+
+# An invoking shell may have inherited SIGCHLD=SIG_IGN, which lets children
+# auto-reap before Popen records an authoritative status.  This embedded
+# supervisor is the first child owner in its process: reset once, then require
+# the disposition to remain exact at every producer acquisition.
+try:
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+except (OSError, ValueError):
+    raise SystemExit(1)
+if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+    raise SystemExit(1)
+
+def interrupted(signum, _frame):
+    # The first delivered terminal signal closes the handler-to-scrub gap;
+    # any second/pending signal remains blocked until cleanup has finished.
+    signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+    raise InterruptedError("interrupted release output acquisition: %d" % signum)
+
+try:
+    for release_signal in release_signals:
+        signal.signal(release_signal, interrupted)
+    parent = os.dup(parent_descriptor)
+    parent_metadata = os.fstat(parent)
+    held_parent_identity = directory_identity(parent_metadata)
+    verify_parent(parent, held_parent_identity)
+    # Hostile acquisition fixtures can plant only a final-name tripwire inside
+    # the already-held release parent. They cannot write through the target,
+    # delete a name, or make an otherwise failing acquisition succeed.
+    if os.environ.get("SP11_RELEASE_CREATOR_FIXTURE") == "true":
+        fixture_mode = os.environ.get("CAPTURE_ATTACK_MODE", "")
+        fixture_victim = os.environ.get("CAPTURE_ATTACK_VICTIM", "")
+        fixture_work_root = os.environ.get("CAPTURE_ATTACK_WORK_ROOT", "")
+        fixture_key = (fixture_mode, name, operation)
+        if fixture_key in (
+            ("snapshot-symlink", "kernel-baseline.env", "copy"),
+            ("retained-fifo-link", "docker-build-args.txt", "copy"),
+        ):
+            if not os.path.isabs(fixture_victim) or "\0" in fixture_victim:
+                raise OSError("invalid exclusive-create fixture victim")
+            if fixture_mode == "snapshot-symlink":
+                if not (
+                    parent_path.startswith("/tmp/sp11-kernel-baseline.")
+                    or parent_path.startswith("/private/tmp/sp11-kernel-baseline.")
+                ):
+                    raise OSError("invalid snapshot fixture parent")
+            elif parent_path != fixture_work_root:
+                raise OSError("invalid retained-evidence fixture parent")
+            os.symlink(fixture_victim, name, dir_fd=parent)
+        elif fixture_key == ("private-args-fifo", "docker-build-args.txt", "stdin"):
+            if not (
+                parent_path.startswith("/tmp/sp11-kernel-baseline.")
+                or parent_path.startswith("/private/tmp/sp11-kernel-baseline.")
+            ):
+                raise OSError("invalid FIFO fixture parent")
+            if os.mkfifo in os.supports_dir_fd:
+                os.mkfifo(name, 0o600, dir_fd=parent)
+            elif sys.platform == "darwin":
+                # Fixed Darwin Python 3.9 lacks mkfifo(dir_fd=...). Keep the
+                # fixture on the already-held parent authority by making that
+                # descriptor as the temporary helper cwd; no pathname parent
+                # is reopened and the cwd dies with this helper process.
+                saved_cwd = os.open(
+                    ".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+                )
+                try:
+                    os.fchdir(parent)
+                    os.mkfifo(name, 0o600)
+                finally:
+                    os.fchdir(saved_cwd)
+                    os.close(saved_cwd)
+            else:
+                raise OSError("exclusive FIFO fixture requires mkfifoat")
+            planted = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if not stat.S_ISFIFO(planted.st_mode):
+                raise OSError("exclusive FIFO fixture did not plant a FIFO")
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+    try:
+        output = os.open(name, output_flags, 0o600, dir_fd=parent)
+        created = True
+    finally:
+        # A pending signal can only raise after the created descriptor has
+        # been registered for exact-inode scrub.
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+    output_initial = os.fstat(output)
+    if (
+        not stat.S_ISREG(output_initial.st_mode)
+        or stat.S_IMODE(output_initial.st_mode) != 0o600
+        or output_initial.st_size != 0
+        or output_initial.st_nlink != 1
+    ):
+        raise OSError("unsafe exclusive release output")
+
+    if operation == "copy":
+        if len(arguments) != 1:
+            raise OSError("invalid release copy arguments")
+        source_path = arguments[0]
+        source = os.open(
+            source_path,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        source_before = os.fstat(source)
+        source_mapped = os.lstat(source_path)
+        if (
+            not stat.S_ISREG(source_before.st_mode)
+            or stat.S_ISLNK(source_mapped.st_mode)
+            or source_before.st_size <= 0
+            or source_before.st_size > maximum
+            or source_before.st_nlink != 1
+            or (source_before.st_dev, source_before.st_ino)
+            != (source_mapped.st_dev, source_mapped.st_ino)
+        ):
+            raise OSError("unsafe release copy source")
+        remaining = source_before.st_size
+        while remaining:
+            chunk = os.read(source, min(65536, remaining))
+            if not chunk:
+                raise OSError("truncated release copy source")
+            write_all(output, chunk)
+            remaining -= len(chunk)
+        if os.read(source, 1):
+            raise OSError("release copy source grew")
+        source_after = os.fstat(source)
+        source_remapped = os.lstat(source_path)
+        if (
+            stable(source_before) != stable(source_after)
+            or (source_after.st_dev, source_after.st_ino)
+            != (source_remapped.st_dev, source_remapped.st_ino)
+        ):
+            raise OSError("release copy source changed")
+    elif operation == "stdin":
+        if arguments:
+            raise OSError("invalid release stdin arguments")
+        total = 0
+        while True:
+            chunk = os.read(0, min(65536, maximum - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > maximum:
+                raise OSError("release stdin exceeded its limit")
+            write_all(output, chunk)
+    else:
+        if (
+            not arguments
+            or len(arguments) > 32
+            or not os.path.isabs(arguments[0])
+            or any(not argument or "\0" in argument for argument in arguments)
+        ):
+            raise OSError("invalid release command")
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+        try:
+            if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+                raise OSError("release command child-wait authority changed")
+            def restore_child_signal_mask():
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+            producer = subprocess.Popen(
+                arguments,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                close_fds=True,
+                start_new_session=True,
+                preexec_fn=restore_child_signal_mask,
+            )
+        finally:
+            # producer is registered while release signals are still blocked;
+            # a pending signal can only raise after there is a child to reap.
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        if producer.stdout is None or producer.stderr is None:
+            raise OSError("release command pipes are unavailable")
+        fixture_deadline = (
+            os.environ.get("SP11_RELEASE_SUPERVISOR_FIXTURE_TIMEOUT") == "true"
+        )
+        total_timeout = 2.0 if fixture_deadline else 120.0
+        inactivity_timeout = 0.5 if fixture_deadline else 30.0
+        stderr_maximum = 1024 * 1024
+        started = time.monotonic()
+        deadline = started + total_timeout
+        last_progress = started
+        total = 0
+        # Docker may emit legitimate warnings on stderr even when the exact
+        # requested stdout is valid. Drain and bound those non-authoritative
+        # diagnostics, but discard them; exit status and sealed stdout bytes
+        # remain the command result authority.
+        diagnostics_total = 0
+        selector = selectors.DefaultSelector()
+        try:
+            for stream, stream_name in (
+                (producer.stdout, "stdout"),
+                (producer.stderr, "stderr"),
+            ):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream.fileno(), selectors.EVENT_READ, stream_name)
+            while selector.get_map():
+                now = time.monotonic()
+                remaining_total = deadline - now
+                remaining_progress = inactivity_timeout - (now - last_progress)
+                if remaining_total <= 0 or remaining_progress <= 0:
+                    raise TimeoutError("release command exceeded its deadline")
+                events = selector.select(min(1.0, remaining_total, remaining_progress))
+                if not events:
+                    continue
+                for key, _mask in events:
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fd)
+                        continue
+                    last_progress = time.monotonic()
+                    if key.data == "stdout":
+                        total += len(chunk)
+                        if total > maximum:
+                            raise OSError("release command output exceeded its limit")
+                        write_all(output, chunk)
+                    else:
+                        diagnostics_total += len(chunk)
+                        if diagnostics_total > stderr_maximum:
+                            raise OSError("release command diagnostics exceeded their limit")
+        finally:
+            selector.close()
+        remaining = min(
+            deadline - time.monotonic(),
+            inactivity_timeout - (time.monotonic() - last_progress),
+        )
+        if remaining <= 0:
+            raise TimeoutError("release command did not exit before its deadline")
+        wait_mask = signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+        try:
+            returncode = producer.wait(timeout=remaining)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, wait_mask)
+        producer.stdout.close()
+        producer.stderr.close()
+        producer = None
+        if returncode != 0:
+            raise OSError("release producer failed")
+
+    os.fsync(output)
+    before_hash = os.fstat(output)
+    if (
+        not stat.S_ISREG(before_hash.st_mode)
+        or stat.S_IMODE(before_hash.st_mode) != 0o600
+        or before_hash.st_size <= 0
+        or before_hash.st_size > maximum
+        or before_hash.st_nlink != 1
+    ):
+        raise OSError("unsafe completed release output")
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < before_hash.st_size:
+        chunk = os.pread(output, min(65536, before_hash.st_size - offset), offset)
+        if not chunk:
+            raise OSError("truncated completed release output")
+        digest.update(chunk)
+        offset += len(chunk)
+    if os.pread(output, 1, before_hash.st_size):
+        raise OSError("completed release output grew")
+    after_hash = os.fstat(output)
+    mapped_output = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if (
+        stable(before_hash) != stable(after_hash)
+        or not stat.S_ISREG(mapped_output.st_mode)
+        or (after_hash.st_dev, after_hash.st_ino)
+        != (mapped_output.st_dev, mapped_output.st_ino)
+    ):
+        raise OSError("completed release output mapping changed")
+    verify_parent(parent, held_parent_identity)
+    try:
+        os.fsync(parent)
+    except OSError:
+        if sys.platform != "darwin":
+            raise
+    # The durable, verified bytes are now committed. Block terminal signals
+    # across the entire first-close transition, discard any pending handled
+    # signal, and close every exact descriptor before reporting success. A
+    # signal delivered before this boundary still reaches the outer scrub.
+    signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+    if (
+        os.environ.get("SP11_RELEASE_EXCLUSIVE_CLOSE_SIGNAL_FIXTURE") == "true"
+        and os.environ.get("SP11_RELEASE_EXCLUSIVE_CLOSE_SIGNAL_TARGET") == name
+    ):
+        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signal.SIGHUP)
+    for release_signal in release_signals:
+        signal.signal(release_signal, signal.SIG_IGN)
+    if source >= 0:
+        try:
+            os.close(source)
+        except BaseException:
+            pass
+        source = -1
+    if output >= 0:
+        try:
+            os.close(output)
+        except BaseException:
+            pass
+        output = -1
+    if parent >= 0:
+        try:
+            os.close(parent)
+        except BaseException:
+            pass
+        parent = -1
+except BaseException:
+    # A second/pending terminal signal must not interrupt producer reaping or
+    # exact-inode scrub. Keep the release signals blocked until this helper
+    # exits, and discard any further instances by changing their disposition.
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+        for release_signal in release_signals:
+            signal.signal(release_signal, signal.SIG_IGN)
+    except BaseException:
+        pass
+    if producer is not None:
+        for stream in (producer.stdout, producer.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except BaseException:
+                pass
+        if producer.poll() is None:
+            try:
+                os.killpg(producer.pid, signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                pass
+            try:
+                producer.wait(timeout=5)
+            except BaseException:
+                try:
+                    os.killpg(producer.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    pass
+                try:
+                    producer.wait()
+                except BaseException:
+                    pass
+    if created and output >= 0:
+        try:
+            os.ftruncate(output, 0)
+            os.fsync(output)
+        except OSError:
+            pass
+    raise SystemExit(1)
+finally:
+    if source >= 0:
+        try:
+            os.close(source)
+        except BaseException:
+            pass
+    if output >= 0:
+        try:
+            os.close(output)
+        except BaseException:
+            pass
+    if parent >= 0:
+        try:
+            os.close(parent)
+        except BaseException:
+            pass
+' "$parent" "$parent_identity" "$parent_fd" "$name" "$maximum" "$operation" "$@"
+}
+
+run_release_command_bounded() {
+  local maximum="$1"
+  shift
+
+  [ "$RELEASE_BUILD" = "true" ] || return 1
+  "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import selectors
+import signal
+import subprocess
+import sys
+import time
+
+maximum = int(sys.argv[1], 10)
+arguments = sys.argv[2:]
+if (
+    maximum <= 0
+    or maximum > 1024 * 1024
+    or not arguments
+    or len(arguments) > 32
+    or not os.path.isabs(arguments[0])
+    or any(not argument or "\0" in argument for argument in arguments)
+):
+    raise SystemExit(1)
+
+producer = None
+release_signals = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+
+try:
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+except (OSError, ValueError):
+    raise SystemExit(1)
+if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+    raise SystemExit(1)
+
+def interrupted(signum, _frame):
+    signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+    raise InterruptedError("interrupted bounded release command: %d" % signum)
+
+def stop_and_reap():
+    global producer
+    if producer is None:
+        return
+    for stream in (producer.stdout, producer.stderr):
+        try:
+            if stream is not None:
+                stream.close()
+        except BaseException:
+            pass
+    if producer.poll() is None:
+        try:
+            os.killpg(producer.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            producer.wait(timeout=5)
+        except BaseException:
+            try:
+                os.killpg(producer.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            try:
+                producer.wait()
+            except BaseException:
+                pass
+    else:
+        try:
+            producer.wait()
+        except BaseException:
+            pass
+    producer = None
+
+try:
+    for release_signal in release_signals:
+        signal.signal(release_signal, interrupted)
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+    try:
+        if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+            raise OSError("bounded release command child-wait authority changed")
+        def restore_child_signal_mask():
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+        producer = subprocess.Popen(
+            arguments,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            start_new_session=True,
+            preexec_fn=restore_child_signal_mask,
+        )
+    finally:
+        # The child is registered while terminal signals are blocked. A
+        # pending signal cannot run cleanup until its exact process group is
+        # available to stop and reap.
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+    if producer.stdout is None or producer.stderr is None:
+        raise OSError("bounded release command pipes are unavailable")
+
+    fixture_deadline = (
+        os.environ.get("SP11_RELEASE_SUPERVISOR_FIXTURE_TIMEOUT") == "true"
+    )
+    total_timeout = 2.0 if fixture_deadline else 120.0
+    inactivity_timeout = 0.5 if fixture_deadline else 30.0
+    stderr_maximum = 1024 * 1024
+    started = time.monotonic()
+    deadline = started + total_timeout
+    last_progress = started
+    output = bytearray()
+    # Successful Docker warnings are non-authoritative. They are drained and
+    # discarded under an independent byte bound; only exit status and the
+    # caller-checked stdout bytes authorize the result.
+    diagnostics_total = 0
+    selector = selectors.DefaultSelector()
+    try:
+        for stream, stream_name in (
+            (producer.stdout, "stdout"),
+            (producer.stderr, "stderr"),
+        ):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream.fileno(), selectors.EVENT_READ, stream_name)
+        while selector.get_map():
+            now = time.monotonic()
+            remaining_total = deadline - now
+            remaining_progress = inactivity_timeout - (now - last_progress)
+            if remaining_total <= 0 or remaining_progress <= 0:
+                raise TimeoutError("bounded release command exceeded its deadline")
+            events = selector.select(min(1.0, remaining_total, remaining_progress))
+            if not events:
+                continue
+            for key, _mask in events:
+                try:
+                    chunk = os.read(key.fd, 65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    selector.unregister(key.fd)
+                    continue
+                last_progress = time.monotonic()
+                if key.data == "stdout":
+                    if len(output) + len(chunk) > maximum:
+                        raise OSError("bounded release command output exceeded its limit")
+                    output.extend(chunk)
+                else:
+                    diagnostics_total += len(chunk)
+                    if diagnostics_total > stderr_maximum:
+                        raise OSError(
+                            "bounded release command diagnostics exceeded their limit"
+                        )
+    finally:
+        selector.close()
+
+    remaining = min(
+        deadline - time.monotonic(),
+        inactivity_timeout - (time.monotonic() - last_progress),
+    )
+    if remaining <= 0:
+        raise TimeoutError("bounded release command did not exit before its deadline")
+    wait_mask = signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+    try:
+        returncode = producer.wait(timeout=remaining)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, wait_mask)
+    producer.stdout.close()
+    producer.stderr.close()
+    producer = None
+    if returncode != 0 or b"\0" in output:
+        raise OSError("bounded release command failed")
+
+    view = memoryview(output)
+    while view:
+        written = os.write(1, view)
+        if written <= 0:
+            raise OSError("short bounded release command output write")
+        view = view[written:]
+except BaseException:
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+        for release_signal in release_signals:
+            signal.signal(release_signal, signal.SIG_IGN)
+    except BaseException:
+        pass
+    stop_and_reap()
+    raise SystemExit(1)
+finally:
+    stop_and_reap()
+' "$maximum" "$@"
 }
 
 verify_baseline_control_membership() {
@@ -337,6 +1399,11 @@ verify_kernel_baseline_control_state() {
   local current
 
   verify_kernel_baseline_state || return 1
+  verify_held_release_file \
+    "$KERNEL_BASELINE_FD" "$KERNEL_BASELINE" "$KERNEL_BASELINE_SHA256" 600 || {
+      echo "Held committed kernel baseline changed or lost its name binding." >&2
+      return 1
+    }
   current="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")" || {
     echo "Committed kernel baseline validator snapshot is missing, unsafe, or unstable." >&2
     return 1
@@ -345,12 +1412,24 @@ verify_kernel_baseline_control_state() {
     echo "Committed kernel baseline validator snapshot changed after materialization." >&2
     return 1
   fi
+  verify_held_release_file \
+    "$KERNEL_BASELINE_VALIDATOR_FD" "$KERNEL_BASELINE_VALIDATOR" \
+    "${KERNEL_BASELINE_VALIDATOR_STATE##*:}" 600 || {
+      echo "Held committed kernel baseline validator changed or lost its name binding." >&2
+      return 1
+    }
 }
 
 verify_initial_baseline_control_state() {
   local current_directory_state
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
+  verify_held_release_directory \
+    "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+    "$BASELINE_CONTROL_IDENTITY" || {
+      echo "Private committed-baseline control directory handle changed." >&2
+      return 1
+    }
   current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || {
     echo "Private committed-baseline control directory is missing, unsafe, or unstable." >&2
     return 1
@@ -368,6 +1447,29 @@ verify_initial_baseline_control_state() {
     echo "Private committed-baseline control directory changed during validation." >&2
     return 1
   fi
+  verify_held_release_directory \
+    "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+    "$BASELINE_CONTROL_IDENTITY"
+}
+
+refresh_initial_baseline_control_state_after_held_validation() {
+  local refreshed_state
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  verify_held_release_directory \
+    "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+    "$BASELINE_CONTROL_IDENTITY" || return 1
+  verify_baseline_control_membership initial || return 1
+  verify_kernel_baseline_control_state || return 1
+  refreshed_state="$(baseline_control_directory_state \
+    "$BASELINE_CONTROL_DIR")" || return 1
+  verify_baseline_control_membership initial || return 1
+  verify_kernel_baseline_control_state || return 1
+  verify_held_release_directory \
+    "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+    "$BASELINE_CONTROL_IDENTITY" || return 1
+  BASELINE_CONTROL_INITIAL_STATE="$refreshed_state"
+  verify_initial_baseline_control_state
 }
 
 verify_pinned_baseline_control_cwd() {
@@ -382,6 +1484,12 @@ verify_release_control_state() {
   local path expected_state current_state current_directory_state
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
+  verify_held_release_directory \
+    "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+    "$BASELINE_CONTROL_IDENTITY" || {
+      echo "Private release control directory handle changed." >&2
+      return 1
+    }
   [ -n "$BASELINE_CONTROL_FINAL_STATE" ] || {
     echo "Private release control directory was not finalized." >&2
     return 1
@@ -421,84 +1529,17 @@ verify_release_control_state() {
     echo "Private release control directory changed during verification." >&2
     return 1
   fi
+  verify_held_release_directory \
+    "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+    "$BASELINE_CONTROL_IDENTITY"
 }
 
 cleanup_baseline_control_dir() {
-  local current_identity baseline_control_file
-  local expected_baseline_control_state current_baseline_control_state
-  local expected_directory_state current_directory_state membership_phase
-
+  # Release control roots are bounded, private retained evidence.  Never reopen
+  # their names during EXIT cleanup to remove, rename, or truncate a path that
+  # may have been substituted after the last validation.
   [ -n "$BASELINE_CONTROL_DIR" ] || return 0
-  case "$BASELINE_CONTROL_DIR" in
-    "$BASELINE_CONTROL_PARENT"/sp11-kernel-baseline.*) ;;
-    *)
-      echo "warning: refusing to clean unexpected kernel baseline control directory: $BASELINE_CONTROL_DIR" >&2
-      return 0
-      ;;
-  esac
-  if [ "$(dirname "$BASELINE_CONTROL_DIR")" != "$BASELINE_CONTROL_PARENT" ] ||
-     [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ]; then
-    echo "warning: refusing to follow changed kernel baseline control directory: $BASELINE_CONTROL_DIR" >&2
-    return 0
-  fi
-  if ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
-     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ]; then
-    echo "warning: refusing to clean replaced kernel baseline control directory: $BASELINE_CONTROL_DIR" >&2
-    return 0
-  fi
-  if [ -n "$BASELINE_CONTROL_FINAL_STATE" ]; then
-    expected_directory_state="$BASELINE_CONTROL_FINAL_STATE"
-    membership_phase=final
-  else
-    expected_directory_state="$BASELINE_CONTROL_INITIAL_STATE"
-    membership_phase=initial
-  fi
-  if [ -z "$expected_directory_state" ] ||
-     ! current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" ||
-     [ "$current_directory_state" != "$expected_directory_state" ] ||
-     ! verify_baseline_control_membership "$membership_phase"; then
-    echo "warning: preserving changed private release control directory: $BASELINE_CONTROL_DIR" >&2
-    return 0
-  fi
-  if [ "$membership_phase" = final ] && ! verify_release_control_state; then
-    echo "warning: preserving drifted private release control directory: $BASELINE_CONTROL_DIR" >&2
-    return 0
-  fi
-  for baseline_control_file in \
-    "$BASELINE_CONTROL_DIR/kernel-baseline.env" \
-    "$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh" \
-    "$BASELINE_CONTROL_DIR/docker-build-args.txt" \
-    "$BASELINE_CONTROL_DIR/docker-build-inside.sh" \
-    "$BASELINE_CONTROL_DIR/sp11-oci-index.json"; do
-    case "$baseline_control_file" in
-      "$KERNEL_BASELINE") expected_baseline_control_state="$KERNEL_BASELINE_STATE" ;;
-      "$KERNEL_BASELINE_VALIDATOR") expected_baseline_control_state="$KERNEL_BASELINE_VALIDATOR_STATE" ;;
-      */docker-build-args.txt) expected_baseline_control_state="$RELEASE_BUILD_ARGS_STATE" ;;
-      */docker-build-inside.sh) expected_baseline_control_state="$RELEASE_ENTRYPOINT_STATE" ;;
-      */sp11-oci-index.json) expected_baseline_control_state="$RELEASE_OCI_INDEX_STATE" ;;
-    esac
-    [ -n "$expected_baseline_control_state" ] || continue
-    if current_baseline_control_state="$(baseline_control_file_state "$baseline_control_file" 2>/dev/null)" &&
-       [ "$current_baseline_control_state" = "$expected_baseline_control_state" ]; then
-      if ! rm -f -- "$baseline_control_file"; then
-        echo "warning: preserving remainder after private control cleanup failed: $baseline_control_file" >&2
-        return 0
-      fi
-    else
-      echo "warning: preserving changed kernel baseline control file: $baseline_control_file" >&2
-      return 0
-    fi
-  done
-  if [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ] ||
-     ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
-     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ] ||
-     find "$BASELINE_CONTROL_DIR" -mindepth 1 -maxdepth 1 -print | grep -q .; then
-    echo "warning: preserving changed private control directory after file cleanup: $BASELINE_CONTROL_DIR" >&2
-    return 0
-  fi
-  if ! rmdir "$BASELINE_CONTROL_DIR"; then
-    echo "warning: could not remove emptied private release control directory: $BASELINE_CONTROL_DIR" >&2
-  fi
+  return 0
 }
 
 support_snapshot_directory_state() {
@@ -512,14 +1553,15 @@ support_snapshot_directory_state() {
 }
 
 committed_support_git() {
-  local safe_support_dir
+  local safe_support_dir access_dir
 
-  safe_support_dir="$(cd "$COMMITTED_SUPPORT_DIR" && pwd -P)" || return 1
+  access_dir="${COMMITTED_SUPPORT_ACCESS_DIR:-$COMMITTED_SUPPORT_DIR}"
+  safe_support_dir="$(cd "$access_dir" && pwd -P)" || return 1
   GIT_OPTIONAL_LOCKS=0 git \
     -c "safe.directory=$safe_support_dir" \
     -c core.fsmonitor=false \
     -c core.untrackedCache=false \
-    -C "$COMMITTED_SUPPORT_DIR" "$@"
+    -C "$access_dir" "$@"
 }
 
 capture_support_snapshot_inventory() {
@@ -602,6 +1644,12 @@ verify_release_support_checkout() {
   local current_root_identity current_root_state head tree status
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
+  verify_held_release_directory \
+    "$SUPPORT_SNAPSHOT_FD" "$SUPPORT_SNAPSHOT_ROOT" \
+    "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" || {
+      echo "Private committed support snapshot root handle changed." >&2
+      return 1
+    }
   if [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ] || [ -L "$SUPPORT_SNAPSHOT_ROOT" ] ||
      ! current_root_identity="$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" ||
      [ "$current_root_identity" != "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
@@ -630,68 +1678,431 @@ verify_release_support_checkout() {
     echo "Private committed support snapshot root changed during verification." >&2
     return 1
   fi
+  verify_held_release_directory \
+    "$SUPPORT_SNAPSHOT_FD" "$SUPPORT_SNAPSHOT_ROOT" \
+    "$SUPPORT_SNAPSHOT_ROOT_IDENTITY"
+}
+
+release_support_script_binding_record() {
+  local relative_path="$1" inventory_path index state entry metadata listed_path
+  local git_mode object_type object_id remainder expected_mode state_tail file_size
+
+  inventory_path="support/$relative_path"
+  index=0
+  while [ "$index" -lt "${#SUPPORT_SNAPSHOT_PATHS[@]}" ]; do
+    if [ "${SUPPORT_SNAPSHOT_PATHS[$index]}" = "$inventory_path" ]; then
+      [ "${SUPPORT_SNAPSHOT_TYPES[$index]}" = file ] || return 1
+      state="${SUPPORT_SNAPSHOT_STATES[$index]}"
+      [[ "${state##*:}" =~ ^[0-9a-f]{64}$ ]] || return 1
+      entry="$(committed_support_git ls-tree "$SUPPORT_HEAD_START" -- "$relative_path")" ||
+        return 1
+      IFS=$'\t' read -r metadata listed_path remainder <<< "$entry"
+      read -r git_mode object_type object_id remainder <<< "$metadata"
+      case "$git_mode" in
+        100644) expected_mode=644 ;;
+        100755) expected_mode=755 ;;
+        *) return 1 ;;
+      esac
+      [ -z "$remainder" ] && [ "$listed_path" = "$relative_path" ] &&
+        [ "$object_type" = blob ] &&
+        [[ "$object_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 1
+      state_tail="${state#*:}"
+      state_tail="${state_tail#*:}"
+      file_size="${state_tail%%:*}"
+      [[ "$file_size" =~ ^[1-9][0-9]*$ ]] || return 1
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${SUPPORT_SNAPSHOT_NODE_IDENTITIES[$index]}" \
+        "${state##*:}" "$object_id" "$expected_mode" "$file_size"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+  return 1
+}
+
+bind_release_support_python_scripts() {
+  local validator_record helper_record build_inputs_record manifest_record remainder
+  local _release_build_inputs_identity _release_manifest_identity
+  local binding_value binding_digest binding_object binding_size
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  verify_release_python_authority || return 1
+  verify_release_support_checkout || return 1
+  validator_record="$(release_support_script_binding_record \
+    scripts/validate-sp11-oci-index.py)" || {
+      echo "Could not bind the committed OCI-index validator blob." >&2
+      return 1
+    }
+  IFS=$'\t' read -r \
+    RELEASE_OCI_VALIDATOR_IDENTITY RELEASE_OCI_VALIDATOR_SHA256 \
+    RELEASE_OCI_VALIDATOR_OBJECT_ID RELEASE_OCI_VALIDATOR_MODE \
+    RELEASE_OCI_VALIDATOR_SIZE remainder \
+    <<< "$validator_record"
+  [ -z "$remainder" ] || return 1
+  helper_record="$(release_support_script_binding_record \
+    scripts/sp11-kernel-release-state.py)" || {
+      echo "Could not bind the committed release-state helper blob." >&2
+      return 1
+    }
+  IFS=$'\t' read -r \
+    RELEASE_STATE_HELPER_IDENTITY RELEASE_STATE_HELPER_SHA256 \
+    RELEASE_STATE_HELPER_OBJECT_ID RELEASE_STATE_HELPER_MODE \
+    RELEASE_STATE_HELPER_SIZE remainder \
+    <<< "$helper_record"
+  [ -z "$remainder" ] || return 1
+  build_inputs_record="$(release_support_script_binding_record \
+    scripts/sp11-kernel-build-inputs.py)" || {
+      echo "Could not bind the committed build-inputs helper blob." >&2
+      return 1
+    }
+  IFS=$'\t' read -r \
+    _release_build_inputs_identity RELEASE_BUILD_INPUTS_HELPER_SHA256 \
+    RELEASE_BUILD_INPUTS_HELPER_OBJECT_ID RELEASE_BUILD_INPUTS_HELPER_MODE \
+    RELEASE_BUILD_INPUTS_HELPER_SIZE remainder <<< "$build_inputs_record"
+  [ -z "$remainder" ] || return 1
+  manifest_record="$(release_support_script_binding_record \
+    scripts/validate-sp11-image-release-manifests.py)" || {
+      echo "Could not bind the committed manifest-validator blob." >&2
+      return 1
+    }
+  IFS=$'\t' read -r \
+    _release_manifest_identity RELEASE_MANIFEST_VALIDATOR_SHA256 \
+    RELEASE_MANIFEST_VALIDATOR_OBJECT_ID RELEASE_MANIFEST_VALIDATOR_MODE \
+    RELEASE_MANIFEST_VALIDATOR_SIZE remainder <<< "$manifest_record"
+  [ -z "$remainder" ] || return 1
+  for binding_value in \
+    "$RELEASE_OCI_VALIDATOR_IDENTITY" "$RELEASE_STATE_HELPER_IDENTITY"; do
+    [[ "$binding_value" =~ ^[0-9]+:[1-9][0-9]*:[0-7]+:[0-9]+:[0-9]+$ ]] ||
+      return 1
+  done
+  for binding_digest in \
+    "$RELEASE_OCI_VALIDATOR_SHA256" "$RELEASE_STATE_HELPER_SHA256" \
+    "$RELEASE_BUILD_INPUTS_HELPER_SHA256" \
+    "$RELEASE_MANIFEST_VALIDATOR_SHA256"; do
+    [[ "$binding_digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  done
+  for binding_object in \
+    "$RELEASE_OCI_VALIDATOR_OBJECT_ID" "$RELEASE_STATE_HELPER_OBJECT_ID" \
+    "$RELEASE_BUILD_INPUTS_HELPER_OBJECT_ID" \
+    "$RELEASE_MANIFEST_VALIDATOR_OBJECT_ID"; do
+    [[ "$binding_object" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 1
+  done
+  for binding_size in \
+    "$RELEASE_OCI_VALIDATOR_SIZE" "$RELEASE_STATE_HELPER_SIZE" \
+    "$RELEASE_BUILD_INPUTS_HELPER_SIZE" "$RELEASE_MANIFEST_VALIDATOR_SIZE"; do
+    [[ "$binding_size" =~ ^[1-9][0-9]*$ ]] || return 1
+  done
+  if [[ "$SUPPORT_HEAD_START" =~ ^[0-9a-f]{40}$ ]]; then
+    RELEASE_GIT_OBJECT_FORMAT=sha1
+  elif [[ "$SUPPORT_HEAD_START" =~ ^[0-9a-f]{64}$ ]]; then
+    RELEASE_GIT_OBJECT_FORMAT=sha256
+  else
+    return 1
+  fi
+  [ "$RELEASE_BUILD_INPUTS_HELPER_MODE" = 755 ] &&
+    [ "$RELEASE_MANIFEST_VALIDATOR_MODE" = 644 ] || return 1
+  verify_release_support_checkout
+}
+
+bound_release_support_python() {
+  local terminal="$1" relative_path="$2" maximum="$3"
+  local expected_identity="$4" expected_sha256="$5" expected_object_id="$6"
+  local expected_mode="$7" launcher
+  shift 7
+
+  launcher='
+import hashlib
+import os
+import re
+import stat
+import sys
+
+snapshot_descriptor = int(sys.argv[1], 10)
+snapshot_path = sys.argv[2]
+expected_snapshot_identity = sys.argv[3]
+relative_path = sys.argv[4]
+maximum = int(sys.argv[5], 10)
+expected_identity = sys.argv[6]
+expected_sha256 = sys.argv[7]
+expected_object_id = sys.argv[8]
+expected_mode = int(sys.argv[9], 8)
+program_arguments = sys.argv[10:]
+allowed = {
+    "scripts/validate-sp11-oci-index.py",
+    "scripts/sp11-kernel-release-state.py",
+}
+fixture_enabled = (
+    os.environ.get("SP11_RELEASE_SCRIPT_BINDING_FIXTURE") == "true"
+)
+fixture_action = os.environ.get("SP11_RELEASE_SCRIPT_BINDING_ACTION", "")
+fixture_target = os.environ.get("SP11_RELEASE_SCRIPT_BINDING_TARGET", "")
+
+def identity(metadata):
+    return ":".join(str(value) for value in (
+        metadata.st_dev,
+        metadata.st_ino,
+        format(stat.S_IMODE(metadata.st_mode), "o"),
+        metadata.st_uid,
+        metadata.st_gid,
+    ))
+
+def stable(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
+def write_all(descriptor, payload):
+    view = memoryview(payload)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("short fixture write")
+        view = view[written:]
+
+root = -1
+support = -1
+scripts = -1
+program = -1
+try:
+    if (
+        sys.flags.isolated != 1
+        or relative_path not in allowed
+        or maximum <= 0
+        or maximum > 4 * 1024 * 1024
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+        or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", expected_object_id)
+        or expected_mode not in (0o644, 0o755)
+        or (fixture_action or fixture_target) and not fixture_enabled
+    ):
+        raise OSError("invalid committed program binding")
+    root = os.dup(snapshot_descriptor)
+    root_before = os.fstat(root)
+    root_mapped = os.lstat(snapshot_path)
+    if (
+        not stat.S_ISDIR(root_before.st_mode)
+        or not stat.S_ISDIR(root_mapped.st_mode)
+        or identity(root_before) != expected_snapshot_identity
+        or identity(root_mapped) != expected_snapshot_identity
+        or (root_before.st_dev, root_before.st_ino)
+        != (root_mapped.st_dev, root_mapped.st_ino)
+    ):
+        raise OSError("committed support root changed")
+    directory_flags = (
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    )
+    support = os.open("support", directory_flags, dir_fd=root)
+    support_before = os.fstat(support)
+    support_mapped = os.stat("support", dir_fd=root, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(support_before.st_mode)
+        or not stat.S_ISDIR(support_mapped.st_mode)
+        or (support_before.st_dev, support_before.st_ino)
+        != (support_mapped.st_dev, support_mapped.st_ino)
+    ):
+        raise OSError("committed support checkout changed")
+    scripts = os.open("scripts", directory_flags, dir_fd=support)
+    scripts_before = os.fstat(scripts)
+    scripts_mapped = os.stat("scripts", dir_fd=support, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(scripts_before.st_mode)
+        or not stat.S_ISDIR(scripts_mapped.st_mode)
+        or (scripts_before.st_dev, scripts_before.st_ino)
+        != (scripts_mapped.st_dev, scripts_mapped.st_ino)
+    ):
+        raise OSError("committed support scripts directory changed")
+    filename = relative_path.removeprefix("scripts/")
+    program = os.open(
+        filename,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        dir_fd=scripts,
+    )
+    before = os.fstat(program)
+    mapped = os.stat(filename, dir_fd=scripts, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or not stat.S_ISREG(mapped.st_mode)
+        or identity(before) != expected_identity
+        or identity(mapped) != expected_identity
+        or stat.S_IMODE(before.st_mode) != expected_mode
+        or before.st_nlink != 1
+        or before.st_size <= 0
+        or before.st_size > maximum
+        or (before.st_dev, before.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise OSError("committed support program identity changed")
+    payload = bytearray()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(program, min(65536, before.st_size - offset), offset)
+        if not chunk:
+            raise OSError("committed support program was truncated")
+        payload.extend(chunk)
+        offset += len(chunk)
+    if os.pread(program, 1, before.st_size):
+        raise OSError("committed support program grew")
+
+    if (
+        fixture_enabled
+        and fixture_action == "mutate-restore"
+        and fixture_target == relative_path
+    ):
+        mutation = os.open(
+            filename,
+            os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=scripts,
+        )
+        try:
+            original = os.pread(mutation, 1, 0)
+            if len(original) != 1:
+                raise OSError("fixture could not read held program")
+            changed = b"X" if original != b"X" else b"Y"
+            os.pwrite(mutation, changed, 0)
+            os.fsync(mutation)
+            os.pwrite(mutation, original, 0)
+            os.fsync(mutation)
+        finally:
+            os.close(mutation)
+
+    after = os.fstat(program)
+    remapped = os.stat(filename, dir_fd=scripts, follow_symlinks=False)
+    support_after = os.fstat(support)
+    scripts_after = os.fstat(scripts)
+    root_after = os.fstat(root)
+    root_remapped = os.lstat(snapshot_path)
+    support_remapped = os.stat("support", dir_fd=root, follow_symlinks=False)
+    scripts_remapped = os.stat("scripts", dir_fd=support, follow_symlinks=False)
+    if (
+        stable(before) != stable(after)
+        or stable(root_before) != stable(root_after)
+        or stable(support_before) != stable(support_after)
+        or stable(scripts_before) != stable(scripts_after)
+        or (root_after.st_dev, root_after.st_ino)
+        != (root_remapped.st_dev, root_remapped.st_ino)
+        or (support_after.st_dev, support_after.st_ino)
+        != (support_remapped.st_dev, support_remapped.st_ino)
+        or (scripts_after.st_dev, scripts_after.st_ino)
+        != (scripts_remapped.st_dev, scripts_remapped.st_ino)
+        or (after.st_dev, after.st_ino) != (remapped.st_dev, remapped.st_ino)
+    ):
+        raise OSError("committed support program changed while sealing")
+    payload_bytes = bytes(payload)
+    if hashlib.sha256(payload_bytes).hexdigest() != expected_sha256:
+        raise OSError("committed support program SHA-256 changed")
+    blob_header = b"blob " + str(len(payload_bytes)).encode("ascii") + b"\0"
+    object_hasher = hashlib.sha1() if len(expected_object_id) == 40 else hashlib.sha256()
+    object_hasher.update(blob_header)
+    object_hasher.update(payload_bytes)
+    if object_hasher.hexdigest() != expected_object_id:
+        raise OSError("committed support program Git object changed")
+    synthetic_name = relative_path
+    code = compile(payload_bytes, synthetic_name, "exec", dont_inherit=True)
+
+    if fixture_enabled and fixture_action == "swap-after-seal" and fixture_target == relative_path:
+        backup = os.environ.get("SP11_RELEASE_SCRIPT_BINDING_BACKUP", "")
+        hostile_marker = os.environ.get("SP11_RELEASE_SCRIPT_BINDING_HOSTILE_MARKER", "")
+        restore_marker = os.environ.get("SP11_RELEASE_SCRIPT_BINDING_RESTORE_MARKER", "")
+        displaced = os.environ.get("SP11_RELEASE_SCRIPT_BINDING_DISPLACED", "")
+        if (
+            not re.fullmatch(r"\.sp11-fixture-[0-9a-z-]{1,64}", backup)
+            or not hostile_marker
+            or not restore_marker
+            or not displaced
+        ):
+            raise OSError("invalid script-binding fixture")
+        os.rename(filename, backup, src_dir_fd=scripts, dst_dir_fd=scripts)
+        hostile = (
+            "import os\n"
+            + "descriptor = os.open("
+            + repr(hostile_marker)
+            + ", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)\n"
+            + "os.close(descriptor)\n"
+            + "raise SystemExit(97)\n"
+        ).encode("utf-8")
+        hostile_descriptor = os.open(
+            filename,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            expected_mode,
+            dir_fd=scripts,
+        )
+        try:
+            write_all(hostile_descriptor, hostile)
+            os.fsync(hostile_descriptor)
+        finally:
+            os.close(hostile_descriptor)
+        os.environ["MOCK_SCRIPT_BINDING_RESTORE_DIR"] = os.path.join(
+            snapshot_path, "support", "scripts"
+        )
+        os.environ["MOCK_SCRIPT_BINDING_RESTORE_NAME"] = filename
+        os.environ["MOCK_SCRIPT_BINDING_RESTORE_BACKUP"] = backup
+        os.environ["MOCK_SCRIPT_BINDING_RESTORE_MARKER"] = restore_marker
+        os.environ["MOCK_SCRIPT_BINDING_DISPLACED"] = displaced
+    elif (
+        fixture_enabled
+        and fixture_target == relative_path
+        and fixture_action not in ("", "mutate-restore")
+    ):
+        raise OSError("unsupported script-binding fixture")
+except BaseException:
+    print("error: committed release support program binding failed", file=sys.stderr)
+    raise SystemExit(1)
+finally:
+    for descriptor in (program, scripts, support, root):
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+sys.argv = [synthetic_name, *program_arguments]
+namespace = {
+    "__name__": "__main__",
+    "__file__": synthetic_name,
+    "__package__": None,
+    "__cached__": None,
+    "__spec__": None,
+}
+exec(code, namespace, namespace)
+'
+
+  if [ "$terminal" = true ]; then
+    exec "$RELEASE_PYTHON_BIN" -I -c "$launcher" \
+      "$SUPPORT_SNAPSHOT_FD" "$SUPPORT_SNAPSHOT_ROOT" \
+      "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" "$relative_path" "$maximum" \
+      "$expected_identity" "$expected_sha256" "$expected_object_id" \
+      "$expected_mode" "$@"
+  else
+    "$RELEASE_PYTHON_BIN" -I -c "$launcher" \
+      "$SUPPORT_SNAPSHOT_FD" "$SUPPORT_SNAPSHOT_ROOT" \
+      "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" "$relative_path" "$maximum" \
+      "$expected_identity" "$expected_sha256" "$expected_object_id" \
+      "$expected_mode" "$@"
+  fi
+}
+
+run_bound_release_support_python() {
+  bound_release_support_python false "$@"
+}
+
+exec_bound_release_support_python() {
+  bound_release_support_python true "$@"
 }
 
 cleanup_release_support_checkout() {
-  local index path current_state current_identity
-
+  # The exact committed checkout is retained as private release evidence.  In
+  # particular, EXIT cleanup never walks its pathname and removes descendants.
   [ -n "$SUPPORT_SNAPSHOT_ROOT" ] || return 0
-  case "$SUPPORT_SNAPSHOT_ROOT" in
-    "$SUPPORT_SNAPSHOT_PARENT"/sp11-kernel-support.*) ;;
-    *)
-      echo "warning: preserving unexpected private support snapshot path: $SUPPORT_SNAPSHOT_ROOT" >&2
-      return 0
-      ;;
-  esac
-  if ! verify_release_support_checkout; then
-    echo "warning: preserving changed private committed support snapshot: $SUPPORT_SNAPSHOT_ROOT" >&2
-    return 0
-  fi
-  index=$((${#SUPPORT_SNAPSHOT_PATHS[@]} - 1))
-  while [ "$index" -ge 0 ]; do
-    path="$SUPPORT_SNAPSHOT_ROOT/${SUPPORT_SNAPSHOT_PATHS[$index]}"
-    case "${SUPPORT_SNAPSHOT_TYPES[$index]}" in
-      file)
-        if ! current_state="$(baseline_control_file_state "$path")" ||
-           [ "$current_state" != "${SUPPORT_SNAPSHOT_STATES[$index]}" ] ||
-           ! current_identity="$(baseline_control_identity "$path")" ||
-           [ "$current_identity" != "${SUPPORT_SNAPSHOT_NODE_IDENTITIES[$index]}" ]; then
-          echo "warning: preserving private support snapshot after file drift at cleanup: $path" >&2
-          return 0
-        fi
-        if ! rm -f -- "$path"; then
-          echo "warning: preserving remainder after private support file cleanup failed: $path" >&2
-          return 0
-        fi
-        ;;
-      directory)
-        if [ ! -d "$path" ] || [ -L "$path" ] ||
-           ! current_identity="$(baseline_control_identity "$path")" ||
-           [ "$current_identity" != "${SUPPORT_SNAPSHOT_NODE_IDENTITIES[$index]}" ]; then
-          echo "warning: preserving private support snapshot after directory drift at cleanup: $path" >&2
-          return 0
-        fi
-        if ! rmdir "$path"; then
-          echo "warning: preserving remainder after private support directory cleanup failed: $path" >&2
-          return 0
-        fi
-        ;;
-    esac
-    index=$((index - 1))
-  done
-  if [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ] || [ -L "$SUPPORT_SNAPSHOT_ROOT" ] ||
-     ! current_identity="$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" ||
-     [ "$current_identity" != "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ] ||
-     find "$SUPPORT_SNAPSHOT_ROOT" -mindepth 1 -maxdepth 1 -print | grep -q .; then
-    echo "warning: preserving changed private support snapshot root after child cleanup: $SUPPORT_SNAPSHOT_ROOT" >&2
-    return 0
-  fi
-  if ! rmdir "$SUPPORT_SNAPSHOT_ROOT"; then
-    echo "warning: could not remove emptied private support snapshot root: $SUPPORT_SNAPSHOT_ROOT" >&2
-  fi
+  return 0
 }
 
-trap 'cleanup_baseline_control_dir; cleanup_release_support_checkout; cleanup_control_dir; cleanup_payload_stage' EXIT
+trap 'cleanup_baseline_control_dir; cleanup_release_support_checkout; cleanup_control_dir; cleanup_payload_stage; cleanup_held_release_roots' EXIT
 
 normalize_absolute_path() {
   local input="$1" component normalized=""
@@ -771,6 +2182,10 @@ ensure_safe_work_dir() {
         return 1
       fi
     else
+      if [ "$RELEASE_BUILD" = "true" ]; then
+        echo "--release-build requires a pre-existing real --work-dir; refusing pre-pin path creation: $requested" >&2
+        return 1
+      fi
       if ! mkdir -m 700 "$current"; then
         echo "Could not create safe --work-dir component: $current" >&2
         return 1
@@ -797,6 +2212,13 @@ verify_pinned_work_root_cwd() {
     echo "Release work root has no captured identity." >&2
     return 1
   }
+  if [ "$WORK_ROOT_FD_OPEN" = "true" ]; then
+    verify_held_release_directory \
+      "$WORK_ROOT_FD" "$work_abs" "$WORK_ROOT_IDENTITY" || {
+        echo "Release work root changed from its held directory." >&2
+        return 1
+      }
+  fi
   current_identity="$(baseline_control_identity .)" || return 1
   if [ "$current_identity" != "$WORK_ROOT_IDENTITY" ] ||
      [ ! -d "$work_abs" ] || [ -L "$work_abs" ] ||
@@ -807,6 +2229,9 @@ verify_pinned_work_root_cwd() {
 }
 
 capture_release_work_root_identity() {
+  local previous_directory identity_record identity_dev identity_ino
+  local identity_mode identity_uid identity_gid identity_remainder
+
   [ "$RELEASE_BUILD" = "true" ] || return 0
 
   if ! WORK_ROOT_IDENTITY="$(
@@ -820,6 +2245,54 @@ capture_release_work_root_identity() {
     echo "Could not capture the release work-root identity." >&2
     return 1
   fi
+  previous_directory="$(pwd -P)" || return 1
+  if ! cd "$work_abs" || ! verify_pinned_work_root_cwd; then
+    cd "$previous_directory" || true
+    echo "Could not enter the pinned release work-root directory." >&2
+    return 1
+  fi
+  # Open `.` through the already-held cwd authority. A late FIFO substitution
+  # of the pathname cannot block this open, and a late symlink cannot redirect
+  # it after the identity check above.
+  if ! exec 52< .; then
+    cd "$previous_directory" || true
+    echo "Could not hold the release work-root directory." >&2
+    return 1
+  fi
+  WORK_ROOT_FD_OPEN="true"
+  if ! cd "$previous_directory"; then
+    echo "Could not restore the wrapper directory after holding the release work root." >&2
+    return 1
+  fi
+  if ! verify_held_release_directory \
+      "$WORK_ROOT_FD" "$work_abs" "$WORK_ROOT_IDENTITY"; then
+    echo "Could not bind the held release work-root directory." >&2
+    return 1
+  fi
+  if ! identity_record="$(
+      held_release_directory_identity_fields "$WORK_ROOT_FD"
+    )"; then
+    echo "Could not capture the held release work-root import identity." >&2
+    return 1
+  fi
+  read -r identity_dev identity_ino identity_mode identity_uid identity_gid \
+    identity_remainder <<< "$identity_record"
+  if [ -n "$identity_remainder" ] ||
+     ! [[ "$identity_dev" =~ ^[0-9]+$ ]] ||
+     ! [[ "$identity_ino" =~ ^[1-9][0-9]*$ ]] ||
+     ! [[ "$identity_mode" =~ ^[1-9][0-9]*$ ]] ||
+     ! [[ "$identity_uid" =~ ^[0-9]+$ ]] ||
+     ! [[ "$identity_gid" =~ ^[0-9]+$ ]]; then
+    echo "Held release work-root import identity is malformed." >&2
+    return 1
+  fi
+  if [ "$identity_mode" -ne 448 ] || [ "$identity_uid" -ne "$EUID" ]; then
+    echo "Release work root must be mode 0700 and owned by the invoking uid: $work_abs" >&2
+    return 1
+  fi
+  WORK_ROOT_IMPORT_IDENTITY=(
+    "$identity_dev" "$identity_ino" "$identity_mode" "$identity_uid" "$identity_gid"
+  )
   (
     cd "$work_abs" || exit 1
     verify_pinned_work_root_cwd || exit 1
@@ -836,13 +2309,13 @@ verify_release_work_root_binding() {
 }
 
 verify_release_work_dirs_cwd() {
-  local index name current_identity
+  local index name current_identity held_fd
 
   index=0
   while [ "$index" -lt "${#RELEASE_WORK_DIR_NAMES[@]}" ]; do
     name="${RELEASE_WORK_DIR_NAMES[$index]}"
     case "$name" in
-      apt-archives|apt-indexes|apt-lists|artifacts) ;;
+      artifacts) ;;
       *)
         echo "Release work-directory identity set contains an unsafe name." >&2
         return 1
@@ -854,8 +2327,50 @@ verify_release_work_dirs_cwd() {
       echo "Release work directory changed from its pinned identity: $work_abs/$name" >&2
       return 1
     fi
+    held_fd="$RELEASE_ARTIFACTS_FD"
+    verify_held_release_directory \
+      "$held_fd" "$work_abs/$name" "${RELEASE_WORK_DIR_IDENTITIES[$index]}" || {
+        echo "Release work directory lost its held identity: $work_abs/$name" >&2
+        return 1
+      }
     index=$((index + 1))
   done
+}
+
+verify_release_work_root_prebuild_membership() {
+  local unexpected_entry
+
+  [ "$RELEASE_BUILD" = "true" ] && [ "$DRY_RUN" != "true" ] || return 0
+  if ! unexpected_entry="$(
+      cd "$work_abs" || exit 1
+      verify_pinned_work_root_cwd || exit 1
+      find . -mindepth 1 -maxdepth 1 \
+        ! -name artifacts \
+        ! -name docker-build-args.txt \
+        ! -name docker-build-inside.sh \
+        ! -name sp11-oci-index.json \
+        -print -quit
+    )"; then
+    echo "Could not inspect the release work-root membership exactly." >&2
+    return 1
+  fi
+  if [ -n "$unexpected_entry" ]; then
+    echo "Release work root contains an unexpected member before Docker." >&2
+    return 1
+  fi
+  for expected_companion in \
+    docker-build-args.txt docker-build-inside.sh sp11-oci-index.json; do
+    if [ ! -f "$work_abs/$expected_companion" ] ||
+       [ -L "$work_abs/$expected_companion" ]; then
+      echo "Release work root is missing an exact regular companion: $expected_companion" >&2
+      return 1
+    fi
+  done
+  (
+    cd "$work_abs" || exit 1
+    verify_pinned_work_root_cwd || exit 1
+    verify_release_work_dirs_cwd || exit 1
+  )
 }
 
 validate_legacy_control_paths() {
@@ -913,37 +2428,23 @@ install_control_evidence_copy() {
     verify_pinned_work_root_cwd || exit 1
     target="./$target_name"
 
-    if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
-      echo "Release Docker evidence path is unsafe: $display_target" >&2
-      exit 1
-    fi
     source_state="$(baseline_control_file_state "$source")" || {
       echo "Private Docker control input is unsafe before evidence copy: $source" >&2
       exit 1
     }
-    if [ -e "$target" ]; then
-      installed_state="$(baseline_control_file_state "$target")" || exit 1
-      if [ "${installed_state##*:}" != "${source_state##*:}" ]; then
-        echo "Existing release Docker evidence differs from its private authority: $display_target" >&2
-        exit 1
-      fi
-    else
-      if ! (
-        set -o noclobber
-        umask 077
-        cat "$source" > "$target" || exit 1
-      ); then
-        echo "Could not exclusively create retained Docker evidence: $display_target" >&2
-        exit 1
-      fi
-      installed_state="$(baseline_control_file_state "$target")" || {
-        echo "Retained Docker evidence is unsafe after creation: $display_target" >&2
-        exit 1
-      }
-      if [ "${installed_state##*:}" != "${source_state##*:}" ]; then
-        echo "Retained Docker evidence bytes differ from private control input: $display_target" >&2
-        exit 1
-      fi
+    if ! create_release_file_exclusive \
+        "$work_abs" "$WORK_ROOT_IDENTITY" "$WORK_ROOT_FD" \
+        "$target_name" 67108864 copy "$source"; then
+      echo "Could not exclusively create retained Docker evidence: $display_target" >&2
+      exit 1
+    fi
+    installed_state="$(baseline_control_file_state "$target")" || {
+      echo "Retained Docker evidence is unsafe after creation: $display_target" >&2
+      exit 1
+    }
+    if [ "${installed_state##*:}" != "${source_state##*:}" ]; then
+      echo "Retained Docker evidence bytes differ from private control input: $display_target" >&2
+      exit 1
     fi
     if [ "$(baseline_control_file_state "$source")" != "$source_state" ]; then
       echo "Private Docker control input changed during evidence copy: $source" >&2
@@ -1119,6 +2620,7 @@ validate_committed_support_tree() {
 
 create_release_support_checkout() {
   local created_root expected_tree head tree status root_mode support_child_identity
+  local previous_directory
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
   expected_tree="$(support_git rev-parse --verify "$SUPPORT_HEAD_START^{tree}")"
@@ -1147,8 +2649,31 @@ create_release_support_checkout() {
     echo "Could not capture the pinned committed-support root identity." >&2
     exit 1
   fi
+  previous_directory="$(pwd -P)" || exit 1
+  if ! cd "$SUPPORT_SNAPSHOT_ROOT" ||
+     [ "$(baseline_control_identity .)" != "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
+    cd "$previous_directory" || true
+    echo "Could not enter the pinned private committed-support root." >&2
+    exit 1
+  fi
+  if ! exec 51< .; then
+    cd "$previous_directory" || true
+    echo "Could not hold the private committed-support root." >&2
+    exit 1
+  fi
+  SUPPORT_SNAPSHOT_FD_OPEN="true"
+  cd "$previous_directory" || exit 1
+  if ! verify_held_release_directory \
+      "$SUPPORT_SNAPSHOT_FD" "$SUPPORT_SNAPSHOT_ROOT" \
+      "$SUPPORT_SNAPSHOT_ROOT_IDENTITY"; then
+    echo "Could not bind the held private committed-support root." >&2
+    exit 1
+  fi
+  SUPPORT_SNAPSHOT_ACCESS_ROOT="$(held_release_directory_access_path \
+    "$SUPPORT_SNAPSHOT_FD" "$SUPPORT_SNAPSHOT_ROOT" \
+    "$SUPPORT_SNAPSHOT_ROOT_IDENTITY")"
   (
-    cd "$SUPPORT_SNAPSHOT_ROOT"
+    cd "$SUPPORT_SNAPSHOT_ACCESS_ROOT"
     if [ ! -d . ] || [ -L . ] ||
        [ "$(baseline_control_identity .)" != "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
       echo "Could not pin the private committed-support snapshot root." >&2
@@ -1200,9 +2725,13 @@ create_release_support_checkout() {
       committed_support_git config core.untrackedCache false
       committed_support_git checkout --detach --force --quiet "$SUPPORT_HEAD_START"
       committed_support_git remote remove origin
-      if [ -e ./.git/objects/info/alternates ] ||
-         { [ -d ./.git/hooks ] &&
-           find ./.git/hooks -mindepth 1 -print | grep -q .; }; then
+      hook_entry=""
+      if [ -d ./.git/hooks ] &&
+         ! hook_entry="$(find ./.git/hooks -mindepth 1 -print -quit)"; then
+        echo "Could not inspect private support checkout hooks exactly." >&2
+        exit 1
+      fi
+      if [ -e ./.git/objects/info/alternates ] || [ -n "$hook_entry" ]; then
         echo "Private support checkout retained shared objects, alternates, or hooks." >&2
         exit 1
       fi
@@ -1216,7 +2745,13 @@ create_release_support_checkout() {
         exit 1
       fi
       validate_committed_support_tree
-      if find . -path ./.git -prune -o -type d -empty -print | grep -q .; then
+      if ! empty_directory="$(
+          find . -path ./.git -prune -o -type d -empty -print -quit
+        )"; then
+        echo "Could not inspect private support checkout directories exactly." >&2
+        exit 1
+      fi
+      if [ -n "$empty_directory" ]; then
         echo "Private support checkout contains an untracked empty directory." >&2
         exit 1
       fi
@@ -1238,6 +2773,7 @@ create_release_support_checkout() {
     fi
   )
   COMMITTED_SUPPORT_DIR="$SUPPORT_SNAPSHOT_ROOT/support"
+  COMMITTED_SUPPORT_ACCESS_DIR="$SUPPORT_SNAPSHOT_ACCESS_ROOT/support"
   if [ -L "$SUPPORT_SNAPSHOT_ROOT" ] || [ ! -d "$SUPPORT_SNAPSHOT_ROOT" ] ||
      [ "$(baseline_control_identity "$SUPPORT_SNAPSHOT_ROOT")" != \
        "$SUPPORT_SNAPSHOT_ROOT_IDENTITY" ]; then
@@ -1262,11 +2798,9 @@ create_release_support_checkout() {
 snapshot_support_blob() {
   local relative_path="$1" expected_mode="$2" destination="$3"
   local entry metadata listed_path mode object_type object_id remainder actual_id hash_path
+  local destination_name
 
-  [ ! -e "$destination" ] && [ ! -L "$destination" ] || {
-    echo "Refusing an existing committed-support snapshot path: $destination" >&2
-    return 1
-  }
+  destination_name="$(basename "$destination")"
   if ! entry="$(committed_support_git ls-tree "$SUPPORT_HEAD_START" -- "$relative_path")"; then
     echo "Could not resolve committed support input: $relative_path" >&2
     return 1
@@ -1279,11 +2813,11 @@ snapshot_support_blob() {
     echo "Committed support input has an unexpected Git tree identity: $relative_path" >&2
     return 1
   fi
-  if ! (
-    set -o noclobber
-    umask 077
-    committed_support_git cat-file blob "$object_id" > "$destination" || exit 1
-  ); then
+  if ! create_release_file_exclusive \
+      "$BASELINE_CONTROL_DIR" "$BASELINE_CONTROL_IDENTITY" \
+      "$BASELINE_CONTROL_FD" \
+      "$destination_name" 1048576 copy \
+      "$COMMITTED_SUPPORT_ACCESS_DIR/$relative_path"; then
     echo "Could not materialize committed support input: $relative_path" >&2
     return 1
   fi
@@ -1304,7 +2838,7 @@ snapshot_support_blob() {
 }
 
 create_release_baseline_control() {
-  local created_dir root_mode
+  local created_dir root_mode previous_directory
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
   require_tool shasum
@@ -1334,10 +2868,35 @@ create_release_baseline_control() {
     echo "Could not capture the pinned committed-baseline root identity." >&2
     exit 1
   fi
+  previous_directory="$(pwd -P)" || exit 1
+  if ! cd "$BASELINE_CONTROL_DIR" ||
+     [ "$(baseline_control_identity .)" != "$BASELINE_CONTROL_IDENTITY" ]; then
+    cd "$previous_directory" || true
+    echo "Could not enter the pinned private committed-baseline root." >&2
+    exit 1
+  fi
+  if ! exec 50< .; then
+    cd "$previous_directory" || true
+    echo "Could not hold the private committed-baseline control root." >&2
+    exit 1
+  fi
+  BASELINE_CONTROL_FD_OPEN="true"
+  cd "$previous_directory" || exit 1
+  if ! verify_held_release_directory \
+      "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+      "$BASELINE_CONTROL_IDENTITY"; then
+    echo "Could not bind the held private committed-baseline control root." >&2
+    exit 1
+  fi
+  BASELINE_CONTROL_ACCESS_DIR="$(held_release_directory_access_path \
+    "$BASELINE_CONTROL_FD" "$BASELINE_CONTROL_DIR" \
+    "$BASELINE_CONTROL_IDENTITY")"
   KERNEL_BASELINE="$BASELINE_CONTROL_DIR/kernel-baseline.env"
   KERNEL_BASELINE_VALIDATOR="$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh"
+  KERNEL_BASELINE_ACCESS="$BASELINE_CONTROL_ACCESS_DIR/kernel-baseline.env"
+  KERNEL_BASELINE_VALIDATOR_ACCESS="$BASELINE_CONTROL_ACCESS_DIR/validate-sp11-kernel-baseline.sh"
   (
-    cd "$BASELINE_CONTROL_DIR"
+    cd "$BASELINE_CONTROL_ACCESS_DIR"
     if [ ! -d . ] || [ -L . ] ||
        [ "$(baseline_control_identity .)" != "$BASELINE_CONTROL_IDENTITY" ]; then
       echo "Could not pin the private committed-baseline control root." >&2
@@ -1371,6 +2930,26 @@ create_release_baseline_control() {
   KERNEL_BASELINE_STATE="$(baseline_control_file_state "$KERNEL_BASELINE")"
   KERNEL_BASELINE_VALIDATOR_STATE="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")"
   KERNEL_BASELINE_SHA256="${KERNEL_BASELINE_STATE##*:}"
+  if ! exec 53< "$KERNEL_BASELINE"; then
+    echo "Could not hold the committed kernel baseline snapshot." >&2
+    exit 1
+  fi
+  KERNEL_BASELINE_FD_OPEN="true"
+  if ! exec 54< "$KERNEL_BASELINE_VALIDATOR"; then
+    echo "Could not hold the committed kernel baseline validator snapshot." >&2
+    exit 1
+  fi
+  KERNEL_BASELINE_VALIDATOR_FD_OPEN="true"
+  verify_held_release_file \
+    "$KERNEL_BASELINE_FD" "$KERNEL_BASELINE" "$KERNEL_BASELINE_SHA256" 600 || exit 1
+  verify_held_release_file \
+    "$KERNEL_BASELINE_VALIDATOR_FD" "$KERNEL_BASELINE_VALIDATOR" \
+    "${KERNEL_BASELINE_VALIDATOR_STATE##*:}" 600 || exit 1
+  case "$(uname -s)" in
+    Linux) KERNEL_BASELINE_ACCESS="/proc/self/fd/$KERNEL_BASELINE_FD" ;;
+    *) KERNEL_BASELINE_ACCESS="/dev/fd/$KERNEL_BASELINE_FD" ;;
+  esac
+  KERNEL_BASELINE_VALIDATOR_ACCESS="/dev/fd/$KERNEL_BASELINE_VALIDATOR_FD"
   BASELINE_CONTROL_INITIAL_STATE="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")"
   if ! verify_baseline_control_membership initial; then
     echo "Private committed-baseline control directory has unexpected contents." >&2
@@ -1384,10 +2963,11 @@ load_release_baseline_values() {
   verify_release_support_checkout || exit 1
   verify_initial_baseline_control_state || exit 1
   if ! emitted="$(
-    bash "$KERNEL_BASELINE_VALIDATOR" \
-      --repo-dir "$COMMITTED_SUPPORT_DIR" \
+    exec 3<&53
+    bash "$KERNEL_BASELINE_VALIDATOR_ACCESS" \
+      --repo-dir "$COMMITTED_SUPPORT_ACCESS_DIR" \
       --emit-release-values \
-      "$KERNEL_BASELINE"
+      --baseline-fd 3
   )"; then
     echo "Committed release kernel baseline validation failed." >&2
     exit 1
@@ -1423,7 +3003,10 @@ load_release_baseline_values() {
     echo "Committed kernel baseline validator field set/order is not exact." >&2
     exit 1
   fi
-  verify_initial_baseline_control_state || exit 1
+  refresh_initial_baseline_control_state_after_held_validation || {
+    echo "Held committed-baseline authority changed during validation." >&2
+    exit 1
+  }
   verify_release_support_checkout || exit 1
 }
 
@@ -1859,10 +3442,15 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     echo "--release-build cannot copy packages into the tracked payload tree." >&2
     exit 2
   fi
+  if [ "$CONTAINER_WORK_DIR" = "/work" ]; then
+    echo "--release-build requires a named Linux work volume; --container-work-dir /work is not allowed." >&2
+    exit 2
+  fi
   if [ -n "$APT_SOURCES_FILE" ]; then
     echo "--release-build cannot use mutable --apt-sources input." >&2
     exit 2
   fi
+  capture_release_python_authority || exit 1
 fi
 
 capture_release_support_start
@@ -1979,6 +3567,7 @@ if [ -n "$APT_SOURCES_FILE" ]; then
 fi
 
 create_release_support_checkout
+bind_release_support_python_scripts
 create_release_baseline_control
 
 if [ -n "$PATCH_DIRS" ]; then
@@ -2063,20 +3652,43 @@ if [ "$CONTAINER_WORK_DIR" = "/work" ] && is_case_insensitive_dir "$work_abs"; t
   exit 1
 fi
 
-if [ "$IMMUTABLE_APT" = "true" ]; then
-  require_tool python3
+if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
+  if [ "$RELEASE_BUILD" = "true" ]; then
+    verify_release_python_authority || {
+      echo "Trusted release Python authority changed before use." >&2
+      exit 1
+    }
+  else
+    require_tool python3
+  fi
   require_apt_list_decoder
 fi
 
 if [ "$DRY_RUN" != "true" ]; then
   require_tool docker
+  DOCKER_BIN="$(command -v docker)"
+  case "$DOCKER_BIN" in
+    /*) ;;
+    *)
+      echo "Could not resolve Docker to an absolute command path." >&2
+      exit 1
+      ;;
+  esac
+  [ -x "$DOCKER_BIN" ] || {
+    echo "The resolved absolute Docker command is not executable." >&2
+    exit 1
+  }
 fi
 
-if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
+if [ "$IMMUTABLE_APT" = "true" ]; then
   if ! release_dir_records="$(
     cd "$work_abs" || exit 1
     verify_pinned_work_root_cwd || exit 1
-    for release_name in apt-archives apt-indexes apt-lists artifacts; do
+    # The retained APT trees never cross back into host directories. They stay
+    # in the private Docker release-state volume and are exported only inside
+    # one canonical evidence tar. Only the small flat artifact set has a held
+    # host publication directory.
+    for release_name in artifacts; do
       release_dir="./$release_name"
       display_release_dir="$work_abs/$release_name"
       if [ -L "$release_dir" ] ||
@@ -2085,13 +3697,20 @@ if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
         exit 1
       fi
       if [ ! -e "$release_dir" ]; then
-        mkdir -m 700 "$release_dir" || exit 1
+        echo "Release-build artifact directory must already exist: $display_release_dir" >&2
+        exit 1
       fi
       if [ ! -d "$release_dir" ] || [ -L "$release_dir" ]; then
         echo "Release-build directory is not a real directory: $display_release_dir" >&2
         exit 1
       fi
-      if find "$release_dir" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+      if ! release_dir_entry="$(
+          find "$release_dir" -mindepth 1 -maxdepth 1 -print -quit
+        )"; then
+        echo "Could not inspect release-build directory exactly: $display_release_dir" >&2
+        exit 1
+      fi
+      if [ -n "$release_dir_entry" ]; then
         echo "Release-build directory must start empty: $display_release_dir" >&2
         exit 1
       fi
@@ -2111,11 +3730,61 @@ if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
     }
     RELEASE_WORK_DIR_NAMES+=("$release_name")
     RELEASE_WORK_DIR_IDENTITIES+=("$release_dir_identity")
+    case "$release_name" in
+      artifacts) RELEASE_ARTIFACTS_IDENTITY="$release_dir_identity" ;;
+    esac
   done <<< "$release_dir_records"
-  [ "${#RELEASE_WORK_DIR_NAMES[@]}" -eq 4 ] || {
+  [ "${#RELEASE_WORK_DIR_NAMES[@]}" -eq 1 ] || {
     echo "Release work-directory identity set is not exact." >&2
     exit 1
   }
+  release_previous_directory="$(pwd -P)" || exit 1
+  if ! cd "$work_abs/artifacts" ||
+     [ "$(baseline_control_identity .)" != "$RELEASE_ARTIFACTS_IDENTITY" ]; then
+    cd "$release_previous_directory" || true
+    echo "Could not enter the pinned release artifact directory." >&2
+    exit 1
+  fi
+  # Acquire the descriptor through the held cwd object, never by reopening the
+  # attacker-replaceable artifact pathname.
+  if ! exec 58< .; then
+    cd "$release_previous_directory" || true
+    echo "Could not hold the release artifact directory." >&2
+    exit 1
+  fi
+  RELEASE_ARTIFACTS_FD_OPEN="true"
+  cd "$release_previous_directory" || exit 1
+  verify_held_release_directory \
+    "$RELEASE_ARTIFACTS_FD" "$work_abs/artifacts" \
+    "$RELEASE_ARTIFACTS_IDENTITY" || exit 1
+  release_artifact_import_record="$(
+    held_release_directory_identity_fields "$RELEASE_ARTIFACTS_FD"
+  )" || exit 1
+  read -r release_artifact_import_dev release_artifact_import_ino \
+    release_artifact_import_mode release_artifact_import_uid \
+    release_artifact_import_gid release_artifact_import_remainder \
+    <<< "$release_artifact_import_record"
+  if [ -n "$release_artifact_import_remainder" ] ||
+     ! [[ "$release_artifact_import_dev" =~ ^[0-9]+$ ]] ||
+     ! [[ "$release_artifact_import_ino" =~ ^[1-9][0-9]*$ ]] ||
+     ! [[ "$release_artifact_import_mode" =~ ^[1-9][0-9]*$ ]] ||
+     ! [[ "$release_artifact_import_uid" =~ ^[0-9]+$ ]] ||
+     ! [[ "$release_artifact_import_gid" =~ ^[0-9]+$ ]]; then
+    echo "Held release artifact import identity is malformed." >&2
+    exit 1
+  fi
+  if [ "$release_artifact_import_mode" -ne 448 ] ||
+     [ "$release_artifact_import_uid" -ne "$EUID" ]; then
+    echo "Release artifact directory must be mode 0700 and owned by the invoking uid: $work_abs/artifacts" >&2
+    exit 1
+  fi
+  RELEASE_ARTIFACTS_IMPORT_IDENTITY=(
+    "$release_artifact_import_dev"
+    "$release_artifact_import_ino"
+    "$release_artifact_import_mode"
+    "$release_artifact_import_uid"
+    "$release_artifact_import_gid"
+  )
   verify_release_work_root_binding || exit 1
 fi
 
@@ -2147,14 +3816,12 @@ if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
     echo "Pinned release OCI index digest is not canonical." >&2
     exit 1
   fi
-  if ! (
-    cd "$BASELINE_CONTROL_DIR"
-    verify_pinned_baseline_control_cwd || exit 1
-    set -o noclobber
-    umask 077
-    docker buildx imagetools inspect --raw "$IMAGE" > ./sp11-oci-index.json || exit 1
-    verify_pinned_baseline_control_cwd || exit 1
-  ); then
+  verify_initial_baseline_control_state || exit 1
+  if ! create_release_file_exclusive \
+      "$BASELINE_CONTROL_DIR" "$BASELINE_CONTROL_IDENTITY" \
+      "$BASELINE_CONTROL_FD" \
+      sp11-oci-index.json 67108864 command \
+      "$DOCKER_BIN" buildx imagetools inspect --raw "$IMAGE"; then
     echo "Could not capture the raw pinned OCI index." >&2
     exit 1
   fi
@@ -2165,16 +3832,32 @@ if [ "$IMMUTABLE_APT" = "true" ] && [ "$DRY_RUN" != "true" ]; then
     exit 1
   fi
   verify_release_support_checkout
-  python3 "$COMMITTED_SUPPORT_DIR/scripts/validate-sp11-oci-index.py" \
-    --raw-index "$oci_index_file" \
-    --index-ref "$RELEASE_BASELINE_DOCKER_IMAGE" \
-    --platform "$RELEASE_BASELINE_DOCKER_PLATFORM" \
-    --expected-platform-manifest "$RELEASE_BASELINE_DOCKER_PLATFORM_MANIFEST"
+  verify_release_python_authority || exit 1
+  if ! run_bound_release_support_python \
+      scripts/validate-sp11-oci-index.py 1048576 \
+      "$RELEASE_OCI_VALIDATOR_IDENTITY" "$RELEASE_OCI_VALIDATOR_SHA256" \
+      "$RELEASE_OCI_VALIDATOR_OBJECT_ID" "$RELEASE_OCI_VALIDATOR_MODE" \
+      --raw-index "$BASELINE_CONTROL_ACCESS_DIR/sp11-oci-index.json" \
+      --index-ref "$RELEASE_BASELINE_DOCKER_IMAGE" \
+      --platform "$RELEASE_BASELINE_DOCKER_PLATFORM" \
+      --expected-platform-manifest "$RELEASE_BASELINE_DOCKER_PLATFORM_MANIFEST"; then
+    echo "Could not execute the exact committed OCI-index validator." >&2
+    exit 1
+  fi
   if [ "$(baseline_control_file_state "$oci_index_file")" != "$RELEASE_OCI_INDEX_STATE" ]; then
     echo "Private OCI index changed during semantic validation." >&2
     exit 1
   fi
   verify_release_support_checkout
+fi
+if [ "$RELEASE_BUILD" = "true" ] && [ "$DRY_RUN" = "true" ]; then
+  # A dry-run does not query Docker, but its printed entrypoint and validator
+  # vector still bind the reviewed raw OCI-index digest from the pinned image.
+  RELEASE_OCI_INDEX_SHA256="${IMAGE##*@sha256:}"
+  [[ "$RELEASE_OCI_INDEX_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Pinned release OCI index digest is not canonical." >&2
+    exit 1
+  }
 fi
 
 inner_args=(
@@ -2228,14 +3911,11 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     echo "Could not derive the in-memory release build-argument digest." >&2
     exit 1
   }
-  if ! (
-    cd "$BASELINE_CONTROL_DIR"
-    verify_pinned_baseline_control_cwd || exit 1
-    set -o noclobber
-    umask 077
-    printf '%s\n' "$release_build_args_text" > ./docker-build-args.txt || exit 1
-    verify_pinned_baseline_control_cwd || exit 1
-  ); then
+  if ! printf '%s\n' "$release_build_args_text" |
+      create_release_file_exclusive \
+        "$BASELINE_CONTROL_DIR" "$BASELINE_CONTROL_IDENTITY" \
+        "$BASELINE_CONTROL_FD" \
+        docker-build-args.txt 1048576 stdin; then
     echo "Could not exclusively create private release build arguments." >&2
     exit 1
   fi
@@ -2281,14 +3961,38 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
          next
        }
        index($5, "/sp11-control/") == 1 { control_nested++ }
+       $5 == "/work" {
+         work_count++
+         if (!has_ro($6)) work_rw++
+         next
+       }
+       index($5, "/work/") == 1 { work_nested++ }
        END {
          exit !(repo_count == 1 && repo_ro == 1 && repo_nested == 0 &&
-                control_count == 1 && control_ro == 1 && control_nested == 0)
+                control_count == 1 && control_ro == 1 && control_nested == 0 &&
+                work_count == 1 && work_rw == 1 && work_nested == 0)
        }
      ' /proc/self/mountinfo; then
     echo "Immutable release build requires exact unshadowed read-only /repo and /sp11-control mounts." >&2
     exit 1
   fi
+  [ -d /work ] && [ ! -L /work ] &&
+    [ "$(cd /work && pwd -P)" = /work ] || {
+      echo "Private release-state volume is not an exact real /work mount." >&2
+      exit 1
+    }
+  if ! release_state_entry="$(
+      find /work -mindepth 1 -maxdepth 1 -print -quit
+    )"; then
+    echo "Could not inspect the private release-state volume exactly." >&2
+    exit 1
+  fi
+  if [ -n "$release_state_entry" ]; then
+    echo "Private release-state volume did not start empty." >&2
+    exit 1
+  fi
+  mkdir -m 700 \
+    /work/apt-archives /work/apt-indexes /work/apt-lists "$artifact_dir"
   for required_dir in /work /work/apt-archives /work/apt-indexes /work/apt-lists "$artifact_dir"; do
     [ -d "$required_dir" ] && [ ! -L "$required_dir" ] || {
       echo "Unsafe immutable build directory: $required_dir" >&2
@@ -2299,7 +4003,13 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
       exit 1
     }
   done
-  if find "$artifact_dir" -mindepth 1 -maxdepth 1 -print | grep -q .; then
+  if ! release_artifact_entry="$(
+      find "$artifact_dir" -mindepth 1 -maxdepth 1 -print -quit
+    )"; then
+    echo "Could not inspect the immutable release artifact directory exactly." >&2
+    exit 1
+  fi
+  if [ -n "$release_artifact_entry" ]; then
     echo "Immutable release artifact directory must start empty." >&2
     exit 1
   fi
@@ -2333,6 +4043,15 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
     /sp11-control/sp11-oci-index.json \
     "${SP11_EXPECTED_OCI_INDEX_SHA256:-}" \
     "OCI index"
+  install -m 0600 \
+    /sp11-control/docker-build-args.txt \
+    /work/docker-build-args.txt
+  install -m 0600 \
+    /sp11-control/docker-build-inside.sh \
+    /work/docker-build-inside.sh
+  install -m 0600 \
+    /sp11-control/sp11-oci-index.json \
+    /work/sp11-oci-index.json
 else
   echo "Cleaning copied artifact shuttle directory: $artifact_dir"
   rm -rf "$artifact_dir"
@@ -2455,6 +4174,67 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
     --work-dir /work \
     --kernel-work-dir "$container_work_dir" \
     --output "$artifact_dir/sp11-kernel-apt-provenance.txt"
+  build_inputs_args=(
+    --baseline /sp11-control/kernel-baseline.env
+    --baseline-sha256 "${SP11_EXPECTED_BASELINE_SHA256:-}"
+    --build-args-sha256 "${SP11_EXPECTED_BUILD_ARGS_SHA256:-}"
+    --entrypoint-sha256 "${SP11_EXPECTED_ENTRYPOINT_SHA256:-}"
+    --oci-index-sha256 "${SP11_EXPECTED_OCI_INDEX_SHA256:-}"
+    --work-dir /work
+    --support-head "${SP11_EXPECTED_SUPPORT_COMMIT:-}"
+    --build-args /work/docker-build-args.txt
+    --entrypoint /work/docker-build-inside.sh
+    --oci-index /work/sp11-oci-index.json
+    --build-manifest "$artifact_dir/sp11-kernel-build-manifest.txt"
+    --apt-provenance "$artifact_dir/sp11-kernel-apt-provenance.txt"
+    --apt-archives-dir /work/apt-archives
+    --apt-lists-dir /work/apt-lists
+    --apt-index-cache-dir /work/apt-indexes
+    --apt-local-build-deps-dir "$artifact_dir"
+    --apt-pre-inventory /work/sp11-apt-installed-pre.txt
+    --apt-post-inventory /work/sp11-apt-installed-post.txt
+    --output "$artifact_dir/sp11-kernel-build-inputs.txt"
+  )
+  /usr/bin/python3 -I /repo/scripts/sp11-kernel-build-inputs.py write \
+    "${build_inputs_args[@]}"
+  validation_attestation_args=(
+    --apt-bootstrap-state /work/sp11-apt-bootstrap-state.txt
+    --attestation-output /work/sp11-kernel-preseal-validation.txt
+    --git-object-format "${SP11_EXPECTED_GIT_OBJECT_FORMAT:-}"
+    --build-inputs-helper-sha256 \
+      "${SP11_EXPECTED_BUILD_INPUTS_HELPER_SHA256:-}"
+    --build-inputs-helper-object-id \
+      "${SP11_EXPECTED_BUILD_INPUTS_HELPER_OBJECT_ID:-}"
+    --manifest-validator-sha256 \
+      "${SP11_EXPECTED_MANIFEST_VALIDATOR_SHA256:-}"
+    --manifest-validator-object-id \
+      "${SP11_EXPECTED_MANIFEST_VALIDATOR_OBJECT_ID:-}"
+  )
+  /usr/bin/python3 -I /repo/scripts/sp11-kernel-build-inputs.py validate \
+    "${build_inputs_args[@]}" "${validation_attestation_args[@]}"
+  /usr/bin/python3 -I /repo/scripts/sp11-kernel-release-state.py seal \
+    --work-root /work \
+    --support-head "${SP11_EXPECTED_SUPPORT_COMMIT:-}" \
+    --baseline-sha256 "${SP11_EXPECTED_BASELINE_SHA256:-}" \
+    --build-args-sha256 "${SP11_EXPECTED_BUILD_ARGS_SHA256:-}" \
+    --entrypoint-sha256 "${SP11_EXPECTED_ENTRYPOINT_SHA256:-}" \
+    --oci-index-sha256 "${SP11_EXPECTED_OCI_INDEX_SHA256:-}" \
+    --container-image "${SP11_BUILD_CONTAINER_IMAGE:-}" \
+    --container-platform "${SP11_BUILD_CONTAINER_PLATFORM:-}" \
+    --git-object-format "${SP11_EXPECTED_GIT_OBJECT_FORMAT:-}" \
+    --validator-argv-sha256 "${SP11_EXPECTED_VALIDATOR_ARGV_SHA256:-}" \
+    --build-inputs-helper-size \
+      "${SP11_EXPECTED_BUILD_INPUTS_HELPER_SIZE:-}" \
+    --build-inputs-helper-sha256 \
+      "${SP11_EXPECTED_BUILD_INPUTS_HELPER_SHA256:-}" \
+    --build-inputs-helper-object-id \
+      "${SP11_EXPECTED_BUILD_INPUTS_HELPER_OBJECT_ID:-}" \
+    --manifest-validator-size \
+      "${SP11_EXPECTED_MANIFEST_VALIDATOR_SIZE:-}" \
+    --manifest-validator-sha256 \
+      "${SP11_EXPECTED_MANIFEST_VALIDATOR_SHA256:-}" \
+    --manifest-validator-object-id \
+      "${SP11_EXPECTED_MANIFEST_VALIDATOR_OBJECT_ID:-}"
 fi
 EOF
 }
@@ -2467,16 +4247,70 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     echo "Could not derive the in-memory release entrypoint digest." >&2
     exit 1
   }
+  release_validator_argv=(
+    /usr/bin/python3
+    -I
+    /repo/scripts/sp11-kernel-build-inputs.py
+    validate
+    --baseline /sp11-control/kernel-baseline.env
+    --baseline-sha256 "$KERNEL_BASELINE_SHA256"
+    --build-args-sha256 "$EXPECTED_RELEASE_BUILD_ARGS_SHA256"
+    --entrypoint-sha256 "$EXPECTED_RELEASE_ENTRYPOINT_SHA256"
+    --oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256"
+    --work-dir /work
+    --support-head "$SUPPORT_HEAD_START"
+    --build-args /work/docker-build-args.txt
+    --entrypoint /work/docker-build-inside.sh
+    --oci-index /work/sp11-oci-index.json
+    --build-manifest /work/artifacts/sp11-kernel-build-manifest.txt
+    --apt-provenance /work/artifacts/sp11-kernel-apt-provenance.txt
+    --apt-archives-dir /work/apt-archives
+    --apt-lists-dir /work/apt-lists
+    --apt-index-cache-dir /work/apt-indexes
+    --apt-local-build-deps-dir /work/artifacts
+    --apt-pre-inventory /work/sp11-apt-installed-pre.txt
+    --apt-post-inventory /work/sp11-apt-installed-post.txt
+    --output /work/artifacts/sp11-kernel-build-inputs.txt
+    --apt-bootstrap-state /work/sp11-apt-bootstrap-state.txt
+    --attestation-output /work/sp11-kernel-preseal-validation.txt
+    --git-object-format "$RELEASE_GIT_OBJECT_FORMAT"
+    --build-inputs-helper-sha256 "$RELEASE_BUILD_INPUTS_HELPER_SHA256"
+    --build-inputs-helper-object-id "$RELEASE_BUILD_INPUTS_HELPER_OBJECT_ID"
+    --manifest-validator-sha256 "$RELEASE_MANIFEST_VALIDATOR_SHA256"
+    --manifest-validator-object-id "$RELEASE_MANIFEST_VALIDATOR_OBJECT_ID"
+  )
+  RELEASE_VALIDATOR_ARGV_SHA256="$(
+    "$RELEASE_PYTHON_BIN" -I -c '
+import hashlib
+import sys
+
+arguments = sys.argv[1:]
+if not 4 <= len(arguments) <= 128:
+    raise SystemExit(1)
+digest = hashlib.sha256()
+for argument in arguments:
+    encoded = argument.encode("ascii")
+    if not encoded or len(encoded) > 8192 or b"\0" in encoded:
+        raise SystemExit(1)
+    digest.update(encoded)
+    digest.update(b"\0")
+print(digest.hexdigest())
+' sp11-validator-vector "${release_validator_argv[@]}"
+  )" || {
+    echo "Could not derive the exact pre-seal validator argv digest." >&2
+    exit 1
+  }
+  [[ "$RELEASE_VALIDATOR_ARGV_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Pre-seal validator argv digest is not canonical." >&2
+    exit 1
+  }
 fi
 if [ "$RELEASE_BUILD" = "true" ]; then
-  if ! (
-    cd "$BASELINE_CONTROL_DIR"
-    verify_pinned_baseline_control_cwd || exit 1
-    set -o noclobber
-    umask 077
-    printf '%s\n' "$docker_entrypoint_text" > ./docker-build-inside.sh || exit 1
-    verify_pinned_baseline_control_cwd || exit 1
-  ); then
+  if ! printf '%s\n' "$docker_entrypoint_text" |
+      create_release_file_exclusive \
+        "$BASELINE_CONTROL_DIR" "$BASELINE_CONTROL_IDENTITY" \
+        "$BASELINE_CONTROL_FD" \
+        docker-build-inside.sh 4194304 stdin; then
     echo "Could not exclusively create the private release entrypoint." >&2
     exit 1
   fi
@@ -2529,6 +4363,7 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     exit 1
   fi
   verify_release_control_state || exit 1
+  verify_release_work_root_prebuild_membership || exit 1
 else
   if ! install_control_file "$args_file" "$work_abs/docker-build-args.txt" ||
      ! install_control_file "$run_script" "$work_abs/docker-build-inside.sh"; then
@@ -2544,14 +4379,12 @@ fi
 
 docker_args=(
   run
-  --rm
   --platform "$PLATFORM"
   -e "SP11_ENABLE_DEB_SRC=$ENABLE_DEB_SRC"
   -e "SP11_APT_SOURCES_NAME=$(basename "${APT_SOURCES_FILE:-sp11-qcom-x1e.sources}")"
   -e "SP11_BUILD_CONTAINER_IMAGE=$IMAGE"
   -e "SP11_BUILD_CONTAINER_PLATFORM=$PLATFORM"
   -e "SP11_CONTAINER_WORK_DIR=$CONTAINER_WORK_DIR"
-  -v "$work_abs:/work"
 )
 
 if [ "$RELEASE_BUILD" = "true" ]; then
@@ -2559,12 +4392,53 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     echo "Release Docker run is missing its private committed support checkout." >&2
     exit 1
   }
+  if [ "$DRY_RUN" = "true" ]; then
+    RELEASE_STATE_VOLUME_NAME="sp11-release-state-dry-run"
+  else
+    RELEASE_STATE_VOLUME_TOKEN="$("$RELEASE_PYTHON_BIN" -I -c \
+      'import secrets; print(secrets.token_hex(32))')"
+    RELEASE_STATE_VOLUME_NAME="sp11-release-state-${RELEASE_STATE_VOLUME_TOKEN:0:32}"
+  fi
+  [[ "$RELEASE_STATE_VOLUME_NAME" =~ ^sp11-release-state-[0-9a-f]{32}$ ]] ||
+    [ "$RELEASE_STATE_VOLUME_NAME" = "sp11-release-state-dry-run" ] || {
+      echo "Could not derive a private Docker release-state volume name." >&2
+      exit 1
+    }
+  if [ "$DRY_RUN" != "true" ]; then
+    [[ "$RELEASE_STATE_VOLUME_TOKEN" =~ ^[0-9a-f]{64}$ ]] || exit 1
+    export RELEASE_STATE_VOLUME_TOKEN
+    if ! release_volume_created="$(run_release_command_bounded 4096 \
+        "$DOCKER_BIN" volume create \
+        --label "org.opencontainers.image.vendor=linux-surface-pro-11-oe" \
+        --label "org.sp11.release-state-token=$RELEASE_STATE_VOLUME_TOKEN" \
+        "$RELEASE_STATE_VOLUME_NAME")" ||
+       [ "$release_volume_created" != "$RELEASE_STATE_VOLUME_NAME" ] ||
+       ! release_volume_inspected="$(run_release_command_bounded 4096 \
+          "$DOCKER_BIN" volume inspect --format \
+          '{{.Name}} {{index .Labels "org.sp11.release-state-token"}}' \
+          "$RELEASE_STATE_VOLUME_NAME")" ||
+       [ "$release_volume_inspected" != \
+         "$RELEASE_STATE_VOLUME_NAME $RELEASE_STATE_VOLUME_TOKEN" ]; then
+      echo "Could not create and bind the private Docker release-state volume." >&2
+      exit 1
+    fi
+  fi
   docker_args+=(
+    --mount \
+      "type=volume,source=$RELEASE_STATE_VOLUME_NAME,destination=/work,volume-nocopy"
     -e "SP11_EXPECTED_SUPPORT_COMMIT=$SUPPORT_HEAD_START"
     -e "SP11_PRIVATE_SUPPORT_SNAPSHOT=true"
     -e "SP11_EXPECTED_BUILD_ARGS_SHA256=$RELEASE_BUILD_ARGS_SHA256"
     -e "SP11_EXPECTED_ENTRYPOINT_SHA256=$RELEASE_ENTRYPOINT_SHA256"
     -e "SP11_EXPECTED_BASELINE_SHA256=$KERNEL_BASELINE_SHA256"
+    -e "SP11_EXPECTED_GIT_OBJECT_FORMAT=$RELEASE_GIT_OBJECT_FORMAT"
+    -e "SP11_EXPECTED_VALIDATOR_ARGV_SHA256=$RELEASE_VALIDATOR_ARGV_SHA256"
+    -e "SP11_EXPECTED_BUILD_INPUTS_HELPER_SIZE=$RELEASE_BUILD_INPUTS_HELPER_SIZE"
+    -e "SP11_EXPECTED_BUILD_INPUTS_HELPER_SHA256=$RELEASE_BUILD_INPUTS_HELPER_SHA256"
+    -e "SP11_EXPECTED_BUILD_INPUTS_HELPER_OBJECT_ID=$RELEASE_BUILD_INPUTS_HELPER_OBJECT_ID"
+    -e "SP11_EXPECTED_MANIFEST_VALIDATOR_SIZE=$RELEASE_MANIFEST_VALIDATOR_SIZE"
+    -e "SP11_EXPECTED_MANIFEST_VALIDATOR_SHA256=$RELEASE_MANIFEST_VALIDATOR_SHA256"
+    -e "SP11_EXPECTED_MANIFEST_VALIDATOR_OBJECT_ID=$RELEASE_MANIFEST_VALIDATOR_OBJECT_ID"
     -v "$COMMITTED_SUPPORT_DIR:/repo:ro"
     -v "$BASELINE_CONTROL_DIR:/sp11-control:ro"
   )
@@ -2572,7 +4446,7 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     docker_args+=(-e "SP11_EXPECTED_OCI_INDEX_SHA256=$RELEASE_OCI_INDEX_SHA256")
   fi
 else
-  docker_args+=(-v "$repo_dir:/repo:ro")
+  docker_args+=(--rm -v "$work_abs:/work" -v "$repo_dir:/repo:ro")
 fi
 if [ "$IMMUTABLE_APT" = "true" ]; then
   docker_args+=(-e "SP11_IMMUTABLE_APT_REQUIRED=true")
@@ -2593,8 +4467,13 @@ else
 fi
 
 if [ "$DRY_RUN" = "true" ]; then
-  printf 'Docker command:\n  docker'
-  printf ' %q' "${docker_args[@]}"
+  if [ "$RELEASE_BUILD" = "true" ]; then
+    printf 'Docker command:\n  docker create'
+    printf ' %q' "${docker_args[@]:1}"
+  else
+    printf 'Docker command:\n  docker'
+    printf ' %q' "${docker_args[@]}"
+  fi
   printf '\n\nInner build args:\n'
   printf '  %s\n' "${inner_args[@]}"
   verify_release_control_state
@@ -2616,8 +4495,20 @@ capture_docker_control_state
 verify_release_control_state
 verify_release_support_checkout
 verify_release_work_root_binding
+capture_release_companion_import_identities
 set +e
-docker "${docker_args[@]}"
+if [ "$RELEASE_BUILD" = "true" ]; then
+  verify_release_python_authority || exit 1
+  run_bound_release_support_python \
+    scripts/sp11-kernel-release-state.py 4194304 \
+    "$RELEASE_STATE_HELPER_IDENTITY" "$RELEASE_STATE_HELPER_SHA256" \
+    "$RELEASE_STATE_HELPER_OBJECT_ID" "$RELEASE_STATE_HELPER_MODE" \
+    run-container \
+    --docker-path "$DOCKER_BIN" \
+    -- "$DOCKER_BIN" create "${docker_args[@]:1}"
+else
+  docker "${docker_args[@]}"
+fi
 docker_status=$?
 set -e
 verify_release_control_state
@@ -2633,80 +4524,72 @@ verify_docker_control_state
 verify_release_support_stable
 
 if [ "$RELEASE_BUILD" = "true" ]; then
-  if [ "$IMMUTABLE_APT" = "true" ] || [ "$CONTAINER_WORK_DIR" != "/work" ]; then
-    completed_manifest="$work_abs/artifacts/sp11-kernel-build-manifest.txt"
-  else
-    completed_manifest="$work_abs/sp11-kernel-build-manifest.txt"
-  fi
-  if [ ! -f "$completed_manifest" ] || [ -L "$completed_manifest" ] ||
-     ! grep -Fxq 'Provenance schema: sp11-kernel-build-v2' "$completed_manifest" ||
-     ! grep -Fxq 'Release build: true' "$completed_manifest" ||
-     ! grep -Fxq 'Build completed: true' "$completed_manifest"; then
-    echo "Docker release build completed without a valid final schema-v2 manifest." >&2
-    exit 1
-  fi
-  if [ "$IMMUTABLE_APT" = "true" ]; then
-    apt_provenance="$work_abs/artifacts/sp11-kernel-apt-provenance.txt"
-    build_inputs="$work_abs/artifacts/sp11-kernel-build-inputs.txt"
-    if [ ! -f "$apt_provenance" ] || [ -L "$apt_provenance" ]; then
-      echo "Docker release build completed without immutable APT provenance." >&2
+  release_exporter_args=(
+    "$DOCKER_BIN"
+    create
+    --pull=never
+    --network none
+    --read-only
+    --cap-drop ALL
+    --security-opt no-new-privileges
+    --pids-limit 64
+    --user 0:0
+    --platform "$PLATFORM"
+    --mount \
+      "type=volume,source=$RELEASE_STATE_VOLUME_NAME,destination=/work,readonly"
+    -v "$COMMITTED_SUPPORT_DIR:/repo:ro"
+    --entrypoint /bin/bash
+    "$IMAGE"
+    /repo/scripts/emit-sp11-kernel-release-state.sh
+  )
+  [ "${#WORK_ROOT_IMPORT_IDENTITY[@]}" -eq 5 ] &&
+    [ "${#RELEASE_ARTIFACTS_IMPORT_IDENTITY[@]}" -eq 5 ] &&
+    [ "${#RELEASE_BUILD_ARGS_IMPORT_IDENTITY[@]}" -eq 9 ] &&
+    [ "${#RELEASE_ENTRYPOINT_IMPORT_IDENTITY[@]}" -eq 9 ] &&
+    [ "${#RELEASE_OCI_INDEX_IMPORT_IDENTITY[@]}" -eq 9 ] || {
+      echo "Release import identities are incomplete before publication." >&2
       exit 1
-    fi
-    verify_release_control_state
-    verify_release_support_checkout
-    python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" write \
-      --baseline "$KERNEL_BASELINE" \
-      --baseline-sha256 "$KERNEL_BASELINE_SHA256" \
-      --build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256" \
-      --entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256" \
-      --oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256" \
-      --work-dir "$work_abs" \
-      --support-head "$SUPPORT_HEAD_START" \
-      --build-args "$work_abs/docker-build-args.txt" \
-      --entrypoint "$work_abs/docker-build-inside.sh" \
-      --oci-index "$work_abs/sp11-oci-index.json" \
-      --build-manifest "$completed_manifest" \
-      --apt-provenance "$apt_provenance" \
-      --apt-archives-dir "$work_abs/apt-archives" \
-      --apt-lists-dir "$work_abs/apt-lists" \
-      --apt-index-cache-dir "$work_abs/apt-indexes" \
-      --apt-local-build-deps-dir "$work_abs/artifacts" \
-      --apt-pre-inventory "$work_abs/sp11-apt-installed-pre.txt" \
-      --apt-post-inventory "$work_abs/sp11-apt-installed-post.txt" \
-      --output "$build_inputs"
-    verify_release_control_state
-    verify_release_support_checkout
-    python3 "$COMMITTED_SUPPORT_DIR/scripts/sp11-kernel-build-inputs.py" validate \
-      --baseline "$KERNEL_BASELINE" \
-      --baseline-sha256 "$KERNEL_BASELINE_SHA256" \
-      --build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256" \
-      --entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256" \
-      --oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256" \
-      --work-dir "$work_abs" \
-      --support-head "$SUPPORT_HEAD_START" \
-      --build-args "$work_abs/docker-build-args.txt" \
-      --entrypoint "$work_abs/docker-build-inside.sh" \
-      --oci-index "$work_abs/sp11-oci-index.json" \
-      --build-manifest "$completed_manifest" \
-      --apt-provenance "$apt_provenance" \
-      --apt-archives-dir "$work_abs/apt-archives" \
-      --apt-lists-dir "$work_abs/apt-lists" \
-      --apt-index-cache-dir "$work_abs/apt-indexes" \
-      --apt-local-build-deps-dir "$work_abs/artifacts" \
-      --apt-pre-inventory "$work_abs/sp11-apt-installed-pre.txt" \
-      --apt-post-inventory "$work_abs/sp11-apt-installed-post.txt" \
-      --output "$build_inputs"
-    verify_release_control_state
-    verify_release_support_checkout
-    for required_artifact in "$completed_manifest" "$apt_provenance" "$build_inputs"; do
-      [ -f "$required_artifact" ] && [ ! -L "$required_artifact" ] || {
-        echo "Release build is missing a required provenance artifact: $required_artifact" >&2
-        exit 1
-      }
-    done
-    verify_docker_control_state
-    echo "Publication remains blocked: outer release validation and independent real-build, signing, and licence gates must pass."
-  fi
+    }
+  verify_release_control_state
+  verify_release_support_checkout
+  verify_release_python_authority || exit 1
+  verify_release_work_root_binding
+  # import-tar is the terminal commit boundary. It owns exporter supervision,
+  # held publication authority, output scrubbing, the final collective recheck,
+  # signal disposition, and the only post-commit success output.  Remove the
+  # shell EXIT hook before replacing this process so Bash can never turn its
+  # committed success into a later false failure.
+  trap - EXIT
+  exec_bound_release_support_python \
+    scripts/sp11-kernel-release-state.py 4194304 \
+    "$RELEASE_STATE_HELPER_IDENTITY" "$RELEASE_STATE_HELPER_SHA256" \
+    "$RELEASE_STATE_HELPER_OBJECT_ID" "$RELEASE_STATE_HELPER_MODE" \
+    import-tar \
+    --work-root "$work_abs" \
+    --work-root-identity "${WORK_ROOT_IMPORT_IDENTITY[@]}" \
+    --artifacts-root "$work_abs/artifacts" \
+    --artifacts-root-identity "${RELEASE_ARTIFACTS_IMPORT_IDENTITY[@]}" \
+    --container-platform "$PLATFORM" \
+    --build-args-identity "${RELEASE_BUILD_ARGS_IMPORT_IDENTITY[@]}" \
+    --entrypoint-identity "${RELEASE_ENTRYPOINT_IMPORT_IDENTITY[@]}" \
+    --oci-index-identity "${RELEASE_OCI_INDEX_IMPORT_IDENTITY[@]}" \
+    --docker-path "$DOCKER_BIN" \
+    --support-head "$SUPPORT_HEAD_START" \
+    --baseline-sha256 "$KERNEL_BASELINE_SHA256" \
+    --build-args-sha256 "$RELEASE_BUILD_ARGS_SHA256" \
+    --entrypoint-sha256 "$RELEASE_ENTRYPOINT_SHA256" \
+    --oci-index-sha256 "$RELEASE_OCI_INDEX_SHA256" \
+    --container-image "$IMAGE" \
+    --git-object-format "$RELEASE_GIT_OBJECT_FORMAT" \
+    --validator-argv-sha256 "$RELEASE_VALIDATOR_ARGV_SHA256" \
+    --build-inputs-helper-size "$RELEASE_BUILD_INPUTS_HELPER_SIZE" \
+    --build-inputs-helper-sha256 "$RELEASE_BUILD_INPUTS_HELPER_SHA256" \
+    --build-inputs-helper-object-id "$RELEASE_BUILD_INPUTS_HELPER_OBJECT_ID" \
+    --manifest-validator-size "$RELEASE_MANIFEST_VALIDATOR_SIZE" \
+    --manifest-validator-sha256 "$RELEASE_MANIFEST_VALIDATOR_SHA256" \
+    --manifest-validator-object-id "$RELEASE_MANIFEST_VALIDATOR_OBJECT_ID" \
+    --retained-volume-name "$RELEASE_STATE_VOLUME_NAME" \
+    -- "${release_exporter_args[@]}"
 fi
 
 echo

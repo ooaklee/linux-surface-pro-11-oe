@@ -63,6 +63,8 @@ CONTRACT_KEYS = (
     "SP11_KERNEL_SOURCE_ARCHIVE_XZ_LIBRARY_SHA256",
 )
 ACTIVE_PASS_FDS: tuple[int, ...] = ()
+RELEASE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+RELEASE_SIGNAL_SET = frozenset(RELEASE_SIGNALS)
 
 
 class GenerationError(Exception):
@@ -214,71 +216,157 @@ class FinalizationState:
     scratch_parent: PinnedDirectory | None = None
     scratch: PinnedScratch | None = None
     installed: InstalledOutput | None = None
+    success_output: bytes | None = None
+    fixture_signal_before_commit: signal.Signals | None = None
+    committed: bool = False
 
 
 def fail(message: str) -> None:
     raise GenerationError(message)
 
 
-def require_sigint_mask_support() -> None:
-    """Fail before resource creation if POSIX signal-mask ownership is unavailable."""
+def require_release_signal_mask_support() -> None:
+    """Fail before resource creation if release-signal ownership is unavailable."""
 
     if not all(
         hasattr(signal, attribute)
-        for attribute in ("pthread_sigmask", "SIG_BLOCK", "SIG_SETMASK", "SIGINT")
+        for attribute in (
+            "pthread_sigmask",
+            "sigpending",
+            "SIG_BLOCK",
+            "SIG_SETMASK",
+            "SIGHUP",
+            "SIGINT",
+            "SIGTERM",
+        )
     ):
-        fail("platform cannot protect source-archive resource ownership from SIGINT")
+        fail("platform cannot protect source-archive resource ownership from release signals")
     try:
         previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
     except (OSError, ValueError) as exc:
-        fail(f"platform cannot protect source-archive resource ownership from SIGINT: {exc}")
+        fail(
+            "platform cannot protect source-archive resource ownership from "
+            f"release signals: {exc}"
+        )
+
+
+def release_signal_handler(_signum: int, _frame: object) -> None:
+    """Latch the first release signal and make cleanup non-interruptible."""
+
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, RELEASE_SIGNAL_SET)
+    finally:
+        raise KeyboardInterrupt
+
+
+def install_release_signal_handlers() -> None:
+    """Convert HUP/INT/TERM into one controlled cleanup unwind."""
+
+    for handled in RELEASE_SIGNALS:
+        try:
+            signal.signal(handled, release_signal_handler)
+        except (OSError, RuntimeError, ValueError) as exc:
+            fail(f"could not install source-archive release-signal handling: {exc}")
+
+
+def fixture_signal(value: str | None) -> signal.Signals | None:
+    if value is None:
+        return None
+    return {"HUP": signal.SIGHUP, "TERM": signal.SIGTERM}[value]
+
+
+def establish_child_reaping_contract() -> None:
+    """Ensure spawned tools remain waitable until this exact parent reaps them."""
+
+    if not hasattr(signal, "SIGCHLD"):
+        fail("platform cannot establish waitable source-archive child processes")
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, RuntimeError, ValueError) as exc:
+        fail(f"could not establish the source-archive child contract: {exc}")
+    require_child_reaping_contract()
+
+
+def require_child_reaping_contract() -> None:
+    if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+        fail("source-archive child processes would not remain waitable")
 
 
 @contextmanager
-def blocked_sigint():
-    """Defer SIGINT until a newly created resource has a visible cleanup owner."""
+def blocked_release_signals():
+    """Defer HUP/INT/TERM until a resource has a visible cleanup owner."""
 
     try:
-        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, RELEASE_SIGNAL_SET)
     except (OSError, ValueError) as exc:
-        fail(f"could not block SIGINT for resource ownership transfer: {exc}")
+        fail(f"could not block release signals for resource ownership transfer: {exc}")
     try:
         yield previous_mask
     finally:
-        # A pending SIGINT may raise KeyboardInterrupt here.  Every caller must
+        # A pending release signal may raise KeyboardInterrupt here. Every caller must
         # record the resource owner inside the with body before this restoration.
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
-def close_finalization_handles(state: FinalizationState, *, scrub_output: bool) -> None:
-    if scrub_output:
-        if state.installed is not None:
-            scrub_and_close_installed_output(state.installed)
-        if state.scratch is not None:
+def release_signal_is_pending() -> bool:
+    try:
+        return bool(signal.sigpending() & RELEASE_SIGNAL_SET)
+    except (OSError, ValueError) as exc:
+        fail(f"could not inspect pending source-archive release signals: {exc}")
+
+
+def scrub_failure_handles(state: FinalizationState) -> None:
+    """Scrub the exact installed inode and close every retained authority."""
+
+    if state.installed is not None:
+        scrub_and_close_installed_output(state.installed)
+    if state.scratch is not None:
+        try:
+            state.scratch.close()
+        except OSError:
+            pass
+    for pinned in (state.scratch_parent, state.output_parent):
+        if pinned is not None:
             try:
-                state.scratch.close()
+                pinned.close()
             except OSError:
                 pass
-        for pinned in (state.scratch_parent, state.output_parent):
-            if pinned is not None:
-                try:
-                    pinned.close()
-                except OSError:
-                    pass
-        return
 
-    # A successful return is allowed only after every retained authority has
-    # actually closed.  Keep the output FD until last so an earlier close error
-    # can still take the failure path and scrub the exact created inode.
+
+def close_precommit_nonoutput_handles(state: FinalizationState) -> None:
+    """Close fallible non-output handles while the exact output remains scrub-able."""
+
     if state.scratch is not None:
         state.scratch.close()
     for pinned in (state.scratch_parent, state.output_parent):
         if pinned is not None:
             pinned.close()
+
+
+def close_committed_output_best_effort(state: FinalizationState) -> None:
+    """Close the exact output after the irreversible commit without changing outcome."""
+
     if state.installed is not None and state.installed.descriptor >= 0:
-        os.close(state.installed.descriptor)
+        try:
+            os.close(state.installed.descriptor)
+        except OSError:
+            return
         state.installed.descriptor = -1
+
+
+def emit_success_best_effort(content: bytes) -> None:
+    """Emit precomputed bounded success bytes without changing a committed result."""
+
+    view = memoryview(content)
+    try:
+        while view:
+            written = os.write(1, view)
+            if written <= 0:
+                return
+            view = view[written:]
+    except BaseException:
+        return
 
 
 def canonical_existing_directory(path: Path, label: str) -> Path:
@@ -1044,16 +1132,16 @@ def verify_library(snapshot: LibrarySnapshot, name: str) -> None:
 def child_process_setup(
     previous_mask: set[signal.Signals],
     maximum: int | None,
-    fixture_signal_parent_before_exec: bool = False,
+    fixture_signal_parent_before_exec: signal.Signals | None = None,
 ):
     """Restore the caller's mask in the child and apply its optional file cap."""
 
     def prepare_child() -> None:
-        # The fixture queues SIGINT while the parent is still inside Popen and
+        # The fixture queues a release signal while the parent is still inside Popen and
         # has not executed its ownership STORE.  The parent mask makes that
         # exact acquisition boundary deterministic on both macOS and Linux.
-        if fixture_signal_parent_before_exec:
-            os.kill(os.getppid(), signal.SIGINT)
+        if fixture_signal_parent_before_exec is not None:
+            os.kill(os.getppid(), fixture_signal_parent_before_exec)
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         if maximum is not None:
             resource.setrlimit(resource.RLIMIT_FSIZE, (maximum, maximum))
@@ -1061,28 +1149,42 @@ def child_process_setup(
     return prepare_child
 
 
+def wait_registered(process: subprocess.Popen[bytes]) -> int:
+    """Reap a child and register its terminal state under the release mask."""
+
+    with blocked_release_signals():
+        returncode = process.wait()
+        if process.returncode is None:
+            fail("source-archive child terminal status was not registered")
+        registered = process.returncode
+    if returncode != registered:
+        fail("source-archive child terminal status changed during registration")
+    return registered
+
+
 def stop_processes(processes: list[subprocess.Popen[bytes]]) -> None:
     """Unconditionally reap children and close their parent-side pipes."""
 
-    for process in processes:
-        if process.poll() is None:
-            try:
-                process.kill()
-            except OSError:
-                pass
-    for process in processes:
-        try:
-            process.wait()
-        except BaseException:
-            pass
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if stream is not None and not stream.closed:
+    with blocked_release_signals():
+        for process in processes:
+            if process.poll() is None:
                 try:
-                    stream.close()
+                    process.kill()
                 except OSError:
                     pass
-    if any(process.poll() is None for process in processes):
-        fail("source-archive child process could not be reaped safely")
+        for process in processes:
+            try:
+                process.wait()
+            except BaseException:
+                pass
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+        if any(process.poll() is None for process in processes):
+            fail("source-archive child process could not be reaped safely")
 
 
 def bounded_process_errors(
@@ -1109,14 +1211,10 @@ def bounded_process_errors(
                     continue
                 buffers[label].extend(chunk)
                 if len(buffers[label]) > MAX_COMMAND_OUTPUT_BYTES:
-                    for process in process_by_label.values():
-                        if process.poll() is None:
-                            process.kill()
-                    for process in process_by_label.values():
-                        process.wait()
+                    stop_processes(list(process_by_label.values()))
                     fail(f"{label} exceeded the bounded diagnostic-output limit")
         for process in process_by_label.values():
-            process.wait()
+            wait_registered(process)
     except BaseException:
         stop_processes(list(process_by_label.values()))
         raise
@@ -1145,16 +1243,14 @@ def bounded_process_capture(
                     continue
                 buffers[stream_name].extend(chunk)
                 if len(buffers[stream_name]) > MAX_COMMAND_OUTPUT_BYTES:
-                    if process.poll() is None:
-                        process.kill()
-                    process.wait()
+                    stop_processes([process])
                     fail(f"{label} exceeded the bounded {stream_name} limit")
     except BaseException:
         stop_processes([process])
         raise
     finally:
         selector.close()
-    return process.wait(), bytes(buffers["stdout"]), bytes(buffers["stderr"])
+    return wait_registered(process), bytes(buffers["stdout"]), bytes(buffers["stderr"])
 
 
 def run_file_process(
@@ -1164,24 +1260,57 @@ def run_file_process(
     label: str,
     file_size_limit: int,
     input_stream=None,
+    *,
+    fixture_pending_signal: signal.Signals | None = None,
+    fixture_delivered_signal: signal.Signals | None = None,
 ) -> tuple[int, bytes]:
     process: subprocess.Popen[bytes] | None = None
     try:
-        with blocked_sigint() as previous_mask:
+        with blocked_release_signals() as previous_mask:
+            require_child_reaping_contract()
             process = subprocess.Popen(
                 arguments,
                 env=environment,
                 stdin=input_stream if input_stream is not None else subprocess.DEVNULL,
                 stdout=output,
                 stderr=subprocess.PIPE,
-                preexec_fn=child_process_setup(previous_mask, file_size_limit),
+                preexec_fn=child_process_setup(
+                    previous_mask,
+                    file_size_limit,
+                    fixture_signal_parent_before_exec=fixture_pending_signal,
+                ),
                 pass_fds=ACTIVE_PASS_FDS,
             )
+        if fixture_delivered_signal is not None:
+            deadline = time.monotonic() + 10.0
+            while os.fstat(output.fileno()).st_size == 0:
+                with blocked_release_signals():
+                    terminal = process.poll()
+                if terminal is not None:
+                    fail("fixture source-archive writer exited before signal delivery")
+                if time.monotonic() >= deadline:
+                    fail("fixture source-archive writer produced no bounded output")
+                time.sleep(0.001)
+            with blocked_release_signals():
+                writer_active = process.poll() is None
+            if not writer_active:
+                fail("fixture source-archive writer was not active at signal delivery")
+            print(
+                "Fixture source-archive writer signal delivered: "
+                f"{fixture_delivered_signal.name}",
+                file=sys.stderr,
+            )
+            os.kill(os.getpid(), fixture_delivered_signal)
         error_output = bounded_process_errors([(label, process)])[label]
         return process.returncode, error_output
     except BaseException:
         if process is not None:
             stop_processes([process])
+            if fixture_pending_signal is not None or fixture_delivered_signal is not None:
+                print(
+                    f"Fixture source-archive writer child reaped PID: {process.pid}",
+                    file=sys.stderr,
+                )
         raise
 
 
@@ -1191,11 +1320,13 @@ def run_text(
     label: str,
     *,
     extra_pass_fds: tuple[int, ...] = (),
-    fixture_interrupt_child: bool = False,
+    fixture_pending_signal: signal.Signals | None = None,
+    fixture_delivered_signal: signal.Signals | None = None,
 ) -> str:
     process: subprocess.Popen[bytes] | None = None
     try:
-        with blocked_sigint() as previous_mask:
+        with blocked_release_signals() as previous_mask:
+            require_child_reaping_contract()
             process = subprocess.Popen(
                 arguments,
                 env=environment,
@@ -1205,12 +1336,14 @@ def run_text(
                 preexec_fn=child_process_setup(
                     previous_mask,
                     None,
-                    fixture_signal_parent_before_exec=fixture_interrupt_child,
+                    fixture_signal_parent_before_exec=fixture_pending_signal,
                 ),
                 pass_fds=tuple(
                     sorted(set((*ACTIVE_PASS_FDS, *extra_pass_fds)))
                 ),
             )
+        if fixture_delivered_signal is not None:
+            os.kill(os.getpid(), fixture_delivered_signal)
         returncode, stdout_bytes, stderr_bytes = bounded_process_capture(
             process, label
         )
@@ -1221,7 +1354,7 @@ def run_text(
     except BaseException:
         if process is not None:
             stop_processes([process])
-            if fixture_interrupt_child:
+            if fixture_pending_signal is not None or fixture_delivered_signal is not None:
                 print(
                     f"Fixture source-archive child reaped PID: {process.pid}",
                     file=sys.stderr,
@@ -1468,6 +1601,8 @@ def generate_archive(
     archive_root: str,
     patched_tree: str,
     epoch: int,
+    fixture_writer_pending_signal: signal.Signals | None = None,
+    fixture_writer_delivered_signal: signal.Signals | None = None,
 ) -> None:
     tar_name = f"{archive_name}.raw.tar"
     try:
@@ -1493,6 +1628,8 @@ def generate_archive(
                 tar_output,
                 "git archive",
                 MAX_TAR_BYTES,
+                fixture_pending_signal=fixture_writer_pending_signal,
+                fixture_delivered_signal=fixture_writer_delivered_signal,
             )
             tar_output.flush()
             os.fsync(tar_output.fileno())
@@ -1540,7 +1677,8 @@ def validate_archive(
     epoch: int,
     environment: dict[str, str],
     *,
-    fixture_interrupt_child: bool = False,
+    fixture_pending_signal: signal.Signals | None = None,
+    fixture_delivered_signal: signal.Signals | None = None,
 ) -> str:
     validator_metadata = os.fstat(validator_descriptor)
     validator_path: Path | None = None
@@ -1578,7 +1716,8 @@ def validate_archive(
         environment,
         "independent source-archive validation",
         extra_pass_fds=(validator_descriptor, archive_descriptor),
-        fixture_interrupt_child=fixture_interrupt_child,
+        fixture_pending_signal=fixture_pending_signal,
+        fixture_delivered_signal=fixture_delivered_signal,
     )
 
 
@@ -1698,29 +1837,57 @@ def generation_finalization_guard(state: FinalizationState):
 
     try:
         yield
-        if (
-            state.output_parent is None
-            or state.scratch_parent is None
-            or state.scratch is None
-            or state.installed is None
-        ):
-            fail("source-archive generation did not retain its final authorities")
-        if state.pause_before_final_check:
-            time.sleep(3)
-        verify_scrubbed_scratch(state.scratch)
-        state.installed.state = verify_installed_output(
-            state.installed,
-            state.output_parent,
-            expected_state=state.installed.state,
-        )
-        # Recheck both requested mappings in a tight final sequence after the
-        # potentially long archive digest and retained-tree checks.
-        state.scratch.verify()
-        state.scratch_parent.verify()
-        verify_installed_mapping_state(state.installed, state.output_parent)
-        close_finalization_handles(state, scrub_output=False)
+        with blocked_release_signals():
+            if (
+                state.output_parent is None
+                or state.scratch_parent is None
+                or state.scratch is None
+                or state.installed is None
+                or state.success_output is None
+            ):
+                fail("source-archive generation did not retain its final authorities")
+            if state.pause_before_final_check:
+                time.sleep(3)
+            verify_scrubbed_scratch(state.scratch)
+            state.installed.state = verify_installed_output(
+                state.installed,
+                state.output_parent,
+                expected_state=state.installed.state,
+            )
+            # Recheck both requested mappings in a tight final sequence after the
+            # potentially long archive digest and retained-tree checks.
+            state.scratch.verify()
+            state.scratch_parent.verify()
+            verify_installed_mapping_state(state.installed, state.output_parent)
+            # Dispose every fallible non-output handle while retaining the exact
+            # O_RDWR output descriptor as the precommit scrub authority.
+            close_precommit_nonoutput_handles(state)
+            if state.fixture_signal_before_commit is not None:
+                print(
+                    "Fixture source-archive final signal queued: "
+                    f"{state.fixture_signal_before_commit.name}",
+                    file=sys.stderr,
+                )
+                os.kill(os.getpid(), state.fixture_signal_before_commit)
+            if release_signal_is_pending():
+                raise KeyboardInterrupt
+            # This direct store is the irreversible commit fence. Any later
+            # signal/output/close failure is postcommit and cannot scrub or
+            # reclassify the already validated bytes.
+            state.committed = True
+            for handled in RELEASE_SIGNALS:
+                try:
+                    signal.signal(handled, signal.SIG_IGN)
+                except (OSError, RuntimeError, ValueError):
+                    pass
+            emit_success_best_effort(state.success_output)
+            close_committed_output_best_effort(state)
     except BaseException:
-        close_finalization_handles(state, scrub_output=True)
+        if state.committed:
+            close_committed_output_best_effort(state)
+            return
+        with blocked_release_signals():
+            scrub_failure_handles(state)
         raise
 
 
@@ -1735,6 +1902,8 @@ def install_exclusive(
     fixture_pause_after_copy: bool = False,
     fixture_raise_after_copy: bool = False,
     fixture_sigint_before_transfer: bool = False,
+    fixture_pending_signal_before_registration: signal.Signals | None = None,
+    fixture_delivered_signal: signal.Signals | None = None,
 ) -> InstalledOutput:
     source = scratch.owned.get(source_name)
     if source is None or source.kind != "file":
@@ -1746,25 +1915,68 @@ def install_exclusive(
     scratch.verify()
     output_parent.verify()
     output_descriptor = -1
-    install_committed = False
+    install_registered = False
     provisional: InstalledOutput | None = None
+
+    def scrub_unregistered_output() -> None:
+        if output_descriptor < 0 or install_registered:
+            return
+        try:
+            os.ftruncate(output_descriptor, 0)
+            os.fsync(output_descriptor)
+        except BaseException:
+            pass
+        try:
+            os.close(output_descriptor)
+        except OSError:
+            pass
+        if provisional is not None:
+            provisional.descriptor = -1
+            if finalization.installed is provisional:
+                finalization.installed = None
+
     try:
-        output_descriptor = os.open(
-            output_name,
-            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=output_parent.descriptor,
-        )
+        with blocked_release_signals():
+            output_descriptor = os.open(
+                output_name,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=output_parent.descriptor,
+            )
+            output_metadata = os.fstat(output_descriptor)
+            output_identity = (output_metadata.st_dev, output_metadata.st_ino)
+            if not stat.S_ISREG(output_metadata.st_mode):
+                fail("exclusive destination did not create a regular file")
+            os.fchmod(output_descriptor, 0o644)
+            provisional = InstalledOutput(
+                output_name,
+                output_descriptor,
+                output_identity,
+                regular_file_state(os.fstat(output_descriptor)),
+                validated.size,
+                validated.sha256,
+            )
+            if fixture_pending_signal_before_registration is not None:
+                print(
+                    "Fixture source-archive install registration signal queued: "
+                    f"{fixture_pending_signal_before_registration.name}",
+                    file=sys.stderr,
+                )
+                os.kill(os.getpid(), fixture_pending_signal_before_registration)
+            # Transfer exact-FD scrub ownership before long copy/hash work so a
+            # delivered release signal can unwind immediately and safely.
+            finalization.installed = provisional
+            install_registered = True
     except FileExistsError:
         fail("refusing to overwrite an existing source-archive output")
     except OSError as exc:
+        scrub_unregistered_output()
         fail(f"could not install source archive exclusively: {exc}")
+    except BaseException:
+        scrub_unregistered_output()
+        raise
     try:
-        output_metadata = os.fstat(output_descriptor)
-        output_identity = (output_metadata.st_dev, output_metadata.st_ino)
-        if not stat.S_ISREG(output_metadata.st_mode):
-            fail("exclusive destination did not create a regular file")
-        os.fchmod(output_descriptor, 0o644)
+        assert provisional is not None
         os.lseek(source.descriptor, 0, os.SEEK_SET)
         os.lseek(output_descriptor, 0, os.SEEK_SET)
         copied = 0
@@ -1782,6 +1994,13 @@ def install_exclusive(
                 written = os.write(output_descriptor, view)
                 view = view[written:]
         os.fsync(output_descriptor)
+        if fixture_delivered_signal is not None:
+            print(
+                "Fixture source-archive install signal delivered: "
+                f"{fixture_delivered_signal.name}",
+                file=sys.stderr,
+            )
+            os.kill(os.getpid(), fixture_delivered_signal)
         if copied != validated.size or copied_digest.hexdigest() != validated.sha256:
             fail("validated source archive changed during destination copy")
         if snapshot_owned_file(
@@ -1800,14 +2019,7 @@ def install_exclusive(
             time.sleep(2)
         if fixture_raise_after_copy:
             raise RuntimeError("fixture unexpected install interruption")
-        provisional = InstalledOutput(
-            output_name,
-            output_descriptor,
-            output_identity,
-            regular_file_state(os.fstat(output_descriptor)),
-            validated.size,
-            validated.sha256,
-        )
+        provisional.state = regular_file_state(os.fstat(output_descriptor))
         provisional.state = verify_installed_output(provisional, output_parent)
         os.fsync(output_parent.descriptor)
         provisional.state = verify_installed_output(
@@ -1815,25 +2027,9 @@ def install_exclusive(
         )
         if fixture_sigint_before_transfer:
             os.kill(os.getpid(), signal.SIGINT)
-        # The caller holds SIGINT blocked across this direct shared-state store,
-        # the return, and its confirming assignment.  Do not suppress local
-        # scrubbing until the finalization guard can see the exact descriptor.
-        finalization.installed = provisional
-        install_committed = True
         return provisional
     finally:
-        if output_descriptor >= 0 and not install_committed:
-            try:
-                os.ftruncate(output_descriptor, 0)
-                os.fsync(output_descriptor)
-            except (OSError, KeyboardInterrupt):
-                pass
-        if output_descriptor >= 0 and not install_committed:
-            os.close(output_descriptor)
-            if provisional is not None:
-                provisional.descriptor = -1
-                if finalization.installed is provisional:
-                    finalization.installed = None
+        scrub_unregistered_output()
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -1865,8 +2061,43 @@ def parse_arguments() -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--fixture-pending-signal-validator-child",
+        choices=("HUP", "TERM"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--fixture-delivered-signal-validator-child",
+        choices=("HUP", "TERM"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--fixture-pending-signal-writer-child",
+        choices=("HUP", "TERM"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--fixture-delivered-signal-writer-child",
+        choices=("HUP", "TERM"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--fixture-sigint-before-install-transfer",
         action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--fixture-pending-signal-before-install-registration",
+        choices=("HUP", "TERM"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--fixture-delivered-signal-during-install",
+        choices=("HUP", "TERM"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--fixture-signal-before-final-commit",
+        choices=("HUP", "TERM"),
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
@@ -1882,10 +2113,51 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def render_success_output(
+    *,
+    contract: str,
+    archive_name: str,
+    archive_root: str,
+    patched_tree: str,
+    epoch: int,
+    git_version: str,
+    xz_version: str,
+    size: int,
+    digest: str,
+    validation_output: str,
+) -> bytes:
+    """Precompute the entire bounded path-neutral success record before commit."""
+
+    content = "\n".join(
+        (
+            "Generated deterministic patched-source archive candidate.",
+            f"Contract: {contract}",
+            f"Archive: {archive_name}",
+            f"Archive root: {archive_root}",
+            f"Patched tree ID: {patched_tree}",
+            f"Source epoch: {epoch}",
+            f"Git version: {git_version}",
+            f"XZ version: {xz_version}",
+            f"XZ arguments: {' '.join(XZ_ARGUMENTS)}",
+            f"Archive size: {size}",
+            f"Archive SHA256: {digest}",
+            validation_output,
+            "Corresponding-source legal sufficiency review required: true",
+            "Publication authorized: false",
+            "",
+        )
+    ).encode("utf-8")
+    if not content or len(content) > MAX_COMMAND_OUTPUT_BYTES:
+        fail("source-archive success record is empty or oversized")
+    return content
+
+
 def main() -> int:
     if not sys.flags.isolated:
         fail("source archive generator must be invoked with Python isolated mode (-I)")
-    require_sigint_mask_support()
+    require_release_signal_mask_support()
+    install_release_signal_handlers()
+    establish_child_reaping_contract()
     args = parse_arguments()
     baseline_snapshot = stable_file(args.baseline, "kernel baseline")
     manifest_snapshot = stable_file(args.build_manifest, "build manifest")
@@ -1899,7 +2171,14 @@ def main() -> int:
         or args.fixture_pause_after_destination_copy
         or args.fixture_raise_after_destination_copy
         or args.fixture_interrupt_validator_child
+        or args.fixture_pending_signal_validator_child is not None
+        or args.fixture_delivered_signal_validator_child is not None
+        or args.fixture_pending_signal_writer_child is not None
+        or args.fixture_delivered_signal_writer_child is not None
         or args.fixture_sigint_before_install_transfer
+        or args.fixture_pending_signal_before_install_registration is not None
+        or args.fixture_delivered_signal_during_install is not None
+        or args.fixture_signal_before_final_commit is not None
         or args.fixture_pause_before_final_mapping_check
     ) and not fixture_baseline:
         fail("source-archive fault injection is permitted only for a fixture baseline")
@@ -1998,7 +2277,10 @@ def main() -> int:
     ):
         fail("source-archive validator SHA-256 does not match the toolchain contract")
     finalization = FinalizationState(
-        pause_before_final_check=args.fixture_pause_before_final_mapping_check
+        pause_before_final_check=args.fixture_pause_before_final_mapping_check,
+        fixture_signal_before_commit=fixture_signal(
+            args.fixture_signal_before_final_commit
+        ),
     )
     with (
         generation_finalization_guard(finalization),
@@ -2175,6 +2457,12 @@ def main() -> int:
             archive_root=archive_root,
             patched_tree=patched_tree,
             epoch=epoch,
+            fixture_writer_pending_signal=fixture_signal(
+                args.fixture_pending_signal_writer_child
+            ),
+            fixture_writer_delivered_signal=fixture_signal(
+                args.fixture_delivered_signal_writer_child
+            ),
         )
         first_validated = snapshot_owned_file(
             scratch_handle,
@@ -2189,7 +2477,14 @@ def main() -> int:
             patched_tree,
             epoch,
             object_environment,
-            fixture_interrupt_child=args.fixture_interrupt_validator_child,
+            fixture_pending_signal=(
+                signal.SIGINT
+                if args.fixture_interrupt_validator_child
+                else fixture_signal(args.fixture_pending_signal_validator_child)
+            ),
+            fixture_delivered_signal=fixture_signal(
+                args.fixture_delivered_signal_validator_child
+            ),
         )
         if args.fixture_mutate_validated_archive:
             fixture_source = scratch_handle.owned[archive_name].descriptor
@@ -2275,37 +2570,42 @@ def main() -> int:
         )
         if final_tree_type != "tree":
             fail("patched tree object changed during source-archive generation")
-        with blocked_sigint():
-            finalization.installed = install_exclusive(
-                archive_name,
-                scratch_handle,
-                output_name,
-                output_parent_handle,
-                first_validated,
-                finalization,
-                fixture_pause_after_copy=args.fixture_pause_after_destination_copy,
-                fixture_raise_after_copy=args.fixture_raise_after_destination_copy,
-                fixture_sigint_before_transfer=(
-                    args.fixture_sigint_before_install_transfer
-                ),
-            )
-        size = finalization.installed.size
-        digest = finalization.installed.sha256
+        installed = install_exclusive(
+            archive_name,
+            scratch_handle,
+            output_name,
+            output_parent_handle,
+            first_validated,
+            finalization,
+            fixture_pause_after_copy=args.fixture_pause_after_destination_copy,
+            fixture_raise_after_copy=args.fixture_raise_after_destination_copy,
+            fixture_sigint_before_transfer=(
+                args.fixture_sigint_before_install_transfer
+            ),
+            fixture_pending_signal_before_registration=fixture_signal(
+                args.fixture_pending_signal_before_install_registration
+            ),
+            fixture_delivered_signal=fixture_signal(
+                args.fixture_delivered_signal_during_install
+            ),
+        )
+        if finalization.installed is not installed:
+            fail("source-archive install ownership transfer was not exact")
+        finalization.success_output = render_success_output(
+            contract=contract["SP11_KERNEL_SOURCE_ARCHIVE_CONTRACT"],
+            archive_name=output.name,
+            archive_root=archive_root,
+            patched_tree=patched_tree,
+            epoch=epoch,
+            git_version=manifest_git_version,
+            xz_version=expected_xz_version,
+            size=installed.size,
+            digest=installed.sha256,
+            validation_output=validation_output,
+        )
 
-    print("Generated deterministic patched-source archive candidate.")
-    print(f"Contract: {contract['SP11_KERNEL_SOURCE_ARCHIVE_CONTRACT']}")
-    print(f"Archive: {output.name}")
-    print(f"Archive root: {archive_root}")
-    print(f"Patched tree ID: {patched_tree}")
-    print(f"Source epoch: {epoch}")
-    print(f"Git version: {manifest_git_version}")
-    print(f"XZ version: {expected_xz_version}")
-    print(f"XZ arguments: {' '.join(XZ_ARGUMENTS)}")
-    print(f"Archive size: {size}")
-    print(f"Archive SHA256: {digest}")
-    print(validation_output)
-    print("Corresponding-source legal sufficiency review required: true")
-    print("Publication authorized: false")
+    if not finalization.committed:
+        fail("source-archive finalization returned without committing")
     return 0
 
 

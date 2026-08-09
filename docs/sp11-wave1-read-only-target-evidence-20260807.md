@@ -146,14 +146,14 @@ not imported as a policy constant.
 The public collector can be streamed without installing it on the target:
 
 ```sh
-ssh sp11-lab-host 'bash -s --' \
+ssh '<target-host>' 'bash -s --' \
   < scripts/collect-sp11-feature-parity-inventory.sh
 ```
 
 The optional log section is local-sensitive even after filtering:
 
 ```sh
-ssh sp11-lab-host 'bash -s -- --include-kernel-log' \
+ssh '<target-host>' 'bash -s -- --include-kernel-log' \
   < scripts/collect-sp11-feature-parity-inventory.sh
 ```
 

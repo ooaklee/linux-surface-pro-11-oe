@@ -115,8 +115,10 @@ will:
    notice, and all six manifests required by an image containing the v3
    binary payload
 11. finish with an explicit `NO-PUBLISH` result while byte-reproducibility,
-    signing, licensing, recovery/hardware, and release-authorization gates
-    remain open
+    signing, recovery/hardware, corresponding-source, and
+    release-authorization gates remain open; [`LEGAL.md`](../../LEGAL.md)
+    records the pending final licence/UCM reviews without treating those
+    reviews alone as a blanket publication block
 
 Snapshot creation compares the source image's size and SHA-256 before and
 after the copy with the private snapshot's size and SHA-256. Clone or reflink

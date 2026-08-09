@@ -337,7 +337,9 @@ They were introduced in project commit
 [`890f501ff3f20155960f06c5bf740b8d8685a4c4`](https://github.com/ooaklee/linux-surface-pro-11-oe/commit/890f501ff3f20155960f06c5bf740b8d8685a4c4)
 and the microphone route was changed in
 [`695592192691348d39445198a90ebcc9383eaa94`](https://github.com/ooaklee/linux-surface-pro-11-oe/commit/695592192691348d39445198a90ebcc9383eaa94).
-Before redistributing or proposing those UCM files upstream, record their exact
-origin and licence or classify them as original project work under an
-owner-reviewed licence. Do not infer their licence from the separately pinned
-BSD-3-Clause topology source.
+[`LEGAL.md`](../LEGAL.md) records the interim upstream ALSA / local hardware
+configuration derivation and redistribution basis, pending the final provenance
+audit. That pending review alone is not a blanket stop on newly authored
+artifacts, but it does not replace the exact origin record, upstream terms,
+per-file attribution, or final review needed for the affected UCM files. Do not
+infer their licence from the separately pinned BSD-3-Clause topology source.

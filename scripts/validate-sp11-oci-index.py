@@ -29,6 +29,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    if sys.flags.isolated != 1:
+        fail("OCI index validator requires isolated Python startup")
     args = parse_args()
     match = INDEX_REF_RE.fullmatch(args.index_ref)
     if not match:

@@ -59,7 +59,7 @@ The starting state is intentionally conservative:
 
 | Area | Recorded starting point | Programme state |
 |---|---|---|
-| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Deterministic signing-independent kernel/Deb identity and the raw matched-pair gate are implemented and fixture-tested, but no fresh C/D pair exists; one earlier real clean build verified the immutable-APT/provenance path, while byte reproducibility, signing, licensing, recovery, and release authorization remain open |
+| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Deterministic signing-independent kernel/Deb identity and the raw matched-pair gate are implemented and fixture-tested, but no fresh C/D pair exists; one earlier real clean build verified the immutable-APT/provenance path, while byte reproducibility, signing, recovery, corresponding-source, and release authorization remain open; `LEGAL.md` records the pending-review licence/UCM direction |
 | Thin fork | The immutable base remains at `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; CI foundation commit `971b5af85ed0c7283ffb33430badeac9b5575057` is merged to the protected integration branch | Base and integration rules are active and thin-fork CI is green; no parity feature is accepted by branch presence |
 | Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is running and named by the effective static `GRUB_DEFAULT`, while `grubenv`'s stale `saved_entry` still names v2 | ADR0053 deliberately rejects mixed static/saved semantics; one-shot apply is blocked until `GRUB_DEFAULT=saved` and `saved_entry` both resolve to known-good v3, then P0 must capture the no-op canary and physical-recovery evidence |
 | Installed DTB path | Repository support retires its loose-DTB helper and kernel hooks under ADR0055; the exact Stubble image is authoritative | Target migration, successful normal GRUB regeneration, absence of project-managed loose-DTB lines, and packaged/embedded/active-FDT pairing remain pending P0 evidence |
@@ -210,8 +210,8 @@ state.
 |---|---|---|---|
 | P0.1 | None | Verify the Johan G. baseline ref resolves to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; make build scripts reject any other source HEAD before applying patches | Passing exact-commit build preflight and manifest containing expected and actual source commits |
 | P0.2 | P0.1 | Verify protected `sp11/base-jg-7.2-rc5-jg-0` and development `sp11/integration-7.2-rc5` begin at the same commit; prohibit force-push/deletion of the base branch | Public fork settings and CI output showing both branch identities |
-| P0.3 | None | Validate `config/source-ledger.tsv`; resolve licences before importing candidates; keep ACPI and the video evidence-only; require the repository owner to choose and document the licence boundary for original project code rather than inferring one | Passing ledger validator, reviewed source-ledger update, and explicit project licence decision before redistribution |
-| P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, and dated APT snapshot in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report, three bound provenance artifacts, and exact outer release/image propagation; every unexplained difference is a blocker, and publication stays closed while byte-reproducibility, signing, licence/UCM, recovery/hardware, and authorization gates remain open |
+| P0.3 | None | Validate `config/source-ledger.tsv`; resolve licences before importing candidates; keep ACPI and the video evidence-only; preserve third-party per-file terms; record and maintain the owner's interim project-code and SP11 UCM direction in `LEGAL.md` while the final reviews remain pending | Passing ledger validator, reviewed source-ledger update, recorded interim owner decision, and final file-level provenance review before claiming that affected third-party material is cleared |
+| P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, and dated APT snapshot in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report, three bound provenance artifacts, and exact outer release/image propagation; every unexplained difference is a blocker, and publication stays closed while byte-reproducibility, signing, recovery/hardware, corresponding-source, and authorization gates remain open |
 | P0.5 | P0.1-P0.3 | Require shell syntax checks, public-content scan, source-ledger validation, exact remote-ref validation, patch-apply smoke test, and build dry-run in CI | Required green CI for this repository and the thin-fork branch |
 | P0.6 | None | Run `scripts/collect-sp11-feature-parity-inventory.sh` read-only; separately capture an optional sanitized kernel-log section; manually review both | Baseline inventory with no serial, UUID, MAC/IP, account, credential, or access-endpoint data |
 | P0.7 | P0.4, P0.6 | Migrate the target with the current support installer; require the retire-only transaction to commit, successful live-root GRUB regeneration, no project-managed loose-DTB lines, and unchanged `grubenv` and historical loose-DTB identity; verify the exact recovery ABI from `config/kernel-baselines/7.2-rc5-jg-0.env` is installed, running, boot-tested, and has matching image/initramfs/modules plus packaged, embedded, and active-FDT evidence | Migration transcript, transaction postchecks, recovery checklist, and checksums; any old loose DTB remains byte-for-byte unchanged and inert; any obstructed rollback blocks reboot and package operations until its private recovery backup is reconciled |
@@ -231,16 +231,28 @@ run does not retroactively make the historical pair replayable, and it is not a
 second build for a raw-byte comparison.
 
 Release mode now has a fixture-tested deterministic, signing-independent
-kernel/Deb identity bound to the pinned source commit. The new reviewed
-`sp11-kernel-raw-matched-pair-v1` comparator is CI-wired through hostile
-synthetic fixtures and applies `sp11-kernel-zero-normalization-v1`: it validates
-matched immutable inputs, compares every raw kernel Deb and all seven manifest
-outputs, and never authorizes publication. No fresh C/D pair has yet used this
-foundation, so fixture success does not change the P0.4b result. The signing
-model still awaits an owner decision, and corresponding-source `git archive`
-normalization remains open. P0.4 remains open overall; licence/UCM,
-recovery/hardware, corresponding-source/release-candidate review, and explicit
-release authorization remain **NO-PUBLISH** gates.
+kernel/Deb identity, reviewed raw matched-pair comparator, and deterministic
+patched-source archive generator. The generator's shallow-clone authority fix
+is exact-head CI-green, but the real offline replay passed only its immutable
+APT sub-gate. It then failed closed because the historical exact patched tree
+contains a tracked symbolic link with an absolute developer-workstation target;
+no archive was installed and the repeat run did not start.
+
+That four-patch tree and its manifest must not be rewritten or postprocessed.
+The fork now carries an ordered patch deleting the stale link and an exact
+post-patch Git-tree symlink-containment preflight, but neither has been exercised
+by a fresh real release build. The next candidate requires that fresh clean
+build with a new v2 manifest, APT sidecar, and build-inputs envelope, then fresh
+offline repeated archive generation and independent validation. No fresh C/D
+pair has yet used this foundation, so P0.4b and P0.4 remain open. The signing
+model still awaits an owner decision; recovery/hardware, legal
+corresponding-source/release-candidate review, and explicit release
+authorization remain **NO-PUBLISH** gates. [`LEGAL.md`](../LEGAL.md) records
+the interim MIT direction for project-authored code and the upstream
+ALSA/local-hardware-configuration basis for SP11 UCM, both pending final
+review. Those pending reviews no longer block ordinary pushes, merges, or
+publication of newly authored artifacts, but third-party terms and attribution
+still apply file by file.
 
 P0.6 is complete for the current target observation. The schema-3 inventory
 collector ran read-only, and both its sanitized result and a separately
@@ -1015,10 +1027,11 @@ Code-review parallelism must not hide a shared dependency. In particular:
 | A deeper PSCI state is causal | P6 isolated A/B/A signature | Investigate device/wakeup/firmware paths; do not disable a state by resemblance |
 | SAM commands are safe | Public protocol provenance, capability response, rollback semantics | Keep platform profiles read-only/blocked; do not scan command IDs |
 | IR illumination is safe | Exact public operating limits, fail-safe design, measured fault tests | Keep VCSEL disabled even if the IR sensor works |
-| Original project code can be redistributed | Repository-owner licence decision and file-level provenance review | Keep packages/releases blocked; do not infer a licence from the kernel baseline |
+| Original project code can be redistributed | Interim owner direction in `LEGAL.md`, followed by the final project-code and file-level provenance reviews | Apply the recorded pending-review status, preserve third-party terms, and do not infer any upstream licence from the kernel baseline |
 | A newer baseline is ready | Rebase build plus repeated hardware gate | Continue from the pinned baseline; do not mix rebase debugging with feature work |
 
-Any source-commit mismatch, missing licence basis, ambiguous rail/GPIO, inability
+Any source-commit mismatch, missing licence basis for imported third-party
+material, ambiguous rail/GPIO, inability
 to recover physically, repeated hard lockup, unexpected heating/current,
 unbounded illumination, storage corruption, or identifier leakage stops the
 affected track immediately.

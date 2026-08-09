@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_dir=""
 baseline=""
+baseline_fd=""
 emit_release_values="false"
 
 die() {
@@ -21,6 +22,12 @@ while [ "$#" -gt 0 ]; do
       emit_release_values="true"
       shift
       ;;
+    --baseline-fd)
+      [ "$#" -ge 2 ] || die "--baseline-fd requires a value"
+      [ -z "$baseline_fd" ] || die "--baseline-fd may be provided only once"
+      baseline_fd="$2"
+      shift 2
+      ;;
     --*) die "unknown option: $1" ;;
     *)
       [ -z "$baseline" ] || die "only one kernel baseline path may be provided"
@@ -30,6 +37,9 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+[ -z "$baseline_fd" ] || [ -z "$baseline" ] ||
+  die "--baseline-fd cannot be combined with a baseline path"
+
 if [ -z "$repo_dir" ]; then
   repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 else
@@ -37,11 +47,31 @@ else
     die "validator repository root is missing or unsafe: $repo_dir"
   repo_dir="$(cd "$repo_dir" && pwd -P)"
 fi
-baseline="${baseline:-$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env}"
+if [ -n "$baseline_fd" ]; then
+  [ "$baseline_fd" = 3 ] ||
+    die "--baseline-fd is restricted to inherited descriptor 3"
+  case "$(uname -s)" in
+    Linux) baseline="/proc/self/fd/3" ;;
+    Darwin) baseline="/dev/fd/3" ;;
+    *) die "--baseline-fd requires Linux procfs or Darwin devfs descriptor access" ;;
+  esac
+  /usr/bin/python3 -I -c '
+import os
+import stat
+
+metadata = os.fstat(3)
+if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= 65536:
+    raise SystemExit(1)
+' || die "held kernel baseline descriptor is missing, non-regular, or oversized"
+else
+  baseline="${baseline:-$repo_dir/config/kernel-baselines/7.2-rc5-jg-0.env}"
+fi
 ledger="$repo_dir/config/source-ledger.tsv"
 
-[ -f "$baseline" ] && [ ! -L "$baseline" ] ||
-  die "kernel baseline is missing, non-regular, or symlinked: $baseline"
+if [ -z "$baseline_fd" ]; then
+  [ -f "$baseline" ] && [ ! -L "$baseline" ] ||
+    die "kernel baseline is missing, non-regular, or symlinked: $baseline"
+fi
 
 required_variables="
 SP11_KERNEL_BASELINE_ID
@@ -100,6 +130,17 @@ for variable in $required_variables; do
 done
 required_words="${required_variables//$'\n'/ }"
 
+rewind_held_baseline() {
+  [ -n "$baseline_fd" ] || return 0
+  /usr/bin/python3 -I -c '
+import os
+
+if os.lseek(3, 0, os.SEEK_SET) != 0:
+    raise SystemExit(1)
+' || die "could not rewind the held kernel baseline descriptor"
+}
+
+rewind_held_baseline
 byte_summary="$(
   LC_ALL=C od -An -v -tu1 "$baseline" | awk '
     {
@@ -125,6 +166,7 @@ IFS=: read -r baseline_size last_byte bad_byte remainder <<< "$byte_summary"
 # Parse the file as data in one awk process.  In particular, never source an
 # unvalidated path: a baseline is allowed to contain only the reviewed,
 # double-quoted assignment grammar and printable ASCII comments/blank lines.
+rewind_held_baseline
 if ! parsed_variables="$(
   LC_ALL=C awk -v required="$required_words" '
     function reject(message) {

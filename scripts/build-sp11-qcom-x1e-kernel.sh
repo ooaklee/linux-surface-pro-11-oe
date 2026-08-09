@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ORIGINAL_ARGUMENTS=("$@")
+
 sanitize_git_environment() {
   local variable_name
 
@@ -38,6 +40,7 @@ KBUILD_BUILD_HOST=""
 KBUILD_BUILD_TIMESTAMP=""
 BUILD_TARGET="binary-qcom-x1e"
 WORK_DIR="${HOME}/sp11-qcom-x1e-kernel-build"
+WORK_DIR_IDENTITY=""
 PATCH_DIR=""
 PATCH_DIRS=""
 MIN_FREE_GB=40
@@ -59,14 +62,31 @@ RESOLVED_SOURCE_PACKAGE=""
 SUPPORT_HEAD_START=""
 KERNEL_BASELINE_REL="config/kernel-baselines/7.2-rc5-jg-0.env"
 KERNEL_BASELINE_VALIDATOR_REL="scripts/validate-sp11-kernel-baseline.sh"
+KERNEL_TREE_SYMLINK_VALIDATOR_REL="scripts/validate-sp11-kernel-tree-symlinks.py"
 BASELINE_CONTROL_DIR=""
 BASELINE_CONTROL_PARENT=""
 BASELINE_CONTROL_IDENTITY=""
 BASELINE_CONTROL_STATE=""
 KERNEL_BASELINE=""
 KERNEL_BASELINE_VALIDATOR=""
+KERNEL_TREE_SYMLINK_VALIDATOR=""
 KERNEL_BASELINE_STATE=""
 KERNEL_BASELINE_VALIDATOR_STATE=""
+KERNEL_TREE_SYMLINK_VALIDATOR_STATE=""
+KERNEL_BASELINE_OID=""
+KERNEL_BASELINE_VALIDATOR_OID=""
+KERNEL_TREE_SYMLINK_VALIDATOR_OID=""
+KERNEL_TREE_VALIDATOR_SINK_OPEN="false"
+KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+KERNEL_TREE_VALIDATOR_PYTHON=""
+KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
+KERNEL_TREE_VALIDATOR_HELPER=""
+KERNEL_TREE_VALIDATOR_HELPER_SHA256=""
+RELEASE_TEST_FIXTURE_CONTEXT="false"
+RELEASE_BASELINE_FDS_OPEN="false"
+RELEASE_BASELINE_PATH=""
+RELEASE_BASELINE_VALIDATOR_PATH=""
+RELEASE_SOURCE_INDEX_MUTATED="false"
 BASELINE_DOCKER_IMAGE=""
 BASELINE_ID=""
 BASELINE_DOCKER_PLATFORM=""
@@ -82,6 +102,7 @@ BASELINE_BUILD_TARGET=""
 BASELINE_PATCH_DIRS=""
 PATCHED_DIFF_FORMAT="git-diff-full-index-binary-v1"
 PATCHED_DIFF_GIT_VERSION=""
+PATCHED_DIFF_SIZE=""
 PATCHED_DIFF_SHA256=""
 PATCHED_TREE_ID=""
 PATCHED_DIFF_ARGS=(
@@ -99,7 +120,8 @@ PATCHED_DIFF_ARGS=(
   --src-prefix=a/
   --dst-prefix=b/
 )
-PATCHED_UNTRACKED_PATHS_FILE=""
+PATCHED_UNTRACKED_PATHS_SIZE=""
+PATCHED_UNTRACKED_PATHS_SHA256=""
 RELEASE_PATCH_PATHS=()
 RELEASE_PATCH_ABS_PATHS=()
 RELEASE_PATCH_SHA256S=()
@@ -118,14 +140,6 @@ RELEASE_DEB_SHA256S=()
 SIGNING_CERT_FINGERPRINT=""
 SIGNING_CERT_SERIAL=""
 SIGNING_CERT_SHA256=""
-
-cleanup_release_source_snapshot() {
-  [ -n "$PATCHED_UNTRACKED_PATHS_FILE" ] || return 0
-  case "$PATCHED_UNTRACKED_PATHS_FILE" in
-    */.sp11-release-untracked-paths.*) rm -f -- "$PATCHED_UNTRACKED_PATHS_FILE" ;;
-    *) echo "Warning: refusing to remove unexpected release source snapshot." >&2 ;;
-  esac
-}
 
 baseline_control_identity() {
   local path="$1"
@@ -170,128 +184,63 @@ baseline_control_directory_state() {
   printf '%s\n' "$before"
 }
 
-verify_baseline_control_membership() {
-  local path name count=0 seen_baseline=false seen_validator=false
-
-  while IFS= read -r -d '' path; do
-    count=$((count + 1))
-    name="${path##*/}"
-    case "$name" in
-      7.2-rc5-jg-0.env)
-        [ "$seen_baseline" = false ] || return 1
-        seen_baseline=true
-        ;;
-      validate-sp11-kernel-baseline.sh)
-        [ "$seen_validator" = false ] || return 1
-        seen_validator=true
-        ;;
-      *) return 1 ;;
-    esac
-  done < <(find "$BASELINE_CONTROL_DIR" -mindepth 1 -maxdepth 1 -print0)
-  [ "$count" -eq 2 ] && [ "$seen_baseline" = true ] &&
-    [ "$seen_validator" = true ]
-}
-
 verify_kernel_baseline_control_state() {
-  local current current_directory_state
+  local current
 
-  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || return 1
-  if [ -z "$BASELINE_CONTROL_STATE" ] ||
-     [ "$current_directory_state" != "$BASELINE_CONTROL_STATE" ] ||
-     ! verify_baseline_control_membership; then
-    echo "Committed kernel baseline control directory changed after materialization." >&2
-    return 1
-  fi
-
-  current="$(baseline_control_file_state "$KERNEL_BASELINE")" || {
-    echo "Committed kernel baseline snapshot is missing, unsafe, or unstable." >&2
-    return 1
-  }
+  [ "$RELEASE_BASELINE_FDS_OPEN" = "true" ] || return 1
+  current="$(held_release_control_state \
+    3 "$KERNEL_BASELINE" "$KERNEL_BASELINE_OID" 524288)" || return 1
   if [ "$current" != "$KERNEL_BASELINE_STATE" ]; then
-    echo "Committed kernel baseline snapshot changed after materialization." >&2
+    echo "Held committed kernel baseline changed after binding." >&2
     return 1
   fi
-  current="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")" || {
-    echo "Committed kernel baseline validator snapshot is missing, unsafe, or unstable." >&2
+  current="$(held_release_control_state \
+    4 "$KERNEL_BASELINE_VALIDATOR" "$KERNEL_BASELINE_VALIDATOR_OID" 524288)" ||
     return 1
-  }
   if [ "$current" != "$KERNEL_BASELINE_VALIDATOR_STATE" ]; then
-    echo "Committed kernel baseline validator snapshot changed after materialization." >&2
+    echo "Held committed kernel baseline validator changed after binding." >&2
     return 1
   fi
-  current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" || return 1
-  if [ "$current_directory_state" != "$BASELINE_CONTROL_STATE" ] ||
-     ! verify_baseline_control_membership; then
-    echo "Committed kernel baseline control directory changed during validation." >&2
+  current="$(held_release_control_state \
+    7 "$KERNEL_TREE_SYMLINK_VALIDATOR" "$KERNEL_TREE_SYMLINK_VALIDATOR_OID" \
+    1048576)" || return 1
+  if [ "$current" != "$KERNEL_TREE_SYMLINK_VALIDATOR_STATE" ]; then
+    echo "Committed kernel tree-symlink validator changed after binding." >&2
     return 1
   fi
 }
 
 cleanup_baseline_control_dir() {
-  local current_identity baseline_control_file
-  local expected_baseline_control_state current_baseline_control_state
-  local current_directory_state
-
-  [ -n "$BASELINE_CONTROL_DIR" ] || return 0
-  case "$BASELINE_CONTROL_DIR" in
-    "$BASELINE_CONTROL_PARENT"/sp11-kernel-baseline.*) ;;
-    *)
-      echo "Warning: refusing to clean unexpected kernel baseline control directory." >&2
-      return 0
-      ;;
-  esac
-  if [ "$(dirname "$BASELINE_CONTROL_DIR")" != "$BASELINE_CONTROL_PARENT" ] ||
-     [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ]; then
-    echo "Warning: refusing to follow changed kernel baseline control directory." >&2
-    return 0
-  fi
-  if ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
-     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ]; then
-    echo "Warning: refusing to clean replaced kernel baseline control directory." >&2
-    return 0
-  fi
-  if [ -z "$BASELINE_CONTROL_STATE" ] ||
-     ! current_directory_state="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")" ||
-     [ "$current_directory_state" != "$BASELINE_CONTROL_STATE" ] ||
-     ! verify_baseline_control_membership ||
-     ! verify_kernel_baseline_control_state; then
-    echo "Warning: preserving changed kernel baseline control directory." >&2
-    return 0
-  fi
-  for baseline_control_file in \
-    "$BASELINE_CONTROL_DIR/7.2-rc5-jg-0.env" \
-    "$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh"; do
-    if [ "$baseline_control_file" = "$KERNEL_BASELINE" ]; then
-      expected_baseline_control_state="$KERNEL_BASELINE_STATE"
-    else
-      expected_baseline_control_state="$KERNEL_BASELINE_VALIDATOR_STATE"
-    fi
-    if current_baseline_control_state="$(baseline_control_file_state "$baseline_control_file" 2>/dev/null)" &&
-       [ "$current_baseline_control_state" = "$expected_baseline_control_state" ]; then
-      if ! rm -f -- "$baseline_control_file"; then
-        echo "Warning: preserving remainder after kernel baseline cleanup failed." >&2
-        return 0
-      fi
-    else
-      echo "Warning: preserving changed kernel baseline control file." >&2
-      return 0
-    fi
-  done
-  if [ ! -d "$BASELINE_CONTROL_DIR" ] || [ -L "$BASELINE_CONTROL_DIR" ] ||
-     ! current_identity="$(baseline_control_identity "$BASELINE_CONTROL_DIR")" ||
-     [ "$current_identity" != "$BASELINE_CONTROL_IDENTITY" ] ||
-     find "$BASELINE_CONTROL_DIR" -mindepth 1 -maxdepth 1 -print | grep -q .; then
-    echo "Warning: preserving changed kernel baseline control directory after file cleanup." >&2
-    return 0
-  fi
-  if ! rmdir "$BASELINE_CONTROL_DIR"; then
-    echo "Warning: could not remove emptied kernel baseline control directory." >&2
-  fi
+  return 0
 }
 
 cleanup_private_release_state() {
-  cleanup_release_source_snapshot
+  if [ "$RELEASE_SOURCE_INDEX_MUTATED" = "true" ] &&
+     [ -n "${source_dir:-}" ]; then
+    if git -C "$source_dir" read-tree HEAD >/dev/null 2>&1; then
+      RELEASE_SOURCE_INDEX_MUTATED="false"
+    else
+      echo "Warning: could not restore the release source index." >&2
+    fi
+  fi
   cleanup_baseline_control_dir
+  if [ "$KERNEL_TREE_VALIDATOR_SINK_OPEN" = "true" ]; then
+    exec 9>&-
+    KERNEL_TREE_VALIDATOR_SINK_OPEN="false"
+  fi
+  if [ "$KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN" = "true" ]; then
+    exec 8<&-
+    KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+  fi
+  if [ "$KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN" = "true" ]; then
+    exec 7<&-
+    KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
+  fi
+  if [ "$RELEASE_BASELINE_FDS_OPEN" = "true" ]; then
+    exec 3<&-
+    exec 4<&-
+    RELEASE_BASELINE_FDS_OPEN="false"
+  fi
 }
 trap cleanup_private_release_state EXIT
 
@@ -388,6 +337,350 @@ file_size() {
   fi
 }
 
+held_release_control_state() {
+  local descriptor="$1" path="$2" object_id="$3" maximum="$4"
+
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+descriptor = int(sys.argv[1], 10)
+path = sys.argv[2]
+object_id = sys.argv[3]
+maximum = int(sys.argv[4], 10)
+if len(object_id) == 40:
+    object_digest = hashlib.sha1()
+elif len(object_id) == 64:
+    object_digest = hashlib.sha256()
+else:
+    raise SystemExit(1)
+before = os.fstat(descriptor)
+mapped = os.lstat(path)
+if (
+    not stat.S_ISREG(before.st_mode)
+    or stat.S_ISLNK(mapped.st_mode)
+    or (before.st_dev, before.st_ino) != (mapped.st_dev, mapped.st_ino)
+    or before.st_size <= 0
+    or before.st_size > maximum
+):
+    raise SystemExit(1)
+sha256 = hashlib.sha256()
+object_digest.update(("blob " + str(before.st_size) + "\0").encode("ascii"))
+offset = 0
+while offset < before.st_size:
+    chunk = os.pread(descriptor, min(65536, before.st_size - offset), offset)
+    if not chunk:
+        raise SystemExit(1)
+    sha256.update(chunk)
+    object_digest.update(chunk)
+    offset += len(chunk)
+after = os.fstat(descriptor)
+stable = lambda value: (
+    value.st_dev,
+    value.st_ino,
+    value.st_mode,
+    value.st_size,
+    value.st_mtime_ns,
+    value.st_ctime_ns,
+    value.st_nlink,
+)
+if stable(before) != stable(after) or object_digest.hexdigest() != object_id:
+    raise SystemExit(1)
+os.lseek(descriptor, 0, os.SEEK_SET)
+print(":".join(str(value) for value in (
+    before.st_dev,
+    before.st_ino,
+    before.st_mode,
+    before.st_size,
+    before.st_mtime_ns,
+    before.st_ctime_ns,
+    before.st_nlink,
+)) + ":" + sha256.hexdigest())
+' "$descriptor" "$path" "$object_id" "$maximum" 2>&1
+}
+
+resolve_release_publication_fixture_hook() {
+  local value="${SP11_KERNEL_RELEASE_PUBLICATION_FIXTURE_HOOK:-}"
+  local repo_parent work_parent repo_name work_name
+
+  [ -n "$value" ] || return 0
+  [ "$RELEASE_TEST_FIXTURE_CONTEXT" = true ] || return 1
+  repo_parent="${repo_dir%/*}"
+  work_parent="${work_dir%/*}"
+  repo_name="${repo_dir##*/}"
+  work_name="${work_dir##*/}"
+  [ "$repo_parent" = "$work_parent" ] || return 1
+  case "$repo_parent:$repo_name:$work_name" in
+    */sp11-apt-fixture.release-provenance.*:support-publication-*:work-publication-*) ;;
+    *) return 1 ;;
+  esac
+  case "$value" in
+    swap-work-root-terminal|mutate-fd10-after-primary|mutate-intended-double-term-scrub|inject-fifo-before-open|inject-symlink-before-open|inject-procfd-candidate-mismatch)
+      printf '%s\n' "$value"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+held_release_output_state() {
+  local work_path="$1" work_identity="$2" seal="$3"
+  local deb_fingerprint="$4" manifest_fingerprint="$5" fixture_hook="$6"
+
+  "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+work_path, expected_work_identity, seal = sys.argv[1:4]
+expected_fingerprints = sys.argv[4:6]
+fixture_hook = sys.argv[6]
+if fixture_hook not in (
+    "",
+    "swap-work-root-terminal",
+    "mutate-fd10-after-primary",
+    "mutate-intended-double-term-scrub",
+):
+    raise SystemExit(1)
+held_root = os.fstat(6)
+actual_work_identity = ":".join(str(value) for value in (
+    held_root.st_dev,
+    held_root.st_ino,
+    format(stat.S_IMODE(held_root.st_mode), "o"),
+    held_root.st_uid,
+    held_root.st_gid,
+))
+
+def stable_identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+    )
+
+held_root_identity = stable_identity(held_root)
+outputs = (
+    (10, "sp11-kernel-debs.txt", 1024 * 1024),
+    (11, "sp11-kernel-build-manifest.txt", 4 * 1024 * 1024),
+)
+
+def verify_root_mapping():
+    current = os.fstat(6)
+    mapped = os.lstat(work_path)
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or stat.S_ISLNK(mapped.st_mode)
+        or stable_identity(current) != held_root_identity
+        or (current.st_dev, current.st_ino) != (mapped.st_dev, mapped.st_ino)
+        or actual_work_identity != expected_work_identity
+    ):
+        raise SystemExit(1)
+
+def open_reader(descriptor, name):
+    if sys.platform.startswith("linux"):
+        return os.open(
+            "/proc/self/fd/" + str(descriptor),
+            os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC,
+        )
+    if (
+        sys.platform == "darwin"
+        and os.environ.get("SP11_KERNEL_RELEASE_TEST_FIXTURE")
+        == "sp11-kernel-release-provenance-v1"
+        and "sp11-apt-fixture.release-provenance." in work_path
+    ):
+        # Darwin cannot reopen a write-only /dev/fd descriptor read-only. This
+        # name read is restricted to the disposable fixture-owned tree;
+        # production publication is Linux and uses only the exact held FD.
+        return os.open(
+            name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=6,
+        )
+    raise SystemExit(1)
+
+parsed_fingerprints = []
+for value in expected_fingerprints:
+    fields = value.split("\t")
+    if (
+        len(fields) != 2
+        or not fields[0].isdigit()
+        or len(fields[1]) != 64
+        or any(character not in "0123456789abcdef" for character in fields[1])
+    ):
+        raise SystemExit(1)
+    parsed_fingerprints.append((int(fields[0], 10), fields[1]))
+
+if seal == "true" and fixture_hook == "mutate-intended-double-term-scrub":
+    if os.pwrite(10, b"\0", 0) != 1:
+        raise SystemExit(1)
+    os.fsync(10)
+
+def hash_held_output(output, expected, required_identity=None):
+    descriptor, name, maximum = output
+    expected_size, expected_digest = expected
+    before = os.fstat(descriptor)
+    if required_identity is not None and stable_identity(before) != required_identity:
+        raise SystemExit(1)
+    reader = open_reader(descriptor, name)
+    try:
+        mapped = os.stat(name, dir_fd=6, follow_symlinks=False)
+        reader_metadata = os.fstat(reader)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(reader_metadata.st_mode)
+            or stat.S_ISLNK(mapped.st_mode)
+            or (before.st_dev, before.st_ino)
+            != (mapped.st_dev, mapped.st_ino)
+            or (before.st_dev, before.st_ino)
+            != (reader_metadata.st_dev, reader_metadata.st_ino)
+            or stat.S_IMODE(before.st_mode) != 0o644
+            or before.st_size <= 0
+            or before.st_size > maximum
+            or before.st_size != expected_size
+            or before.st_nlink != 1
+        ):
+            raise SystemExit(1)
+        digest = hashlib.sha256()
+        offset = 0
+        while offset < before.st_size:
+            chunk = os.pread(reader, min(65536, before.st_size - offset), offset)
+            if not chunk:
+                raise SystemExit(1)
+            digest.update(chunk)
+            offset += len(chunk)
+    finally:
+        os.close(reader)
+    after = os.fstat(descriptor)
+    remapped = os.stat(name, dir_fd=6, follow_symlinks=False)
+    if (
+        stable_identity(before) != stable_identity(after)
+        or (after.st_dev, after.st_ino) != (remapped.st_dev, remapped.st_ino)
+        or digest.hexdigest() != expected_digest
+    ):
+        raise SystemExit(1)
+    return stable_identity(after), digest.hexdigest()
+
+verify_root_mapping()
+states = []
+primary_identities = []
+for index, output in enumerate(outputs):
+    descriptor = output[0]
+    if seal == "true":
+        os.fchmod(descriptor, 0o644)
+    os.fsync(descriptor)
+    identity, digest = hash_held_output(output, parsed_fingerprints[index])
+    primary_identities.append(identity)
+    states.append(":".join(str(value) for value in identity) + ":" + digest)
+    if (
+        seal == "true"
+        and index == 0
+        and fixture_hook == "mutate-fd10-after-primary"
+    ):
+        if os.pwrite(10, b"\0", 0) != 1:
+            raise SystemExit(1)
+        os.fsync(10)
+try:
+    os.fsync(6)
+except OSError:
+    if sys.platform != "darwin":
+        raise
+
+# Cross-check both intended byte streams only after the first pass has
+# completed for both files.  This prevents a stable mutation or name rebind of
+# the first output while the second output is being hashed from escaping the
+# per-file checks above.
+verify_root_mapping()
+for index, output in enumerate(outputs):
+    hash_held_output(
+        output,
+        parsed_fingerprints[index],
+        primary_identities[index],
+    )
+
+# Finish with a collective descriptor/name/root mapping pass after every byte
+# read.  Names are observation-only; all byte reads above use the held inode on
+# Linux.  Concurrent mutation after this bounded terminal check remains part of
+# the declared trusted controller envelope.
+verify_root_mapping()
+for index, (descriptor, name, _maximum) in enumerate(outputs):
+    metadata = os.fstat(descriptor)
+    mapped = os.stat(name, dir_fd=6, follow_symlinks=False)
+    if (
+        stable_identity(metadata) != primary_identities[index]
+        or stat.S_ISLNK(mapped.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise SystemExit(1)
+if seal == "true" and fixture_hook == "swap-work-root-terminal":
+    held_path = work_path + ".publication-held"
+    victim_path = work_path + ".publication-victim"
+    if os.path.lexists(held_path):
+        raise SystemExit(1)
+    victim = os.lstat(victim_path)
+    if stat.S_ISLNK(victim.st_mode) or not stat.S_ISDIR(victim.st_mode):
+        raise SystemExit(1)
+    os.rename(work_path, held_path)
+    os.rename(victim_path, work_path)
+verify_root_mapping()
+print("\n".join(states))
+' "$work_path" "$work_identity" "$seal" \
+  "$deb_fingerprint" "$manifest_fingerprint" "$fixture_hook" 2>&9
+}
+
+scrub_held_release_outputs() {
+  "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import os
+import signal
+import stat
+import sys
+
+status = 0
+for descriptor, enabled in ((10, sys.argv[1]), (11, sys.argv[2])):
+    if enabled != "true":
+        continue
+    try:
+        os.ftruncate(descriptor, 0)
+        os.fsync(descriptor)
+    except OSError:
+        status = 1
+    if (
+        descriptor == 10
+        and sys.argv[3] == "mutate-intended-double-term-scrub"
+    ):
+        os.kill(os.getppid(), signal.SIGTERM)
+        os.kill(os.getppid(), signal.SIGTERM)
+if sys.argv[3] == "mutate-intended-double-term-scrub":
+    try:
+        flags = os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+        marker = os.open(
+            ".sp11-publication-scrub-marker", flags, dir_fd=6
+        )
+        try:
+            metadata = os.fstat(marker)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_nlink != 1
+            ):
+                raise OSError("unsafe fixture marker")
+            os.ftruncate(marker, 0)
+            if os.write(marker, b"double-term-survived\n") != 21:
+                raise OSError("short fixture marker write")
+            os.fsync(marker)
+        finally:
+            os.close(marker)
+    except OSError:
+        status = 1
+raise SystemExit(status)
+' "$1" "$2" "$3" 1>&9 2>&9
+}
+
 support_git() {
   GIT_OPTIONAL_LOCKS=0 git \
     -c "safe.directory=$repo_dir" \
@@ -396,14 +689,25 @@ support_git() {
     -C "$repo_dir" "$@"
 }
 
-snapshot_support_blob() {
-  local relative_path="$1" expected_mode="$2" destination="$3"
-  local entry metadata listed_path mode object_type object_id remainder actual_id hash_path
+committed_support_blob_oid() {
+  local commit="$1" relative_path="$2" expected_mode="$3"
+  local entry metadata listed_path mode object_type object_id remainder
 
-  [ ! -e "$destination" ] && [ ! -L "$destination" ] || {
-    echo "Refusing an existing committed-support snapshot path: $destination" >&2
+  if ! entry="$(support_git ls-tree "$commit" -- "$relative_path")"; then
     return 1
-  }
+  fi
+  IFS=$'\t' read -r metadata listed_path remainder <<< "$entry"
+  read -r mode object_type object_id remainder <<< "$metadata"
+  [ -z "$remainder" ] && [ "$listed_path" = "$relative_path" ] &&
+    [ "$mode" = "$expected_mode" ] && [ "$object_type" = blob ] &&
+    [[ "$object_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 1
+  printf '%s\n' "$object_id"
+}
+
+verify_committed_support_file() {
+  local relative_path="$1" expected_mode="$2" path="$3"
+  local entry metadata listed_path mode object_type object_id remainder
+
   if ! entry="$(support_git ls-tree "$SUPPORT_HEAD_START" -- "$relative_path")"; then
     echo "Could not resolve committed support input: $relative_path" >&2
     return 1
@@ -416,110 +720,79 @@ snapshot_support_blob() {
     echo "Committed support input has an unexpected Git tree identity: $relative_path" >&2
     return 1
   fi
-  if ! (
-    set -o noclobber
-    umask 077
-    support_git cat-file blob "$object_id" > "$destination" || exit 1
-  ); then
-    echo "Could not materialize committed support input: $relative_path" >&2
+  if [ ! -f "$path" ] || [ -L "$path" ]; then
+    echo "Committed support input is not a regular non-symlinked file: $relative_path" >&2
     return 1
   fi
-  if [ ! -f "$destination" ] || [ -L "$destination" ]; then
-    echo "Committed support snapshot is not a private regular file: $destination" >&2
-    return 1
-  fi
-  hash_path="$destination"
-  case "$hash_path" in
-    /*) ;;
-    *) hash_path="$(cd "$(dirname "$hash_path")" && pwd -P)/$(basename "$hash_path")" ;;
-  esac
-  actual_id="$(support_git hash-object --no-filters -- "$hash_path")"
-  if [ "$actual_id" != "$object_id" ]; then
-    echo "Committed support snapshot does not match its Git blob: $relative_path" >&2
-    return 1
-  fi
+  printf '%s\n' "$object_id"
 }
 
 create_release_baseline_control() {
-  local created_dir root_mode
-
   BASELINE_CONTROL_PARENT="$(cd /tmp && pwd -P)"
-  created_dir="$(umask 077 && mktemp -d "$BASELINE_CONTROL_PARENT/sp11-kernel-baseline.XXXXXX")"
-  BASELINE_CONTROL_DIR="$created_dir"
-  case "$BASELINE_CONTROL_DIR" in
-    "$BASELINE_CONTROL_PARENT"/sp11-kernel-baseline.*) ;;
-    *)
-      echo "Private committed-baseline control path is not canonical." >&2
-      exit 1
-      ;;
-  esac
-  if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ]; then
-    echo "Could not create a private committed-baseline control directory." >&2
+  KERNEL_BASELINE="$repo_dir/$KERNEL_BASELINE_REL"
+  KERNEL_BASELINE_VALIDATOR="$repo_dir/$KERNEL_BASELINE_VALIDATOR_REL"
+  KERNEL_TREE_SYMLINK_VALIDATOR="$repo_dir/$KERNEL_TREE_SYMLINK_VALIDATOR_REL"
+  if [ "${SP11_RELEASE_CONTROL_FDS_BOUND:-}" != \
+       "sp11-release-control-fds-v1" ]; then
+    echo "Release controller inputs were not bound by the trusted launcher." >&2
     exit 1
   fi
-  if ! BASELINE_CONTROL_IDENTITY="$(
-    cd "$BASELINE_CONTROL_DIR"
-    pinned_identity="$(baseline_control_identity .)" || exit 1
-    [ -d "$BASELINE_CONTROL_DIR" ] && [ ! -L "$BASELINE_CONTROL_DIR" ] &&
-      [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" = "$pinned_identity" ] ||
-      exit 1
-    printf '%s\n' "$pinned_identity"
+  KERNEL_BASELINE_OID="$(
+    verify_committed_support_file "$KERNEL_BASELINE_REL" 100644 "$KERNEL_BASELINE"
+  )"
+  KERNEL_BASELINE_VALIDATOR_OID="$(
+    verify_committed_support_file \
+      "$KERNEL_BASELINE_VALIDATOR_REL" 100755 "$KERNEL_BASELINE_VALIDATOR"
+  )"
+  KERNEL_TREE_SYMLINK_VALIDATOR_OID="$(
+    verify_committed_support_file \
+      "$KERNEL_TREE_SYMLINK_VALIDATOR_REL" 100755 "$KERNEL_TREE_SYMLINK_VALIDATOR"
+  )"
+  if ! KERNEL_BASELINE_STATE="$(held_release_control_state \
+    3 "$KERNEL_BASELINE" "$KERNEL_BASELINE_OID" 524288)"; then
+    echo "Held release baseline authority is invalid." >&2
+    exit 1
+  fi
+  if ! KERNEL_BASELINE_VALIDATOR_STATE="$(held_release_control_state \
+    4 "$KERNEL_BASELINE_VALIDATOR" "$KERNEL_BASELINE_VALIDATOR_OID" \
+      524288)"; then
+    echo "Held release baseline validator authority is invalid." >&2
+    exit 1
+  fi
+  if ! KERNEL_TREE_SYMLINK_VALIDATOR_STATE="$(
+    held_release_control_state 7 "$KERNEL_TREE_SYMLINK_VALIDATOR" \
+      "$KERNEL_TREE_SYMLINK_VALIDATOR_OID" 1048576
   )"; then
-    echo "Could not capture the pinned committed-baseline root identity." >&2
+    echo "Held release tree validator authority is invalid." >&2
     exit 1
   fi
-  KERNEL_BASELINE="$BASELINE_CONTROL_DIR/7.2-rc5-jg-0.env"
-  KERNEL_BASELINE_VALIDATOR="$BASELINE_CONTROL_DIR/validate-sp11-kernel-baseline.sh"
-  (
-    cd "$BASELINE_CONTROL_DIR"
-    if [ ! -d . ] || [ -L . ] ||
-       [ "$(baseline_control_identity .)" != "$BASELINE_CONTROL_IDENTITY" ]; then
-      echo "Could not pin the private committed-baseline control root." >&2
-      exit 1
-    fi
-    case "$(uname -s)" in
-      Darwin) root_mode="$(stat -f '%Lp' .)" ;;
-      *) root_mode="$(stat -c '%a' -- .)" ;;
-    esac
-    [ "$root_mode" = 700 ] || {
-      echo "Private committed-baseline root was not created with mode 0700." >&2
-      exit 1
-    }
-    snapshot_support_blob "$KERNEL_BASELINE_REL" 100644 ./7.2-rc5-jg-0.env
-    snapshot_support_blob \
-      "$KERNEL_BASELINE_VALIDATOR_REL" 100755 \
-      ./validate-sp11-kernel-baseline.sh
-    if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ] ||
-       [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" != \
-         "$BASELINE_CONTROL_IDENTITY" ]; then
-      echo "Private committed-baseline root changed before sealing." >&2
-      exit 1
-    fi
-  )
-  if [ -L "$BASELINE_CONTROL_DIR" ] || [ ! -d "$BASELINE_CONTROL_DIR" ] ||
-     [ "$(baseline_control_identity "$BASELINE_CONTROL_DIR")" != \
-       "$BASELINE_CONTROL_IDENTITY" ]; then
-    echo "Private committed-baseline root changed after pinned creation." >&2
-    exit 1
-  fi
-  KERNEL_BASELINE_STATE="$(baseline_control_file_state "$KERNEL_BASELINE")"
-  KERNEL_BASELINE_VALIDATOR_STATE="$(baseline_control_file_state "$KERNEL_BASELINE_VALIDATOR")"
-  BASELINE_CONTROL_STATE="$(baseline_control_directory_state "$BASELINE_CONTROL_DIR")"
-  if ! verify_baseline_control_membership; then
-    echo "Private committed-baseline control directory has unexpected contents." >&2
-    exit 1
-  fi
+  RELEASE_BASELINE_FDS_OPEN="true"
+  KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="true"
+  verify_kernel_baseline_control_state || exit 1
 }
 
 load_release_baseline_values() {
   local emitted key value remainder emitted_keys="" expected_keys
+  local validator_fd_path
 
   verify_kernel_baseline_control_state || exit 1
+  case "$(uname -s)" in
+    Linux)
+      validator_fd_path=/proc/self/fd/4
+      ;;
+    Darwin)
+      validator_fd_path=/dev/fd/4
+      ;;
+    *)
+      echo "Held baseline validation requires Linux or the Darwin fixture boundary." >&2
+      exit 1
+      ;;
+  esac
   if ! emitted="$(
-    bash "$KERNEL_BASELINE_VALIDATOR" \
+    /bin/bash "$validator_fd_path" \
       --repo-dir "$repo_dir" \
       --emit-release-values \
-      "$KERNEL_BASELINE"
+      --baseline-fd 3
   )"; then
     echo "Committed release kernel baseline validation failed." >&2
     exit 1
@@ -700,6 +973,8 @@ require_release_build_contract() {
       ;;
   esac
 
+  bind_release_control_fds_and_reexec
+
   if ! support_git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "--release-build requires the support scripts to come from a Git worktree." >&2
     exit 1
@@ -778,6 +1053,7 @@ require_wrapper_release_context() {
     case "$repo_dir" in
       */sp11-apt-fixture.release-provenance.*/support-*)
         fixture_context="true"
+        RELEASE_TEST_FIXTURE_CONTEXT="true"
         ;;
     esac
   fi
@@ -925,7 +1201,17 @@ run_rules() {
   fakeroot "$rules_file" "$@"
 }
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ "${SP11_RELEASE_CONTROL_FDS_BOUND:-}" = \
+     "sp11-release-control-fds-v1" ]; then
+  repo_dir="${SP11_RELEASE_REPO_DIR:-}"
+  [ -n "$repo_dir" ] && [ -d "$repo_dir" ] && [ ! -L "$repo_dir" ] &&
+    [ "$(cd "$repo_dir" && pwd -P)" = "$repo_dir" ] || {
+      echo "Bound release support repository path is invalid." >&2
+      exit 1
+    }
+else
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -1155,6 +1441,117 @@ if ! [[ "$MIN_FREE_GB" =~ ^[0-9]+$ ]] || [ "$MIN_FREE_GB" -lt 1 ]; then
   exit 2
 fi
 
+bind_release_control_fds_and_reexec() {
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ "${SP11_RELEASE_CONTROL_FDS_BOUND:-}" != \
+    "sp11-release-control-fds-v1" ] || return 0
+
+  builder_script="$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh"
+  launcher_commit="${SP11_EXPECTED_SUPPORT_COMMIT:-}"
+  if [ -z "$launcher_commit" ] && [ "$repo_dir" != /repo ]; then
+    launcher_commit="$(support_git rev-parse --verify 'HEAD^{commit}')"
+  fi
+  if ! [[ "$launcher_commit" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
+     ! launcher_builder_oid="$(committed_support_blob_oid \
+       "$launcher_commit" scripts/build-sp11-qcom-x1e-kernel.sh 100755)" ||
+     ! launcher_baseline_oid="$(committed_support_blob_oid \
+       "$launcher_commit" "$KERNEL_BASELINE_REL" 100644)" ||
+     ! launcher_baseline_validator_oid="$(committed_support_blob_oid \
+       "$launcher_commit" "$KERNEL_BASELINE_VALIDATOR_REL" 100755)" ||
+     ! launcher_tree_validator_oid="$(committed_support_blob_oid \
+       "$launcher_commit" "$KERNEL_TREE_SYMLINK_VALIDATOR_REL" 100755)"; then
+    echo "Could not resolve exact committed release controller objects." >&2
+    exit 1
+  fi
+  exec /usr/bin/python3 -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+items = (
+    (sys.argv[1], sys.argv[2], 5, 1024 * 1024),
+    (sys.argv[3], sys.argv[4], 3, 512 * 1024),
+    (sys.argv[5], sys.argv[6], 4, 512 * 1024),
+    (sys.argv[7], sys.argv[8], 7, 1024 * 1024),
+)
+script = items[0][0]
+arguments = sys.argv[9:]
+flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+opened = []
+try:
+    for path, object_id, target, maximum in items:
+        descriptor = os.open(path, flags)
+        opened.append(descriptor)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size <= 0
+            or metadata.st_size > maximum
+        ):
+            raise OSError("unsafe release control input")
+        digest = hashlib.sha1() if len(object_id) == 40 else hashlib.sha256()
+        digest.update(("blob " + str(metadata.st_size) + "\0").encode("ascii"))
+        offset = 0
+        while offset < metadata.st_size:
+            chunk = os.pread(
+                descriptor, min(65536, metadata.st_size - offset), offset
+            )
+            if not chunk:
+                raise OSError("truncated release control input")
+            digest.update(chunk)
+            offset += len(chunk)
+        mapped = os.lstat(path)
+        after = os.fstat(descriptor)
+        if (
+            (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+                after.st_nlink,
+            ) != (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_mode,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+                metadata.st_nlink,
+            )
+            or stat.S_ISLNK(mapped.st_mode)
+            or (mapped.st_dev, mapped.st_ino)
+            != (metadata.st_dev, metadata.st_ino)
+            or digest.hexdigest() != object_id
+        ):
+            raise OSError("release control object mismatch")
+        os.dup2(descriptor, target, inheritable=True)
+        # os.dup2 may be a no-op when os.open already returned the requested
+        # number (notably the fourth control commonly arrives as fd 7).  Make
+        # the ownership transfer explicit so that case survives execve too.
+        os.set_inheritable(target, True)
+    environment = dict(os.environ)
+    environment["SP11_RELEASE_CONTROL_FDS_BOUND"] = \
+        "sp11-release-control-fds-v1"
+    environment["SP11_RELEASE_REPO_DIR"] = os.path.dirname(os.path.dirname(script))
+    script_fd = "/proc/self/fd/5" if sys.platform.startswith("linux") \
+        else "/dev/fd/5"
+    os.execve("/bin/bash", ["/bin/bash", script_fd, *arguments], environment)
+except Exception:
+    os.write(2, b"Could not bind exact release controller inputs.\n")
+    raise SystemExit(1)
+' "$builder_script" \
+    "$launcher_builder_oid" \
+    "$repo_dir/$KERNEL_BASELINE_REL" "$launcher_baseline_oid" \
+    "$repo_dir/$KERNEL_BASELINE_VALIDATOR_REL" \
+    "$launcher_baseline_validator_oid" \
+    "$repo_dir/$KERNEL_TREE_SYMLINK_VALIDATOR_REL" \
+    "$launcher_tree_validator_oid" \
+    "${ORIGINAL_ARGUMENTS[@]}"
+}
+
 require_release_build_contract
 
 PATCH_DIR="${PATCH_DIR:-$repo_dir/patches/ubuntu-qcom-x1e-7.0}"
@@ -1297,6 +1694,7 @@ if [ "$work_dir" != "$expected_work_dir" ]; then
   echo "Kernel work directory resolves outside its requested managed path: $WORK_DIR" >&2
   exit 1
 fi
+WORK_DIR_IDENTITY="$(baseline_control_identity "$work_dir")"
 source_parent="$work_dir/source"
 source_dir=""
 if [ -L "$source_parent" ] ||
@@ -1313,12 +1711,14 @@ if [ "$(cd "$source_parent" && pwd -P)" != "$source_parent" ]; then
 fi
 
 if [ "$RELEASE_BUILD" = "true" ]; then
-  release_manifest="$work_dir/sp11-kernel-build-manifest.txt"
-  if [ -L "$release_manifest" ] || { [ -e "$release_manifest" ] && [ ! -f "$release_manifest" ]; }; then
-    echo "Refusing unsafe existing release build manifest path: $release_manifest" >&2
-    exit 1
-  fi
-  rm -f -- "$release_manifest"
+  for release_output_name in \
+      sp11-kernel-build-manifest.txt sp11-kernel-debs.txt; do
+    release_output_path="$work_dir/$release_output_name"
+    if [ -e "$release_output_path" ] || [ -L "$release_output_path" ]; then
+      echo "Release output already exists; refusing replacement: $release_output_name" >&2
+      exit 1
+    fi
+  done
 fi
 
 install_dependencies() {
@@ -1754,6 +2154,14 @@ apply_patch_file() {
         return 0
       fi
       ;;
+    0002-debian-remove-host-local-find-dtbs-symlink.patch)
+      if [ ! -e "$source_dir/debian/scripts/misc/find-dtbs.py" ] &&
+         [ ! -L "$source_dir/debian/scripts/misc/find-dtbs.py" ]; then
+        echo "Already satisfied: $(basename "$patch")"
+        LAST_PATCH_DISPOSITION="already-satisfied"
+        return 0
+      fi
+      ;;
   esac
 
   if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
@@ -1816,11 +2224,322 @@ find_rules_file() {
   fi
 }
 
-capture_patched_tree_identity() {
-  local temporary_index temporary_diff
+verify_kernel_tree_validator_sink() {
+  [ "$KERNEL_TREE_VALIDATOR_SINK_OPEN" = "true" ] &&
+    [ "$KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN" = "true" ] &&
+    [ "$KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN" = "true" ] &&
+    [ -n "$KERNEL_TREE_VALIDATOR_PYTHON" ] &&
+    [ -n "$KERNEL_TREE_VALIDATOR_HELPER" ] &&
+    [[ "$KERNEL_TREE_VALIDATOR_HELPER_SHA256" =~ ^[0-9a-f]{64}$ ]] || return 1
+  "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+expected_helper_digest = sys.argv[1]
+helper_path = sys.argv[2]
+helper_metadata = os.fstat(7)
+helper_mapping = os.lstat(helper_path)
+python_metadata = os.fstat(8)
+python_mapping = os.stat("/usr/bin/python3")
+metadata = os.fstat(9)
+expected = (1, 3) if sys.platform.startswith("linux") else (3, 2)
+if sys.platform != "darwin" and not sys.platform.startswith("linux"):
+    raise SystemExit(1)
+if not stat.S_ISREG(python_metadata.st_mode) or not python_metadata.st_mode & 0o111:
+    raise SystemExit(1)
+if not stat.S_ISREG(python_mapping.st_mode):
+    raise SystemExit(1)
+if (python_mapping.st_dev, python_mapping.st_ino) != (
+    python_metadata.st_dev,
+    python_metadata.st_ino,
+):
+    raise SystemExit(1)
+if (
+    stat.S_ISLNK(helper_mapping.st_mode)
+    or not stat.S_ISREG(helper_mapping.st_mode)
+    or not stat.S_ISREG(helper_metadata.st_mode)
+    or helper_metadata.st_size <= 0
+    or helper_metadata.st_size > 1024 * 1024
+    or helper_metadata.st_nlink != 1
+    or (helper_mapping.st_dev, helper_mapping.st_ino)
+    != (helper_metadata.st_dev, helper_metadata.st_ino)
+):
+    raise SystemExit(1)
+helper_identity = (
+    helper_metadata.st_dev,
+    helper_metadata.st_ino,
+    helper_metadata.st_mode,
+    helper_metadata.st_size,
+    helper_metadata.st_mtime_ns,
+    helper_metadata.st_ctime_ns,
+    helper_metadata.st_nlink,
+)
+os.lseek(7, 0, os.SEEK_SET)
+digest = hashlib.sha256()
+remaining = helper_metadata.st_size
+while remaining:
+    chunk = os.read(7, min(65536, remaining))
+    if not chunk:
+        raise SystemExit(1)
+    digest.update(chunk)
+    remaining -= len(chunk)
+if os.read(7, 1) or digest.hexdigest() != expected_helper_digest:
+    raise SystemExit(1)
+os.lseek(7, 0, os.SEEK_SET)
+helper_after = os.fstat(7)
+if helper_identity != (
+    helper_after.st_dev,
+    helper_after.st_ino,
+    helper_after.st_mode,
+    helper_after.st_size,
+    helper_after.st_mtime_ns,
+    helper_after.st_ctime_ns,
+    helper_after.st_nlink,
+):
+    raise SystemExit(1)
+if not stat.S_ISCHR(metadata.st_mode):
+    raise SystemExit(1)
+if (os.major(metadata.st_rdev), os.minor(metadata.st_rdev)) != expected:
+    raise SystemExit(1)
+' "$KERNEL_TREE_VALIDATOR_HELPER_SHA256" \
+    "$KERNEL_TREE_SYMLINK_VALIDATOR" 1>&9 2>&9
+}
+
+initialize_kernel_tree_validator_sink() {
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  # Trust boundary: the digest-pinned OCI/APT /usr, loader, libraries, Python
+  # stdlib, and Git toolchain are materialized build authority. FD 8 prevents a
+  # later executable-name swap; it is not a defense against arbitrary root
+  # mutation of that trusted toolchain. Darwin is fixture-only because macOS
+  # does not permit executing /dev/fd/8.
+  if ! exec 8</usr/bin/python3; then
+    echo "Could not pin the trusted kernel-tree validator interpreter." >&2
+    return 1
+  fi
+  KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="true"
+  case "$host_os" in
+    Linux)
+      KERNEL_TREE_VALIDATOR_PYTHON="/proc/self/fd/8"
+      KERNEL_TREE_VALIDATOR_HELPER="/proc/self/fd/7"
+      ;;
+    Darwin)
+      KERNEL_TREE_VALIDATOR_PYTHON="/usr/bin/python3"
+      KERNEL_TREE_VALIDATOR_HELPER="/dev/fd/7"
+      ;;
+    *)
+      exec 8<&-
+      KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+      echo "Kernel-tree validation requires Linux or the Darwin fixture boundary." >&2
+      return 1
+      ;;
+  esac
+  KERNEL_TREE_VALIDATOR_HELPER_SHA256="${KERNEL_TREE_SYMLINK_VALIDATOR_STATE##*:}"
+  if ! [[ "$KERNEL_TREE_VALIDATOR_HELPER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    exec 8<&-
+    KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    echo "Exact kernel-tree validator helper digest is unavailable." >&2
+    return 1
+  fi
+  if [ "$KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN" != "true" ] ||
+     ! verify_kernel_baseline_control_state; then
+    exec 8<&-
+    KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    echo "Exact kernel-tree validator helper binding is unavailable." >&2
+    return 1
+  fi
+  if ! exec 9>/dev/null; then
+    exec 7<&-
+    exec 8<&-
+    KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    echo "Could not open the trusted kernel-tree validator output sink." >&2
+    return 1
+  fi
+  KERNEL_TREE_VALIDATOR_SINK_OPEN="true"
+  if ! verify_kernel_tree_validator_sink; then
+    exec 9>&-
+    exec 7<&-
+    exec 8<&-
+    KERNEL_TREE_VALIDATOR_SINK_OPEN="false"
+    KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    echo "Kernel-tree validator output sink does not match the trusted platform." >&2
+    return 1
+  fi
+}
+
+run_bound_kernel_tree_helper() {
+  local status
+
+  if ! verify_kernel_tree_validator_sink ||
+     ! verify_kernel_baseline_control_state; then
+    return 1
+  fi
+  if [ "$host_os" = Darwin ]; then
+    # macOS /dev/fd opens share the held descriptor offset, and Python 3.9 can
+    # consequently treat a nonempty /dev/fd script as empty.  The fixture-only
+    # fallback compiles the exact preheld bytes without reopening their name.
+    if "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+expected = sys.argv[1]
+metadata = os.fstat(7)
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or metadata.st_size <= 0
+    or metadata.st_size > 1024 * 1024
+):
+    raise SystemExit(1)
+content = bytearray()
+offset = 0
+while offset < metadata.st_size:
+    chunk = os.pread(7, min(65536, metadata.st_size - offset), offset)
+    if not chunk:
+        raise SystemExit(1)
+    content.extend(chunk)
+    offset += len(chunk)
+after = os.fstat(7)
+stable = lambda value: (
+    value.st_dev,
+    value.st_ino,
+    value.st_mode,
+    value.st_size,
+    value.st_mtime_ns,
+    value.st_ctime_ns,
+    value.st_nlink,
+)
+if stable(metadata) != stable(after) or hashlib.sha256(content).hexdigest() != expected:
+    raise SystemExit(1)
+arguments = sys.argv[2:]
+sys.argv = ["<held-kernel-tree-validator>", *arguments]
+namespace = {
+    "__name__": "__main__",
+    "__file__": "<held-kernel-tree-validator>",
+    "__package__": None,
+    "__spec__": None,
+    "__cached__": None,
+}
+exec(compile(bytes(content), "<held-kernel-tree-validator>", "exec"), namespace)
+' "$KERNEL_TREE_VALIDATOR_HELPER_SHA256" "$@" 2>&9; then
+      status=0
+    else
+      status=$?
+    fi
+  elif "$KERNEL_TREE_VALIDATOR_PYTHON" -I "$KERNEL_TREE_VALIDATOR_HELPER" \
+      "$@" 2>&9; then
+    status=0
+  else
+    status=$?
+  fi
+  if ! verify_kernel_tree_validator_sink ||
+     ! verify_kernel_baseline_control_state; then
+    return 1
+  fi
+  return "$status"
+}
+
+split_stream_fingerprint() {
+  local value="$1" size digest
+
+  case "$value" in
+    *$'\t'*) ;;
+    *) return 1 ;;
+  esac
+  size="${value%%$'\t'*}"
+  digest="${value#*$'\t'}"
+  [[ "$size" =~ ^(0|[1-9][0-9]*)$ ]] &&
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n%s\n' "$size" "$digest"
+}
+
+validate_release_kernel_tree_symlinks() {
+  local tree_id="$1" status
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
-  require_tool cmp
+  if ! [[ "$tree_id" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+    echo "Cannot validate a non-canonical patched kernel tree ID." >&2
+    return 1
+  fi
+  if ! verify_kernel_baseline_control_state; then
+    echo "Committed kernel tree-symlink validator control changed before use." >&2
+    return 1
+  fi
+  if ! verify_kernel_tree_validator_sink; then
+    echo "Kernel-tree validator output sink changed before use." >&2
+    return 1
+  fi
+  if (
+    ulimit -f 128
+    run_bound_kernel_tree_helper \
+      --repo "$source_dir" \
+      --tree "$tree_id" \
+      --scratch-parent "$BASELINE_CONTROL_PARENT" \
+      --quiet 1>&9 2>&9
+  ); then
+    status=0
+  else
+    status=$?
+  fi
+  if ! verify_kernel_tree_validator_sink; then
+    echo "Kernel-tree validator output sink changed during use." >&2
+    return 1
+  fi
+  if ! verify_kernel_baseline_control_state; then
+    echo "Committed kernel tree-symlink validator control changed during use." >&2
+    return 1
+  fi
+  if [ "$status" -ne 0 ]; then
+    echo "Exact patched kernel tree symlink-containment preflight failed." >&2
+    return 1
+  fi
+  if ! verify_kernel_tree_validator_sink ||
+     ! verify_kernel_baseline_control_state; then
+    echo "Kernel tree-symlink validation authority changed before completion." >&2
+    return 1
+  fi
+  echo "Validated exact patched kernel tree symlink containment: $tree_id"
+}
+
+preflight_release_patched_tree_symlinks() {
+  local preliminary_tree="" capture_status=0 restore_status=0
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  # The release clone is required to start with HEAD in its real index. Use
+  # that source-owned index before any package rule runs, then restore HEAD in
+  # every outcome; this avoids a mktemp-name unlink/reopen victim window.
+  if ! git -C "$source_dir" diff --cached --quiet --exit-code HEAD --; then
+    echo "Preliminary kernel-tree preflight requires a pristine source index." >&2
+    return 1
+  fi
+  RELEASE_SOURCE_INDEX_MUTATED="true"
+  if ! git -C "$source_dir" add -A -f -- . ||
+     ! preliminary_tree="$(git -C "$source_dir" write-tree)"; then
+    capture_status=1
+  fi
+  if ! git -C "$source_dir" read-tree HEAD; then
+    restore_status=1
+  else
+    RELEASE_SOURCE_INDEX_MUTATED="false"
+  fi
+  if [ "$capture_status" -ne 0 ] || [ "$restore_status" -ne 0 ]; then
+    echo "Could not capture the preliminary patched kernel tree." >&2
+    return 1
+  fi
+  if ! validate_release_kernel_tree_symlinks "$preliminary_tree"; then
+    echo "Refusing build-dependency generation for an unsafe patched kernel tree." >&2
+    return 1
+  fi
+}
+
+capture_patched_tree_identity() {
+  local diff_fingerprint untracked_fingerprint fingerprint_parts
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
 
   if [ -e "$source_dir/.git/info/attributes" ] ||
      [ -L "$source_dir/.git/info/attributes" ]; then
@@ -1828,36 +2547,51 @@ capture_patched_tree_identity() {
     exit 1
   fi
 
-  PATCHED_UNTRACKED_PATHS_FILE="$(mktemp "$work_dir/.sp11-release-untracked-paths.XXXXXX")"
-  if ! git -C "$source_dir" ls-files -z --others --exclude-standard \
-      > "$PATCHED_UNTRACKED_PATHS_FILE"; then
-    rm -f -- "$PATCHED_UNTRACKED_PATHS_FILE"
-    PATCHED_UNTRACKED_PATHS_FILE=""
-    echo "Could not capture the pre-build nonignored untracked source paths." >&2
+  if ! git -C "$source_dir" diff --cached --quiet --exit-code HEAD --; then
+    echo "Canonical patched-tree capture requires the source index at HEAD." >&2
     exit 1
   fi
 
-  temporary_index="$(mktemp "$work_dir/.sp11-release-index.XXXXXX")"
-  temporary_diff="$(mktemp "$work_dir/.sp11-release-diff.XXXXXX")"
-  rm -f -- "$temporary_index"
-
-  if ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" read-tree HEAD ||
-     ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" add -A -f -- . ||
-     ! PATCHED_TREE_ID="$(GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" write-tree)" ||
-     ! LC_ALL=C GIT_EXTERNAL_DIFF= \
-       git -C "$source_dir" -c core.attributesFile=/dev/null \
-         -c diff.suppressBlankEmpty=false --attr-source="$PATCHED_TREE_ID" diff \
-         "${PATCHED_DIFF_ARGS[@]}" HEAD "$PATCHED_TREE_ID" -- > "$temporary_diff"; then
-    rm -f -- "$temporary_index" "$temporary_diff"
+  RELEASE_SOURCE_INDEX_MUTATED="true"
+  if ! git -C "$source_dir" add -A -f -- . ||
+     ! PATCHED_TREE_ID="$(git -C "$source_dir" write-tree)"; then
     echo "Could not capture the canonical patched kernel tree identity." >&2
     exit 1
   fi
+  if ! validate_release_kernel_tree_symlinks "$PATCHED_TREE_ID"; then
+    echo "Refusing to build from an unsafe exact patched kernel tree." >&2
+    exit 1
+  fi
+  if ! diff_fingerprint="$(
+    LC_ALL=C GIT_EXTERNAL_DIFF= \
+      git -C "$source_dir" -c core.attributesFile=/dev/null \
+        -c diff.suppressBlankEmpty=false --attr-source="$PATCHED_TREE_ID" diff \
+        "${PATCHED_DIFF_ARGS[@]}" HEAD "$PATCHED_TREE_ID" -- 2>&9 |
+      run_bound_kernel_tree_helper --stream-sha256 2147483648
+  )"; then
+    echo "Could not capture the canonical patched kernel diff identity." >&2
+    exit 1
+  fi
+  if ! fingerprint_parts="$(split_stream_fingerprint "$diff_fingerprint")"; then
+    echo "Canonical patched kernel diff fingerprint was malformed." >&2
+    exit 1
+  fi
+  PATCHED_DIFF_SIZE="${fingerprint_parts%%$'\n'*}"
+  PATCHED_DIFF_SHA256="${fingerprint_parts#*$'\n'}"
 
-  PATCHED_DIFF_SHA256="$(sha256_file "$temporary_diff")"
+  if ! untracked_fingerprint="$(
+    git -C "$source_dir" ls-files -z --others --exclude-standard 2>&9 |
+      run_bound_kernel_tree_helper --stream-sha256 67108864
+  )" || ! fingerprint_parts="$(split_stream_fingerprint "$untracked_fingerprint")"; then
+    echo "Could not bind the pre-build nonignored untracked source paths." >&2
+    exit 1
+  fi
+  PATCHED_UNTRACKED_PATHS_SIZE="${fingerprint_parts%%$'\n'*}"
+  PATCHED_UNTRACKED_PATHS_SHA256="${fingerprint_parts#*$'\n'}"
   PATCHED_DIFF_GIT_VERSION="$(LC_ALL=C git --version)"
-  rm -f -- "$temporary_index" "$temporary_diff"
 
   if ! [[ "$PATCHED_TREE_ID" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]] ||
+     ! [[ "$PATCHED_DIFF_SIZE" =~ ^(0|[1-9][0-9]*)$ ]] ||
      ! [[ "$PATCHED_DIFF_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Canonical patched kernel tree identity is incomplete." >&2
     exit 1
@@ -1865,8 +2599,9 @@ capture_patched_tree_identity() {
 }
 
 verify_patched_tree_stable() {
-  local temporary_index temporary_diff deleted_paths recomputed_tree recomputed_diff_sha
-  local post_untracked_paths source_head deleted_path
+  local current_index_tree deleted_status recomputed_tree source_head
+  local diff_fingerprint untracked_fingerprint fingerprint_parts
+  local recomputed_diff_size recomputed_diff_sha post_untracked_size post_untracked_sha
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
 
@@ -1882,64 +2617,78 @@ verify_patched_tree_stable() {
     return 1
   fi
 
-  post_untracked_paths="$(mktemp "$work_dir/.sp11-release-post-untracked-paths.XXXXXX")"
-  if ! git -C "$source_dir" ls-files -z --others --exclude-standard \
-      > "$post_untracked_paths"; then
-    rm -f -- "$post_untracked_paths"
+  if ! current_index_tree="$(git -C "$source_dir" write-tree)" ||
+     [ "$current_index_tree" != "$PATCHED_TREE_ID" ]; then
+    echo "The exact release source index changed during the build." >&2
+    return 1
+  fi
+
+  if ! untracked_fingerprint="$(
+    git -C "$source_dir" ls-files -z --others --exclude-standard 2>&9 |
+      run_bound_kernel_tree_helper --stream-sha256 67108864
+  )" || ! fingerprint_parts="$(split_stream_fingerprint "$untracked_fingerprint")"; then
     echo "Could not inspect post-build nonignored untracked source paths." >&2
     return 1
   fi
-  if ! cmp -s "$PATCHED_UNTRACKED_PATHS_FILE" "$post_untracked_paths"; then
-    rm -f -- "$post_untracked_paths"
+  post_untracked_size="${fingerprint_parts%%$'\n'*}"
+  post_untracked_sha="${fingerprint_parts#*$'\n'}"
+  if [ "$post_untracked_size" != "$PATCHED_UNTRACKED_PATHS_SIZE" ] ||
+     [ "$post_untracked_sha" != "$PATCHED_UNTRACKED_PATHS_SHA256" ]; then
     echo "A nonignored source path was added or removed during the release build." >&2
     return 1
   fi
-  rm -f -- "$post_untracked_paths"
 
   # A patched tree can intentionally delete a path from HEAD. Such a path is
   # absent from the pre-build index, so check the deletion contract explicitly
   # before refreshing the exact pre-build path set below.
-  deleted_paths="$(mktemp "$work_dir/.sp11-release-deleted-paths.XXXXXX")"
-  if ! git -C "$source_dir" diff-tree -r -z --no-commit-id --name-only \
-      --diff-filter=D HEAD "$PATCHED_TREE_ID" -- > "$deleted_paths"; then
-    rm -f -- "$deleted_paths"
+  if git -C "$source_dir" -c core.attributesFile=/dev/null \
+      diff-tree -r -z --no-commit-id --name-only --no-ext-diff --no-textconv \
+      --diff-filter=D HEAD "$PATCHED_TREE_ID" -- 2>&9 |
+      run_bound_kernel_tree_helper --check-deleted-paths "$source_dir" \
+        --max-input-bytes 67108864 1>&9; then
+    deleted_status=0
+  else
+    deleted_status=$?
+  fi
+  if [ "$deleted_status" -ne 0 ]; then
     echo "Could not verify paths deleted by the captured patched tree." >&2
     return 1
   fi
-  while IFS= read -r -d '' deleted_path; do
-    if [ -e "$source_dir/$deleted_path" ] || [ -L "$source_dir/$deleted_path" ]; then
-      rm -f -- "$deleted_paths"
-      echo "A path deleted by the captured patched tree reappeared during the build: $deleted_path" >&2
-      return 1
-    fi
-  done < "$deleted_paths"
-  rm -f -- "$deleted_paths"
 
-  temporary_index="$(mktemp "$work_dir/.sp11-release-recheck-index.XXXXXX")"
-  temporary_diff="$(mktemp "$work_dir/.sp11-release-recheck-diff.XXXXXX")"
-  rm -f -- "$temporary_index"
-  if ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" read-tree "$PATCHED_TREE_ID" ||
-     ! GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" add -u -- . ||
-     ! recomputed_tree="$(GIT_INDEX_FILE="$temporary_index" git -C "$source_dir" write-tree)" ||
-     ! LC_ALL=C GIT_EXTERNAL_DIFF= \
-       git -C "$source_dir" -c core.attributesFile=/dev/null \
-         -c diff.suppressBlankEmpty=false --attr-source="$recomputed_tree" diff \
-         "${PATCHED_DIFF_ARGS[@]}" HEAD "$recomputed_tree" -- > "$temporary_diff"; then
-    rm -f -- "$temporary_index" "$temporary_diff"
+  if ! git -C "$source_dir" add -u -- . ||
+     ! recomputed_tree="$(git -C "$source_dir" write-tree)"; then
     echo "Could not recompute the exact pre-build kernel source contract." >&2
     return 1
   fi
-  recomputed_diff_sha="$(sha256_file "$temporary_diff")"
-  rm -f -- "$temporary_index" "$temporary_diff"
+  if ! validate_release_kernel_tree_symlinks "$recomputed_tree"; then
+    echo "Recomputed patched kernel tree failed symlink-containment validation." >&2
+    return 1
+  fi
+  if ! diff_fingerprint="$(
+    LC_ALL=C GIT_EXTERNAL_DIFF= \
+      git -C "$source_dir" -c core.attributesFile=/dev/null \
+        -c diff.suppressBlankEmpty=false --attr-source="$recomputed_tree" diff \
+        "${PATCHED_DIFF_ARGS[@]}" HEAD "$recomputed_tree" -- 2>&9 |
+      run_bound_kernel_tree_helper --stream-sha256 2147483648
+  )" || ! fingerprint_parts="$(split_stream_fingerprint "$diff_fingerprint")"; then
+    echo "Could not recompute the canonical patched kernel diff identity." >&2
+    return 1
+  fi
+  recomputed_diff_size="${fingerprint_parts%%$'\n'*}"
+  recomputed_diff_sha="${fingerprint_parts#*$'\n'}"
 
   if [ "$recomputed_tree" != "$PATCHED_TREE_ID" ] ||
+     [ "$recomputed_diff_size" != "$PATCHED_DIFF_SIZE" ] ||
      [ "$recomputed_diff_sha" != "$PATCHED_DIFF_SHA256" ]; then
     echo "Patched kernel source input changed during the release build." >&2
     echo "The completed manifest will not describe a pre-build-only source identity." >&2
     return 1
   fi
-  rm -f -- "$PATCHED_UNTRACKED_PATHS_FILE"
-  PATCHED_UNTRACKED_PATHS_FILE=""
+  if ! git -C "$source_dir" read-tree HEAD; then
+    echo "Could not restore the source index after stable-tree verification." >&2
+    return 1
+  fi
+  RELEASE_SOURCE_INDEX_MUTATED="false"
 }
 
 write_manifest() {
@@ -2264,6 +3013,7 @@ ensure_header_dependencies_present() {
 }
 
 write_deb_manifest() {
+  [ "$RELEASE_BUILD" = "true" ] && return 0
   collect_kernel_debs > "$work_dir/sp11-kernel-debs.txt"
 }
 
@@ -2444,12 +3194,434 @@ capture_release_debs() {
   done
 }
 
+acquire_release_output_descriptors() {
+  local opener_job_pid opener_pid opener_deb_fd opener_manifest_fd
+  local opener_protocol opener_endpoint opener_token
+  local deb_dev deb_ino manifest_dev manifest_ino marker extra
+
+  release_output_opener_control() {
+    local action="$1" acknowledgement=""
+
+    if [ "$opener_protocol" = fixture-delay ]; then
+      [ "$action" = ABORT ] && return 0
+      if ! IFS= read -r acknowledgement <&12 ||
+         [ "$acknowledgement" != TRANSFERRED ]; then
+        return 1
+      fi
+      return 0
+    fi
+
+    "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import os
+import socket
+import struct
+import sys
+
+protocol, endpoint, token, expected_pid, action = sys.argv[1:]
+if action not in ("TRANSFER", "ABORT"):
+    raise SystemExit(1)
+if protocol == "unix" and sys.platform.startswith("linux"):
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    address = b"\0" + bytes.fromhex(endpoint)
+elif protocol == "unix-fixture" and sys.platform == "darwin":
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    os.fchdir(6)
+    address = endpoint
+else:
+    raise SystemExit(1)
+connection.settimeout(5.0)
+try:
+    connection.connect(address)
+    if protocol == "unix":
+        size = struct.calcsize("3i")
+        credentials = connection.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, size
+        )
+        peer_pid, peer_uid, _peer_gid = struct.unpack("3i", credentials)
+        if peer_pid != int(expected_pid, 10) or peer_uid != os.getuid():
+            raise SystemExit(1)
+    connection.sendall((action + " " + token + "\n").encode("ascii"))
+    response = bytearray()
+    while len(response) <= 64:
+        chunk = connection.recv(65 - len(response))
+        if not chunk:
+            break
+        response.extend(chunk)
+    expected = b"TRANSFERRED\n" if action == "TRANSFER" else b"ABORTED\n"
+    if bytes(response) != expected:
+        raise SystemExit(1)
+finally:
+    connection.close()
+' "$opener_protocol" "$opener_endpoint" "$opener_token" \
+      "$opener_pid" "$action" 1>&9 2>&9
+  }
+
+  close_release_output_opener_channel() {
+    local require_success="$1" unexpected="" wait_status=0
+
+    if IFS= read -r unexpected <&12; then
+      exec 12<&-
+      release_output_opener_channel_open=false
+      return 1
+    fi
+    exec 12<&-
+    release_output_opener_channel_open=false
+    if [ "$host_os" = Linux ]; then
+      if wait "$opener_job_pid" 2>/dev/null; then
+        wait_status=0
+      else
+        wait_status=$?
+      fi
+      if [ "$require_success" = true ] && [ "$wait_status" -ne 0 ]; then
+        return 1
+      fi
+    fi
+    release_output_opener_job_pid=""
+  }
+
+  # The release path must not use Bash noclobber as an O_EXCL substitute:
+  # noclobber still opens existing FIFOs/devices.  A short trusted Python
+  # owner creates both fixed names relative to held work-root FD 6 with real
+  # O_EXCL|O_NOFOLLOW and keeps those exact inodes open until this shell has
+  # acquired its own descriptors.  A bounded authenticated socket handshake,
+  # rather than PID signalling, transfers ownership without a PID-reuse victim
+  # window.  Production duplicates only through trusted procfs descriptor
+  # authority; Darwin name reopening is restricted to the disposable fixture.
+  exec 12< <(exec "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import os
+import secrets
+import select
+import socket
+import stat
+import struct
+import sys
+import time
+
+created = []
+foreign = []
+listener = None
+ready = False
+stage = "startup"
+fixture_hook = sys.argv[1]
+if fixture_hook not in (
+    "",
+    "swap-work-root-terminal",
+    "mutate-fd10-after-primary",
+    "mutate-intended-double-term-scrub",
+    "inject-fifo-before-open",
+    "inject-symlink-before-open",
+    "inject-procfd-candidate-mismatch",
+):
+    raise SystemExit(1)
+
+try:
+    stage = "flags"
+    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC", "O_EXCL")
+    if any(not hasattr(os, name) for name in required):
+        raise OSError("required open flags unavailable")
+    root = os.fstat(6)
+    if not stat.S_ISDIR(root.st_mode):
+        raise OSError("held work root is not a directory")
+    old_umask = os.umask(0o077)
+    try:
+        stage = "open"
+        if fixture_hook == "inject-fifo-before-open":
+            if os.mkfifo in os.supports_dir_fd:
+                os.mkfifo("sp11-kernel-debs.txt", 0o600, dir_fd=6)
+            else:
+                os.fchdir(6)
+                os.mkfifo("sp11-kernel-debs.txt", 0o600)
+        elif fixture_hook == "inject-symlink-before-open":
+            os.symlink(
+                ".sp11-publication-victim",
+                "sp11-kernel-debs.txt",
+                dir_fd=6,
+            )
+        flags = (
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_NOFOLLOW
+            | os.O_CLOEXEC
+        )
+        for name in (
+            "sp11-kernel-debs.txt",
+            "sp11-kernel-build-manifest.txt",
+        ):
+            descriptor = os.open(name, flags, 0o600, dir_fd=6)
+            created.append(descriptor)
+    finally:
+        os.umask(old_umask)
+    metadata = [os.fstat(descriptor) for descriptor in created]
+    stage = "metadata"
+    if any(
+        not stat.S_ISREG(value.st_mode)
+        or stat.S_IMODE(value.st_mode) != 0o600
+        or value.st_size != 0
+        or value.st_nlink != 1
+        for value in metadata
+    ):
+        raise OSError("created release output is unsafe")
+    reported = list(created)
+    if fixture_hook == "inject-procfd-candidate-mismatch":
+        victim = os.open(
+            ".sp11-procfd-candidate-victim",
+            os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=6,
+        )
+        victim_metadata = os.fstat(victim)
+        if (
+            not stat.S_ISREG(victim_metadata.st_mode)
+            or stat.S_IMODE(victim_metadata.st_mode) != 0o600
+            or victim_metadata.st_nlink != 1
+        ):
+            raise OSError("candidate mismatch fixture victim is unsafe")
+        foreign.append(victim)
+        reported[0] = victim
+    token = secrets.token_hex(32)
+    stage = "socket"
+    if sys.platform.startswith("linux"):
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        address = b"\0sp11-release-output-" + secrets.token_bytes(16)
+        listener.bind(address)
+        protocol = "unix"
+        endpoint = address[1:].hex()
+    elif sys.platform == "darwin":
+        # The macOS provenance fixture runs in a socket-restricted sandbox.
+        # It receives no production authority: keep the exact O_EXCL-created
+        # inodes open for a short bounded handoff and acknowledge on the
+        # already-owned stdout pipe. Production Linux uses authenticated
+        # abstract AF_UNIX peer credentials below.
+        protocol = "fixture-delay"
+        endpoint = "none"
+    else:
+        raise OSError("unsupported release output platform")
+    if listener is not None:
+        listener.listen(4)
+        listener.settimeout(0.1)
+        liveness = select.poll()
+        liveness.register(1, select.POLLERR | select.POLLHUP | select.POLLNVAL)
+    readiness = "READY {} {} {} {} {} {} {} {} {} {}\n".format(
+        os.getpid(),
+        protocol,
+        endpoint,
+        token,
+        reported[0],
+        reported[1],
+        metadata[0].st_dev,
+        metadata[0].st_ino,
+        metadata[1].st_dev,
+        metadata[1].st_ino,
+    ).encode("ascii")
+    os.write(1, readiness)
+    ready = True
+    if protocol == "fixture-delay":
+        time.sleep(0.1)
+        for descriptor in created:
+            os.close(descriptor)
+        created.clear()
+        os.write(1, b"TRANSFERRED\n")
+        raise SystemExit(0)
+    deadline = time.monotonic() + 30.0
+    attempts = 0
+    while time.monotonic() < deadline and attempts < 8:
+        if liveness.poll(0):
+            raise OSError("release output owner disappeared")
+        try:
+            connection, _address = listener.accept()
+        except socket.timeout:
+            continue
+        attempts += 1
+        try:
+            connection.settimeout(2.0)
+            if protocol == "unix":
+                size = struct.calcsize("3i")
+                credentials = connection.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, size
+                )
+                _peer_pid, peer_uid, _peer_gid = struct.unpack(
+                    "3i", credentials
+                )
+                if peer_uid != os.getuid():
+                    continue
+            request = bytearray()
+            while len(request) <= 128 and b"\n" not in request:
+                chunk = connection.recv(129 - len(request))
+                if not chunk:
+                    break
+                request.extend(chunk)
+            transfer_request = ("TRANSFER " + token + "\n").encode("ascii")
+            abort_request = ("ABORT " + token + "\n").encode("ascii")
+            if bytes(request) == transfer_request:
+                for descriptor in created:
+                    os.close(descriptor)
+                created.clear()
+                connection.sendall(b"TRANSFERRED\n")
+                raise SystemExit(0)
+            if bytes(request) == abort_request:
+                for descriptor in created:
+                    os.ftruncate(descriptor, 0)
+                    os.fsync(descriptor)
+                    os.close(descriptor)
+                created.clear()
+                connection.sendall(b"ABORTED\n")
+                raise SystemExit(1)
+        finally:
+            connection.close()
+    raise OSError("release output ownership transfer timed out")
+except SystemExit:
+    raise
+except BaseException:
+    for descriptor in created:
+        try:
+            os.ftruncate(descriptor, 0)
+            os.fsync(descriptor)
+        except OSError:
+            pass
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    if not ready:
+        try:
+            os.write(1, ("ERROR " + stage + "\n").encode("ascii"))
+        except OSError:
+            pass
+    raise SystemExit(1)
+finally:
+    if listener is not None:
+        listener.close()
+    for descriptor in foreign:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+' "$publication_fixture_hook" 2>&9)
+  release_output_opener_channel_open=true
+  opener_job_pid=$!
+  release_output_opener_job_pid="$opener_job_pid"
+  if ! IFS=' ' read -r marker opener_pid opener_protocol opener_endpoint \
+      opener_token opener_deb_fd opener_manifest_fd deb_dev deb_ino \
+      manifest_dev manifest_ino extra <&12 ||
+     [ "$marker" != READY ] || [ -n "$extra" ] ||
+     ! [[ "$opener_job_pid" =~ ^[1-9][0-9]*$ ]] ||
+     [ "$opener_pid" != "$opener_job_pid" ] ||
+     ! [[ "$opener_protocol" =~ ^(unix|fixture-delay)$ ]] ||
+     ! [[ "$opener_endpoint" =~ ^[A-Za-z0-9.-]+$ ]] ||
+     ! [[ "$opener_token" =~ ^[0-9a-f]{64}$ ]] ||
+     ! [[ "$opener_deb_fd" =~ ^[0-9]+$ ]] ||
+     ! [[ "$opener_manifest_fd" =~ ^[0-9]+$ ]] ||
+     ! [[ "$deb_dev" =~ ^[0-9]+$ ]] || ! [[ "$deb_ino" =~ ^[0-9]+$ ]] ||
+     ! [[ "$manifest_dev" =~ ^[0-9]+$ ]] ||
+     ! [[ "$manifest_ino" =~ ^[0-9]+$ ]]; then
+    close_release_output_opener_channel false || :
+    echo "Could not exclusively create the release output names." >&2
+    return 1
+  fi
+
+  case "$host_os" in
+    Linux)
+      if ! exec 10<>"/proc/$opener_pid/fd/$opener_deb_fd"; then
+        release_output_opener_control ABORT || :
+        close_release_output_opener_channel false || :
+        echo "Could not acquire the held release package-list inode." >&2
+        return 1
+      fi
+      if ! exec 11<>"/proc/$opener_pid/fd/$opener_manifest_fd"; then
+        exec 10>&-
+        release_output_opener_control ABORT || :
+        close_release_output_opener_channel false || :
+        echo "Could not acquire the held release-manifest inode." >&2
+        return 1
+      fi
+      ;;
+    Darwin)
+      case "${SP11_KERNEL_RELEASE_TEST_FIXTURE:-}:$work_dir" in
+        sp11-kernel-release-provenance-v1:*/sp11-apt-fixture.release-provenance.*/work-*) ;;
+        *)
+          release_output_opener_control ABORT || :
+          close_release_output_opener_channel false || :
+          echo "Darwin release-output acquisition is fixture-only." >&2
+          return 1
+          ;;
+      esac
+      if ! exec 10<>./sp11-kernel-debs.txt; then
+        release_output_opener_control ABORT || :
+        close_release_output_opener_channel false || :
+        echo "Could not acquire the fixture release package-list inode." >&2
+        return 1
+      fi
+      if ! exec 11<>./sp11-kernel-build-manifest.txt; then
+        exec 10>&-
+        release_output_opener_control ABORT || :
+        close_release_output_opener_channel false || :
+        echo "Could not acquire the fixture release-manifest inode." >&2
+        return 1
+      fi
+      ;;
+    *)
+      release_output_opener_control ABORT || :
+      close_release_output_opener_channel false || :
+      echo "Release-output acquisition requires Linux." >&2
+      return 1
+      ;;
+  esac
+
+  if ! "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import os
+import stat
+import sys
+
+for descriptor, name, expected_dev, expected_ino in (
+    (10, "sp11-kernel-debs.txt", sys.argv[1], sys.argv[2]),
+    (11, "sp11-kernel-build-manifest.txt", sys.argv[3], sys.argv[4]),
+):
+    metadata = os.fstat(descriptor)
+    mapped = os.stat(name, dir_fd=6, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(mapped.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size != 0
+        or metadata.st_nlink != 1
+        or (metadata.st_dev, metadata.st_ino)
+        != (mapped.st_dev, mapped.st_ino)
+        or str(metadata.st_dev) != expected_dev
+        or str(metadata.st_ino) != expected_ino
+    ):
+        raise SystemExit(1)
+' "$deb_dev" "$deb_ino" "$manifest_dev" "$manifest_ino" 1>&9 2>&9; then
+    exec 10>&-
+    exec 11>&-
+    release_output_opener_control ABORT || :
+    close_release_output_opener_channel false || :
+    echo "Held release output ownership could not be verified." >&2
+    return 1
+  fi
+  # Only exact descriptors that have passed the READY identity and held-name
+  # checks become scrub-owned. A procfs PID/FD mismatch is merely closed above;
+  # the authenticated opener remains responsible for its intended empty files.
+  deb_output_open=true
+  manifest_output_open=true
+  if ! release_output_opener_control TRANSFER ||
+     ! close_release_output_opener_channel true; then
+    echo "Held release output ownership transfer failed." >&2
+    return 1
+  fi
+}
+
 write_release_manifest_v2() {
-  local manifest="$work_dir/sp11-kernel-build-manifest.txt" temporary_manifest
   local source_head container_image container_digest rules_runner
-  local index
+  local index publication_fixture_hook
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
+
+  if ! publication_fixture_hook="$(
+    resolve_release_publication_fixture_hook
+  )"; then
+    echo "Release publication fixture hook is outside its private test boundary." >&2
+    return 1
+  fi
 
   verify_release_support_stable
   verify_patched_tree_stable
@@ -2471,89 +3643,194 @@ write_release_manifest_v2() {
     rules_runner="fakeroot"
   fi
 
-  temporary_manifest="$(mktemp "$work_dir/.sp11-kernel-build-manifest.XXXXXX")"
-  if ! {
-    echo "Provenance schema: sp11-kernel-build-v2"
-    echo "Release build: true"
-    echo "Support start HEAD: $SUPPORT_HEAD_START"
-    echo "Support start dirty: false"
-    echo "Support end HEAD: $SUPPORT_HEAD_START"
-    echo "Support end dirty: false"
-    echo "Source mode: git"
-    echo "Source URL: $GIT_URL"
-    echo "Source ref: $GIT_BRANCH"
-    echo "Expected source commit: $EXPECTED_SOURCE_COMMIT"
-    echo "Source HEAD: $source_head"
-    echo "Container image: $container_image"
-    echo "Container digest: $container_digest"
-    echo "Container platform: ${SP11_BUILD_CONTAINER_PLATFORM}"
-    echo "Build target: $BUILD_TARGET"
-    echo "Jobs: $JOBS"
-    echo "Rules runner: $rules_runner"
-    echo "Patch count: ${#RELEASE_PATCH_PATHS[@]}"
-    index=0
-    while [ "$index" -lt "${#RELEASE_PATCH_PATHS[@]}" ]; do
-      echo "Patch $((index + 1)) path: ${RELEASE_PATCH_PATHS[$index]}"
-      echo "Patch $((index + 1)) SHA256: ${RELEASE_PATCH_SHA256S[$index]}"
-      echo "Patch $((index + 1)) disposition: ${RELEASE_PATCH_DISPOSITIONS[$index]}"
-      index=$((index + 1))
-    done
-    echo "Patched diff format: $PATCHED_DIFF_FORMAT"
-    echo "Patched diff Git version: $PATCHED_DIFF_GIT_VERSION"
-    echo "Patched diff SHA256: $PATCHED_DIFF_SHA256"
-    echo "Patched tree ID: $PATCHED_TREE_ID"
-    echo "Required output roles: kernel-config module-symvers system-map kernel-efi-stubble denali-oled-dtb denali-oled-el2-dtb module-signing-certificate"
-    echo "Optional output roles: none"
-    echo "Output count: ${#RELEASE_OUTPUT_PATHS[@]}"
-    index=0
-    while [ "$index" -lt "${#RELEASE_OUTPUT_PATHS[@]}" ]; do
-      echo "Output $((index + 1)) role: ${RELEASE_OUTPUT_ROLES[$index]}"
-      echo "Output $((index + 1)) required: true"
-      echo "Output $((index + 1)) path: ${RELEASE_OUTPUT_PATHS[$index]}"
-      echo "Output $((index + 1)) size: ${RELEASE_OUTPUT_SIZES[$index]}"
-      echo "Output $((index + 1)) SHA256: ${RELEASE_OUTPUT_SHA256S[$index]}"
-      index=$((index + 1))
-    done
-    echo "Signing certificate SHA256: $SIGNING_CERT_SHA256"
-    echo "Signing certificate fingerprint: $SIGNING_CERT_FINGERPRINT"
-    echo "Signing certificate serial: $SIGNING_CERT_SERIAL"
-    echo "Required Deb roles: common-headers headers image modules"
-    echo "Optional Deb roles: modules-extra"
-    echo "Deb count: ${#RELEASE_DEB_PATHS[@]}"
-    index=0
-    while [ "$index" -lt "${#RELEASE_DEB_PATHS[@]}" ]; do
-      echo "Deb $((index + 1)) role: ${RELEASE_DEB_ROLES[$index]}"
-      if [ "${RELEASE_DEB_ROLES[$index]}" = "modules-extra" ]; then
-        echo "Deb $((index + 1)) required: false"
-      else
-        echo "Deb $((index + 1)) required: true"
+  (
+    deb_output_open=false
+    manifest_output_open=false
+    work_output_root_open=false
+    publication_committed=false
+    release_output_opener_channel_open=false
+    release_output_opener_job_pid=""
+
+    cleanup_release_publication() {
+      local cleanup_status=$?
+      trap - EXIT
+      trap '' HUP INT TERM
+      if [ "$release_output_opener_channel_open" = true ]; then
+        exec 12<&- || :
+        release_output_opener_channel_open=false
+        if [ "$host_os" = Linux ] &&
+           [[ "$release_output_opener_job_pid" =~ ^[1-9][0-9]*$ ]]; then
+          wait "$release_output_opener_job_pid" 2>/dev/null || cleanup_status=1
+        fi
+        release_output_opener_job_pid=""
       fi
-      echo "Deb $((index + 1)) path: ${RELEASE_DEB_PATHS[$index]}"
-      echo "Deb $((index + 1)) package: ${RELEASE_DEB_PACKAGES[$index]}"
-      echo "Deb $((index + 1)) version: ${RELEASE_DEB_VERSIONS[$index]}"
-      echo "Deb $((index + 1)) architecture: ${RELEASE_DEB_ARCHITECTURES[$index]}"
-      echo "Deb $((index + 1)) size: ${RELEASE_DEB_SIZES[$index]}"
-      echo "Deb $((index + 1)) SHA256: ${RELEASE_DEB_SHA256S[$index]}"
-      index=$((index + 1))
-    done
-    echo "Build completed: true"
-  } > "$temporary_manifest"; then
-    rm -f -- "$temporary_manifest"
-    echo "Could not write the schema-v2 release build manifest." >&2
-    return 1
-  fi
-  chmod 0644 "$temporary_manifest"
-  if ! mv -f -- "$temporary_manifest" "$manifest"; then
-    rm -f -- "$temporary_manifest"
-    echo "Could not atomically install the schema-v2 release build manifest." >&2
-    return 1
-  fi
-  if ! verify_release_support_stable; then
-    rm -f -- "$manifest"
-    echo "Removed the final manifest because support provenance changed during completion." >&2
-    return 1
-  fi
-  echo "Wrote completed schema-v2 release build manifest: $manifest"
+      if [ "$publication_committed" != "true" ] &&
+         { [ "$deb_output_open" = "true" ] ||
+           [ "$manifest_output_open" = "true" ]; }; then
+        scrub_held_release_outputs \
+          "$deb_output_open" "$manifest_output_open" \
+          "$publication_fixture_hook" || cleanup_status=1
+      fi
+      [ "$manifest_output_open" = "true" ] && exec 11>&-
+      [ "$deb_output_open" = "true" ] && exec 10>&-
+      [ "$work_output_root_open" = "true" ] && exec 6<&-
+      exit "$cleanup_status"
+    }
+    trap cleanup_release_publication EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    cd "$work_dir"
+    exec 6<.
+    work_output_root_open=true
+    if ! "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import os
+import stat
+import sys
+
+metadata = os.fstat(6)
+mapped = os.lstat(sys.argv[1])
+identity = ":".join(str(value) for value in (
+    metadata.st_dev,
+    metadata.st_ino,
+    format(stat.S_IMODE(metadata.st_mode), "o"),
+    metadata.st_uid,
+    metadata.st_gid,
+))
+if (
+    not stat.S_ISDIR(metadata.st_mode)
+    or stat.S_ISLNK(mapped.st_mode)
+    or (metadata.st_dev, metadata.st_ino) != (mapped.st_dev, mapped.st_ino)
+    or identity != sys.argv[2]
+):
+    raise SystemExit(1)
+' "$work_dir" "$WORK_DIR_IDENTITY" 1>&9 2>&9; then
+      echo "Release work directory identity changed before publication." >&2
+      exit 1
+    fi
+
+    acquire_release_output_descriptors || exit 1
+
+    if ! deb_list_fingerprint="$(
+      printf '%s\n' "${RELEASE_DEB_PATHS[@]}" |
+        run_bound_kernel_tree_helper --copy-sha256-to-fd 10 \
+          --max-input-bytes 1048576
+    )" || ! split_stream_fingerprint "$deb_list_fingerprint" >/dev/null; then
+      echo "Could not write the held release package list." >&2
+      exit 1
+    fi
+    if ! manifest_fingerprint="$(
+      {
+      echo "Provenance schema: sp11-kernel-build-v2"
+      echo "Release build: true"
+      echo "Support start HEAD: $SUPPORT_HEAD_START"
+      echo "Support start dirty: false"
+      echo "Support end HEAD: $SUPPORT_HEAD_START"
+      echo "Support end dirty: false"
+      echo "Source mode: git"
+      echo "Source URL: $GIT_URL"
+      echo "Source ref: $GIT_BRANCH"
+      echo "Expected source commit: $EXPECTED_SOURCE_COMMIT"
+      echo "Source HEAD: $source_head"
+      echo "Container image: $container_image"
+      echo "Container digest: $container_digest"
+      echo "Container platform: ${SP11_BUILD_CONTAINER_PLATFORM}"
+      echo "Build target: $BUILD_TARGET"
+      echo "Jobs: $JOBS"
+      echo "Rules runner: $rules_runner"
+      echo "Patch count: ${#RELEASE_PATCH_PATHS[@]}"
+      index=0
+      while [ "$index" -lt "${#RELEASE_PATCH_PATHS[@]}" ]; do
+        echo "Patch $((index + 1)) path: ${RELEASE_PATCH_PATHS[$index]}"
+        echo "Patch $((index + 1)) SHA256: ${RELEASE_PATCH_SHA256S[$index]}"
+        echo "Patch $((index + 1)) disposition: ${RELEASE_PATCH_DISPOSITIONS[$index]}"
+        index=$((index + 1))
+      done
+      echo "Patched diff format: $PATCHED_DIFF_FORMAT"
+      echo "Patched diff Git version: $PATCHED_DIFF_GIT_VERSION"
+      echo "Patched diff SHA256: $PATCHED_DIFF_SHA256"
+      echo "Patched tree ID: $PATCHED_TREE_ID"
+      echo "Required output roles: kernel-config module-symvers system-map kernel-efi-stubble denali-oled-dtb denali-oled-el2-dtb module-signing-certificate"
+      echo "Optional output roles: none"
+      echo "Output count: ${#RELEASE_OUTPUT_PATHS[@]}"
+      index=0
+      while [ "$index" -lt "${#RELEASE_OUTPUT_PATHS[@]}" ]; do
+        echo "Output $((index + 1)) role: ${RELEASE_OUTPUT_ROLES[$index]}"
+        echo "Output $((index + 1)) required: true"
+        echo "Output $((index + 1)) path: ${RELEASE_OUTPUT_PATHS[$index]}"
+        echo "Output $((index + 1)) size: ${RELEASE_OUTPUT_SIZES[$index]}"
+        echo "Output $((index + 1)) SHA256: ${RELEASE_OUTPUT_SHA256S[$index]}"
+        index=$((index + 1))
+      done
+      echo "Signing certificate SHA256: $SIGNING_CERT_SHA256"
+      echo "Signing certificate fingerprint: $SIGNING_CERT_FINGERPRINT"
+      echo "Signing certificate serial: $SIGNING_CERT_SERIAL"
+      echo "Required Deb roles: common-headers headers image modules"
+      echo "Optional Deb roles: modules-extra"
+      echo "Deb count: ${#RELEASE_DEB_PATHS[@]}"
+      index=0
+      while [ "$index" -lt "${#RELEASE_DEB_PATHS[@]}" ]; do
+        echo "Deb $((index + 1)) role: ${RELEASE_DEB_ROLES[$index]}"
+        if [ "${RELEASE_DEB_ROLES[$index]}" = "modules-extra" ]; then
+          echo "Deb $((index + 1)) required: false"
+        else
+          echo "Deb $((index + 1)) required: true"
+        fi
+        echo "Deb $((index + 1)) path: ${RELEASE_DEB_PATHS[$index]}"
+        echo "Deb $((index + 1)) package: ${RELEASE_DEB_PACKAGES[$index]}"
+        echo "Deb $((index + 1)) version: ${RELEASE_DEB_VERSIONS[$index]}"
+        echo "Deb $((index + 1)) architecture: ${RELEASE_DEB_ARCHITECTURES[$index]}"
+        echo "Deb $((index + 1)) size: ${RELEASE_DEB_SIZES[$index]}"
+        echo "Deb $((index + 1)) SHA256: ${RELEASE_DEB_SHA256S[$index]}"
+        index=$((index + 1))
+      done
+      echo "Build completed: true"
+      } | run_bound_kernel_tree_helper --copy-sha256-to-fd 11 \
+        --max-input-bytes 4194304
+    )" || ! split_stream_fingerprint "$manifest_fingerprint" >/dev/null; then
+      echo "Could not write the held schema-v2 release build manifest." >&2
+      exit 1
+    fi
+
+    first_publication_state="$(
+      held_release_output_state "$work_dir" "$WORK_DIR_IDENTITY" true \
+        "$deb_list_fingerprint" "$manifest_fingerprint" \
+        "$publication_fixture_hook"
+    )" || {
+      echo "Could not seal the held release outputs." >&2
+      exit 1
+    }
+    verify_release_support_stable || exit 1
+    verify_kernel_baseline_control_state || exit 1
+    verify_kernel_tree_validator_sink || exit 1
+    final_publication_state="$(
+      held_release_output_state "$work_dir" "$WORK_DIR_IDENTITY" false \
+        "$deb_list_fingerprint" "$manifest_fingerprint" \
+        "$publication_fixture_hook"
+    )" || {
+      echo "Release output mapping changed before completion." >&2
+      exit 1
+    }
+    if [ "$final_publication_state" != "$first_publication_state" ]; then
+      echo "Held release output bytes changed during final validation." >&2
+      exit 1
+    fi
+
+    # At this point both exact descriptors, their final names, the pinned work
+    # root, and support provenance have been revalidated. Treat later terminal
+    # signals as arriving after the publication commit boundary.
+    trap '' HUP INT TERM
+    publication_committed=true
+    exec 11>&-
+    manifest_output_open=false
+    exec 10>&-
+    deb_output_open=false
+    exec 6<&-
+    work_output_root_open=false
+    trap - EXIT
+    echo "Wrote completed schema-v2 release build manifest: $work_dir/sp11-kernel-build-manifest.txt"
+  )
 }
 
 build_kernel() {
@@ -2655,6 +3932,8 @@ if [ "$INSTALL_DEPS" = "true" ]; then
   install_dependencies
 fi
 
+initialize_kernel_tree_validator_sink || exit 1
+
 if [ "$PREPARE_ONLY" != "true" ]; then
   check_free_space
 fi
@@ -2669,6 +3948,7 @@ verify_and_export_build_identity
 echo "Using source tree: $source_dir"
 assert_release_package_output_pristine
 apply_patches
+preflight_release_patched_tree_symlinks
 install_source_build_dependencies
 capture_patched_tree_identity
 if [ "$RELEASE_BUILD" != "true" ]; then

@@ -15,11 +15,14 @@ import lzma
 import os
 import re
 import secrets
+import selectors
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -74,6 +77,10 @@ MAX_PRIVATE_ENTRIES = 20000
 MAX_APT_DECODED_BYTES = 4 * 1024 * 1024 * 1024
 MAX_TOOL_BYTES = 128 * 1024 * 1024
 MAX_TOOL_DEPENDENCY_OUTPUT = 1024 * 1024
+EXTERNAL_DECODER_STDERR_MAX = 1024 * 1024
+EXTERNAL_DECODER_TOTAL_TIMEOUT_SECONDS = 300.0
+EXTERNAL_DECODER_IDLE_TIMEOUT_SECONDS = 30.0
+EXTERNAL_DECODER_STOP_TIMEOUT_SECONDS = 5.0
 OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~-]*\Z")
@@ -90,6 +97,26 @@ class ValidationError(Exception):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValidationError(message)
+
+
+def establish_child_wait_authority() -> None:
+    """Reset an inherited ignored SIGCHLD before any owned subprocess."""
+
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, ValueError) as exc:
+        raise ValidationError("child-wait authority could not be established") from exc
+    require(
+        signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
+        "child-wait authority is not the default SIGCHLD disposition",
+    )
+
+
+def require_child_wait_authority() -> None:
+    require(
+        signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
+        "child-wait authority changed before subprocess acquisition",
+    )
 
 
 def stable_metadata(value: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -2003,6 +2030,7 @@ def copy_open_descriptor(
 
 
 def darwin_dylib_dependencies(descriptor: int) -> tuple[str, ...]:
+    require_child_wait_authority()
     try:
         result = subprocess.run(
             ["/usr/bin/otool", "-L", f"/dev/fd/{descriptor}"],
@@ -2221,6 +2249,7 @@ def run_git(
     binary: bool = False,
     cwd_descriptor: int | None = None,
 ) -> bytes | str:
+    require_child_wait_authority()
     executable = trusted_git_executable()
     try:
         process_options: dict[str, object] = {}
@@ -2910,82 +2939,303 @@ def zstd_command(program: BoundTool | None) -> list[str]:
     return zstd_arguments(program.relative)
 
 
-@contextlib.contextmanager
-def bounded_zstd_stream(source: BinaryIO, program: BoundTool | None) -> Iterator[BinaryIO]:
-    try:
-        command = zstd_command(program)
-        process_options: dict[str, object] = {}
-        environment = trusted_process_environment()
-        if program is not None:
-            private_tool_launch_barrier(program)
-            process_options.update(
-                pass_fds=(program.root_descriptor,),
-                preexec_fn=descriptor_cwd_preexec(program.root_descriptor),
+def run_owned_decoder(
+    command: list[str],
+    *,
+    label: str,
+    output_maximum: int,
+    retain_output: bool,
+    environment: dict[str, str],
+    pass_fds: tuple[int, ...] = (),
+    child_setup: Callable[[], None] | None = None,
+    input_source: BinaryIO | None = None,
+    input_descriptor: int | None = None,
+) -> tuple[bytes | None, int, str]:
+    """Run one decoder with bounded streams and exact signal-safe ownership."""
+
+    require_child_wait_authority()
+    require(
+        0 <= output_maximum <= MAX_APT_DECODED_BYTES,
+        f"{label} has an invalid output limit",
+    )
+    require(
+        not (input_source is not None and input_descriptor is not None),
+        f"{label} has ambiguous input authority",
+    )
+    process: subprocess.Popen[bytes] | None = None
+    selector: selectors.BaseSelector | None = None
+    returncode: int | None = None
+    failure: BaseException | None = None
+    interrupted_signal: int | None = None
+    output_size = 0
+    output_digest = hashlib.sha256()
+    output = bytearray() if retain_output else None
+    diagnostics_size = 0
+    release_signals = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+    original_handlers = {
+        release_signal: signal.getsignal(release_signal)
+        for release_signal in release_signals
+    }
+
+    def interrupted(number: int, _frame: object) -> None:
+        nonlocal interrupted_signal
+        interrupted_signal = number
+        signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+        raise InterruptedError(f"{label} interrupted by signal {number}")
+
+    def check_interrupted() -> None:
+        if interrupted_signal is not None:
+            raise InterruptedError(
+                f"{label} interrupted by signal {interrupted_signal}"
             )
-            environment = bound_tool_environment(program)
+
+    def close_streams() -> None:
+        assert process is not None
+        for stream in (process.stdin, process.stdout, process.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except BaseException:
+                pass
+
+    def stop_and_wait() -> None:
+        assert process is not None
+        close_streams()
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            process.wait(timeout=EXTERNAL_DECODER_STOP_TIMEOUT_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        process.wait()
+
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+    try:
+        for release_signal in release_signals:
+            signal.signal(release_signal, interrupted)
+
+        def child_preexec() -> None:
+            if child_setup is not None:
+                child_setup()
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
         process = subprocess.Popen(
             command,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.PIPE
+            if input_source is not None
+            else input_descriptor
+            if input_descriptor is not None
+            else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             env=environment,
-            **process_options,
+            pass_fds=pass_fds,
+            close_fds=True,
+            start_new_session=True,
+            preexec_fn=child_preexec,
         )
-    except OSError as exc:
-        raise ValidationError("bounded zstd decoder could not start") from exc
-    assert process.stdin is not None
-    assert process.stdout is not None
-    feed_error: list[BaseException] = []
+        if (
+            process.stdout is None
+            or process.stderr is None
+            or (input_source is not None and process.stdin is None)
+        ):
+            raise OSError(f"{label} pipes are unavailable")
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        check_interrupted()
 
-    def feed() -> None:
-        try:
-            while True:
-                chunk = source.read(64 * 1024)
+        selector = selectors.DefaultSelector()
+        os.set_blocking(process.stdout.fileno(), False)
+        selector.register(process.stdout.fileno(), selectors.EVENT_READ, "stdout")
+        os.set_blocking(process.stderr.fileno(), False)
+        selector.register(process.stderr.fileno(), selectors.EVENT_READ, "stderr")
+        pending_input = memoryview(b"")
+        if input_source is not None:
+            assert process.stdin is not None
+            os.set_blocking(process.stdin.fileno(), False)
+            selector.register(process.stdin.fileno(), selectors.EVENT_WRITE, "stdin")
+
+        started = time.monotonic()
+        deadline = started + EXTERNAL_DECODER_TOTAL_TIMEOUT_SECONDS
+        last_progress = started
+        while selector.get_map():
+            check_interrupted()
+            now = time.monotonic()
+            remaining_total = deadline - now
+            remaining_progress = EXTERNAL_DECODER_IDLE_TIMEOUT_SECONDS - (
+                now - last_progress
+            )
+            if remaining_total <= 0 or remaining_progress <= 0:
+                raise TimeoutError(f"{label} exceeded its deadline")
+            events = selector.select(
+                min(1.0, remaining_total, remaining_progress)
+            )
+            check_interrupted()
+            if not events:
+                continue
+            for key, _mask in events:
+                if key.data == "stdin":
+                    assert input_source is not None and process.stdin is not None
+                    if not pending_input:
+                        chunk = input_source.read(64 * 1024)
+                        if not chunk:
+                            selector.unregister(key.fd)
+                            process.stdin.close()
+                            continue
+                        if not isinstance(chunk, bytes):
+                            raise OSError(f"{label} input returned non-byte data")
+                        pending_input = memoryview(chunk)
+                    try:
+                        written = os.write(key.fd, pending_input)
+                    except BlockingIOError:
+                        continue
+                    if written <= 0:
+                        raise OSError(f"{label} input write made no progress")
+                    pending_input = pending_input[written:]
+                    last_progress = time.monotonic()
+                    continue
+
+                maximum_read = 64 * 1024
+                if key.data == "stdout":
+                    maximum_read = min(
+                        maximum_read, output_maximum - output_size + 1
+                    )
+                try:
+                    chunk = os.read(key.fd, maximum_read)
+                except BlockingIOError:
+                    continue
                 if not chunk:
-                    break
-                process.stdin.write(chunk)
-        except BaseException as exc:
-            feed_error.append(exc)
-        finally:
-            try:
-                process.stdin.close()
-            except BaseException as exc:
-                feed_error.append(exc)
+                    selector.unregister(key.fd)
+                    continue
+                last_progress = time.monotonic()
+                if key.data == "stdout":
+                    output_size += len(chunk)
+                    if output_size > output_maximum:
+                        raise OSError(f"{label} output exceeded its limit")
+                    output_digest.update(chunk)
+                    if output is not None:
+                        output.extend(chunk)
+                else:
+                    # Tool diagnostics are non-authoritative.  Permit bounded
+                    # warnings, drain them independently, and never include
+                    # their untrusted bytes in an error or comparison result.
+                    diagnostics_size += len(chunk)
+                    if diagnostics_size > EXTERNAL_DECODER_STDERR_MAX:
+                        raise OSError(f"{label} diagnostics exceeded their limit")
+            check_interrupted()
 
-    feeder = threading.Thread(target=feed, name="sp11-raw-zstd-input", daemon=True)
-    feeder.start()
-    body_error: BaseException | None = None
-    try:
-        yield process.stdout
+        check_interrupted()
+        remaining = min(
+            deadline - time.monotonic(),
+            EXTERNAL_DECODER_IDLE_TIMEOUT_SECONDS
+            - (time.monotonic() - last_progress),
+        )
+        if remaining <= 0:
+            raise TimeoutError(f"{label} did not exit before its deadline")
+        # Popen.wait() may reap in waitpid() before it records returncode.
+        # Block terminal signals through both that internal transition and the
+        # caller's local registration; only then unmask and honor the latch.
+        wait_mask = signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+        try:
+            returncode = process.wait(timeout=remaining)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, wait_mask)
+        check_interrupted()
+        if returncode != 0:
+            raise OSError(f"{label} exited unsuccessfully")
     except BaseException as exc:
-        body_error = exc
-        raise
+        failure = exc
     finally:
-        process.stdout.close()
-        feeder.join(timeout=120)
-        if feeder.is_alive():
-            process.kill()
-            feeder.join()
-            process.wait()
-            if body_error is None:
-                raise ValidationError("bounded zstd input feeder did not terminate")
-            return_code = process.returncode
-        else:
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, release_signals)
+        except BaseException as exc:
+            if failure is None:
+                failure = exc
+        if selector is not None:
             try:
-                return_code = process.wait(timeout=120)
-            except subprocess.TimeoutExpired as exc:
-                process.kill()
-                process.wait()
-                if body_error is None:
-                    raise ValidationError("bounded zstd decoder did not terminate") from exc
-                return_code = process.returncode
-        if body_error is None and (feed_error or return_code != 0):
-            raise ValidationError("bounded zstd control decoding failed")
+                selector.close()
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
+        if process is not None:
+            # wait() records this before returning.  Adopt it across a signal
+            # between the CALL and local STORE; never kill by an already-reaped
+            # PID or process-group identifier.
+            if returncode is None and process.returncode is not None:
+                returncode = process.returncode
+            if returncode is None:
+                try:
+                    stop_and_wait()
+                except BaseException as exc:
+                    if failure is None:
+                        failure = exc
+            else:
+                close_streams()
+        for release_signal, original_handler in original_handlers.items():
+            try:
+                signal.signal(release_signal, original_handler)
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        except BaseException as exc:
+            if failure is None:
+                failure = exc
+
+    if failure is not None:
+        if isinstance(failure, ValidationError):
+            raise failure
+        raise ValidationError(f"{label} failed") from failure
+    return (
+        bytes(output) if output is not None else None,
+        output_size,
+        output_digest.hexdigest(),
+    )
+
+
+@contextlib.contextmanager
+def bounded_zstd_stream(
+    source: BinaryIO,
+    program: BoundTool | None,
+    maximum: int,
+) -> Iterator[BinaryIO]:
+    command = zstd_command(program)
+    environment = trusted_process_environment()
+    pass_fds: tuple[int, ...] = ()
+    child_setup: Callable[[], None] | None = None
+    if program is not None:
+        private_tool_launch_barrier(program)
+        pass_fds = (program.root_descriptor,)
+        child_setup = descriptor_cwd_preexec(program.root_descriptor)
+        environment = bound_tool_environment(program)
+    decoded, _size, _sha256 = run_owned_decoder(
+        command,
+        label="bounded zstd control decoder",
+        output_maximum=maximum,
+        retain_output=True,
+        environment=environment,
+        pass_fds=pass_fds,
+        child_setup=child_setup,
+        input_source=source,
+    )
+    assert decoded is not None
+    with io.BytesIO(decoded) as stream:
+        yield stream
 
 
 @contextlib.contextmanager
 def bounded_control_stream(
-    source: BinaryIO, member_name: str, zstd_program: BoundTool | None
+    source: BinaryIO,
+    member_name: str,
+    zstd_program: BoundTool | None,
+    maximum: int,
 ) -> Iterator[BinaryIO]:
     try:
         if member_name.endswith(".tar"):
@@ -2997,7 +3247,7 @@ def bounded_control_stream(
             with io.BufferedReader(BoundedXZReader(source)) as stream:
                 yield stream
         elif member_name.endswith(".tar.zst"):
-            with bounded_zstd_stream(source, zstd_program) as stream:
+            with bounded_zstd_stream(source, zstd_program, maximum) as stream:
                 yield stream
         else:
             raise ValidationError("Debian control archive uses unsupported compression")
@@ -3022,7 +3272,12 @@ def package_control_fields(
         )
         control_data: bytes | None = None
         seen: dict[str, str] = {}
-        with bounded_control_stream(source, member.name, zstd_program) as decompressed:
+        with bounded_control_stream(
+            source,
+            member.name,
+            zstd_program,
+            deb.MAX_CONTROL_TAR_BYTES,
+        ) as decompressed:
             limited = io.BufferedReader(
                 deb.LimitedReader(decompressed, deb.MAX_CONTROL_TAR_BYTES, "control archive")
             )
@@ -3107,7 +3362,15 @@ def bound_apt_list_identity(
     baseline: dict[str, str],
     support: SupportBinding,
     private_build: PrivateTree,
+    expected: tuple[int, str],
 ) -> tuple[int, str]:
+    expected_size, expected_sha256 = expected
+    require(
+        isinstance(expected_size, int)
+        and 0 <= expected_size <= MAX_APT_DECODED_BYTES
+        and bool(SHA256.fullmatch(expected_sha256)),
+        "signed APT index has an invalid decompressed identity",
+    )
     parent = -1
     record: FileRecord | None = None
     try:
@@ -3153,37 +3416,21 @@ def bound_apt_list_identity(
                 raise ValidationError("a bound APT list decoder is unavailable")
             verify_bound_tool(tool)
             private_tool_launch_barrier(tool)
-            try:
-                process = subprocess.Popen(
-                    command,
-                    stdin=standard_input,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    env=bound_tool_environment(tool),
-                    pass_fds=(tool.root_descriptor, descriptor),
-                    preexec_fn=descriptor_cwd_preexec(tool.root_descriptor),
-                )
-            except OSError as exc:
-                raise ValidationError("bound APT list decoder could not start") from exc
-            assert process.stdout is not None
-            digest = hashlib.sha256()
-            size = 0
-            try:
-                while True:
-                    chunk = process.stdout.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    require(size <= MAX_APT_DECODED_BYTES, "decoded APT list exceeds its limit")
-                    digest.update(chunk)
-                process.stdout.close()
-                return_code = process.wait(timeout=120)
-            except BaseException:
-                process.kill()
-                process.wait()
-                raise
-            require(return_code == 0, "bound APT list decoding failed")
-            result = (size, digest.hexdigest())
+            _output, size, decoded_sha256 = run_owned_decoder(
+                command,
+                label="bound APT list decoder",
+                output_maximum=expected_size,
+                retain_output=False,
+                environment=bound_tool_environment(tool),
+                pass_fds=(tool.root_descriptor, descriptor),
+                child_setup=descriptor_cwd_preexec(tool.root_descriptor),
+                input_descriptor=standard_input,
+            )
+            result = (size, decoded_sha256)
+        require(
+            result == expected,
+            "bound APT list decoder output differs from the signed index",
+        )
         require(
             stable_metadata(os.fstat(descriptor)) == stable_metadata(opened),
             "APT list decoder input descriptor changed while decoded",
@@ -3290,13 +3537,25 @@ def validate_retained_inputs(
         return dict(captured_baseline)
 
     module.read_baseline = read_bound_baseline
-    module.apt_list_identity = lambda path, values: bound_apt_list_identity(
-        path, values, support, build
-    )
+    def bound_expected_apt_list_identity(
+        path: Path,
+        values: dict[str, str],
+        expected: tuple[int, str],
+    ) -> tuple[int, str]:
+        identity = bound_apt_list_identity(
+            path, values, support, build, expected
+        )
+        require(
+            identity == expected,
+            "bound APT list decoder output differs from the signed index",
+        )
+        return identity
+
+    module.apt_list_identity = bound_expected_apt_list_identity
     build_path = build.path
     arguments = [
         str(support.snapshot_repo / "scripts/sp11-kernel-build-inputs.py"),
-        "validate",
+        "validate-release-snapshot",
         "--baseline",
         str(support.snapshot_baseline),
         "--baseline-sha256",
@@ -3785,6 +4044,7 @@ def compare_pair(
     build_a: Path,
     build_b: Path,
 ) -> Comparison:
+    require_child_wait_authority()
     support: SupportBinding | None = None
     opened_a: OpenBuild | None = None
     opened_b: OpenBuild | None = None
@@ -4226,6 +4486,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     result: Comparison | None = None
     try:
+        establish_child_wait_authority()
+        require(
+            sys.flags.isolated == 1,
+            "raw matched-pair validation requires isolated Python",
+        )
         args = parse_args(argv)
         result = compare_pair(
             args.baseline,
