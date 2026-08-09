@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! inherited_sigchld_disposition="$(trap -p SIGCHLD)"; then
+  printf '%s\n' 'Could not inspect the startup SIGCHLD disposition.' >&2
+  exit 2
+fi
+if [ -n "$inherited_sigchld_disposition" ]; then
+  printf '%s\n' \
+    'Wrapper requires the default SIGCHLD disposition at startup.' >&2
+  exit 2
+fi
+unset inherited_sigchld_disposition
+
 sanitize_git_environment() {
   local variable_name
 
@@ -899,6 +910,12 @@ release_signals = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
 # auto-reap before Popen records an authoritative status.  This embedded
 # supervisor is the first child owner in its process: reset once, then require
 # the disposition to remain exact at every producer acquisition.
+if (
+    os.environ.get("SP11_RELEASE_SUPERVISOR_FIXTURE_SIGCHLD_IGNORE") == "true"
+):
+    if os.environ.get("SP11_RELEASE_SUPERVISOR_FIXTURE_TIMEOUT") != "true":
+        raise SystemExit(1)
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 try:
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
 except (OSError, ValueError):
@@ -1287,6 +1304,12 @@ if (
 producer = None
 release_signals = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
 
+if (
+    os.environ.get("SP11_RELEASE_SUPERVISOR_FIXTURE_SIGCHLD_IGNORE") == "true"
+):
+    if os.environ.get("SP11_RELEASE_SUPERVISOR_FIXTURE_TIMEOUT") != "true":
+        raise SystemExit(1)
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 try:
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
 except (OSError, ValueError):

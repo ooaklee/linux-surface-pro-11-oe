@@ -75,6 +75,37 @@ regular_fingerprint() {
   printf '%s:%s\n' "$(cksum < "$path")" "$(node_metadata "$path")"
 }
 
+stable_directory_identity() {
+  local path="$1"
+
+  case "$(uname -s)" in
+    Darwin) stat -f '%d:%i:%Lp:%u:%g' "$path" ;;
+    Linux) stat -c '%d:%i:%a:%u:%g' -- "$path" ;;
+    *) die "unsupported fixture stat platform" ;;
+  esac
+}
+
+full_regular_state() {
+  local digest
+  local metadata
+  local path="$1"
+
+  case "$(uname -s)" in
+    Darwin)
+      metadata="$(stat -f \
+        '%HT:%d:%i:%Lp:%u:%g:%l:%z:%Fm:%Fc' "$path")"
+      ;;
+    Linux)
+      metadata="$(stat -c \
+        '%F:%d:%i:%a:%u:%g:%h:%s:%y:%z' -- "$path")"
+      ;;
+    *) die "unsupported fixture stat platform" ;;
+  esac
+  digest="$(shasum -a 256 "$path")"
+  digest="${digest%% *}"
+  printf '%s:%s\n' "$metadata" "$digest"
+}
+
 for tool in cmp git grep mktemp readlink shasum stat; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
@@ -187,13 +218,62 @@ fi
 test -f "$baseline"
 aba_control_root=""
 if [ "${MOCK_BASELINE_ROOT_ABA:-false}" = "true" ]; then
+  aba_full_regular_state() {
+    local aba_digest
+    local aba_metadata
+    local aba_path="$1"
+
+    case "${OSTYPE:-}" in
+      darwin*)
+        aba_metadata="$("$FIXTURE_REAL_STAT" -f \
+          '%HT:%d:%i:%Lp:%u:%g:%l:%z:%Fm:%Fc' "$aba_path")"
+        ;;
+      linux*)
+        aba_metadata="$("$FIXTURE_REAL_STAT" -c \
+          '%F:%d:%i:%a:%u:%g:%h:%s:%y:%z' -- "$aba_path")"
+        ;;
+      *) exit 71 ;;
+    esac
+    aba_digest="$("$FIXTURE_REAL_SHASUM" -a 256 "$aba_path")"
+    aba_digest="${aba_digest%% *}"
+    printf '%s:%s\n' "$aba_metadata" "$aba_digest"
+  }
+  aba_stable_directory_identity() {
+    case "${OSTYPE:-}" in
+      darwin*) "$FIXTURE_REAL_STAT" -f '%d:%i:%Lp:%u:%g' "$1" ;;
+      linux*) "$FIXTURE_REAL_STAT" -c '%d:%i:%a:%u:%g' -- "$1" ;;
+      *) exit 71 ;;
+    esac
+  }
+
   test -n "${MOCK_BASELINE_ABA_BACKUP:-}"
   aba_control_root="$(cat \
     "$MOCK_BASELINE_ABA_BACKUP/capture/control-root-path")"
+  test -d "$aba_control_root"
+  test ! -L "$aba_control_root"
+  test -f "$aba_control_root/kernel-baseline.env"
+  test ! -L "$aba_control_root/kernel-baseline.env"
+  test -f "$aba_control_root/validate-sp11-kernel-baseline.sh"
+  test ! -L "$aba_control_root/validate-sp11-kernel-baseline.sh"
+  aba_stable_directory_identity "$aba_control_root" \
+    > "$MOCK_BASELINE_ABA_BACKUP/pre-root-stable"
+  aba_full_regular_state "$aba_control_root/kernel-baseline.env" \
+    > "$MOCK_BASELINE_ABA_BACKUP/pre-baseline-state"
+  aba_full_regular_state \
+    "$aba_control_root/validate-sp11-kernel-baseline.sh" \
+    > "$MOCK_BASELINE_ABA_BACKUP/pre-validator-state"
   mv "$aba_control_root" "$MOCK_BASELINE_ABA_BACKUP/control-root"
   mkdir "$aba_control_root"
-  cp "$MOCK_BASELINE_ABA_BACKUP/control-root/kernel-baseline.env" \
-    "$aba_control_root/kernel-baseline.env"
+  aba_stable_directory_identity "$aba_control_root" \
+    > "$MOCK_BASELINE_ABA_BACKUP/substitute-root-stable"
+  printf '%s\n' 'if then' \
+    > "$aba_control_root/kernel-baseline.env"
+  if /bin/bash -n "$aba_control_root/kernel-baseline.env" \
+      >/dev/null 2>&1; then
+    exit 72
+  fi
+  "$FIXTURE_REAL_SHASUM" -a 256 "$aba_control_root/kernel-baseline.env" \
+    > "$MOCK_BASELINE_ABA_BACKUP/substitute-baseline-sha256"
 fi
 # shellcheck disable=SC1090
 . "$baseline"
@@ -623,6 +703,10 @@ os.execve(sys.argv[1], sys.argv[1:], os.environ)
 cat > "$mock_bin/docker" <<'EOF_DOCKER'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [ -n "${MOCK_DOCKER_ACTIVITY_MARKER:-}" ]; then
+  : > "$MOCK_DOCKER_ACTIVITY_MARKER"
+fi
 
 if [ -n "${MOCK_SCRIPT_BINDING_RESTORE_DIR:-}" ]; then
   test -n "${MOCK_SCRIPT_BINDING_RESTORE_NAME:-}"
@@ -1507,6 +1591,15 @@ fi
 [ "$(grep -Fc 'signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL' \
     "$wrapper")" -eq 4 ] ||
   die "release embedded child supervisors did not recheck wait authority at Popen"
+[ "$(grep -Fc 'SP11_RELEASE_SUPERVISOR_FIXTURE_SIGCHLD_IGNORE' \
+    "$wrapper")" -eq 2 ] ||
+  die "release embedded child supervisors lack exact inherited-ignore fixtures"
+[ "$(grep -Fc 'signal.signal(signal.SIGCHLD, signal.SIG_IGN)' \
+    "$wrapper")" -eq 2 ] ||
+  die "release embedded child supervisors lack exact ignored dispositions"
+grep -Fq 'Wrapper requires the default SIGCHLD disposition at startup.' \
+  "$wrapper" ||
+  die "release wrapper lacks an early inherited-SIGCHLD refusal"
 grep -Fq 'code = compile(payload_bytes, synthetic_name, "exec"' "$wrapper" ||
   die "release local programs were not compiled from verified committed bytes"
 for forbidden_local_program in \
@@ -1870,11 +1963,13 @@ for volume_supervisor_mode in hang stderr-flood signal; do
   fi
 done
 
-# The caller can enter through a parent that deliberately ignores SIGCHLD.
-# Both embedded Python child owners must replace that auto-reap disposition
-# before Popen and preserve a nonzero producer status even when stdout is an
-# otherwise exact, plausible result.  A separate live process proves failure
-# cleanup remains confined to the registered producer process group.
+# Linux preserves an ignored SIGCHLD disposition across exec. The outer Bash
+# wrapper cannot safely restore it before Git or another child-owning tool, so
+# it must refuse before any producer or private release state is created.
+# Embedded Python owners separately exercise their own reset immediately before
+# Popen and preserve nonzero producer status despite otherwise plausible stdout.
+# A separate live process proves failure cleanup remains confined to the
+# registered producer process group.
 sigchld_victim_marker="$temporary_root/sigchld-unrelated-victim-signalled"
 (
   trap ': > "$sigchld_victim_marker"; exit 143' HUP INT TERM
@@ -1883,6 +1978,64 @@ sigchld_victim_marker="$temporary_root/sigchld-unrelated-victim-signalled"
   done
 ) &
 sigchld_victim_pid=$!
+
+if [ "$(uname -s)" = Linux ]; then
+  sigchld_entry_root="$temporary_root/release-inherited-sigchld-entry"
+  sigchld_entry_state="$sigchld_entry_root/state"
+  sigchld_entry_work="$support_dir/build/release-inherited-sigchld-entry/work"
+  sigchld_entry_log="$sigchld_entry_root/wrapper.log"
+  mkdir -p "$sigchld_entry_state" "$sigchld_entry_work/artifacts"
+  secure_release_work_root "$sigchld_entry_work"
+  sigchld_entry_private_count="$(wc -l < \
+    "$retained_private_root_log" | tr -d '[:space:]')"
+  sigchld_entry_volume_count="$(find "$mock_release_volume_root" \
+    -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d '[:space:]')"
+  sigchld_entry_container_count="$(wc -l < \
+    "$MOCK_CONTAINER_AUDIT_ROOT/created-order" | tr -d '[:space:]')"
+  sigchld_entry_status=0
+  MOCK_OCI_NONZERO_MODE=true \
+      MOCK_OCI_SUPERVISOR_STATE="$sigchld_entry_state" \
+      MOCK_OCI_INDEX="$release_oci_index" \
+      PATH="$mock_bin:/usr/bin:/bin" \
+      run_with_ignored_sigchld "$wrapper" \
+        --work-dir "$sigchld_entry_work" \
+        "${decoder_args[@]}" > "$sigchld_entry_log" 2>&1 ||
+    sigchld_entry_status=$?
+  [ "$sigchld_entry_status" -eq 2 ] ||
+    die "inherited-SIGCHLD entry refusal did not return status 2"
+  [ ! -e "$sigchld_entry_state/producer-pid" ] ||
+    die "inherited-SIGCHLD entry refusal reached the OCI producer"
+  [ "$(wc -l < "$sigchld_entry_log" | tr -d '[:space:]')" -eq 1 ] ||
+    die "inherited-SIGCHLD entry refusal emitted an ambiguous diagnostic"
+  grep -Fxq \
+    'Wrapper requires the default SIGCHLD disposition at startup.' \
+    "$sigchld_entry_log" ||
+    die "inherited-SIGCHLD entry refusal was not exact and explicit"
+  [ "$(wc -l < "$retained_private_root_log" | tr -d '[:space:]')" \
+    -eq "$sigchld_entry_private_count" ] ||
+    die "inherited-SIGCHLD entry refusal created private release state"
+  [ "$(find "$mock_release_volume_root" -mindepth 1 -maxdepth 1 \
+      -type d -print | wc -l | tr -d '[:space:]')" \
+    -eq "$sigchld_entry_volume_count" ] ||
+    die "inherited-SIGCHLD entry refusal created a release-state volume"
+  [ "$(wc -l < "$MOCK_CONTAINER_AUDIT_ROOT/created-order" | \
+      tr -d '[:space:]')" -eq "$sigchld_entry_container_count" ] ||
+    die "inherited-SIGCHLD entry refusal reached container creation"
+  [ -z "$(find "$sigchld_entry_work" -mindepth 1 -maxdepth 1 \
+      ! -name artifacts -print -quit)" ] &&
+    [ -z "$(find "$sigchld_entry_work/artifacts" -mindepth 1 \
+      -maxdepth 1 -print -quit)" ] ||
+    die "inherited-SIGCHLD entry refusal wrote release work outputs"
+  if ! kill -0 "$sigchld_victim_pid" 2>/dev/null ||
+     [ -e "$sigchld_victim_marker" ]; then
+    die "inherited-SIGCHLD entry refusal signalled an unrelated process"
+  fi
+  if grep -Fq \
+      'Imported verified retained kernel release evidence and final assets.' \
+      "$sigchld_entry_log"; then
+    die "inherited-SIGCHLD entry refusal printed terminal success"
+  fi
+fi
 
 sigchld_oci_root="$temporary_root/release-oci-inherited-sigchld-ignore"
 sigchld_oci_state="$sigchld_oci_root/state"
@@ -1896,11 +2049,13 @@ sigchld_oci_volume_count="$(find "$mock_release_volume_root" \
   -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d '[:space:]')"
 sigchld_oci_container_count="$(wc -l < \
   "$MOCK_CONTAINER_AUDIT_ROOT/created-order" | tr -d '[:space:]')"
-if MOCK_OCI_NONZERO_MODE=true \
+if SP11_RELEASE_SUPERVISOR_FIXTURE_TIMEOUT=true \
+    SP11_RELEASE_SUPERVISOR_FIXTURE_SIGCHLD_IGNORE=true \
+    MOCK_OCI_NONZERO_MODE=true \
     MOCK_OCI_SUPERVISOR_STATE="$sigchld_oci_state" \
     MOCK_OCI_INDEX="$release_oci_index" \
     PATH="$mock_bin:/usr/bin:/bin" \
-    run_with_ignored_sigchld "$wrapper" \
+    "$wrapper" \
       --work-dir "$sigchld_oci_work" \
       "${decoder_args[@]}" > "$sigchld_oci_log" 2>&1; then
   die "release OCI supervisor accepted nonzero under inherited SIGCHLD ignore"
@@ -1950,11 +2105,13 @@ sigchld_volume_count="$(find "$mock_release_volume_root" \
   -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d '[:space:]')"
 sigchld_volume_container_count="$(wc -l < \
   "$MOCK_CONTAINER_AUDIT_ROOT/created-order" | tr -d '[:space:]')"
-if MOCK_OCI_INDEX="$release_oci_index" \
+if SP11_RELEASE_SUPERVISOR_FIXTURE_TIMEOUT=true \
+    SP11_RELEASE_SUPERVISOR_FIXTURE_SIGCHLD_IGNORE=true \
+    MOCK_OCI_INDEX="$release_oci_index" \
     MOCK_VOLUME_NONZERO_MODE=true \
     MOCK_VOLUME_SUPERVISOR_STATE="$sigchld_volume_state" \
     PATH="$mock_bin:/usr/bin:/bin" \
-    run_with_ignored_sigchld "$wrapper" \
+    "$wrapper" \
       --work-dir "$sigchld_volume_work" \
       "${decoder_args[@]}" > "$sigchld_volume_log" 2>&1; then
   die "release volume supervisor accepted nonzero under inherited SIGCHLD ignore"
@@ -2143,26 +2300,44 @@ baseline_aba_work="$support_dir/build/baseline-root-aba/work"
 mkdir -p "$baseline_aba_work"
 secure_release_work_root "$baseline_aba_work"
 baseline_aba_capture="$baseline_aba_backup/capture"
+baseline_aba_docker_marker="$baseline_aba_backup/docker-invoked"
+baseline_aba_log="$temporary_root/baseline-root-aba.log"
+baseline_aba_victim="$baseline_aba_backup/unrelated-victim"
 mkdir -p "$baseline_aba_backup" "$baseline_aba_capture"
-if ! MOCK_BASELINE_ROOT_ABA=true \
+# Concurrent same-credential A->B->A mutation is outside the release-controller
+# custody boundary.  After exact restoration, refresh may accept the held A or
+# conservatively fail a contemporaneous authority check; neither history
+# detection nor availability is promised, and no third outcome is valid.
+printf 'baseline ABA unrelated victim must remain unchanged\n' \
+  > "$baseline_aba_victim"
+baseline_aba_victim_state="$(full_regular_state "$baseline_aba_victim")"
+baseline_aba_volume_count="$(find "$mock_release_volume_root" \
+  -mindepth 1 -maxdepth 1 -type d -print | wc -l | tr -d '[:space:]')"
+baseline_aba_container_count="$(wc -l < \
+  "$MOCK_CONTAINER_AUDIT_ROOT/created-order" | tr -d '[:space:]')"
+baseline_aba_status=0
+MOCK_BASELINE_ROOT_ABA=true \
     MOCK_BASELINE_ABA_BACKUP="$baseline_aba_backup" \
+    MOCK_DOCKER_ACTIVITY_MARKER="$baseline_aba_docker_marker" \
     CAPTURE_ATTACK_MODE=none \
     CAPTURE_ATTACK_MARKER="$baseline_aba_capture/unused-marker" \
     CAPTURE_ATTACK_STATE="$baseline_aba_capture" \
     PATH="$capture_attack_bin:$mock_bin:/usr/bin:/bin" "$wrapper" \
       --work-dir "$baseline_aba_work" \
       "${decoder_args[@]}" \
-      --dry-run > "$temporary_root/baseline-root-aba.log" 2>&1; then
-  cat "$temporary_root/baseline-root-aba.log" >&2
-  die "held baseline authority failed across an irrelevant name A->B->A"
-fi
+      --dry-run > "$baseline_aba_log" 2>&1 ||
+  baseline_aba_status=$?
+case "$baseline_aba_status" in
+  0|1) ;;
+  *)
+    cat "$baseline_aba_log" >&2
+    die "baseline A->B->A produced an unsupported outcome"
+    ;;
+esac
 [ -f "$baseline_aba_backup/completed" ] || {
-  cat "$temporary_root/baseline-root-aba.log" >&2
+  cat "$baseline_aba_log" >&2
   die "baseline validator did not complete its control-root A->B->A fixture"
 }
-[ -f "$baseline_aba_work/docker-build-args.txt" ] &&
-  grep -Fxq -- '--release-build' "$baseline_aba_work/docker-build-args.txt" ||
-  die "baseline control-root A->B->A displaced held authority bytes"
 preserved_baseline_control="$(cat "$baseline_aba_capture/control-root-path")"
 case "$preserved_baseline_control" in
   /tmp/sp11-kernel-baseline.*|/private/tmp/sp11-kernel-baseline.*) ;;
@@ -2170,6 +2345,118 @@ case "$preserved_baseline_control" in
 esac
 [ -d "$preserved_baseline_control" ] && [ ! -L "$preserved_baseline_control" ] ||
   die "preserved baseline-root hostile fixture is no longer a real directory"
+baseline_aba_pre_stable="$(cat "$baseline_aba_backup/pre-root-stable")"
+baseline_aba_post_stable="$(stable_directory_identity \
+  "$preserved_baseline_control")"
+[ "$baseline_aba_post_stable" = "$baseline_aba_pre_stable" ] ||
+  die "baseline A->B->A did not restore the original root identity"
+[ "$baseline_aba_post_stable" != \
+    "$(cat "$baseline_aba_backup/substitute-root-stable")" ] ||
+  die "baseline A->B->A retained the substitute root"
+baseline_aba_pre_baseline_state="$(cat \
+  "$baseline_aba_backup/pre-baseline-state")"
+baseline_aba_pre_validator_state="$(cat \
+  "$baseline_aba_backup/pre-validator-state")"
+[ "$(full_regular_state \
+      "$preserved_baseline_control/kernel-baseline.env")" = \
+    "$baseline_aba_pre_baseline_state" ] ||
+  die "baseline A->B->A changed the restored baseline member state"
+[ "$(full_regular_state \
+      "$preserved_baseline_control/validate-sp11-kernel-baseline.sh")" = \
+    "$baseline_aba_pre_validator_state" ] ||
+  die "baseline A->B->A changed the restored validator member state"
+baseline_aba_substitute_sha="$(cat \
+  "$baseline_aba_backup/substitute-baseline-sha256")"
+baseline_aba_substitute_sha="${baseline_aba_substitute_sha%% *}"
+[ "$baseline_aba_substitute_sha" != \
+    "${baseline_aba_pre_baseline_state##*:}" ] ||
+  die "baseline A->B->A substitute was not byte-distinct from held A"
+[ ! -e "$baseline_aba_backup/control-root" ] &&
+  [ ! -L "$baseline_aba_backup/control-root" ] ||
+  die "baseline A->B->A retained its backup alias"
+[ "$(full_regular_state "$baseline_aba_victim")" = \
+    "$baseline_aba_victim_state" ] ||
+  die "baseline A->B->A changed its unrelated victim"
+[ ! -e "$baseline_aba_docker_marker" ] ||
+  die "baseline A->B->A reached Docker"
+[ "$(find "$mock_release_volume_root" -mindepth 1 -maxdepth 1 \
+    -type d -print | wc -l | tr -d '[:space:]')" \
+  -eq "$baseline_aba_volume_count" ] ||
+  die "baseline A->B->A changed release-volume state"
+[ "$(wc -l < "$MOCK_CONTAINER_AUDIT_ROOT/created-order" | \
+    tr -d '[:space:]')" -eq "$baseline_aba_container_count" ] ||
+  die "baseline A->B->A reached container creation"
+baseline_aba_control_members="$(find "$preserved_baseline_control" \
+  -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+baseline_aba_work_members="$(find "$baseline_aba_work" \
+  -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)"
+if [ "$baseline_aba_status" -eq 0 ]; then
+  baseline_aba_expected_control_members="$(printf '%s\n%s\n%s\n%s\n' \
+    "$preserved_baseline_control/docker-build-args.txt" \
+    "$preserved_baseline_control/docker-build-inside.sh" \
+    "$preserved_baseline_control/kernel-baseline.env" \
+    "$preserved_baseline_control/validate-sp11-kernel-baseline.sh" | \
+    LC_ALL=C sort)"
+  [ "$baseline_aba_control_members" = \
+    "$baseline_aba_expected_control_members" ] ||
+    die "successful baseline A->B->A changed final control membership"
+  baseline_aba_expected_work_members="$(printf '%s\n%s\n%s\n' \
+    "$baseline_aba_work/artifacts" \
+    "$baseline_aba_work/docker-build-args.txt" \
+    "$baseline_aba_work/docker-build-inside.sh" | LC_ALL=C sort)"
+  [ "$baseline_aba_work_members" = "$baseline_aba_expected_work_members" ] ||
+    die "successful baseline A->B->A changed dry-run work membership"
+  [ -d "$baseline_aba_work/artifacts" ] &&
+    [ ! -L "$baseline_aba_work/artifacts" ] &&
+    [ -z "$(find "$baseline_aba_work/artifacts" -mindepth 1 \
+      -maxdepth 1 -print -quit)" ] ||
+    die "successful baseline A->B->A changed the empty artifact root"
+  for baseline_aba_control in \
+    docker-build-args.txt docker-build-inside.sh; do
+    [ -f "$baseline_aba_work/$baseline_aba_control" ] &&
+      [ ! -L "$baseline_aba_work/$baseline_aba_control" ] &&
+      cmp "$baseline_aba_work/$baseline_aba_control" \
+        "$release_dry_work/$baseline_aba_control" &&
+      cmp "$baseline_aba_work/$baseline_aba_control" \
+        "$preserved_baseline_control/$baseline_aba_control" ||
+      die "successful baseline A->B->A changed $baseline_aba_control bytes"
+  done
+  grep -Fq 'Docker command:' "$baseline_aba_log" ||
+    die "successful baseline A->B->A omitted normal dry-run output"
+else
+  baseline_aba_expected_control_members="$(printf '%s\n%s\n' \
+    "$preserved_baseline_control/kernel-baseline.env" \
+    "$preserved_baseline_control/validate-sp11-kernel-baseline.sh" | \
+    LC_ALL=C sort)"
+  [ "$baseline_aba_control_members" = \
+    "$baseline_aba_expected_control_members" ] ||
+    die "refused baseline A->B->A changed initial control membership"
+  [ "$baseline_aba_work_members" = "$baseline_aba_work/artifacts" ] &&
+    [ -d "$baseline_aba_work/artifacts" ] &&
+    [ ! -L "$baseline_aba_work/artifacts" ] &&
+    [ -z "$(find "$baseline_aba_work/artifacts" -mindepth 1 \
+      -maxdepth 1 -print -quit)" ] ||
+    die "refused baseline A->B->A published work output"
+  [ "$(wc -l < "$baseline_aba_log" | tr -d '[:space:]')" -eq 1 ] &&
+    grep -Fxq \
+      'Held committed-baseline authority changed during validation.' \
+      "$baseline_aba_log" ||
+    die "refused baseline A->B->A omitted its exact generic diagnostic"
+  if grep -Fq 'Traceback (most recent call last):' "$baseline_aba_log" ||
+     grep -Fq 'MOCK_BASELINE_ROOT_ABA' "$baseline_aba_log" ||
+     grep -Fq 'MOCK_BASELINE_ABA_BACKUP' "$baseline_aba_log" ||
+     grep -Fq 'CAPTURE_ATTACK_' "$baseline_aba_log" ||
+     grep -Fq "$temporary_root" "$baseline_aba_log" ||
+     grep -Fq "$preserved_baseline_control" "$baseline_aba_log"; then
+    die "refused baseline A->B->A exposed private state"
+  fi
+  if grep -Fq 'Docker command:' "$baseline_aba_log" ||
+     grep -Fq \
+       'Imported verified retained kernel release evidence and final assets.' \
+       "$baseline_aba_log"; then
+    die "refused baseline A->B->A printed terminal success"
+  fi
+fi
 mv "$preserved_baseline_control" "$baseline_aba_backup/preserved-private"
 
 for capture_attack_mode in replace-args symlink-entrypoint; do
