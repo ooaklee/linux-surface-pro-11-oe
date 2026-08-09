@@ -97,6 +97,9 @@ EXPECTED_RELEASE_OCI_INDEX_SHA256=""
 RELEASE_STATE_VOLUME_NAME=""
 RELEASE_STATE_VOLUME_TOKEN=""
 DOCKER_BIN=""
+RELEASE_PYTHON_DIRECTORY="/usr/bin"
+RELEASE_PYTHON_DIRECTORY_FD=55
+RELEASE_PYTHON_DIRECTORY_FD_OPEN="false"
 RELEASE_PYTHON_BIN="/usr/bin/python3"
 RELEASE_PYTHON_IDENTITY=""
 RELEASE_OCI_VALIDATOR_IDENTITY=""
@@ -225,79 +228,184 @@ require_tool() {
 }
 
 release_python_identity_record() {
+  [ "$RELEASE_PYTHON_DIRECTORY_FD_OPEN" = "true" ] &&
+    [ "$RELEASE_PYTHON_DIRECTORY" = "/usr/bin" ] &&
+    [ "$RELEASE_PYTHON_BIN" = "/usr/bin/python3" ] || return 1
   "$RELEASE_PYTHON_BIN" -I -c '
+# SP11_RELEASE_PYTHON_AUTHORITY_PROGRAM_BEGIN
 import os
+import re
 import stat
 import sys
 
-path = sys.argv[1]
-if sys.flags.isolated != 1 or path != "/usr/bin/python3":
-    raise SystemExit(1)
-descriptor = os.open(
-    path,
-    os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
-)
+target_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+directory_descriptor = -1
+target_descriptor = -1
+
+def identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
 try:
-    before = os.fstat(descriptor)
-    mapped = os.lstat(path)
+    if len(sys.argv) != 5:
+        raise RuntimeError
+    directory_descriptor = int(sys.argv[1], 10)
+    directory_path = sys.argv[2]
+    alias_name = sys.argv[3]
+    expected_uid_text = sys.argv[4]
     if (
-        not stat.S_ISREG(before.st_mode)
-        or not stat.S_ISREG(mapped.st_mode)
-        or before.st_uid != 0
-        or stat.S_IMODE(before.st_mode) & 0o022
-        or not stat.S_IMODE(before.st_mode) & 0o111
-        or before.st_size <= 0
-        or before.st_size > 256 * 1024 * 1024
-        or (before.st_dev, before.st_ino) != (mapped.st_dev, mapped.st_ino)
+        sys.flags.isolated != 1
+        or not expected_uid_text.isascii()
+        or not expected_uid_text.isdecimal()
+        or str(int(expected_uid_text, 10)) != expected_uid_text
+        or not os.path.isabs(directory_path)
+        or os.path.normpath(directory_path) != directory_path
+        or alias_name != "python3"
     ):
-        raise SystemExit(1)
-    if not os.pread(descriptor, 1, 0):
-        raise SystemExit(1)
-    after = os.fstat(descriptor)
-    remapped = os.lstat(path)
-    fields = (
-        before.st_dev,
-        before.st_ino,
-        stat.S_IMODE(before.st_mode),
-        before.st_size,
-        before.st_mtime_ns,
-        before.st_ctime_ns,
-        before.st_nlink,
-        before.st_uid,
-        before.st_gid,
+        raise RuntimeError
+    expected_uid = int(expected_uid_text, 10)
+    directory_before = os.fstat(directory_descriptor)
+    directory_mapped_before = os.stat(directory_path, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(directory_before.st_mode)
+        or not stat.S_ISDIR(directory_mapped_before.st_mode)
+        or directory_before.st_uid != expected_uid
+        or stat.S_IMODE(directory_before.st_mode) & 0o022
+        or identity(directory_before) != identity(directory_mapped_before)
+    ):
+        raise RuntimeError
+    alias_before = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    if stat.S_ISREG(alias_before.st_mode):
+        alias_kind = "regular"
+        target_name = alias_name
+    elif stat.S_ISLNK(alias_before.st_mode):
+        if alias_before.st_uid != expected_uid or alias_before.st_nlink != 1:
+            raise RuntimeError
+        alias_kind = "symlink"
+        target_name = os.readlink(alias_name, dir_fd=directory_descriptor)
+        if not re.fullmatch(r"python3\.[0-9]+", target_name):
+            raise RuntimeError
+    else:
+        raise RuntimeError
+    target_mapped_before = os.stat(
+        target_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
     )
     if (
-        fields
-        != (
-            after.st_dev,
-            after.st_ino,
-            stat.S_IMODE(after.st_mode),
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-            after.st_nlink,
-            after.st_uid,
-            after.st_gid,
-        )
-        or (after.st_dev, after.st_ino) != (remapped.st_dev, remapped.st_ino)
+        not stat.S_ISREG(target_mapped_before.st_mode)
+        or target_mapped_before.st_uid != expected_uid
+        or stat.S_IMODE(target_mapped_before.st_mode) & 0o022
+        or not stat.S_IMODE(target_mapped_before.st_mode) & 0o111
+        or target_mapped_before.st_size <= 0
+        or target_mapped_before.st_size > 256 * 1024 * 1024
     ):
-        raise SystemExit(1)
-    print(*fields)
+        raise RuntimeError
+    target_descriptor = os.open(
+        target_name,
+        target_flags,
+        dir_fd=directory_descriptor,
+    )
+    target_before = os.fstat(target_descriptor)
+    alias_followed_before = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=True,
+    )
+    if (
+        identity(target_before) != identity(target_mapped_before)
+        or identity(alias_followed_before) != identity(target_before)
+        or not os.pread(target_descriptor, 1, 0)
+    ):
+        raise RuntimeError
+
+    # SP11_RELEASE_PYTHON_AUTHORITY_AFTER_INITIAL_STATE
+
+    directory_after = os.fstat(directory_descriptor)
+    directory_mapped_after = os.stat(directory_path, follow_symlinks=False)
+    alias_after = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    target_mapped_after = os.stat(
+        target_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    alias_followed_after = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=True,
+    )
+    target_after = os.fstat(target_descriptor)
+    if (
+        identity(directory_after) != identity(directory_before)
+        or identity(directory_mapped_after) != identity(directory_before)
+        or identity(alias_after) != identity(alias_before)
+        or identity(target_mapped_after) != identity(target_before)
+        or identity(alias_followed_after) != identity(target_before)
+        or identity(target_after) != identity(target_before)
+        or (
+            alias_kind == "symlink"
+            and os.readlink(alias_name, dir_fd=directory_descriptor) != target_name
+        )
+    ):
+        raise RuntimeError
+    print(
+        *identity(directory_before),
+        alias_kind,
+        *identity(alias_before),
+        target_name,
+        *identity(target_before),
+    )
+except BaseException:
+    raise SystemExit(1)
 finally:
-    os.close(descriptor)
-' "$RELEASE_PYTHON_BIN"
+    if target_descriptor >= 0:
+        try:
+            os.close(target_descriptor)
+        except OSError:
+            pass
+# SP11_RELEASE_PYTHON_AUTHORITY_PROGRAM_END
+' "$RELEASE_PYTHON_DIRECTORY_FD" "$RELEASE_PYTHON_DIRECTORY" python3 0
 }
 
 capture_release_python_authority() {
   local release_python_fields=()
 
   [ "$RELEASE_BUILD" = "true" ] || return 0
+  if ! exec 55<"$RELEASE_PYTHON_DIRECTORY"; then
+    echo "Release mode could not hold the trusted /usr/bin toolchain directory." >&2
+    return 1
+  fi
+  RELEASE_PYTHON_DIRECTORY_FD_OPEN="true"
   RELEASE_PYTHON_IDENTITY="$(release_python_identity_record)" || {
-    echo "Release mode requires the trusted real /usr/bin/python3 toolchain authority." >&2
+    exec 55<&-
+    RELEASE_PYTHON_DIRECTORY_FD_OPEN="false"
+    echo "Release mode requires the trusted /usr/bin/python3 toolchain authority." >&2
     return 1
   }
   read -r -a release_python_fields <<< "$RELEASE_PYTHON_IDENTITY"
-  [ "${#release_python_fields[@]}" -eq 9 ] || return 1
+  if [ "${#release_python_fields[@]}" -ne 29 ]; then
+    exec 55<&-
+    RELEASE_PYTHON_DIRECTORY_FD_OPEN="false"
+    RELEASE_PYTHON_IDENTITY=""
+    return 1
+  fi
 }
 
 verify_release_python_authority() {
@@ -376,6 +484,10 @@ cleanup_payload_stage() {
 
 cleanup_held_release_roots() {
   # Closing an inherited directory handle cannot traverse a replaced name.
+  if [ "$RELEASE_PYTHON_DIRECTORY_FD_OPEN" = "true" ]; then
+    exec 55<&-
+    RELEASE_PYTHON_DIRECTORY_FD_OPEN="false"
+  fi
   if [ "$RELEASE_ARTIFACTS_FD_OPEN" = "true" ]; then
     exec 58<&-
     RELEASE_ARTIFACTS_FD_OPEN="false"

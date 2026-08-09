@@ -1202,6 +1202,178 @@ def assert_decompressed_empty_index_contract(temp_root: Path) -> None:
     assert "Traceback" not in result.stderr
 
 
+def assert_fixed_python_authority_contract(temp_root: Path) -> None:
+    module_name = "sp11_kernel_build_inputs_python_authority_fixture"
+    specification = importlib.util.spec_from_file_location(module_name, ENVELOPE)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+    fixture_root = Path(
+        tempfile.mkdtemp(prefix="sp11-python-authority.", dir=temp_root)
+    )
+    CREATED_FIXTURES.append(fixture_root)
+    saved_python = module.FIXED_PYTHON
+    saved_owner = module.FIXED_PYTHON_OWNER_UID
+    module.FIXED_PYTHON_OWNER_UID = os.geteuid()
+
+    def make_directory(label: str) -> Path:
+        directory = fixture_root / label / "bin"
+        directory.mkdir(parents=True, mode=0o755)
+        directory.chmod(0o755)
+        return directory
+
+    def write_target(path: Path, mode: int = 0o755) -> None:
+        path.write_bytes(b"fixture isolated Python executable\n")
+        path.chmod(mode)
+
+    def acquire(directory: Path) -> tuple[int, int, tuple[object, ...]]:
+        module.FIXED_PYTHON = str(directory / "python3")
+        return module._acquire_fixed_python_authority()
+
+    def expect_acquisition_refusal(directory: Path, expected: str) -> None:
+        try:
+            acquire(directory)
+        except SystemExit as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError("unsafe fixed-Python authority was accepted")
+
+    def expect_verification_refusal(
+        authority: tuple[int, int, tuple[object, ...]], expected: str
+    ) -> None:
+        directory_descriptor, target_descriptor, identity = authority
+        try:
+            module._verify_fixed_python_authority(
+                directory_descriptor,
+                target_descriptor,
+                identity,
+            )
+        except SystemExit as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError("drifted fixed-Python authority was accepted")
+        finally:
+            os.close(target_descriptor)
+            os.close(directory_descriptor)
+
+    try:
+        direct = make_directory("direct")
+        write_target(direct / "python3")
+        direct_authority = acquire(direct)
+        module._verify_fixed_python_authority(*direct_authority)
+        os.close(direct_authority[1])
+        os.close(direct_authority[0])
+
+        linked = make_directory("linked")
+        write_target(linked / "python3.12")
+        (linked / "python3").symlink_to("python3.12")
+        linked_authority = acquire(linked)
+        module._verify_fixed_python_authority(*linked_authority)
+        os.close(linked_authority[1])
+        os.close(linked_authority[0])
+
+        wrong_type = make_directory("wrong-type")
+        (wrong_type / "python3").mkdir()
+        expect_acquisition_refusal(wrong_type, "unsafe type")
+
+        special_type = make_directory("special-type")
+        os.mkfifo(special_type / "python3", 0o600)
+        expect_acquisition_refusal(special_type, "unsafe type")
+
+        unsafe_mode = make_directory("unsafe-mode")
+        write_target(unsafe_mode / "python3.12", 0o775)
+        (unsafe_mode / "python3").symlink_to("python3.12")
+        expect_acquisition_refusal(unsafe_mode, "unsafe identity or mode")
+
+        non_executable = make_directory("non-executable")
+        write_target(non_executable / "python3.12", 0o644)
+        (non_executable / "python3").symlink_to("python3.12")
+        expect_acquisition_refusal(non_executable, "unsafe identity or mode")
+
+        dangling = make_directory("dangling")
+        (dangling / "python3").symlink_to("python3.12")
+        expect_acquisition_refusal(dangling, "could not be acquired")
+
+        second_link = make_directory("second-link")
+        write_target(second_link / "python3.12-real")
+        (second_link / "python3.12").symlink_to("python3.12-real")
+        (second_link / "python3").symlink_to("python3.12")
+        expect_acquisition_refusal(second_link, "could not be acquired")
+
+        outside = make_directory("outside")
+        write_target(outside.parent / "python3.12")
+        (outside / "python3").symlink_to("../python3.12")
+        expect_acquisition_refusal(outside, "approved direct basename")
+
+        unsafe_parent = make_directory("unsafe-parent")
+        write_target(unsafe_parent / "python3")
+        unsafe_parent.chmod(0o777)
+        expect_acquisition_refusal(unsafe_parent, "directory has an unsafe")
+
+        wrong_owner = make_directory("wrong-owner")
+        write_target(wrong_owner / "python3")
+        module.FIXED_PYTHON_OWNER_UID = os.geteuid() + 1
+        expect_acquisition_refusal(wrong_owner, "directory has an unsafe")
+        module.FIXED_PYTHON_OWNER_UID = os.geteuid()
+
+        alias_drift = make_directory("alias-drift")
+        write_target(alias_drift / "python3.12")
+        write_target(alias_drift / "python3.13")
+        (alias_drift / "python3").symlink_to("python3.12")
+        alias_authority = acquire(alias_drift)
+        (alias_drift / "python3").unlink()
+        (alias_drift / "python3").symlink_to("python3.13")
+        expect_verification_refusal(alias_authority, "authority changed")
+
+        target_drift = make_directory("target-drift")
+        write_target(target_drift / "python3")
+        target_authority = acquire(target_drift)
+        (target_drift / "python3").rename(target_drift / "python3.saved")
+        write_target(target_drift / "python3")
+        expect_verification_refusal(target_authority, "authority changed")
+
+        inplace_drift = make_directory("inplace-drift")
+        write_target(inplace_drift / "python3")
+        inplace_authority = acquire(inplace_drift)
+        (inplace_drift / "python3").chmod(0o700)
+        expect_verification_refusal(inplace_authority, "authority changed")
+
+        parent_drift = make_directory("parent-drift")
+        write_target(parent_drift / "python3")
+        parent_authority = acquire(parent_drift)
+        held_parent = parent_drift.with_name("bin-held")
+        parent_drift.rename(held_parent)
+        parent_drift.mkdir(mode=0o755)
+        write_target(parent_drift / "python3")
+        expect_verification_refusal(parent_authority, "authority changed")
+
+        post_child_drift = make_directory("post-child-drift")
+        write_target(post_child_drift / "python3")
+        manifest = post_child_drift.parent / "manifest.txt"
+        manifest.write_text("fixture\n", encoding="utf-8")
+        module.FIXED_PYTHON = str(post_child_drift / "python3")
+        original_run = module.subprocess.run
+
+        def successful_drifting_child(*_args: object, **_kwargs: object) -> object:
+            (post_child_drift / "python3").chmod(0o700)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        module.subprocess.run = successful_drifting_child
+        module.establish_child_wait_authority()
+        try:
+            module.validate_exact_build_manifest(manifest, SUPPORT_HEAD)
+        except SystemExit as exc:
+            assert "fixed isolated Python authority changed" in str(exc)
+        else:
+            raise AssertionError("post-child interpreter drift did not override success")
+        finally:
+            module.subprocess.run = original_run
+    finally:
+        module.FIXED_PYTHON = saved_python
+        module.FIXED_PYTHON_OWNER_UID = saved_owner
+
+
 def assert_full_validator_signed_size_contract(temp_root: Path) -> None:
     specification = importlib.util.spec_from_file_location(
         "sp11_kernel_build_inputs_signed_size_fixture", ENVELOPE
@@ -2988,6 +3160,7 @@ def main() -> None:
         assert_bootstrap_authentication_failures(temp_root)
         assert_inrelease_empty_entry_contract(temp_root)
         assert_decompressed_empty_index_contract(temp_root)
+        assert_fixed_python_authority_contract(temp_root)
         assert_full_validator_signed_size_contract(temp_root)
         assert_full_validator_decoder_contract(temp_root)
         writer_fixture = bootstrap_and_finalize(temp_root)

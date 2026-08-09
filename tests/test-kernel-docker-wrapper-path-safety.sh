@@ -75,7 +75,7 @@ regular_fingerprint() {
   printf '%s:%s\n' "$(cksum < "$path")" "$(node_metadata "$path")"
 }
 
-for tool in git grep mktemp readlink shasum stat; do
+for tool in cmp git grep mktemp readlink shasum stat; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 
@@ -117,12 +117,26 @@ mkdir -p \
   "$mock_bin" \
   "$capture_attack_bin"
 cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" "$support_dir/scripts/"
+cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" "$support_dir/scripts/"
 cp "$repo_dir/scripts/emit-sp11-kernel-release-state.sh" "$support_dir/scripts/"
 cp "$repo_dir/scripts/sp11-kernel-build-inputs.py" "$support_dir/scripts/"
 cp "$repo_dir/scripts/sp11-kernel-release-state.py" "$support_dir/scripts/"
 cp "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
   "$support_dir/scripts/"
-chmod +x "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh"
+chmod +x \
+  "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+  "$support_dir/scripts/build-sp11-qcom-x1e-kernel.sh"
+cmp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" \
+  "$support_dir/scripts/build-sp11-qcom-x1e-kernel.sh" ||
+  die "fixture support did not retain the exact inner builder bytes"
+inner_builder_source_sha="$(
+  shasum -a 256 "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" | awk '{print $1}'
+)"
+inner_builder_fixture_sha="$(
+  shasum -a 256 "$support_dir/scripts/build-sp11-qcom-x1e-kernel.sh" | awk '{print $1}'
+)"
+[ "$inner_builder_fixture_sha" = "$inner_builder_source_sha" ] ||
+  die "fixture support inner builder digest differs from its source authority"
 sed 's#/usr/lib/apt/apt-helper#/sp11-fixture-missing-apt-helper#g' \
   "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
   > "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker-no-apt-helper.sh"
@@ -229,6 +243,356 @@ git -C "$support_dir" commit --quiet -m "Create Docker wrapper safety fixture"
 
 wrapper="$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh"
 no_apt_helper_wrapper="$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker-no-apt-helper.sh"
+
+# Exercise the exact embedded interpreter-authority program independently of
+# the host layout.  macOS supplies a direct regular /usr/bin/python3, while
+# Ubuntu supplies the reviewed one-hop python3 -> python3.N symlink; the two
+# positive cases and every hostile case must therefore be deterministic on
+# both hosts.
+/usr/bin/python3 -I - "$wrapper" \
+  "$support_dir/scripts/build-sp11-qcom-x1e-kernel.sh" \
+  "$temporary_root/python-authority" <<'PY_AUTHORITY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+wrapper = Path(sys.argv[1])
+inner_builder = Path(sys.argv[2])
+fixture_root = Path(sys.argv[3])
+source = wrapper.read_text(encoding="utf-8")
+begin = "# SP11_RELEASE_PYTHON_AUTHORITY_PROGRAM_BEGIN\n"
+end = "\n# SP11_RELEASE_PYTHON_AUTHORITY_PROGRAM_END"
+if source.count(begin) != 1 or source.count(end) != 1:
+    raise SystemExit("embedded Python-authority program markers are not exact")
+program = source.split(begin, 1)[1].split(end, 1)[0]
+injection_marker = "    # SP11_RELEASE_PYTHON_AUTHORITY_AFTER_INITIAL_STATE\n"
+if program.count(injection_marker) != 1:
+    raise SystemExit("embedded Python-authority drift marker is not exact")
+inner_source = inner_builder.read_text(encoding="utf-8")
+inner_begin = "# SP11_INNER_PYTHON_AUTHORITY_PROGRAM_BEGIN\n"
+inner_end = "\n# SP11_INNER_PYTHON_AUTHORITY_PROGRAM_END"
+if inner_source.count(inner_begin) != 1 or inner_source.count(inner_end) != 1:
+    raise SystemExit("inner Python-authority program markers are not exact")
+inner_program = inner_source.split(inner_begin, 1)[1].split(inner_end, 1)[0]
+inner_injection_marker = "    # SP11_INNER_PYTHON_AUTHORITY_AFTER_INITIAL_STATE\n"
+if inner_program.count(inner_injection_marker) != 1:
+    raise SystemExit("inner Python-authority drift marker is not exact")
+
+
+def new_case(name: str) -> Path:
+    path = fixture_root / name
+    path.mkdir(parents=True, mode=0o755)
+    return path
+
+
+def regular(path: Path, mode: int = 0o755) -> None:
+    path.write_bytes(b"fixture Python executable\n")
+    path.chmod(mode)
+
+
+def run_case(
+    directory: Path,
+    *,
+    expect: bool,
+    expected_uid=None,
+    injected: str = "",
+) -> subprocess.CompletedProcess[bytes]:
+    case_program = program
+    if injected:
+        case_program = case_program.replace(
+            injection_marker,
+            injection_marker + injected,
+            1,
+        )
+    descriptor = os.open(
+        directory,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        result = subprocess.run(
+            [
+                "/usr/bin/python3",
+                "-I",
+                "-c",
+                case_program,
+                str(descriptor),
+                str(directory),
+                "python3",
+                str(os.getuid() if expected_uid is None else expected_uid),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            pass_fds=(descriptor,),
+        )
+    finally:
+        os.close(descriptor)
+    if (result.returncode == 0) != expect:
+        raise AssertionError(
+            f"unexpected Python-authority result for {directory.name}: "
+            f"{result.returncode}, {result.stderr!r}"
+        )
+    if result.stderr:
+        raise AssertionError(
+            f"Python-authority case leaked a diagnostic: {result.stderr!r}"
+        )
+    return result
+
+
+def run_inner_case(
+    directory: Path,
+    *,
+    expect: bool,
+    expected_uid=None,
+    injected: str = "",
+) -> subprocess.CompletedProcess[bytes]:
+    case_program = inner_program
+    if injected:
+        case_program = case_program.replace(
+            inner_injection_marker,
+            inner_injection_marker + injected,
+            1,
+        )
+    saved_descriptor = -1
+    directory_descriptor = -1
+    execution_source = -1
+    try:
+        try:
+            saved_descriptor = os.dup(8)
+        except OSError:
+            pass
+        reservation = os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            os.dup2(reservation, 8, inheritable=True)
+        finally:
+            if reservation != 8:
+                os.close(reservation)
+        directory_descriptor = os.open(
+            directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        execution_source = os.open(
+            directory / "python3",
+            os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC,
+        )
+        os.dup2(execution_source, 8, inheritable=True)
+        result = subprocess.run(
+            [
+                "/usr/bin/python3",
+                "-I",
+                "-c",
+                case_program,
+                str(directory_descriptor),
+                str(directory),
+                "python3",
+                str(os.getuid() if expected_uid is None else expected_uid),
+                "8",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            pass_fds=(directory_descriptor, 8),
+        )
+    finally:
+        if execution_source >= 0:
+            os.close(execution_source)
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+        if saved_descriptor >= 0:
+            try:
+                os.dup2(saved_descriptor, 8, inheritable=True)
+            finally:
+                os.close(saved_descriptor)
+        else:
+            try:
+                os.close(8)
+            except OSError:
+                pass
+    if (result.returncode == 0) != expect:
+        raise AssertionError(
+            f"unexpected inner Python-authority result for {directory.name}: "
+            f"{result.returncode}, {result.stderr!r}"
+        )
+    if result.stderr:
+        raise AssertionError(
+            f"inner Python-authority case leaked a diagnostic: {result.stderr!r}"
+        )
+    return result
+
+
+direct = new_case("direct")
+regular(direct / "python3")
+direct_result = run_case(direct, expect=True)
+direct_fields = direct_result.stdout.decode("ascii").split()
+assert len(direct_fields) == 29 and direct_fields[9] == "regular"
+assert direct_fields[19] == "python3"
+inner_direct_result = run_inner_case(direct, expect=True)
+inner_direct_fields = inner_direct_result.stdout.decode("ascii").split()
+assert len(inner_direct_fields) == 29 and inner_direct_fields[9] == "regular"
+assert inner_direct_fields[19] == "python3"
+
+linked = new_case("linked")
+regular(linked / "python3.12")
+os.symlink("python3.12", linked / "python3")
+linked_result = run_case(linked, expect=True)
+linked_fields = linked_result.stdout.decode("ascii").split()
+assert len(linked_fields) == 29 and linked_fields[9] == "symlink"
+assert linked_fields[19] == "python3.12"
+inner_linked_result = run_inner_case(linked, expect=True)
+inner_linked_fields = inner_linked_result.stdout.decode("ascii").split()
+assert len(inner_linked_fields) == 29 and inner_linked_fields[9] == "symlink"
+assert inner_linked_fields[19] == "python3.12"
+
+special = new_case("special")
+os.mkfifo(special / "python3")
+run_case(special, expect=False)
+run_inner_case(special, expect=False)
+
+wrong_owner = new_case("wrong-owner")
+regular(wrong_owner / "python3")
+run_case(wrong_owner, expect=False, expected_uid=os.getuid() + 1)
+run_inner_case(wrong_owner, expect=False, expected_uid=os.getuid() + 1)
+
+unsafe_directory = new_case("unsafe-directory")
+regular(unsafe_directory / "python3")
+unsafe_directory.chmod(0o777)
+run_case(unsafe_directory, expect=False)
+run_inner_case(unsafe_directory, expect=False)
+
+unsafe_target = new_case("unsafe-target")
+regular(unsafe_target / "python3.12", 0o775)
+os.symlink("python3.12", unsafe_target / "python3")
+run_case(unsafe_target, expect=False)
+run_inner_case(unsafe_target, expect=False)
+
+absolute_link = new_case("absolute-link")
+regular(absolute_link / "python3.12")
+os.symlink(str(absolute_link / "python3.12"), absolute_link / "python3")
+run_case(absolute_link, expect=False)
+run_inner_case(absolute_link, expect=False)
+
+link_chain = new_case("link-chain")
+regular(link_chain / "python3.13")
+os.symlink("python3.13", link_chain / "python3.12")
+os.symlink("python3.12", link_chain / "python3")
+run_case(link_chain, expect=False)
+run_inner_case(link_chain, expect=False)
+
+alias_drift = new_case("alias-drift")
+regular(alias_drift / "python3.12")
+regular(alias_drift / "python3.13")
+os.symlink("python3.12", alias_drift / "python3")
+alias_drift_trigger = fixture_root / "alias-drift-trigger"
+run_case(
+    alias_drift,
+    expect=False,
+    injected=(
+        "    os.unlink(alias_name, dir_fd=directory_descriptor)\n"
+        "    os.symlink(\"python3.13\", alias_name, "
+        "dir_fd=directory_descriptor)\n"
+        f"    with open({str(alias_drift_trigger)!r}, \"xb\") as fixture_marker:\n"
+        "        fixture_marker.write(b\"triggered\\n\")\n"
+    ),
+)
+assert alias_drift_trigger.read_bytes() == b"triggered\n"
+
+target_drift = new_case("target-drift")
+regular(target_drift / "python3.12")
+os.symlink("python3.12", target_drift / "python3")
+target_drift_trigger = fixture_root / "target-drift-trigger"
+run_case(
+    target_drift,
+    expect=False,
+    injected=(
+        "    fixture_writer = os.open(\n"
+        "        target_name,\n"
+        "        os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,\n"
+        "        dir_fd=directory_descriptor,\n"
+        "    )\n"
+        "    try:\n"
+        "        os.lseek(fixture_writer, 0, os.SEEK_END)\n"
+        "        os.write(fixture_writer, b\"drift\")\n"
+        "        os.fsync(fixture_writer)\n"
+        "    finally:\n"
+        "        os.close(fixture_writer)\n"
+        f"    with open({str(target_drift_trigger)!r}, \"xb\") as fixture_marker:\n"
+        "        fixture_marker.write(b\"triggered\\n\")\n"
+    ),
+)
+assert target_drift_trigger.read_bytes() == b"triggered\n"
+
+directory_drift = new_case("directory-drift")
+regular(directory_drift / "python3")
+directory_drift_trigger = fixture_root / "directory-drift-trigger"
+run_case(
+    directory_drift,
+    expect=False,
+    injected=(
+        "    os.chmod(directory_path, 0o700)\n"
+        f"    with open({str(directory_drift_trigger)!r}, \"xb\") as fixture_marker:\n"
+        "        fixture_marker.write(b\"triggered\\n\")\n"
+    ),
+)
+assert directory_drift_trigger.read_bytes() == b"triggered\n"
+
+inner_alias_drift = new_case("inner-alias-drift")
+regular(inner_alias_drift / "python3.12")
+regular(inner_alias_drift / "python3.13")
+os.symlink("python3.12", inner_alias_drift / "python3")
+inner_alias_trigger = fixture_root / "inner-alias-drift-trigger"
+run_inner_case(
+    inner_alias_drift,
+    expect=False,
+    injected=(
+        "    os.unlink(alias_name, dir_fd=directory_descriptor)\n"
+        "    os.symlink(\"python3.13\", alias_name, "
+        "dir_fd=directory_descriptor)\n"
+        f"    with open({str(inner_alias_trigger)!r}, \"xb\") as fixture_marker:\n"
+        "        fixture_marker.write(b\"triggered\\n\")\n"
+    ),
+)
+assert inner_alias_trigger.read_bytes() == b"triggered\n"
+
+inner_target_drift = new_case("inner-target-drift")
+regular(inner_target_drift / "python3.12")
+os.symlink("python3.12", inner_target_drift / "python3")
+inner_target_trigger = fixture_root / "inner-target-drift-trigger"
+run_inner_case(
+    inner_target_drift,
+    expect=False,
+    injected=(
+        "    fixture_writer = os.open(\n"
+        "        target_name,\n"
+        "        os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,\n"
+        "        dir_fd=directory_descriptor,\n"
+        "    )\n"
+        "    try:\n"
+        "        os.lseek(fixture_writer, 0, os.SEEK_END)\n"
+        "        os.write(fixture_writer, b\"drift\")\n"
+        "        os.fsync(fixture_writer)\n"
+        "    finally:\n"
+        "        os.close(fixture_writer)\n"
+        f"    with open({str(inner_target_trigger)!r}, \"xb\") as fixture_marker:\n"
+        "        fixture_marker.write(b\"triggered\\n\")\n"
+    ),
+)
+assert inner_target_trigger.read_bytes() == b"triggered\n"
+
+inner_directory_drift = new_case("inner-directory-drift")
+regular(inner_directory_drift / "python3")
+inner_directory_trigger = fixture_root / "inner-directory-drift-trigger"
+run_inner_case(
+    inner_directory_drift,
+    expect=False,
+    injected=(
+        "    os.chmod(directory_path, 0o700)\n"
+        f"    with open({str(inner_directory_trigger)!r}, \"xb\") as fixture_marker:\n"
+        "        fixture_marker.write(b\"triggered\\n\")\n"
+    ),
+)
+assert inner_directory_trigger.read_bytes() == b"triggered\n"
+PY_AUTHORITY
 
 run_dry() {
   local work_dir="$1"

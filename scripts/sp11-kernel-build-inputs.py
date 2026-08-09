@@ -72,6 +72,8 @@ VALIDATOR_ARGV_SCHEMA = "sp11-kernel-build-inputs-validate-argv-v1"
 BUILD_INPUTS_HELPER_PATH = "scripts/sp11-kernel-build-inputs.py"
 MANIFEST_VALIDATOR_PATH = "scripts/validate-sp11-image-release-manifests.py"
 FIXED_PYTHON = "/usr/bin/python3"
+FIXED_PYTHON_OWNER_UID = 0
+FIXED_PYTHON_TARGET_RE = re.compile(r"python3\.[0-9]+\Z")
 MAX_VALIDATED_INPUTS = 4096
 MAX_VALIDATED_PATH_BYTES = 1024
 MAX_VALIDATED_AGGREGATE_PATH_BYTES = 4 * 1024 * 1024
@@ -507,6 +509,186 @@ def regular_file(path: Path, label: str) -> os.stat_result:
     if not stat.S_ISREG(metadata.st_mode):
         fail(f"{label} must be a regular non-symlinked file")
     return metadata
+
+
+def _python_metadata_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
+
+def _fixed_python_entry(
+    directory_descriptor: int,
+    alias_name: str,
+) -> tuple[str, os.stat_result, str, str]:
+    try:
+        alias_metadata = os.stat(
+            alias_name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+    except OSError:
+        fail("fixed isolated Python alias is unavailable")
+    if stat.S_ISREG(alias_metadata.st_mode):
+        return "regular", alias_metadata, "-", alias_name
+    if not stat.S_ISLNK(alias_metadata.st_mode):
+        fail("fixed isolated Python alias has an unsafe type")
+    if alias_metadata.st_uid != FIXED_PYTHON_OWNER_UID:
+        fail("fixed isolated Python alias has an unsafe owner")
+    try:
+        link_target = os.readlink(alias_name, dir_fd=directory_descriptor)
+    except OSError:
+        fail("fixed isolated Python alias could not be read")
+    if not FIXED_PYTHON_TARGET_RE.fullmatch(link_target):
+        fail("fixed isolated Python alias target is not an approved direct basename")
+    return "symlink", alias_metadata, link_target, link_target
+
+
+def _verify_fixed_python_authority(
+    directory_descriptor: int,
+    target_descriptor: int,
+    expected: tuple[object, ...],
+) -> None:
+    (
+        expected_directory,
+        expected_kind,
+        expected_alias,
+        expected_link_target,
+        expected_target_name,
+        expected_target,
+    ) = expected
+    fixed_path = Path(FIXED_PYTHON)
+    if (
+        not fixed_path.is_absolute()
+        or fixed_path.name != "python3"
+        or str(fixed_path.parent) != os.path.dirname(FIXED_PYTHON)
+    ):
+        fail("fixed isolated Python path is not canonical")
+    try:
+        directory_metadata = os.fstat(directory_descriptor)
+        mapped_directory = os.lstat(fixed_path.parent)
+        kind, alias_metadata, link_target, target_name = _fixed_python_entry(
+            directory_descriptor,
+            fixed_path.name,
+        )
+        target_metadata = os.fstat(target_descriptor)
+        mapped_target = os.stat(
+            target_name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        followed_target = os.stat(fixed_path, follow_symlinks=True)
+    except OSError:
+        fail("fixed isolated Python authority could not be rechecked")
+    if (
+        _python_metadata_identity(directory_metadata) != expected_directory
+        or _python_metadata_identity(mapped_directory) != expected_directory
+        or kind != expected_kind
+        or _python_metadata_identity(alias_metadata) != expected_alias
+        or link_target != expected_link_target
+        or target_name != expected_target_name
+        or _python_metadata_identity(target_metadata) != expected_target
+        or _python_metadata_identity(mapped_target) != expected_target
+        or _python_metadata_identity(followed_target) != expected_target
+    ):
+        fail("fixed isolated Python authority changed")
+
+
+def _acquire_fixed_python_authority() -> tuple[int, int, tuple[object, ...]]:
+    fixed_path = Path(FIXED_PYTHON)
+    if (
+        not fixed_path.is_absolute()
+        or fixed_path.name != "python3"
+        or str(fixed_path.parent) != os.path.dirname(FIXED_PYTHON)
+    ):
+        fail("fixed isolated Python path is not canonical")
+    required_flags = ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK", "O_DIRECTORY")
+    if any(not hasattr(os, name) for name in required_flags):
+        fail("fixed isolated Python validation requires no-follow descriptors")
+    directory_descriptor = -1
+    target_descriptor = -1
+    try:
+        directory_descriptor = os.open(
+            fixed_path.parent,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | os.O_NOFOLLOW
+            | os.O_NONBLOCK
+            | os.O_DIRECTORY,
+        )
+        directory_metadata = os.fstat(directory_descriptor)
+        mapped_directory = os.lstat(fixed_path.parent)
+        if (
+            not stat.S_ISDIR(directory_metadata.st_mode)
+            or directory_metadata.st_uid != FIXED_PYTHON_OWNER_UID
+            or stat.S_IMODE(directory_metadata.st_mode) & 0o022
+            or _python_metadata_identity(directory_metadata)
+            != _python_metadata_identity(mapped_directory)
+        ):
+            fail("fixed isolated Python directory has an unsafe identity or mode")
+        kind, alias_metadata, link_target, target_name = _fixed_python_entry(
+            directory_descriptor,
+            fixed_path.name,
+        )
+        target_descriptor = os.open(
+            target_name,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory_descriptor,
+        )
+        target_metadata = os.fstat(target_descriptor)
+        mapped_target = os.stat(
+            target_name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        followed_target = os.stat(fixed_path, follow_symlinks=True)
+        if (
+            not stat.S_ISREG(target_metadata.st_mode)
+            or target_metadata.st_uid != FIXED_PYTHON_OWNER_UID
+            or stat.S_IMODE(target_metadata.st_mode) & 0o111 == 0
+            or stat.S_IMODE(target_metadata.st_mode) & 0o022
+            or not 0 < target_metadata.st_size <= 256 * 1024 * 1024
+            or _python_metadata_identity(target_metadata)
+            != _python_metadata_identity(mapped_target)
+            or _python_metadata_identity(target_metadata)
+            != _python_metadata_identity(followed_target)
+            or not os.pread(target_descriptor, 1, 0)
+        ):
+            fail("fixed isolated Python target has an unsafe identity or mode")
+        expected = (
+            _python_metadata_identity(directory_metadata),
+            kind,
+            _python_metadata_identity(alias_metadata),
+            link_target,
+            target_name,
+            _python_metadata_identity(target_metadata),
+        )
+        _verify_fixed_python_authority(
+            directory_descriptor,
+            target_descriptor,
+            expected,
+        )
+        return directory_descriptor, target_descriptor, expected
+    except OSError:
+        if target_descriptor >= 0:
+            os.close(target_descriptor)
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+        fail("fixed isolated Python authority could not be acquired")
+    except BaseException:
+        if target_descriptor >= 0:
+            os.close(target_descriptor)
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+        raise
 
 
 def parse_unique_lines(path: Path) -> dict[str, str]:
@@ -2473,17 +2655,9 @@ def validate_exact_build_manifest(path: Path, support_head: str) -> None:
     repo_dir = Path(__file__).resolve().parent.parent
     validator = repo_dir / "scripts/validate-sp11-image-release-manifests.py"
     regular_file(validator, "exact schema-v2 build-manifest validator")
-    try:
-        python_metadata = os.lstat(FIXED_PYTHON)
-    except OSError as exc:
-        fail(f"fixed isolated Python is unavailable: {exc}")
-    if (
-        not stat.S_ISREG(python_metadata.st_mode)
-        or python_metadata.st_uid != 0
-        or stat.S_IMODE(python_metadata.st_mode) & 0o111 == 0
-        or stat.S_IMODE(python_metadata.st_mode) & 0o022 != 0
-    ):
-        fail("fixed isolated Python has an unsafe identity or mode")
+    directory_descriptor, target_descriptor, python_authority = (
+        _acquire_fixed_python_authority()
+    )
     command = (
         FIXED_PYTHON,
         "-I",
@@ -2496,14 +2670,28 @@ def validate_exact_build_manifest(path: Path, support_head: str) -> None:
         "--kernel-build-manifest",
         str(path),
     )
-    require_child_wait_authority()
-    completed = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
+    try:
+        _verify_fixed_python_authority(
+            directory_descriptor,
+            target_descriptor,
+            python_authority,
+        )
+        require_child_wait_authority()
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        _verify_fixed_python_authority(
+            directory_descriptor,
+            target_descriptor,
+            python_authority,
+        )
+    finally:
+        os.close(target_descriptor)
+        os.close(directory_descriptor)
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         fail(

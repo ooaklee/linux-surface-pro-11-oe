@@ -77,8 +77,10 @@ KERNEL_BASELINE_OID=""
 KERNEL_BASELINE_VALIDATOR_OID=""
 KERNEL_TREE_SYMLINK_VALIDATOR_OID=""
 KERNEL_TREE_VALIDATOR_SINK_OPEN="false"
+KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
 KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
 KERNEL_TREE_VALIDATOR_PYTHON=""
+KERNEL_TREE_VALIDATOR_PYTHON_IDENTITY=""
 KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
 KERNEL_TREE_VALIDATOR_HELPER=""
 KERNEL_TREE_VALIDATOR_HELPER_SHA256=""
@@ -232,6 +234,11 @@ cleanup_private_release_state() {
     exec 8<&-
     KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
   fi
+  if [ "$KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN" = "true" ]; then
+    exec 5<&-
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
+  fi
+  KERNEL_TREE_VALIDATOR_PYTHON_IDENTITY=""
   if [ "$KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN" = "true" ]; then
     exec 7<&-
     KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
@@ -2224,13 +2231,182 @@ find_rules_file() {
   fi
 }
 
+kernel_tree_validator_python_identity_record() {
+  [ "$KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN" = "true" ] &&
+    [ "$KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN" = "true" ] &&
+    [ -n "$KERNEL_TREE_VALIDATOR_PYTHON" ] || return 1
+  "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+# SP11_INNER_PYTHON_AUTHORITY_PROGRAM_BEGIN
+import os
+import re
+import stat
+import sys
+
+target_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+target_descriptor = -1
+
+def identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
+try:
+    if len(sys.argv) != 6:
+        raise RuntimeError
+    directory_descriptor = int(sys.argv[1], 10)
+    directory_path = sys.argv[2]
+    alias_name = sys.argv[3]
+    expected_uid_text = sys.argv[4]
+    execution_descriptor = int(sys.argv[5], 10)
+    if (
+        sys.flags.isolated != 1
+        or not expected_uid_text.isascii()
+        or not expected_uid_text.isdecimal()
+        or str(int(expected_uid_text, 10)) != expected_uid_text
+        or not os.path.isabs(directory_path)
+        or os.path.normpath(directory_path) != directory_path
+        or alias_name != "python3"
+        or execution_descriptor != 8
+    ):
+        raise RuntimeError
+    expected_uid = int(expected_uid_text, 10)
+    directory_before = os.fstat(directory_descriptor)
+    directory_mapped_before = os.stat(directory_path, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(directory_before.st_mode)
+        or not stat.S_ISDIR(directory_mapped_before.st_mode)
+        or directory_before.st_uid != expected_uid
+        or stat.S_IMODE(directory_before.st_mode) & 0o022
+        or identity(directory_before) != identity(directory_mapped_before)
+    ):
+        raise RuntimeError
+    alias_before = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    if stat.S_ISREG(alias_before.st_mode):
+        alias_kind = "regular"
+        target_name = alias_name
+    elif stat.S_ISLNK(alias_before.st_mode):
+        if alias_before.st_uid != expected_uid or alias_before.st_nlink != 1:
+            raise RuntimeError
+        alias_kind = "symlink"
+        target_name = os.readlink(alias_name, dir_fd=directory_descriptor)
+        if not re.fullmatch(r"python3\.[0-9]+", target_name):
+            raise RuntimeError
+    else:
+        raise RuntimeError
+    target_mapped_before = os.stat(
+        target_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISREG(target_mapped_before.st_mode)
+        or target_mapped_before.st_uid != expected_uid
+        or stat.S_IMODE(target_mapped_before.st_mode) & 0o022
+        or not stat.S_IMODE(target_mapped_before.st_mode) & 0o111
+        or target_mapped_before.st_size <= 0
+        or target_mapped_before.st_size > 256 * 1024 * 1024
+    ):
+        raise RuntimeError
+    target_descriptor = os.open(
+        target_name,
+        target_flags,
+        dir_fd=directory_descriptor,
+    )
+    target_before = os.fstat(target_descriptor)
+    execution_before = os.fstat(execution_descriptor)
+    alias_followed_before = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=True,
+    )
+    if (
+        identity(target_before) != identity(target_mapped_before)
+        or identity(alias_followed_before) != identity(target_before)
+        or identity(execution_before) != identity(target_before)
+        or not os.pread(target_descriptor, 1, 0)
+        or not os.pread(execution_descriptor, 1, 0)
+    ):
+        raise RuntimeError
+
+    # SP11_INNER_PYTHON_AUTHORITY_AFTER_INITIAL_STATE
+
+    directory_after = os.fstat(directory_descriptor)
+    directory_mapped_after = os.stat(directory_path, follow_symlinks=False)
+    alias_after = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    target_mapped_after = os.stat(
+        target_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    alias_followed_after = os.stat(
+        alias_name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=True,
+    )
+    target_after = os.fstat(target_descriptor)
+    execution_after = os.fstat(execution_descriptor)
+    if (
+        identity(directory_after) != identity(directory_before)
+        or identity(directory_mapped_after) != identity(directory_before)
+        or identity(alias_after) != identity(alias_before)
+        or identity(target_mapped_after) != identity(target_before)
+        or identity(alias_followed_after) != identity(target_before)
+        or identity(target_after) != identity(target_before)
+        or identity(execution_after) != identity(target_before)
+        or (
+            alias_kind == "symlink"
+            and os.readlink(alias_name, dir_fd=directory_descriptor) != target_name
+        )
+    ):
+        raise RuntimeError
+    print(
+        *identity(directory_before),
+        alias_kind,
+        *identity(alias_before),
+        target_name,
+        *identity(target_before),
+    )
+except BaseException:
+    raise SystemExit(1)
+finally:
+    if target_descriptor >= 0:
+        try:
+            os.close(target_descriptor)
+        except OSError:
+            pass
+# SP11_INNER_PYTHON_AUTHORITY_PROGRAM_END
+' 5 /usr/bin python3 0 8
+}
+
 verify_kernel_tree_validator_sink() {
+  local current_python_identity
+
   [ "$KERNEL_TREE_VALIDATOR_SINK_OPEN" = "true" ] &&
+    [ "$KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN" = "true" ] &&
     [ "$KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN" = "true" ] &&
     [ "$KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN" = "true" ] &&
     [ -n "$KERNEL_TREE_VALIDATOR_PYTHON" ] &&
+    [ -n "$KERNEL_TREE_VALIDATOR_PYTHON_IDENTITY" ] &&
     [ -n "$KERNEL_TREE_VALIDATOR_HELPER" ] &&
     [[ "$KERNEL_TREE_VALIDATOR_HELPER_SHA256" =~ ^[0-9a-f]{64}$ ]] || return 1
+  current_python_identity="$(kernel_tree_validator_python_identity_record)" || return 1
+  [ "$current_python_identity" = "$KERNEL_TREE_VALIDATOR_PYTHON_IDENTITY" ] || return 1
   "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
 import hashlib
 import os
@@ -2308,13 +2484,22 @@ if (os.major(metadata.st_rdev), os.minor(metadata.st_rdev)) != expected:
 }
 
 initialize_kernel_tree_validator_sink() {
+  local python_identity_fields=()
+
   [ "$RELEASE_BUILD" = "true" ] || return 0
   # Trust boundary: the digest-pinned OCI/APT /usr, loader, libraries, Python
   # stdlib, and Git toolchain are materialized build authority. FD 8 prevents a
   # later executable-name swap; it is not a defense against arbitrary root
   # mutation of that trusted toolchain. Darwin is fixture-only because macOS
   # does not permit executing /dev/fd/8.
+  if ! exec 5</usr/bin; then
+    echo "Could not hold the trusted kernel-tree validator interpreter directory." >&2
+    return 1
+  fi
+  KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="true"
   if ! exec 8</usr/bin/python3; then
+    exec 5<&-
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
     echo "Could not pin the trusted kernel-tree validator interpreter." >&2
     return 1
   fi
@@ -2330,30 +2515,58 @@ initialize_kernel_tree_validator_sink() {
       ;;
     *)
       exec 8<&-
+      exec 5<&-
       KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+      KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
       echo "Kernel-tree validation requires Linux or the Darwin fixture boundary." >&2
       return 1
       ;;
   esac
+  KERNEL_TREE_VALIDATOR_PYTHON_IDENTITY="$(
+    kernel_tree_validator_python_identity_record
+  )" || {
+    exec 8<&-
+    exec 5<&-
+    KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
+    echo "Trusted kernel-tree validator interpreter authority is unavailable." >&2
+    return 1
+  }
+  read -r -a python_identity_fields <<< "$KERNEL_TREE_VALIDATOR_PYTHON_IDENTITY"
+  if [ "${#python_identity_fields[@]}" -ne 29 ]; then
+    exec 8<&-
+    exec 5<&-
+    KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_IDENTITY=""
+    echo "Trusted kernel-tree validator interpreter identity is not exact." >&2
+    return 1
+  fi
   KERNEL_TREE_VALIDATOR_HELPER_SHA256="${KERNEL_TREE_SYMLINK_VALIDATOR_STATE##*:}"
   if ! [[ "$KERNEL_TREE_VALIDATOR_HELPER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
     exec 8<&-
+    exec 5<&-
     KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
     echo "Exact kernel-tree validator helper digest is unavailable." >&2
     return 1
   fi
   if [ "$KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN" != "true" ] ||
      ! verify_kernel_baseline_control_state; then
     exec 8<&-
+    exec 5<&-
     KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
     echo "Exact kernel-tree validator helper binding is unavailable." >&2
     return 1
   fi
   if ! exec 9>/dev/null; then
     exec 7<&-
     exec 8<&-
+    exec 5<&-
     KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
     KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
     echo "Could not open the trusted kernel-tree validator output sink." >&2
     return 1
   fi
@@ -2362,9 +2575,11 @@ initialize_kernel_tree_validator_sink() {
     exec 9>&-
     exec 7<&-
     exec 8<&-
+    exec 5<&-
     KERNEL_TREE_VALIDATOR_SINK_OPEN="false"
     KERNEL_TREE_VALIDATOR_HELPER_FD_OPEN="false"
     KERNEL_TREE_VALIDATOR_PYTHON_FD_OPEN="false"
+    KERNEL_TREE_VALIDATOR_PYTHON_DIRECTORY_FD_OPEN="false"
     echo "Kernel-tree validator output sink does not match the trusted platform." >&2
     return 1
   fi
