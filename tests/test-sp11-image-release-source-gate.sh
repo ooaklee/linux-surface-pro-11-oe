@@ -1267,7 +1267,7 @@ printf '%s\n' "$legacy_binding_output" |
 for tag_mode in local-wrong remote-wrong; do
   tag_suffix="${tag_mode%-wrong}-tag"
   set +e
-  tag_output="$(PATH="$mock_bin:$PATH" FIXTURE_REAL_GIT="$real_git" \
+  tag_output="$(env "${validator_env[@]}" FIXTURE_REAL_GIT="$real_git" \
     FIXTURE_CLEAN_GIT=true FIXTURE_TAG_MODE="$tag_mode" \
     "$helper" "${common_publish_args[@]}" \
       --release-name "$release_prefix-$tag_suffix" 2>&1)"
@@ -1279,7 +1279,7 @@ for tag_mode in local-wrong remote-wrong; do
   [ ! -e "$repo_dir/build/release/$release_prefix-$tag_suffix" ]
 done
 set +e
-missing_origin_output="$(PATH="$mock_bin:$PATH" FIXTURE_CLEAN_GIT=true \
+missing_origin_output="$(env "${validator_env[@]}" FIXTURE_CLEAN_GIT=true \
   FIXTURE_TAG_MODE=missing-origin \
   "$helper" "${common_publish_args[@]}" \
     --release-name "$release_prefix-missing-origin" 2>&1)"
@@ -1296,8 +1296,8 @@ private_path_prefix="/""Users/example"
 printf '%s\n' '# Source fixture' "Private path: $private_path_prefix/release-input" \
   > "$private_notice_dir/SOURCE-NOTICE.md"
 set +e
-fixture_binding_env=(
-  "PATH=$mock_bin:$PATH"
+fixture_binding_env=("${validator_env[@]}")
+fixture_binding_env+=(
   "FIXTURE_DIRTY_GIT=true"
   "FIXTURE_ACTUAL_PAYLOAD=$bound_actual_payload"
   "FIXTURE_SUPPORT_MANIFEST=$support_manifest"
@@ -1856,8 +1856,18 @@ printf '%s\n' "$private_notice_output" |
   grep -F 'public content contains a private-path' >/dev/null
 
 private_manifest_dir="$(clone_kernel_candidate private-manifest)"
-printf '%s\n' "Private path: $private_path_prefix/release-manifest" \
-  >> "$private_manifest_dir/sp11-touchscreen-modules-manifest.txt"
+awk -v private_path="$private_path_prefix/release-manifest" '
+     /^Module compiler identity: / {
+       print "Module compiler identity: cc " private_path " 1.0"
+       changed++
+       next
+     }
+     { print }
+     END { if (changed != 1) exit 1 }' \
+  "$private_manifest_dir/sp11-touchscreen-modules-manifest.txt" \
+  > "$private_manifest_dir/sp11-touchscreen-modules-manifest.changed"
+mv "$private_manifest_dir/sp11-touchscreen-modules-manifest.changed" \
+  "$private_manifest_dir/sp11-touchscreen-modules-manifest.txt"
 write_candidate_checksums "$private_manifest_dir"
 chmod 0500 "$private_manifest_dir"
 expect_provenance_failure private-manifest \
