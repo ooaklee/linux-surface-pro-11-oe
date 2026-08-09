@@ -71,7 +71,9 @@ evidence, and releases. See
 [public source ledger](docs/sp11-feature-parity-source-ledger.md). The
 [full execution backlog](docs/sp11-full-feature-parity-execution-plan.md)
 defines the phase gates, acceptance matrices, rollback paths, and upstream
-destinations.
+destinations. The repository owner's interim project-code licence and SP11 UCM
+provenance direction is recorded in [LEGAL.md](LEGAL.md); its stated final
+reviews remain pending.
 
 The [public feature demonstration](https://www.youtube.com/watch?v=WJqRIeTjUbI)
 and [pinned public SP11 ACPI dumps](https://github.com/linux-surface/acpidumps/tree/1d0a2ce742b450fe3f65287adbe174ddccabe228/surface_pro_11_qcom)
