@@ -75,10 +75,15 @@ assert_incomplete_preparer_root() {
 }
 
 assert_zero_regular() {
-  local path="$1"
+  local path="$1" size
   [ -f "$path" ] && [ ! -L "$path" ] ||
     die "expected a retained zero-length regular file: $path"
-  [ "$(stat -f '%z' "$path" 2>/dev/null || stat -c '%s' -- "$path")" = 0 ] ||
+  case "$(uname -s)" in
+    Darwin) size="$(stat -f '%z' "$path")" ;;
+    Linux) size="$(stat -c '%s' -- "$path")" ;;
+    *) die "unsupported platform for retained publication size checks" ;;
+  esac
+  [ "$size" = 0 ] ||
     die "retained failed publication bytes were not scrubbed: $path"
 }
 
@@ -95,7 +100,7 @@ assert_no_publication_success() {
   fi
 }
 
-for tool in awk cmp git grep mktemp python3 readlink sed shasum stat xz; do
+for tool in awk cmp git grep mktemp python3 readlink sed shasum stat uname xz; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 grep -Fq 'digest-pinned OCI/APT /usr, loader, libraries, Python' \
@@ -669,6 +674,7 @@ import importlib.util
 import os
 import sys
 
+sys.dont_write_bytecode = True
 module_path = sys.argv[1]
 production_count = int(sys.argv[2], 10)
 production = tuple(sys.argv[3 : 3 + production_count])
@@ -712,6 +718,7 @@ import stat
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 helper_path = Path(sys.argv[1])
 stage = Path(sys.argv[2])
 target = Path(sys.argv[3])
@@ -801,6 +808,11 @@ make_provenance_work() {
     >/dev/null
 
   seal_provenance_volume "$support_dir" "$volume_work" "$evidence_tar" "$support_head"
+  if find "$support_dir/scripts" \
+      \( -type d -name __pycache__ -o -type f -name '*.pyc' \) \
+      -print -quit | grep -q .; then
+    die "provenance bridge left Python bytecode in the support checkout"
+  fi
 
   mkdir -m 0700 "$provenance_work"
   mkdir -m 0700 "$provenance_work/artifacts"
@@ -1882,6 +1894,27 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     )
     (cd "$release_dir" && shasum -a 256 "${checksum_files[@]}" > SHA256SUMS)
   }
+  local_candidate_state() {
+    local release_dir="$1" candidate_path
+    printf 'root-mode:%s\n' "$(directory_permission_mode "$release_dir")"
+    while IFS= read -r candidate_path; do
+      [ -f "$candidate_path" ] && [ ! -L "$candidate_path" ] ||
+        die "local candidate fixture contains a non-regular member"
+      printf '%s\t%s\n' "${candidate_path##*/}" \
+        "$(regular_file_state "$candidate_path")"
+    done < <(
+      find "$release_dir" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort
+    )
+  }
+  clone_local_candidate() {
+    local clone_name="$1" clone_dir candidate_dir
+    clone_dir="$(clone_support "$clone_name")"
+    mkdir -p "$clone_dir/build/release"
+    candidate_dir="$clone_dir/build/release/fixture-v2-source"
+    cp -R "$bound_release_dir" "$candidate_dir"
+    chmod 0700 "$candidate_dir"
+    printf '%s\n' "$clone_dir"
+  }
 
   git -C "$support_a" tag fixture-v2-source
   git -C "$support_b" tag fixture-v2-optional-source
@@ -1897,51 +1930,58 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   fi
 
   bound_release_dir="$support_a/build/release/fixture-v2-source"
-  printf 'checksummed but not manifest-bound\n' > "$bound_release_dir/unexpected.txt"
-  rewrite_release_checksums "$bound_release_dir"
-  if validate_schema_v2_dir "$support_a" fixture-v2-source \
+  original_candidate_state="$(local_candidate_state "$bound_release_dir")"
+
+  support_extra_candidate="$(clone_local_candidate support-validator-extra)"
+  extra_candidate_dir="$support_extra_candidate/build/release/fixture-v2-source"
+  printf 'checksummed but not manifest-bound\n' > "$extra_candidate_dir/unexpected.txt"
+  rewrite_release_checksums "$extra_candidate_dir"
+  chmod 0500 "$extra_candidate_dir"
+  git -C "$support_extra_candidate" tag fixture-v2-source
+  if validate_schema_v2_dir "$support_extra_candidate" fixture-v2-source \
       validate-flat-v2-extra.log; then
     die "standalone release validator accepted an unexpected checksummed schema-v2 asset"
   fi
   grep -Fq 'schema-v2 release contains an unexpected asset: unexpected.txt' \
     "$temporary_root/validate-flat-v2-extra.log" ||
     die "unexpected schema-v2 asset rejection was not explicit"
-  rm "$bound_release_dir/unexpected.txt"
-  rewrite_release_checksums "$bound_release_dir"
 
-  cp "$bound_release_dir/sp11-kernel-release-manifest.txt" \
-    "$temporary_root/kernel-release-manifest.original"
+  support_duplicate_candidate="$(clone_local_candidate support-validator-duplicate)"
+  duplicate_candidate_dir="$support_duplicate_candidate/build/release/fixture-v2-source"
   printf 'Build provenance schema: sp11-kernel-build-v2\n' \
-    >> "$bound_release_dir/sp11-kernel-release-manifest.txt"
-  rewrite_release_checksums "$bound_release_dir"
-  if validate_schema_v2_dir "$support_a" fixture-v2-source \
+    >> "$duplicate_candidate_dir/sp11-kernel-release-manifest.txt"
+  rewrite_release_checksums "$duplicate_candidate_dir"
+  chmod 0500 "$duplicate_candidate_dir"
+  git -C "$support_duplicate_candidate" tag fixture-v2-source
+  if validate_schema_v2_dir "$support_duplicate_candidate" fixture-v2-source \
       validate-flat-v2-schema-duplicate.log; then
     die "standalone release validator accepted an ambiguous schema declaration"
   fi
   grep -Fq 'unsupported or ambiguous Build provenance schema declaration' \
     "$temporary_root/validate-flat-v2-schema-duplicate.log" ||
     die "ambiguous schema rejection was not explicit"
-  cp "$temporary_root/kernel-release-manifest.original" \
-    "$bound_release_dir/sp11-kernel-release-manifest.txt"
-  rewrite_release_checksums "$bound_release_dir"
 
+  support_order_candidate="$(clone_local_candidate support-validator-order)"
+  order_candidate_dir="$support_order_candidate/build/release/fixture-v2-source"
   awk '
     /^Kernel release schema: / { kernel_schema = $0; next }
     /^Build provenance schema: / { print; print kernel_schema; next }
     { print }
-  ' "$temporary_root/kernel-release-manifest.original" \
-    > "$bound_release_dir/sp11-kernel-release-manifest.txt"
-  rewrite_release_checksums "$bound_release_dir"
-  if validate_schema_v2_dir "$support_a" fixture-v2-source \
+  ' "$bound_release_dir/sp11-kernel-release-manifest.txt" \
+    > "$order_candidate_dir/sp11-kernel-release-manifest.txt"
+  rewrite_release_checksums "$order_candidate_dir"
+  chmod 0500 "$order_candidate_dir"
+  git -C "$support_order_candidate" tag fixture-v2-source
+  if validate_schema_v2_dir "$support_order_candidate" fixture-v2-source \
       validate-flat-v2-schema-order.log; then
     die "standalone release validator accepted reordered outer v1 fields"
   fi
   grep -Fq 'field order does not match its schema' \
     "$temporary_root/validate-flat-v2-schema-order.log" ||
     die "reordered outer v1 field rejection was not explicit"
-  cp "$temporary_root/kernel-release-manifest.original" \
-    "$bound_release_dir/sp11-kernel-release-manifest.txt"
-  rewrite_release_checksums "$bound_release_dir"
+  [ "$(local_candidate_state "$bound_release_dir")" = \
+    "$original_candidate_state" ] ||
+    die "semantic validator fixtures changed the original local candidate"
 
   support_ahead="$(clone_support support-validator-ahead)"
   mkdir -p "$support_ahead/build/release"
