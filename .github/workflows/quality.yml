@@ -145,7 +145,7 @@ jobs:
         run: python3 ./tests/test-sp11-kernel-build-comparison.py --synthetic-only
 
       - name: Test raw kernel matched-pair comparator hostile fixtures
-        run: python3 ./tests/test-sp11-kernel-raw-build-comparison.py
+        run: python3 -I ./tests/test-sp11-kernel-raw-build-comparison.py
 
       - name: Test live-image release source gate
         run: ./tests/test-sp11-image-release-source-gate.sh

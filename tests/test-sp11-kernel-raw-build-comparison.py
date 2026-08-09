@@ -23,6 +23,14 @@ from types import ModuleType
 from typing import Callable, Iterator
 
 
+ISOLATION_ERROR = (
+    "error: raw comparator hostile fixtures require isolated Python startup"
+)
+if sys.flags.isolated != 1:
+    print(ISOLATION_ERROR, file=sys.stderr)
+    raise SystemExit(2)
+
+
 REPO = Path(__file__).resolve().parents[1]
 SOURCE_COMPARATOR = REPO / "scripts/compare-sp11-kernel-raw-builds.py"
 APT_FIXTURES = REPO / "tests/test-sp11-immutable-apt-provenance.py"
@@ -1948,6 +1956,7 @@ def external_decoder_supervisor_cases(fixture: PairFixture) -> None:
         assert specification is not None and specification.loader is not None
         comparator = importlib.util.module_from_spec(specification)
         sys.modules[specification.name] = comparator
+        sys.dont_write_bytecode = True
         specification.loader.exec_module(comparator)
         comparator.EXTERNAL_DECODER_STDERR_MAX = 4096
         comparator.EXTERNAL_DECODER_TOTAL_TIMEOUT_SECONDS = 0.8
@@ -2162,6 +2171,9 @@ def external_decoder_supervisor_cases(fixture: PairFixture) -> None:
 
 def decoder_bound_cases(fixture: PairFixture) -> None:
     external_decoder_supervisor_cases(fixture)
+    assert not any(fixture.support.rglob("__pycache__"))
+    assert not any(fixture.support.rglob("*.pyc"))
+    assert git(fixture.support, "status", "--porcelain") == ""
     comparator = load_module(
         fixture.comparator, "_sp11_raw_pair_decoder_bound_fixture_target"
     )
