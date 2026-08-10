@@ -24,8 +24,8 @@ trap cleanup EXIT
 for tool in awk bash chmod cp git ln mkdir mkfifo mktemp mv rm sed; do
   command -v "$tool" >/dev/null 2>&1 || die "missing fixture tool: $tool"
 done
-[ -x /usr/bin/openssl ] && [ -x /usr/bin/python3 ] ||
-  die "baseline signing fixture requires fixed OpenSSL and Python tools"
+[ -x /usr/bin/git ] && [ -x /usr/bin/openssl ] && [ -x /usr/bin/python3 ] ||
+  die "baseline signing fixture requires fixed Git, OpenSSL, and Python tools"
 
 fixture_repo="$temporary_root/repo"
 mkdir -p \
@@ -52,11 +52,11 @@ for patch_dir in $patch_dirs; do
   printf '%s\n' fixture > "$fixture_repo/$patch_dir/.fixture"
 done
 
-git -C "$fixture_repo" init --quiet --initial-branch=fixture
-git -C "$fixture_repo" config user.name 'SP11 baseline fixture'
-git -C "$fixture_repo" config user.email 'sp11-baseline@example.invalid'
-git -C "$fixture_repo" add .
-git -C "$fixture_repo" commit --quiet -m 'Create baseline signing fixture'
+/usr/bin/git -C "$fixture_repo" init --quiet --initial-branch=fixture
+/usr/bin/git -C "$fixture_repo" config user.name 'SP11 baseline fixture'
+/usr/bin/git -C "$fixture_repo" config user.email 'sp11-baseline@example.invalid'
+/usr/bin/git -C "$fixture_repo" add .
+/usr/bin/git -C "$fixture_repo" commit --quiet -m 'Create baseline signing fixture'
 
 validator="$fixture_repo/scripts/validate-sp11-kernel-baseline.sh"
 baseline="$fixture_repo/config/kernel-baselines/7.2-rc5-jg-0.env"
