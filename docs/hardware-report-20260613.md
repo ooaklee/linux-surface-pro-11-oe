@@ -1,7 +1,7 @@
 # Surface Pro 11 Hardware Report - 2026-06-13
 
-Source: Windows diagnostic report collected from the target Surface Pro 11
-during a remote diagnostic session.
+Source: Windows diagnostic report collected from the target Surface Pro 11 over
+AnyDesk/Live Share.
 
 ## Device
 

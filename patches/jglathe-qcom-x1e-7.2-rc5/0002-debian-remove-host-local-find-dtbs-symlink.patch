@@ -1,9 +1,0 @@
-diff --git a/debian/scripts/misc/find-dtbs.py b/debian/scripts/misc/find-dtbs.py
-deleted file mode 120000
-index 9584132ed83dbd42381d64ec53191c70097cd1c0..0000000000000000000000000000000000000000
-GIT binary patch
-literal 0
-HcmV?d00001
-
--- 
-2.43.0

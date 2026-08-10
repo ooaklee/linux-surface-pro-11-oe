@@ -9,13 +9,11 @@ description: Architecture Decision Record (ADR) for requiring the Surface Pro 11
 
 Partially superseded (2026-07-18).
 
-[ADR-0042](adr-0042-sp11-touchscreen-troubleshooting.md) established on
-2026-07-18 that the tested installed Stubble path uses its embedded DTB and
-that GRUB's loose `devicetree` command does not determine the live FDT.
-[ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md) formalized the
-installed-path retirement on 2026-08-07: the helper, kernel hooks, and
-generated-GRUB rewriting are retired. The live-USB decision and historical
-observations remain.
+The live-USB decision remains historical context. For current installed
+Stubble-packaged kernels, the installed-system GRUB injection decision is
+superseded by [ADR-0042](adr-0042-sp11-touchscreen-troubleshooting.md): Stubble
+registers its embedded DTB in the EFI Configuration Table, and the tested GRUB
+`devicetree` command does not replace the live tree.
 
 ## Context
 

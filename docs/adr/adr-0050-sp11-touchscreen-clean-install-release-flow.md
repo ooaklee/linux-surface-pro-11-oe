@@ -39,22 +39,15 @@ Source and device evidence distinguish them:
 
 - The stock Johan G. `spi-geni-qcom` at kernel source commit `8f953dd` rejects
   protocol 9 with `Invalid proto 9`.
-- The controller built from the pinned geocausa Phase 91 source accepts
-  protocol 9 on `a88000.spi`
+- The pinned geocausa Phase 91 controller accepts protocol 9 on `a88000.spi`
   unconditionally. `sp11_windows_se_init` is consulted later to choose a
   controller-initialization path; it does not enable protocol-9 recognition.
 - The development Surface works with `sp11_windows_se_init=N` and logs
   `applied Linux-integrated QSPI SE preparation`.
 - Its three loaded module source versions match the `updates/` files, and they
   load during the initramfs phase before the root filesystem is available.
-- The pinned source's reference deployment explicitly excludes the experimental
+- The Phase 91 reference deployment explicitly excludes the experimental
   Windows controller sequence from its validated baseline.
-
-“Phase 91” identifies the source pin. The support installer supplies no
-`mshw0485_touch` profile parameters, so the driver's defaults select the Phase
-75 runtime profile. `behavior_stats` is the authoritative runtime-profile
-observation; later Phase 76–91 behavior gates are not implied by the source
-revision.
 
 The 2026-08-06 diagnostic on the development Surface identified loaded and
 selected source versions `A9BE6B3E2AEF71B5F41F865` (`gpi`),
@@ -103,8 +96,7 @@ another release.
 
 ### Build
 
-- Pin the touchscreen source to an immutable Phase 91 commit and record the
-  separately observed runtime profile.
+- Pin the touchscreen source to an immutable Phase 91 commit.
 - Refuse dirty or wrong-origin source checkouts and support an explicit offline
   build from the pinned commit.
 - Resolve or require the exact target ABI instead of assuming `uname -r`.
@@ -185,27 +177,6 @@ the ARM64 build host:
 These checks cover the refusal behavior in matrix item 4 and the artifact side
 of the release. Items 1–3 and 5–7 still require the physical Surface Pro 11
 transitions described below.
-
-### Corresponding-source supplement
-
-The r1 kernel and image prereleases initially included the patched JG kernel
-source but not a self-contained archive of the GPL touchscreen-module source.
-On 2026-08-07 the releases were amended additively, without moving tags or
-replacing binary assets. Both now carry the exact geocausa commit's licence and
-twelve build/source files under `phase55/modules/`, a source notice, and source
-checksums. The image release also carries the matching patched kernel source.
-
-Future image preparation requires seven binding inputs: the patched-kernel and
-exact touchscreen source archives, `SOURCE-NOTICE.md`, the fresh schema-v2
-kernel build manifest, the matching kernel release manifest, and the matching
-touchscreen module manifest, plus the image-build manifest. The helper validates
-the archive identities, exact two-partition GPT and ESP contents, pinned input
-ISO, kernel-manifest DTB output, exact committed support tree, and embedded
-image payload against those manifests,
-then attaches and hashes all seven inputs in the prepared release. An upstream
-URL and commit pin alone do not replace corresponding-source distribution.
-Historical r1 assets remain immutable and are not evidence that a future
-candidate satisfies this newer gate.
 
 ## Validation matrix
 

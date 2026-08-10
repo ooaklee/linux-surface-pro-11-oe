@@ -1,8 +1,0 @@
-profile=phase75
-initialization_stage=set-feature56
-mode_enabled=1
-awaiting_ready_heat=0
-heat_frames=123
-irq_transport_errors=4
-ready_verification_failures=99999999999999999999
-panel_resets=12

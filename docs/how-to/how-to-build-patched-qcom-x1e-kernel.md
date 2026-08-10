@@ -35,9 +35,6 @@ Surface Pro 11 rfkill patches.
 - For the preferred off-device build: Docker on a host that can run
   `linux/arm64` containers. Native ARM64 is fastest; x86_64 hosts may use QEMU
   emulation and can be much slower.
-- The Docker build host must provide `python3` and either the regular system
-  `/usr/lib/apt/apt-helper` or `lz4` on `PATH`. The wrapper checks this before
-  starting the immutable release build; macOS hosts normally use `lz4`.
 - Enough Docker storage for a persistent Linux work volume. The host work
   directory only receives control files and copied artifacts; the kernel source
   and object tree are kept in Docker's `sp11-qcom-x1e-kernel-build` volume.
@@ -143,7 +140,7 @@ build-compatibility patches, and the standard Surface Pro 11 v2 patch set:
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.1.3 patches/sp11-qcom-x1e-7.1.3-v2" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-sp11-v2 \
@@ -178,19 +175,16 @@ branch configures the DMIC clock at 4.8 MHz, which reintroduces microphone
 static, so the Surface Pro 11 v2 patch set restores the validated 2.4 MHz
 clock and gives the result the distinct `7.2-rc5-jg-0sp11v2` ABI:
 
-Use the immutable `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag for pinned build
-provenance. The command below is a normal local build. A future publishable
-build must also pass `--release-build` and follow
-[Release Prebuilt Kernel Artifacts](how-to-release-kernel-artifacts.md); the
-moving `jg/ubuntu-qcom-x1e-7.2rc` branch is not durable release provenance.
+Use the immutable `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag for a release build.
+The moving `jg/ubuntu-qcom-x1e-7.2rc` branch is useful for development but is
+not durable release provenance.
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v2" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v2 \
@@ -205,8 +199,7 @@ The output is a matching four-package set
 (`linux-image`, `linux-modules`, `linux-headers`,
 `linux-qcom-x1e-headers`). See
 [ADR0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md) for the
-DMIC decision and embedded-DTB correction. ADR0055 retires the former
-installed loose-DTB selector.
+DMIC decision and the installer DTB-selection fix.
 
 ### Johan G. 7.2-rc5 v3 source (touchscreen)
 
@@ -220,8 +213,7 @@ the distinct `7.2-rc5-jg-0sp11v3` ABI:
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \
@@ -231,167 +223,6 @@ the distinct `7.2-rc5-jg-0sp11v3` ABI:
   --jobs 8 \
   2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3-build-$(date +%Y%m%d-%H%M%S).log
 ```
-
-For a fresh experimental release-mode verification run, use the baseline's
-exact platform as well as its image digest, start with a clean repository, and
-choose a new work directory and Docker volume:
-
-```bash
-RELEASE_CHECK_WORK=build/docker-sp11-qcom-x1e-kernel-release-check
-test ! -e "$RELEASE_CHECK_WORK"
-install -d -m 0700 "$RELEASE_CHECK_WORK"
-install -d -m 0700 "$RELEASE_CHECK_WORK/artifacts"
-ARTIFACTS_FIRST_ENTRY="$(
-  find "$RELEASE_CHECK_WORK/artifacts" \
-    -mindepth 1 -maxdepth 1 -print -quit
-)" || exit 1
-test -z "$ARTIFACTS_FIRST_ENTRY"
-
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
-  --platform linux/arm64/v8 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir "$RELEASE_CHECK_WORK" \
-  --linux-work-volume sp11-qcom-x1e-kernel-release-check \
-  --reset-source \
-  --release-build \
-  --jobs 8
-```
-
-Release mode refuses `--apt-sources`. It uses the exact
-`20260807T000000Z` Ubuntu snapshot and retains the authenticated APT cache,
-signed indexes, acquired list targets, and pre/post installed-package
-inventories in the private daemon-owned release-state volume. After the build
-container has stopped, a separate network-disabled container mounts that volume
-read-only and exports the bounded canonical host record
-`sp11-kernel-retained-evidence.tar`. The host work directory therefore contains
-that tar, three bound controller files, and the flat `artifacts/` directory; it
-does not recreate the retained APT directory trees. A successful run requires
-all three files below in `artifacts/`:
-
-The pinned snapshot contains six signed, positive-size backports indexes whose
-decompressed payload is empty. APT legitimately emits no local list view for
-those indexes. Release mode binds the six exact paths and compressed
-identities, requires their views to be absent, and still requires and verifies
-the other 26 list views. It never fabricates placeholder list files.
-
-```text
-artifacts/sp11-kernel-build-manifest.txt
-artifacts/sp11-kernel-apt-provenance.txt
-artifacts/sp11-kernel-build-inputs.txt
-```
-
-Require the imported record and its three host controls as well:
-
-```bash
-test -s "$RELEASE_CHECK_WORK/sp11-kernel-retained-evidence.tar"
-test -s "$RELEASE_CHECK_WORK/docker-build-args.txt"
-test -s "$RELEASE_CHECK_WORK/docker-build-inside.sh"
-test -s "$RELEASE_CHECK_WORK/sp11-oci-index.json"
-```
-
-Preserve `sp11-kernel-retained-evidence.tar` together with those three files.
-The release preparer validates and cross-binds the tar, the flat artifacts, and
-the controller files before it creates a local review candidate.
-
-The underlying immutable-input build and validation path has one real result in
-the [2026-08-08 build evidence](../sp11-kernel-immutable-build-evidence-20260808.md).
-That run predates the daemon-owned volume, read-only exporter, and canonical
-evidence-tar handoff described above; the new handoff has no real integration
-result yet and still requires a fresh end-to-end run. The historical result is
-one provenance-validated build, not a byte-reproducibility result. Its last
-envelope deliberately records publication schema propagation as incomplete
-because that is its immutable build-time state. The kernel and image
-preparation paths consume and validate the exact trio and record their
-propagation completion in outer manifests while keeping overall publication
-blocked. Preserve all three files byte-for-byte. Byte reproducibility, the
-release-signing decision, recovery/hardware evidence, corresponding-source
-review, and explicit release authorization remain open. [`LEGAL.md`](../../LEGAL.md)
-records the interim MIT direction for project-authored code and the upstream
-ALSA/local-hardware-configuration basis for SP11 UCM; both final reviews remain
-pending, but that pending status alone does not block ordinary development or
-publication of newly authored material.
-
-#### Deterministic identity and the next raw comparison
-
-The deterministic, signing-independent kernel/Deb build identity is
-implemented and fixture-tested. Release mode takes the fixed
-`SOURCE_DATE_EPOCH`, `KBUILD_BUILD_USER`, `KBUILD_BUILD_HOST`, and
-`KBUILD_BUILD_TIMESTAMP` values from the committed baseline, checks the epoch
-against the pinned source commit, and propagates them through build-dependency
-generation and both Debian kernel-package targets. This foundation does not
-choose a module-signing model or make generated signing material reproducible.
-
-After two new clean builds from the same committed support HEAD, compare their
-retained work directories without normalization:
-
-```bash
-REPO_ROOT="$(pwd -P)"
-SUPPORT_HEAD="$(git rev-parse --verify HEAD)"
-python3 -I ./scripts/compare-sp11-kernel-raw-builds.py \
-  --baseline "$REPO_ROOT/config/kernel-baselines/7.2-rc5-jg-0.env" \
-  --support-repo "$REPO_ROOT" \
-  --support-head "$SUPPORT_HEAD" \
-  --build-a "$REPO_ROOT/build/sp11-kernel-clean-c" \
-  --build-b "$REPO_ROOT/build/sp11-kernel-clean-d"
-```
-
-The fail-closed `sp11-kernel-raw-matched-pair-v1` comparator is implemented,
-reviewed, and wired into CI through hostile synthetic fixtures. It accepts a
-pair only after matching the immutable retained inputs, then compares every
-kernel Deb and the seven manifest outputs as raw bytes or raw identities under
-`sp11-kernel-zero-normalization-v1`. A validated mismatch exits `1`; unsafe or
-inconsistent input exits `2`. Its report always records publication as
-unauthorized.
-
-No fresh C/D pair has been built or compared since the deterministic identity
-was added. P0.4b and P0.4 overall therefore remain open, while P0.4c remains
-the single earlier real immutable-input build. The signing model still awaits
-an owner decision. The deterministic patched-source generator is implemented,
-but the retained 2026-08-08 exact four-patch tree was correctly rejected for an
-escaping tracked symlink; a corrected fresh build and new manifest are required
-before archive validation can resume. Recovery/hardware evidence, legal
-corresponding-source review, and explicit authorization remain **NO-PUBLISH**
-gates. The interim licence/UCM direction in [`LEGAL.md`](../../LEGAL.md) does
-not replace third-party per-file terms or the pending final reviews, but those
-reviews are no longer blanket publication gates for newly authored artifacts.
-
-The exact-tree preflight treats the digest-pinned OCI/APT toolchain as trusted
-build authority. It is not a sandbox against source rules that can mutate a
-root-writable container runtime; that stronger threat model requires a separate
-non-root or read-only-root-filesystem build design.
-
-The host-side Docker launch assumes an exclusive, trusted host controller from
-before private control/output-root creation or acquisition through bind-source
-resolution and use. After a root is acquired, release-mode writes are confined
-to held directory and creation-owned file descriptors; collisions, links,
-special nodes, persistent mapping drift, and pathname deletion or overwrite are
-rejected. This flow does not claim integrity, availability, or victim
-preservation against a concurrent process with the same host credentials
-racing root creation/acquisition or substituting a validated bind source. That
-stronger guarantee requires privilege separation or a separately reviewed
-supervisor and daemon-owned, content-addressed inputs.
-
-That trusted-controller boundary also requires exclusive use of the selected
-Docker context, socket, and daemon credentials, with no concurrent read-write
-mount or mutation of the named release-state volume from creation through
-evidence import. A daemon-owned volume is not itself immutable or
-content-addressed. Any later forensic use of the retained volume requires the
-same exclusive custody and a fresh validation; the imported evidence tar is
-the bounded host-side record of the accepted run.
-
-Host-side orchestration also assumes an exclusive trusted checkout and a
-non-hostile process environment, system toolchain, and `PATH`; it does not
-claim resistance to a malicious replacement of ordinary host utilities.
-Security-critical retained release-evidence helpers use absolute isolated
-interpreter authority and commit-bound code, while legacy orchestration
-utilities remain inside this
-explicit host-toolchain boundary.
 
 The kernel ABI carries the touchscreen device tree, but the runtime QSPI
 support ships as out-of-tree modules from the geocausa Phase 91 baseline
@@ -521,15 +352,32 @@ post-install support helper run consistently.
 
 ## Reboot and Validate
 
-On the tested installed qcom-x1e Stubble path, each kernel uses the Denali DTB
-embedded in its exact Stubble-wrapped EFI image. The support installer does
-not select, copy, or inject a shared loose DTB. If
-`/boot/sp11-denali.dtb` exists from an earlier release, it is left untouched
-as inert recovery evidence; its presence or contents do not establish
-live-FDT provenance. The guarded install must finish its normal live-root GRUB
-regeneration successfully before reboot.
+1. Confirm GRUB still injects the Surface Pro 11 DTB.
 
-1. Reboot and choose the patched kernel.
+```bash
+grep -n "devicetree .*sp11-denali" /boot/grub/grub.cfg | head
+```
+
+For the verified separate `/boot` layout, the entries should use:
+
+```text
+devicetree /sp11-denali.dtb
+```
+
+2. Confirm the staged boot DTB contains the rfkill property.
+
+```bash
+sudo grep -a -q 'disable-rfkill' /boot/sp11-denali.dtb \
+  && echo "/boot/sp11-denali.dtb contains disable-rfkill" \
+  || echo "/boot/sp11-denali.dtb is missing disable-rfkill"
+```
+
+If the patched kernel ABI is older than another installed qcom-x1e fallback
+kernel, the support helper must prefer the rfkill-capable DTB rather than the
+newest unpatched DTB. This is recorded in
+[ADR025](../adr/adr-0025-rfkill-capable-dtb-selection.md).
+
+3. Reboot and choose the patched kernel.
 
 ```bash
 sudo reboot

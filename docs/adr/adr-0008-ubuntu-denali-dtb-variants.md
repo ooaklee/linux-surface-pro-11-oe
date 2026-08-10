@@ -5,15 +5,6 @@ title: "ADR008: Ubuntu Denali DTB Variants"
 description: Architecture Decision Record (ADR) for supporting Ubuntu's Surface Pro 11 Denali DTB filenames while preserving explicit custom-DTB testing.
 ---
 
-## Status
-
-Partially superseded (2026-08-07).
-
-Superseded for the tested installed Stubble path by
-[ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md). The live-USB
-decision and the historical observations remain; the installed loose-DTB
-helper, kernel hooks, and generated-GRUB rewriting are retired.
-
 ## Context
 
 [ADR007](adr-0007-auto-dtb-extraction-and-debug-entries.md) introduced

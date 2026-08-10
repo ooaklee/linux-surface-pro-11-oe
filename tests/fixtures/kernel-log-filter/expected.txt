@@ -1,5 +1,0 @@
-mshw0485_touch: controller initialized profile=phase75
-mshw0485_touch: GET_FEATURE 0x70 config len=1 bytes=<redacted-binary>
-mshw0485_touch: SET_FEATURE 0x70 derived len=2 bytes=<redacted-binary>
-mshw0485_touch: IRQ fault x=<redacted-input-value> y=<redacted-input-value> pressure=<redacted-input-value>
-camss: peer=<redacted-ipv4> source=/home/<redacted-user>/private.log

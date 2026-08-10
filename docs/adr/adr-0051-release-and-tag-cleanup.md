@@ -10,10 +10,7 @@ description: Decision record for auditing the project's GitHub releases and tags
 ## Status
 
 Accepted and executed (2026-08-07). Amended the same day to record the names
-and validation rules for the authorized experimental r1 successors. A later
-same-day amendment separates validation-complete image preparation from
-publication authorization and requires immutable kernel build-input
-propagation through future image release manifests.
+and validation rules for the authorized experimental r1 successors.
 
 ## Context
 
@@ -117,11 +114,10 @@ The following seven releases were retained:
 | `sp11-qcom-x1e-7.1.3-jg-1-v2` | Tag and manifest match `c67df67` | Device-validated 2.4 MHz DMIC default kernel |
 | `sp11-audio-topology-v2` | Tag and manifest identify `c67df67` | Corrected single-WSA UCM and validated microphone route |
 
-The local-only `sp11-qcom-x1e-7.2-rc5-jg-0` tag at `ca379d2` was retained
-during the original cleanup. A later 2026-08-07 audit found that marker absent
-from the active checkout. It never had a GitHub release or remote tag, and it
-is not required for release provenance because the upstream source tag and
-full source commit are now recorded explicitly.
+The local-only `sp11-qcom-x1e-7.2-rc5-jg-0` tag at `ca379d2` was also retained.
+It never had a GitHub release and accurately marks the accepted, validated
+7.2-rc5 build-support change documented by ADR0047. An unpublished source tag
+is not incorrect merely because it has no binary release.
 
 The two retained dirty-manifest releases are legacy artifacts, not templates
 for future publication. Their tags correctly identify the commits recorded by
@@ -192,17 +188,12 @@ new immutable public artifacts; it does not change the installable
 `7.2-rc5-jg-0sp11v3-qcom-x1e` kernel ABI. Neither retired original name may be
 recreated.
 
-Both corrective releases were published on 2026-08-07 as experimental
-prereleases. Their remote tags resolve to support commit
-`acdc959ca7a32318e321c2c11e96bae6b9980f53`. This publication does not promote
-either artifact to hardware-qualified or stable status.
-
 ### Future release gates
 
 Before publishing any new binary release:
 
-- use an explicit `--target <support-commit>` in the separately authorized
-  publication operation;
+- create it with an explicit `--target <support-commit>`, including image
+  releases prepared by `prepare-sp11-image-release-assets.sh`;
 - require the manifest support commit and local and remote tag targets to
   agree;
 - generate checksums from the exact upload list rather than adding assets
@@ -213,22 +204,9 @@ Before publishing any new binary release:
   release body; and
 - retain a new tag only after the release validator passes.
 
-`prepare-sp11-image-release-assets.sh` does not print or run a publication
-command. A validation-complete image preparation must attach and independently
-validate the exact kernel build manifest, kernel release manifest,
-APT-provenance sidecar, build-inputs envelope, touchscreen-module manifest,
-and image-build manifest. The image outer manifest preserves the envelope's
-build-time incomplete-creation fact while attesting that kernel-provenance
-propagation is complete. Every semantic validator, hash, and compression step
-must consume one privately snapshotted raw-image identity rather than the
-mutable public input path; its publication state remains blocked. A
-`--skip-validate` draft cannot satisfy that attestation and is never
-publishable.
-
-If a separately authorized `gh release create` operation creates a previously
-absent tag, fetch that exact tag locally before the post-publication validator
-runs. The validator compares the manifest support commit with both the local
-and remote tag targets.
+When `gh release create` creates a previously absent tag, fetch that exact tag
+locally before the post-publication validator runs. The validator compares the
+manifest support commit with both the local and remote tag targets.
 
 Touchscreen releases additionally follow the exact-ABI module, DTB,
 initramfs, and provenance gates in ADR0050.

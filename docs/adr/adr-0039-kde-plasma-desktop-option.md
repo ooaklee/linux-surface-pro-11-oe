@@ -24,10 +24,11 @@ Kubuntu does not publish an official ARM64 ISO. The Reddit thread
 confirms this gap as of 2025. Users who want Plasma on Snapdragon X Elite
 hardware currently have no official installation path.
 
-The SP11 bring-up work is desktop-agnostic. The kernel and its per-kernel
-embedded DTB, firmware extraction, Wi-Fi rfkill fix, Bluetooth public-address
-helper, and audio topology work are all independent of GNOME versus Plasma.
-Switching to Plasma only replaces the desktop session and display manager.
+The SP11 bring-up work is desktop-agnostic. The kernel, DTB injection, firmware
+extraction, Wi-Fi rfkill fix, Bluetooth public-address helper, and audio
+topology work are all independent of GNOME vs Plasma. Switching to Plasma only
+replaces the desktop session and display manager; it does not affect any
+`sp11-*` support helper.
 
 ## Decision
 
@@ -73,10 +74,9 @@ post-install swap.
   who installs Plasma still needs the patched `qcom-x1e` kernel, the Denali DTB,
   the audio topology, and the Bluetooth MAC helper exactly as documented in the
   README.
-- SDDM replaces GDM as the display manager. This does not alter the tested
-  installed Stubble path, where each exact kernel image carries its embedded
-  DTB and the former loose-DTB helper and kernel hooks are retired by
-  [ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md).
+- SDDM replaces GDM as the display manager. The `sp11-grub-inject-dtb` and
+  kernel postinst hooks are unaffected because they run before the display
+  manager starts.
 
 ## Alternatives Considered
 

@@ -9,14 +9,7 @@ description: Architecture Decision Record (ADR) documenting the troubleshooting 
 
 ## Status
 
-Historical troubleshooting record (2026-07-17), operationally resolved.
-
-[ADR-0049](adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md) records the
-working v3 kernel, embedded touchscreen DTB, and exact-ABI module deployment.
-[ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md) retires the
-installed loose-DTB helper and generated-GRUB rewriting. The failed experiments
-and observations below are retained as history, not current installation
-guidance.
+Draft (2026-07-17). Work in progress.
 
 ## Context
 
@@ -36,7 +29,7 @@ the problem.
 - Surface Pro 11 (OLED)
 - Touchscreen: QSPI HID-over-SPI device on QUP SE10 (`spi@a88000`)
 - SoC: Snapdragon X Elite (X1E80100)
-- Boot: EDK2 → GRUB (arm64-efi) → Stubble-wrapped kernel PE → Linux
+- Boot: EDK2 → Stubble → GRUB (arm64-efi) → Linux
 
 ### File Layout (on development machine)
 
@@ -91,7 +84,7 @@ Verified the DTB contains:
 - `spi@a88000` with `compatible = "qcom,geni-spi-qspi"` and `status = "okay"`
 - `touchscreen@0` child node with `compatible = "hid-over-spi"`
 
-### 4. Tested installed Stubble image uses its embedded DTB
+### 4. Kernel uses EFI firmware DTB, NOT GRUB's devicetree directive
 
 **Critical finding.** GRUB is configured with `devicetree /sp11-denali.dtb`,
 and the DTB at that path has the touchscreen node. However, the live
@@ -100,29 +93,18 @@ and the DTB at that path has the touchscreen node. However, the live
 - `status = "disabled"` (not `"okay"`)
 - No `touchscreen@0` child
 
-The observed installed boot chain works as follows:
-
-1. Firmware starts **GRUB**.
-2. GRUB loads the **Stubble-wrapped kernel PE**.
-3. Stubble, as part of that self-executing kernel image, selects the embedded
-   DTB and registers it in the EFI Configuration Table before Linux starts.
-4. Linux receives that FDT. In this tested path, the loose GRUB
-   `devicetree /sp11-denali.dtb` input did not determine the live tree.
+The boot chain on this device works as follows:
+1. **Stubble** (firmware shim) creates an FDT and registers it in the
+   EFI Configuration Table
+2. **GRUB** loads `devicetree /sp11-denali.dtb` — this tries to override
+   the EFI FDT
+3. **Kernel** EFI stub reads from `get_fdt()` (EFI Configuration Table) —
+   GRUB's override is **not taking effect** on this platform
 
 Evidence:
-
-- `/sys/firmware/fdt` had a different hash from
-  `/boot/sp11-denali.dtb`. This is supporting evidence, not standalone proof,
-  because firmware and boot-time fixups can change FDT bytes.
-- The live `spi@a88000` properties retained the semantics of the DTB embedded
-  in the packaged image and did not acquire the loose file's touchscreen
-  changes.
-- Replacing the loose file and copying candidates to the EFI System Partition
-  did not change those live properties.
-- A later test used a unique kernel-command-line marker to prove the intended
-  GRUB entry ran, while the active DMIC property still matched the packaged
-  embedded DTB. The package build also recorded the Denali DTB passed to
-  `ukify --devicetree-auto` for the Stubble-wrapped image.
+- `/sys/firmware/fdt` had a DIFFERENT MD5 than `/boot/sp11-denali.dtb`
+- `md5sum /sys/firmware/fdt` ≠ `md5sum /boot/sp11-denali.dtb`
+- Live tree confirmed the Stubble-provided DTB was active, not ours
 
 ### 5. Copied DTB to EFI partition — no effect
 
@@ -133,11 +115,9 @@ Copied `/boot/sp11-denali.dtb` to:
 **No change.** The kernel still used the EFI Configuration Table FDT,
 not the files in `/boot/efi/`.
 
-### 6. Historical `dtb=` command-line override experiment
+### 6. `dtb=` kernel command line parameter — the real fix (but blocked)
 
-This experiment predated the packaged embedded-DTB resolution and is not the
-current installed path. The ARM64 EFI stub in
-`drivers/firmware/efi/libstub/fdt.c` supports a
+The ARM64 EFI stub in `drivers/firmware/efi/libstub/fdt.c` supports a
 `dtb=` kernel command-line parameter that loads a DTB from the same
 filesystem the kernel was loaded from. The logic (lines 249–272):
 
@@ -203,23 +183,18 @@ fdtoverlay -i /sys/firmware/fdt -o merged.dtb overlay.dtbo
 ```
 However, `/sys/firmware/fdt` is root-owned and requires sudo.
 
-## Resolution Summary
+## Root Cause Summary
 
-On the tested installed path, GRUB loads a Stubble-wrapped kernel PE. Stubble
-then selects the DTB embedded in that exact image and registers the FDT before
-Linux starts. The loose GRUB `devicetree` input did not override that
-per-kernel pairing.
+The Stubble bootloader registers a DTB in the EFI Configuration Table
+that defines `spi@a88000` with `compatible = "qcom,geni-spi"` and
+`status = "disabled"`. GRUB's `devicetree` directive cannot override
+this. The kernel must use either:
 
-The operational resolution is to rebuild the complete qcom-x1e package so its
-Stubble image embeds the intended Denali DTB. ADR-0049 records that resolution
-for v3 and its working touchscreen deployment. The earlier override ideas are
-historical experiments, not supported fallbacks:
-
-| Historical mechanism | Config needed | Recorded result |
+| Mechanism | Config Needed | Status |
 |-----------|--------------|--------|
-| `dtb=` cmdline | `CONFIG_EFI_ARMSTUB_DTB_LOADER=y` | Rebuilt image hung; rejected for the current path |
-| configfs overlay | `CONFIG_OF_OVERLAY_CONFIGFS=y` | Was unavailable and was not pursued |
-| `fdtoverlay` + initramfs | N/A (userspace) | Considered only; not the packaged resolution |
+| `dtb=` cmdline | `CONFIG_EFI_ARMSTUB_DTB_LOADER=y` | Enabled in rebuild; kernel hangs |
+| configfs overlay | `CONFIG_OF_OVERLAY_CONFIGFS=y` | Not yet enabled |
+| fdtoverlay + initramfs | N/A (userspace) | Possible fallback |
 
 The same handoff was reconfirmed on `7.1.3-jg-1-qcom-x1e` while preparing a
 2.4 MHz DMIC clock experiment. A diagnostic GRUB entry was proven active by a
@@ -231,16 +206,11 @@ build log shows `ukify` receiving the Denali OLED DTB through
 
 ## Diagnostics Reference
 
-### Compare live and loose FDT bytes
+### Check if kernel loaded our DTB
 ```bash
-sudo md5sum /sys/firmware/fdt /boot/sp11-denali.dtb
-# A mismatch is supporting evidence only; boot-time fixups can change FDT bytes.
+md5sum /sys/firmware/fdt /boot/sp11-denali.dtb
+# If mismatch → kernel ignored GRUB's devicetree
 ```
-
-Do not infer provenance from that hash comparison alone. Compare the exact
-packaged and Stubble-embedded DTBs, then verify stable identifying properties
-in the active tree. When boot-time fixups prevent byte equality, use a reviewed
-canonical tree comparison.
 
 ### Check live device tree for touchscreen
 ```bash
@@ -265,39 +235,34 @@ modinfo spi-geni-qcom | grep alias
 sudo dmesg | grep -iE "fdt|device.tree|dtb|EFI stub"
 ```
 
-## Operational Resolution and Follow-Up
+## Remaining Steps (for future work)
 
-1. ADR-0049 resolves the touchscreen DTB requirement by rebuilding the
-   complete qcom-x1e package and embedding the modified Denali DTB in the
-   exact Stubble-wrapped v3 kernel image.
-2. ADR-0055 retires the deployed loose-DTB helper and both managed kernel hooks
-   before another kernel package is installed. A successful live-root
-   `update-grub` is required, and the old loose file remains untouched and
-   inert.
-3. Future DT experiments must use distinct co-installable ABIs, verify that
-   each packaged Denali DTB matches its Stubble-embedded copy, and compare the
-   active tree semantically after boot.
-4. Keep a boot-tested packaged kernel, its initramfs and modules, and physical
-   recovery media available throughout testing.
-
-The `dtb=` loader, configfs overlay, initramfs overlay, and Stubble-fork ideas
-above are retained only as rejected or uncompleted historical alternatives.
+1. Patch the Denali DTS and rebuild the complete qcom-x1e `linux-image`
+   package, allowing the normal `ukify --devicetree-auto` step to embed the
+   modified DTB in a Stubble-wrapped test kernel. Keep a known-good packaged
+   kernel as the fallback.
+2. OR: rebuild a complete test kernel with `CONFIG_EFI_ARMSTUB_DTB_LOADER=y`
+   and use `dtb=` as the sole override mechanism. Do not combine it with the
+   GRUB `devicetree` command.
+3. OR: build kernel with `CONFIG_OF_OVERLAY_CONFIGFS=y` and apply overlay at
+   runtime after boot
+4. OR: use an initramfs hook with `fdtoverlay` to patch the FDT before driver
+   probing
+5. OR: fork the Stubble firmware to fix the DTB at source
 
 ## Consequences
 
-- Positive: the handoff and per-kernel embedded-DTB requirement are understood,
-  and ADR-0049 records a working packaged resolution.
-- Positive: co-installed ABIs can retain exact kernel/DTB pairing without a
-  shared mutable installed file.
-- Caution: a live-FDT/loose-file hash mismatch is not standalone provenance
-  proof because boot-time fixups can alter bytes.
-- Historical: the `dtb=` rebuild hang was not diagnosed, but that path is not
-  needed by the current packaged resolution.
+- Positive: all patches apply clean, modules compile, DTB builds correctly
+- Positive: the root cause (EFI FDT priority over GRUB devicetree) is well
+  understood
+- Negative: requires a kernel Image rebuild for `CONFIG_EFI_ARMSTUB_DTB_LOADER`,
+  which is a slow build step
+- Negative: the boot hang regression is not yet diagnosed
+- Neutral: when resolved, the applied patches and DTB are complete — no
+  further code changes are expected
 
 ## Related
 
-- [ADR-0041: Surface Pro 11 Touchscreen Kernel Patch Set](adr-0041-sp11-touchscreen-patches.md)
-- [ADR-0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Build](adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
-- [ADR-0055: Retire Installed Loose-DTB Injection](adr-0055-retire-installed-loose-dtb-injection.md)
+- ADR-0041: Surface Pro 11 Touchscreen Kernel Patch Set (patch structure)
 - `drivers/firmware/efi/libstub/fdt.c` — DTB loading in EFI stub
 - `drivers/of/overlay.c` — runtime DT overlay support

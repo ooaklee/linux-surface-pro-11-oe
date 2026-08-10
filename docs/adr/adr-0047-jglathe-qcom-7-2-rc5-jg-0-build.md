@@ -2,7 +2,7 @@
 id: adr-0047-jglathe-qcom-7-2-rc5-jg-0-build
 title: "ADR0047: JG 7.2-rc5-jg-0 Kernel Build"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for building Johan G.'s immutable qcom-x1e 7.2-rc5-jg-0 kernel baseline with this repository's Docker kernel builder.
+description: Architecture Decision Record (ADR) for building Johan G.'s qcom-x1e 7.2-rc5-jg-0 kernel (branch jg/ubuntu-qcom-x1e-7.2rc) with this repository's Docker kernel builder.
 ---
 
 # ADR0047: JG 7.2-rc5-jg-0 Kernel Build
@@ -48,16 +48,14 @@ wrong token. The helper therefore gained explicit `--version-token` and
 
 ## Decision
 
-Build the immutable tag with the existing Docker flow and verify its full
-source commit before applying patches:
+Build the branch with the existing Docker flow:
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
+  --image ubuntu:26.04 \
   --patch-dir patches/jglathe-qcom-x1e-7.2-rc5 \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc \
@@ -82,7 +80,7 @@ encode them:
 ```bash
 ./scripts/regenerate-qcom-x1e-annotations.sh \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
+  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
   --version-token 7.2-rc5-jg-0 \
   --base-version 7.2-rc5 \
   --reset-source

@@ -7,14 +7,13 @@ description: Architecture Decision Record (ADR) for deriving the installed-syste
 
 ## Status
 
-Superseded for the tested installed Stubble path (2026-07-18).
+Superseded for current installed Stubble-packaged kernels (2026-07-18).
 
-[ADR-0042](adr-0042-sp11-touchscreen-troubleshooting.md) established that the
-embedded Stubble DTB, not GRUB's loose `devicetree` path, determines the live
-FDT on that path. [ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md)
-formalized retirement on 2026-08-07: the installed helper, kernel hooks, and
-generated-GRUB rewriting are retired. The separate-`/boot` path observation
-remains historical evidence.
+The path correction remains useful historical context and may still apply to
+boot chains that honor GRUB's `devicetree` command. On the tested installed
+Surface Pro 11 system, [ADR-0042](adr-0042-sp11-touchscreen-troubleshooting.md)
+shows that Stubble's embedded EFI Configuration Table FDT remains active
+regardless of whether GRUB resolves the loose DTB path correctly.
 
 ## Context
 

@@ -1,26 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-sanitize_git_environment() {
-  local variable_name
-
-  unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_COMMON_DIR
-  unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
-  unset GIT_CONFIG_GLOBAL GIT_DIR GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_EXEC_PATH
-  unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX
-  unset GIT_SHALLOW_FILE GIT_WORK_TREE
-  for variable_name in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
-    unset "$variable_name"
-  done
-  export GIT_CONFIG_NOSYSTEM=1
-  export GIT_CONFIG_SYSTEM=/dev/null
-  export GIT_CONFIG_GLOBAL=/dev/null
-  export GIT_ATTR_NOSYSTEM=1
-  export GIT_NO_REPLACE_OBJECTS=1
-}
-
-sanitize_git_environment
-
 # Regenerate the debian.qcom-x1e annotations patch for a jg/ubuntu-qcom-x1e
 # kernel branch. Runs the export -> olddefconfig -> import cycle from
 # patches/jglathe-qcom-x1e-<version>/README.md inside an ubuntu:26.04 Docker
@@ -43,8 +23,6 @@ PATCH_DIR=""
 RESET_SOURCE="false"
 KEEP_SOURCE="false"
 DRY_RUN="false"
-CONTROL_DIR=""
-PATCH_STAGE=""
 
 usage() {
   cat <<EOF
@@ -60,8 +38,7 @@ existing 0001-*.patch there. Other patches in the directory are left alone.
 
 Options:
   --git-url URL          Kernel git URL. Required unless --keep-source.
-  --git-branch BRANCH    Kernel git branch or tag. Always required so the source
-                         directory and output identity are unambiguous.
+  --git-branch BRANCH    Kernel git branch or tag. Required unless --keep-source.
   --version-token TOKEN  Full version token (e.g. "7.2-rc5-jg-0"). Defaults to
                          --git-branch minus the jg/ubuntu-qcom-x1e- prefix.
                          Set this when the branch name does not encode the full
@@ -120,415 +97,16 @@ require_arg() {
   fi
 }
 
-normalize_absolute_path() {
-  local input="$1" component normalized=""
-  local -a components=()
-
-  case "$input" in
-    /*) ;;
-    *) return 1 ;;
-  esac
-  if [ "$input" = "/" ]; then
-    printf '/\n'
-    return 0
-  fi
-  IFS='/' read -r -a components <<< "${input#/}"
-  for component in "${components[@]}"; do
-    case "$component" in
-      ""|.) continue ;;
-      ..) return 1 ;;
-    esac
-    normalized="$normalized/$component"
-  done
-  printf '%s\n' "${normalized:-/}"
-}
-
-reject_unsafe_path_spelling() {
-  local value="$1" label="$2"
-
-  case "$value" in
-    ""|*$'\n'*|*$'\r'*|*$'\t'*|*[!A-Za-z0-9._+/-]*)
-      echo "$label must use a canonical path without control or unsafe characters: $value" >&2
-      return 1
-      ;;
-    *//*|*/|./*|*/./*)
-      echo "$label must use a canonical path without duplicate, dot, or trailing separators: $value" >&2
-      return 1
-      ;;
-  esac
-  case "/$value/" in
-    */../*)
-      echo "$label must not contain a '..' path component: $value" >&2
-      return 1
-      ;;
-  esac
-}
-
-ensure_safe_work_dir() {
-  local requested="$1" candidate normalized current component
-  local -a components=()
-
-  reject_unsafe_path_spelling "$requested" "--work-dir" || return 1
-  case "$requested" in
-    /*) candidate="$requested" ;;
-    *) candidate="$repo_dir/$requested" ;;
-  esac
-  if ! normalized="$(normalize_absolute_path "$candidate")"; then
-    echo "Could not normalize --work-dir safely: $requested" >&2
-    return 1
-  fi
-  if [ "$candidate" != "$normalized" ]; then
-    echo "--work-dir must use its exact canonical path: $requested" >&2
-    return 1
-  fi
-  case "$normalized" in
-    "$repo_dir/build"/*) ;;
-    *)
-      echo "--work-dir must be a dedicated descendant of this repository's build/ directory: $requested" >&2
-      return 1
-      ;;
-  esac
-
-  current=""
-  IFS='/' read -r -a components <<< "${normalized#/}"
-  for component in "${components[@]}"; do
-    [ -n "$component" ] || continue
-    current="$current/$component"
-    if [ -L "$current" ]; then
-      echo "--work-dir must not contain symlink components: $requested" >&2
-      return 1
-    fi
-    if [ -e "$current" ]; then
-      if [ ! -d "$current" ]; then
-        echo "--work-dir component is not a directory: $current" >&2
-        return 1
-      fi
-    else
-      if ! mkdir -m 700 "$current"; then
-        echo "Could not create safe --work-dir component: $current" >&2
-        return 1
-      fi
-      if [ -L "$current" ] || [ ! -d "$current" ]; then
-        echo "Unsafe --work-dir component appeared during creation: $current" >&2
-        return 1
-      fi
-    fi
-  done
-  if [ "$(cd "$normalized" && pwd -P)" != "$normalized" ]; then
-    echo "--work-dir did not resolve to its exact non-symlink path: $requested" >&2
-    return 1
-  fi
-  printf '%s\n' "$normalized"
-}
-
-resolve_safe_patch_dir() {
-  local requested="$1" candidate normalized current component
-  local -a components=()
-
-  reject_unsafe_path_spelling "$requested" "--patch-dir" || return 1
-  case "$requested" in
-    /*) candidate="$requested" ;;
-    *) candidate="$repo_dir/$requested" ;;
-  esac
-  if ! normalized="$(normalize_absolute_path "$candidate")"; then
-    echo "Could not normalize --patch-dir safely: $requested" >&2
-    return 1
-  fi
-  if [ "$candidate" != "$normalized" ]; then
-    echo "--patch-dir must use its exact canonical path: $requested" >&2
-    return 1
-  fi
-  case "$normalized" in
-    "$repo_dir/patches"/*) ;;
-    *)
-      echo "--patch-dir must be a dedicated child of this repository's patches/ directory: $requested" >&2
-      return 1
-      ;;
-  esac
-
-  current=""
-  IFS='/' read -r -a components <<< "${normalized#/}"
-  for component in "${components[@]}"; do
-    [ -n "$component" ] || continue
-    current="$current/$component"
-    if [ -L "$current" ]; then
-      echo "--patch-dir must not contain symlink components: $requested" >&2
-      return 1
-    fi
-    if [ ! -d "$current" ]; then
-      echo "--patch-dir component is not an existing directory: $current" >&2
-      return 1
-    fi
-  done
-  if [ "$(cd "$normalized" && pwd -P)" != "$normalized" ]; then
-    echo "--patch-dir did not resolve to its exact non-symlink path: $requested" >&2
-    return 1
-  fi
-  printf '%s\n' "$normalized"
-}
-
-validate_public_git_url() {
-  local url="$1" authority path
-
-  case "$url" in
-    https://*) ;;
-    *) echo "--git-url must be a public HTTPS URL." >&2; return 1 ;;
-  esac
-  if [ "${#url}" -gt 2048 ]; then
-    echo "--git-url exceeds the supported length." >&2
-    return 1
-  fi
-  case "$url" in
-    *[[:space:]]*|*\?*|*\#*|*@*)
-      echo "--git-url must not contain credentials, controls, shell metacharacters, a query, or a fragment." >&2
-      return 1
-      ;;
-  esac
-  case "$url" in
-    *\'*|*\"*|*\`*|*\$*|*\\*)
-      echo "--git-url must not contain credentials, controls, shell metacharacters, a query, or a fragment." >&2
-      return 1
-      ;;
-  esac
-  case "$url" in
-    *[!A-Za-z0-9._~:/%+-]*)
-      echo "--git-url contains unsupported characters." >&2
-      return 1
-      ;;
-  esac
-  authority="${url#https://}"
-  authority="${authority%%/*}"
-  case "$authority" in
-    ""|.*|*.|*[!A-Za-z0-9.-]*)
-      echo "--git-url has an unsafe host." >&2
-      return 1
-      ;;
-  esac
-  case "$authority" in
-    localhost|localhost.*|*.localhost|*.local|*.internal|*.invalid|*.test|*.example|*.onion|127.*|0.*)
-      echo "--git-url must name a public host." >&2
-      return 1
-      ;;
-  esac
-  case "$authority" in
-    *[!0-9.]*) ;;
-    *) echo "--git-url must use a public DNS host, not a numeric address." >&2; return 1 ;;
-  esac
-  case "$authority" in
-    *.*) ;;
-    *) echo "--git-url must name a fully qualified public host." >&2; return 1 ;;
-  esac
-  path="${url#https://$authority}"
-  case "$path" in
-    /?*) ;;
-    *) echo "--git-url must include a repository path." >&2; return 1 ;;
-  esac
-}
-
-validate_git_ref() {
-  local value="$1"
-
-  if [ "${#value}" -gt 255 ] ||
-     ! [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._+~/-]*$ ]] ||
-     [[ "$value" == *..* ]] ||
-     ! git check-ref-format "refs/heads/$value" >/dev/null 2>&1; then
-    echo "--git-branch must be a safe full Git ref name: $value" >&2
-    return 1
-  fi
-}
-
-validate_version_token() {
-  local value="$1" label="$2"
-
-  if [ "${#value}" -gt 128 ] ||
-     ! [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._+~-]*$ ]] ||
-     [[ "$value" == *..* ]]; then
-    echo "$label must be a safe version token without slashes, controls, or '..': $value" >&2
-    return 1
-  fi
-}
-
-validate_container_storage() {
-  local normalized
-
-  case "$CONTAINER_WORK_DIR" in
-    *$'\n'*|*$'\r'*|*$'\t'*|*[!A-Za-z0-9._+/-]*)
-      echo "--container-work-dir must not contain controls or unsafe characters." >&2
-      return 1
-      ;;
-  esac
-  if ! normalized="$(normalize_absolute_path "$CONTAINER_WORK_DIR")" ||
-     [ "$normalized" != "$CONTAINER_WORK_DIR" ]; then
-    echo "--container-work-dir must use a canonical absolute path without '.', '..', duplicate, or trailing separators." >&2
-    return 1
-  fi
-  case "$CONTAINER_WORK_DIR" in
-    /work/*)
-      echo "--container-work-dir must not be nested under /work." >&2
-      return 1
-      ;;
-    /repo|/repo/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/etc|/etc/*|\
-    /usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|\
-    /run|/run/*|/tmp|/tmp/*|/var|/var/*|/boot|/boot/*|/home|/home/*|\
-    /root|/root/*|/opt|/opt/*|/mnt|/mnt/*|/media|/media/*|/srv|/srv/*|/)
-      echo "--container-work-dir must not overlap a protected container path: $CONTAINER_WORK_DIR" >&2
-      return 1
-      ;;
-  esac
-  if [ "${#LINUX_WORK_VOLUME}" -gt 128 ] ||
-     ! [[ "$LINUX_WORK_VOLUME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
-    echo "--linux-work-volume must be a Docker named volume, not a host path or mount specification." >&2
-    return 1
-  fi
-}
-
-validate_docker_tokens() {
-  if [ "${#IMAGE}" -gt 255 ] ||
-     ! [[ "$IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@-]*$ ]] ||
-     [[ "$IMAGE" == *..* ]]; then
-    echo "--image must be a safe Docker image reference." >&2
-    return 1
-  fi
-  if [ "${#PLATFORM}" -gt 64 ] ||
-     ! [[ "$PLATFORM" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] ||
-     [[ "$PLATFORM" == *..* ]]; then
-    echo "--platform must be a safe Docker platform token." >&2
-    return 1
-  fi
-}
-
-file_sha256() {
+abs_path() {
   local path="$1"
-
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$path" | awk '{print $1}'
+  if [ -d "$path" ]; then
+    (cd "$path" && pwd)
   else
-    sha256sum "$path" | awk '{print $1}'
+    (cd "$(dirname "$path")" && printf '%s/%s\n' "$(pwd)" "$(basename "$path")")
   fi
 }
 
-file_mode() {
-  local path="$1" mode
-
-  if mode="$(stat -c '%a' "$path" 2>/dev/null)"; then
-    printf '%s\n' "$mode"
-  else
-    stat -f '%Lp' "$path"
-  fi
-}
-
-validate_control_tripwire() {
-  local target="$1"
-
-  if [ -L "$target" ]; then
-    echo "Refusing symlinked annotations control-file tripwire: $target" >&2
-    return 1
-  fi
-  if [ -e "$target" ] && [ ! -f "$target" ]; then
-    echo "Refusing non-regular annotations control-file tripwire: $target" >&2
-    return 1
-  fi
-}
-
-cleanup_control_dir() {
-  [ -n "$CONTROL_DIR" ] || return 0
-  case "$CONTROL_DIR" in
-    "$work_abs"/.sp11-annotations-control.*)
-      if [ -d "$CONTROL_DIR" ] && [ ! -L "$CONTROL_DIR" ]; then
-        rm -f -- "$CONTROL_DIR/docker-regenerate-inside.sh"
-        rmdir "$CONTROL_DIR" 2>/dev/null || true
-      else
-        echo "warning: refusing to follow changed annotations control directory: $CONTROL_DIR" >&2
-      fi
-      ;;
-    *) echo "warning: refusing to clean unexpected annotations control directory: $CONTROL_DIR" >&2 ;;
-  esac
-}
-
-cleanup_patch_stage() {
-  [ -n "$PATCH_STAGE" ] || return 0
-  case "$PATCH_STAGE" in
-    "$patch_dir_abs"/.sp11-annotations-patch.*) rm -f -- "$PATCH_STAGE" ;;
-    *) echo "warning: refusing to clean unexpected annotations patch stage: $PATCH_STAGE" >&2 ;;
-  esac
-}
-
-cleanup() {
-  cleanup_control_dir
-  cleanup_patch_stage
-}
-
-install_control_file() {
-  local source="$1" target="$2"
-
-  validate_control_tripwire "$target" || return 1
-  if ! mv "$source" "$target"; then
-    echo "Could not atomically install annotations control evidence: $target" >&2
-    return 1
-  fi
-  if [ -L "$target" ] || [ ! -f "$target" ]; then
-    echo "Annotations control evidence is not a regular file after install: $target" >&2
-    return 1
-  fi
-  if [ "$(file_mode "$target")" != "700" ]; then
-    echo "Annotations control evidence does not have mode 0700: $target" >&2
-    return 1
-  fi
-}
-
-validate_container_output_tripwire() {
-  local path="$1"
-
-  if [ -L "$path" ]; then
-    echo "Refusing symlinked annotations output tripwire: $path" >&2
-    return 1
-  fi
-  if [ -e "$path" ] && [ ! -f "$path" ]; then
-    echo "Refusing non-regular annotations output tripwire: $path" >&2
-    return 1
-  fi
-}
-
-prepare_container_output_path() {
-  local path="$1"
-
-  validate_container_output_tripwire "$path" || return 1
-  [ ! -e "$path" ] || rm -f -- "$path"
-}
-
-validate_generated_patch() {
-  local path="$1"
-
-  if [ ! -s "$path" ] || [ ! -f "$path" ] || [ -L "$path" ]; then
-    echo "Generated annotations patch must be a nonempty regular, non-symlinked file: $path" >&2
-    return 1
-  fi
-  if ! grep -Iq . "$path" || ! grep -q '^diff --git ' "$path"; then
-    echo "Generated annotations patch is not a nonempty textual Git patch: $path" >&2
-    return 1
-  fi
-}
-
-preflight_patch_leaves() {
-  local candidate
-
-  shopt -s nullglob
-  for candidate in "$patch_dir_abs"/0001-*.patch; do
-    if [ -L "$candidate" ]; then
-      shopt -u nullglob
-      echo "Refusing symlinked annotations patch leaf: $candidate" >&2
-      return 1
-    fi
-    if [ -e "$candidate" ] && [ ! -f "$candidate" ]; then
-      shopt -u nullglob
-      echo "Refusing non-regular annotations patch leaf: $candidate" >&2
-      return 1
-    fi
-  done
-  shopt -u nullglob
-}
-
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -606,37 +184,39 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$KEEP_SOURCE" != "true" ]; then
+  if [ -z "$GIT_URL" ] || [ -z "$GIT_BRANCH" ]; then
+    echo "Either --git-url and --git-branch, or --keep-source, is required." >&2
+    usage >&2
+    exit 2
+  fi
+fi
+
 if [ "$KEEP_SOURCE" = "true" ] && [ "$RESET_SOURCE" = "true" ]; then
   echo "--keep-source and --reset-source are mutually exclusive." >&2
   exit 2
 fi
 
-if [ -z "$GIT_BRANCH" ]; then
-  echo "--git-branch is required in both fresh-source and --keep-source modes." >&2
+case "$CONTAINER_WORK_DIR" in
+  /*) ;;
+  *)
+    echo "--container-work-dir must be an absolute container path." >&2
+    exit 2
+    ;;
+esac
+
+case "$CONTAINER_WORK_DIR" in
+  /work/*)
+    echo "--container-work-dir must not be nested under /work." >&2
+    echo "Use /work for the host-mounted work dir or keep the default /linux-work volume." >&2
+    exit 2
+    ;;
+esac
+
+if [ "$CONTAINER_WORK_DIR" != "/work" ] && [ -z "$LINUX_WORK_VOLUME" ]; then
+  echo "--linux-work-volume must not be empty when --container-work-dir is not /work." >&2
   exit 2
 fi
-if [ "$KEEP_SOURCE" != "true" ] && [ -z "$GIT_URL" ]; then
-  echo "--git-url is required unless --keep-source is used." >&2
-  exit 2
-fi
-
-require_tool git
-require_tool grep
-require_tool mktemp
-require_tool awk
-require_tool stat
-if ! command -v shasum >/dev/null 2>&1 &&
-   ! command -v sha256sum >/dev/null 2>&1; then
-  echo "Missing required SHA-256 tool: shasum or sha256sum" >&2
-  exit 1
-fi
-
-validate_git_ref "$GIT_BRANCH" || exit 2
-if [ -n "$GIT_URL" ]; then
-  validate_public_git_url "$GIT_URL" || exit 2
-fi
-validate_container_storage || exit 2
-validate_docker_tokens || exit 2
 
 # Derive the short version token (e.g. "7.1.3-jg-1") from the branch name.
 # Branches look like jg/ubuntu-qcom-x1e-<version>, e.g.
@@ -656,7 +236,12 @@ else
   version_token=""
 fi
 
-validate_version_token "$version_token" "--version-token" || exit 2
+# --keep-source reuses an existing checked-out tree but still needs the branch
+# to locate the source dir and name the output patch.
+if [ "$KEEP_SOURCE" = "true" ] && [ -z "$version_token" ]; then
+  echo "--keep-source requires --git-branch too (used to locate the source dir and name the patch)." >&2
+  exit 2
+fi
 
 # Branches follow jg/ubuntu-qcom-x1e-<base>-jg-<n>, e.g.
 #   jg/ubuntu-qcom-x1e-7.1.3-jg-1  ->  base "7.1.3",  full "7.1.3-jg-1"
@@ -674,7 +259,6 @@ else
     exit 2
   fi
 fi
-validate_version_token "$base_version" "--base-version" || exit 2
 
 if [ -z "$PATCH_DIR" ]; then
   if [ -z "$version_token" ]; then
@@ -684,13 +268,26 @@ if [ -z "$PATCH_DIR" ]; then
   PATCH_DIR="patches/jglathe-qcom-x1e-${base_version}"
 fi
 
-patch_dir_abs="$(resolve_safe_patch_dir "$PATCH_DIR")" || exit 1
-preflight_patch_leaves || exit 1
+patch_dir_abs="$(abs_path "$PATCH_DIR")"
+case "$patch_dir_abs" in
+  "$repo_dir"/*) ;;
+  *)
+    echo "--patch-dir must be inside this repository so Docker can write back to it." >&2
+    exit 1
+    ;;
+esac
+
+if [ ! -d "$patch_dir_abs" ]; then
+  echo "Patch directory not found: $patch_dir_abs" >&2
+  echo "Create it first (it should hold the other patches for this branch)." >&2
+  exit 1
+fi
 
 if [ -z "$WORK_DIR" ]; then
   WORK_DIR="build/docker-sp11-qcom-x1e-annotations-${version_token}"
 fi
-work_abs="$(ensure_safe_work_dir "$WORK_DIR")" || exit 1
+mkdir -p "$WORK_DIR"
+work_abs="$(abs_path "$WORK_DIR")"
 
 # Source directory name under CONTAINER_WORK_DIR/source mirrors what
 # build-sp11-qcom-x1e-kernel.sh's prepare_git_source() uses:
@@ -698,52 +295,10 @@ work_abs="$(ensure_safe_work_dir "$WORK_DIR")" || exit 1
 safe_branch="${GIT_BRANCH//\//-}"
 expected_source_dir="${CONTAINER_WORK_DIR}/source/git-${safe_branch}"
 
-patch_basename="0001-debian-qcom-x1e-update-annotations-for-${version_token}.patch"
-src_patch="$work_abs/$patch_basename"
-annotations_after="$work_abs/annotations.after"
-control_target="$work_abs/docker-regenerate-inside.sh"
-dst_patch="$patch_dir_abs/$patch_basename"
-
-# Validate every predictable host leaf before creating any control or output
-# file. In particular, never let the root container follow a host symlink.
-validate_control_tripwire "$control_target" || exit 1
-validate_container_output_tripwire "$src_patch" || exit 1
-validate_container_output_tripwire "$annotations_after" || exit 1
-
-CONTROL_DIR="$(mktemp -d "$work_abs/.sp11-annotations-control.XXXXXX")"
-trap cleanup EXIT
-trap 'exit 130' HUP INT TERM
-chmod 700 "$CONTROL_DIR"
-if [ -L "$CONTROL_DIR" ] || [ ! -d "$CONTROL_DIR" ] ||
-   [ "$(file_mode "$CONTROL_DIR")" != "700" ]; then
-  echo "Could not create a private annotations control directory safely." >&2
-  exit 1
-fi
-
-run_script="$CONTROL_DIR/docker-regenerate-inside.sh"
+run_script="$work_abs/docker-regenerate-inside.sh"
 cat > "$run_script" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-
-sanitize_git_environment() {
-  local variable_name
-
-  unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES GIT_COMMON_DIR
-  unset GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM
-  unset GIT_CONFIG_GLOBAL GIT_DIR GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_EXEC_PATH
-  unset GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_PREFIX
-  unset GIT_SHALLOW_FILE GIT_WORK_TREE
-  for variable_name in "\${!GIT_CONFIG_KEY_@}" "\${!GIT_CONFIG_VALUE_@}"; do
-    unset "\$variable_name"
-  done
-  export GIT_CONFIG_NOSYSTEM=1
-  export GIT_CONFIG_SYSTEM=/dev/null
-  export GIT_CONFIG_GLOBAL=/dev/null
-  export GIT_ATTR_NOSYSTEM=1
-  export GIT_NO_REPLACE_OBJECTS=1
-}
-
-sanitize_git_environment
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -759,72 +314,11 @@ apt-get install -y --no-install-recommends \\
 # package, which provides the aarch64-linux-gnu-gcc-15 executable) is in
 # universe.
 
-container_work="${CONTAINER_WORK_DIR}"
-source_root="\$container_work/source"
 src="${expected_source_dir}"
-
-if [ ! -d "\$container_work" ] || [ -L "\$container_work" ] ||
-   [ "\$(cd "\$container_work" && pwd -P)" != "\$container_work" ]; then
-  echo "Container work mount is not an exact physical directory: \$container_work" >&2
-  exit 1
-fi
-if [ -L "\$source_root" ] || { [ -e "\$source_root" ] && [ ! -d "\$source_root" ]; }; then
-  echo "Refusing unsafe source-root tripwire: \$source_root" >&2
-  exit 1
-fi
-mkdir -p "\$source_root"
-if [ -L "\$source_root" ] || [ ! -d "\$source_root" ] ||
-   [ "\$(cd "\$source_root" && pwd -P)" != "\$source_root" ]; then
-  echo "Source root did not resolve to its exact physical path: \$source_root" >&2
-  exit 1
-fi
-if [ -L "\$src" ] || { [ -e "\$src" ] && [ ! -d "\$src" ]; }; then
-  echo "Refusing unsafe kernel source tripwire: \$src" >&2
-  exit 1
-fi
-if [ -d "\$src" ] && [ "\$(cd "\$src" && pwd -P)" != "\$src" ]; then
-  echo "Kernel source did not resolve to its exact physical path: \$src" >&2
-  exit 1
-fi
-
-require_clean_git_source() {
-  local status_output
-
-  if ! git -C "\$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Existing source is not a Git worktree: \$src" >&2
-    return 1
-  fi
-  if ! status_output="\$(git -C "\$src" status --porcelain --untracked-files=all)"; then
-    echo "Could not inspect the existing source worktree: \$src" >&2
-    return 1
-  fi
-  if [ -n "\$status_output" ]; then
-    echo "Existing source has tracked or untracked changes: \$src" >&2
-    echo "Preserve them, or rerun with the explicit --reset-source option." >&2
-    return 1
-  fi
-}
 
 if [ "\${SP11_KEEP_SOURCE:-false}" = "true" ]; then
   if [ ! -d "\$src" ]; then
     echo "Source tree not found for --keep-source: \$src" >&2
-    exit 1
-  fi
-  require_clean_git_source || exit 1
-  head_commit="\$(git -C "\$src" rev-parse --verify 'HEAD^{commit}')"
-  declared_ref_matches=false
-  for candidate_ref in \
-    "refs/heads/${GIT_BRANCH}" \
-    "refs/tags/${GIT_BRANCH}" \
-    "refs/remotes/origin/${GIT_BRANCH}"; do
-    if candidate_commit="\$(git -C "\$src" rev-parse --verify "\${candidate_ref}^{commit}" 2>/dev/null)" &&
-       [ "\$candidate_commit" = "\$head_commit" ]; then
-      declared_ref_matches=true
-      break
-    fi
-  done
-  if [ "\$declared_ref_matches" != "true" ]; then
-    echo "--keep-source HEAD is not the declared --git-branch ref: ${GIT_BRANCH}" >&2
     exit 1
   fi
 else
@@ -835,18 +329,9 @@ else
     mkdir -p "\$(dirname "\$src")"
     git clone --depth 1 --branch "${GIT_BRANCH}" "${GIT_URL}" "\$src"
   else
-    require_clean_git_source || exit 1
-    origin_url="\$(git -C "\$src" remote get-url origin 2>/dev/null || true)"
-    if [ "\$origin_url" != "${GIT_URL}" ]; then
-      echo "Existing source origin does not match --git-url." >&2
-      echo "Expected: ${GIT_URL}" >&2
-      echo "Actual:   \${origin_url:-<missing>}" >&2
-      echo "Use --reset-source to create a checkout from the requested origin." >&2
-      exit 1
-    fi
-
-    # Resolve the declared ref at the validated URL, fetch that exact namespace,
-    # then detach at FETCH_HEAD. Never trust a pre-existing origin ref silently.
+    # Detect head vs tag the same way build-sp11-qcom-x1e-kernel.sh does, so
+    # refs that are actually tags (like the jg/... refs) don't fail when
+    # origin/\$GIT_BRANCH doesn't exist.
     ref_kind=""
     if git ls-remote --exit-code --heads "${GIT_URL}" "${GIT_BRANCH}" >/dev/null 2>&1; then
       ref_kind="head"
@@ -858,14 +343,15 @@ else
       exit 1
     fi
     if [ "\$ref_kind" = "head" ]; then
-      git -C "\$src" fetch --force "${GIT_URL}" "refs/heads/${GIT_BRANCH}"
+      git -C "\$src" fetch origin "${GIT_BRANCH}"
+      git -C "\$src" checkout "${GIT_BRANCH}"
+      git -C "\$src" reset --hard "origin/${GIT_BRANCH}"
     else
-      git -C "\$src" fetch --force "${GIT_URL}" "refs/tags/${GIT_BRANCH}"
+      git -C "\$src" fetch --force origin "refs/tags/${GIT_BRANCH}:refs/tags/${GIT_BRANCH}"
+      git -C "\$src" checkout --detach "refs/tags/${GIT_BRANCH}"
+      git -C "\$src" reset --hard "refs/tags/${GIT_BRANCH}"
     fi
-    fetched_commit="\$(git -C "\$src" rev-parse --verify 'FETCH_HEAD^{commit}')"
-    git -C "\$src" checkout --detach "\$fetched_commit"
   fi
-  require_clean_git_source || exit 1
 fi
 
 # Install the source package's complete build dependency set. Kconfig probes
@@ -937,18 +423,7 @@ echo "  /work/0001-debian-qcom-x1e-update-annotations-for-${version_token}.patch
 echo "Diffstat:"
 git -C "\$src" diff --stat -- debian.qcom-x1e/config/annotations || true
 EOF
-chmod 700 "$run_script"
-if [ -L "$run_script" ] || [ ! -f "$run_script" ] ||
-   [ "$(file_mode "$run_script")" != "700" ]; then
-  echo "Could not create private annotations control evidence safely." >&2
-  exit 1
-fi
-validate_control_tripwire "$control_target" || exit 1
-install_control_file "$run_script" "$control_target" || exit 1
-cleanup_control_dir
-CONTROL_DIR=""
-run_script="$control_target"
-control_sha="$(file_sha256 "$control_target")"
+chmod +x "$run_script"
 
 docker_args=(
   run
@@ -975,8 +450,6 @@ if [ "$DRY_RUN" = "true" ]; then
   exit 0
 fi
 
-prepare_container_output_path "$src_patch" || exit 1
-prepare_container_output_path "$annotations_after" || exit 1
 require_tool docker
 
 set +e
@@ -988,58 +461,26 @@ if [ "$docker_status" -ne 0 ]; then
   exit "$docker_status"
 fi
 
-validate_generated_patch "$src_patch" || exit 1
-if [ -L "$annotations_after" ] ||
-   { [ -e "$annotations_after" ] && [ ! -f "$annotations_after" ]; }; then
-  echo "Generated annotations evidence must be a regular, non-symlinked file: $annotations_after" >&2
-  exit 1
-fi
-validate_control_tripwire "$control_target" || exit 1
-if [ ! -f "$control_target" ] || [ "$(file_mode "$control_target")" != "700" ] ||
-   [ "$(file_sha256 "$control_target")" != "$control_sha" ]; then
-  echo "Annotations control evidence changed type, mode, or bytes during Docker execution: $control_target" >&2
+src_patch="$work_abs/0001-debian-qcom-x1e-update-annotations-for-${version_token}.patch"
+dst_patch="$patch_dir_abs/0001-debian-qcom-x1e-update-annotations-for-${version_token}.patch"
+
+if [ ! -f "$src_patch" ]; then
+  echo "Expected regenerated patch not found: $src_patch" >&2
+  echo "The container may have failed before writing it." >&2
   exit 1
 fi
 
-# Copy the generated patch into a private unpredictable leaf on the destination
-# filesystem. Validate the staged bytes before replacing any exact 0001 leaf.
-preflight_patch_leaves || exit 1
-src_sha_before="$(file_sha256 "$src_patch")"
-PATCH_STAGE="$(mktemp "$patch_dir_abs/.sp11-annotations-patch.XXXXXX")"
-if [ -L "$PATCH_STAGE" ] || [ ! -f "$PATCH_STAGE" ]; then
-  echo "Could not create a regular annotations patch stage safely." >&2
-  exit 1
-fi
-cp "$src_patch" "$PATCH_STAGE"
-chmod 644 "$PATCH_STAGE"
-validate_generated_patch "$PATCH_STAGE" || exit 1
-src_sha_after="$(file_sha256 "$src_patch")"
-stage_sha="$(file_sha256 "$PATCH_STAGE")"
-if [ "$src_sha_before" != "$src_sha_after" ] ||
-   [ "$src_sha_before" != "$stage_sha" ]; then
-  echo "Generated annotations patch changed while it was being staged." >&2
+if [ ! -s "$src_patch" ]; then
+  echo "Regenerated patch is empty (no annotations changes): $src_patch" >&2
+  echo "olddefconfig produced no diff vs. upstream annotations for ${version_token}." >&2
+  echo "The existing patch in $patch_dir_abs is left untouched." >&2
   exit 1
 fi
 
-# Recheck every managed leaf immediately before the atomic destination rename.
-# mv replaces a regular or symlink leaf itself and never opens its contents.
-preflight_patch_leaves || exit 1
-if ! mv -f "$PATCH_STAGE" "$dst_patch"; then
-  echo "Could not atomically install regenerated annotations patch: $dst_patch" >&2
-  exit 1
-fi
-PATCH_STAGE=""
-if [ -L "$dst_patch" ] || [ ! -f "$dst_patch" ] ||
-   [ "$(file_sha256 "$dst_patch")" != "$stage_sha" ]; then
-  echo "Installed annotations patch failed its post-rename identity check: $dst_patch" >&2
-  exit 1
-fi
-
-# Remove stale exact annotations leaves only after the new patch is safely in
-# place. Files with any other name are deliberately outside this script's scope.
-preflight_patch_leaves || exit 1
+# Remove any prior 0001-debian-qcom-x1e-update-annotations-for-*.patch so a
+# stale patch for an older version doesn't linger alongside the new one.
 shopt -s nullglob
-for old in "$patch_dir_abs"/0001-*.patch; do
+for old in "$patch_dir_abs"/0001-debian-qcom-x1e-update-annotations-for-*.patch; do
   if [ "$old" != "$dst_patch" ]; then
     echo "Removing stale annotations patch: $old"
     rm -f "$old"
@@ -1047,6 +488,7 @@ for old in "$patch_dir_abs"/0001-*.patch; do
 done
 shopt -u nullglob
 
+cp -f "$src_patch" "$dst_patch"
 echo
 echo "Installed regenerated patch:"
 echo "  $dst_patch"

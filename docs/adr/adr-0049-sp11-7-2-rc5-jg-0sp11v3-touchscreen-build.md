@@ -28,12 +28,6 @@ initramfs, and verifies their source versions. The reported
 validated development device works with it disabled. See
 [ADR-0050](adr-0050-sp11-touchscreen-clean-install-release-flow.md).
 
-Profile clarification (2026-08-07): “Phase 91” identifies the immutable
-source revision and test lineage, not the active client behavior profile. The
-installer supplies no `mshw0485_touch` profile parameters. At that source
-revision, `mode_config_fix=true` and the later Phase 76–91 behavior gates
-default to false, so `behavior_stats` reports the Phase 75 runtime profile.
-
 ## Context
 
 [ADR-0048](adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md) established the
@@ -49,7 +43,7 @@ protocol.
 
 The working configuration was reached cooperatively with the geocausa
 [SP11X1e-touchscreen](https://github.com/geocausa/SP11X1e-touchscreen) project,
-whose pinned Phase 91 source provides three out-of-tree modules that the
+whose Phase 91 baseline provides three out-of-tree modules that the
 7.2-rc5-jg-0 kernel does not carry: a QSPI-aware `gpi` DMA engine driver, a
 `spi-geni-qcom` controller driver that recognizes GENI protocol 9 (QSPI) and
 performs the Linux-integrated QSPI SE preparation, and the `mshw0485_touch`
@@ -85,7 +79,7 @@ new standard Surface Pro 11 kernel:
    gives the result the distinct Debian ABI `7.2-rc5-jg-0sp11v3`, preserving
    the v2 ABI as a co-installable rollback option.
 2. Build the runtime QSPI support as out-of-tree modules from the geocausa
-   Phase 91 source pin (`gpi`, `spi-geni-qcom`, `mshw0485_touch`) against the
+   Phase 91 baseline (`gpi`, `spi-geni-qcom`, `mshw0485_touch`) against the
    `7.2-rc5-jg-0sp11v3` kernel headers, and install them as higher-priority
    `/lib/modules/<release>/updates/` overrides. `scripts/build-sp11-touchscreen-modules.sh`
    reproduces the build.
@@ -94,11 +88,9 @@ new standard Surface Pro 11 kernel:
    initramfs and loads them at early boot; without a rebuild the stock
    `gpi` module (which has no QSPI TRE support) binds `a00000.dma-controller`
    permanently and the touch DMA path fails with `CH START completion timeout`.
-4. Retire the installed loose-DTB selector and GRUB injection on the tested
-   Stubble path. Each ABI uses the DTB embedded in its exact Stubble-wrapped
-   image. The installer removes only the former managed helper and hooks,
-   preserves any existing loose file unchanged, and uses normal live-root GRUB
-   generation.
+4. Generalize the installer's DTB selection from `sp11v2` to any
+   `sp11v[0-9]+` suffix so a v3 build is preferred when it coexists with the
+   plain or v2 build.
 
 ## Decision details
 
@@ -109,8 +101,7 @@ The Docker kernel build:
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \
@@ -139,12 +130,18 @@ configuration, regenerates the exact target ABI, then checks that module
 selection and the initramfs use the geocausa source versions. No separate
 `dracut` or `update-initramfs` command is required.
 
-Under [ADR-0055](adr-0055-retire-installed-loose-dtb-injection.md), the
-installer retires the deployed `/usr/local/sbin/sp11-grub-inject-dtb` helper
-and its managed kernel hooks. It leaves an existing `/boot/sp11-denali.dtb`
-byte-for-byte untouched as inert evidence and does not use it for live-FDT
-provenance. Each v3 or experimental Stubble image carries its exact
-authoritative DTB.
+The installer DTB selection (`pick_dtb` in `scripts/install-sp11-support.sh`)
+now extracts the numeric suffix after `sp11v` and prefers the newest one:
+
+```bash
+sp11="$(printf '%s\n' "$@" | grep -E 'sp11v[0-9]+' || true)"
+if [ -n "$sp11" ]; then
+  newest_suffix="$(printf '%s\n' "$sp11" | sed -nE 's/.*sp11v([0-9]+).*/\1/p' | sort -n | tail -n 1)"
+  printf '%s\n' "$sp11" | grep -E "sp11v${newest_suffix}" | sort -V | tail -n 1
+else
+  printf '%s\n' "$@" | sort -V | tail -n 1
+fi
+```
 
 ## Consequences
 
@@ -153,8 +150,6 @@ authoritative DTB.
   device reports as `Microsoft Surface G6 Touch`.
 - Multi-touch, pinch/zoom, and three-finger gestures work through the Linux
   `mshw0485_touch` HID-SPI driver.
-- The release uses Phase 91 source but the Phase 75 default runtime profile;
-  later behavior gates remain opt-in until independently validated.
 - The 2.4 MHz DMIC clock and the audio capture path from v2 are unchanged and
   remain working.
 - The touchscreen works only with the geocausa `updates/` modules present and
@@ -162,6 +157,3 @@ authoritative DTB.
   driver and the touch DMA path fails.
 - The plain `7.2-rc5-jg-0` and `7.2-rc5-jg-0sp11v2` ABIs remain co-installable
   as rollback options but are no longer the recommended Surface Pro 11 kernels.
-- Co-installed kernels do not share a mutable installed DTB; rollback depends
-  on the known-good Stubble image, initramfs, modules, and physical recovery
-  path.

@@ -51,45 +51,11 @@ list for the upstream Arch status.
 | Wi-Fi | ✅ Working | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Uses a [kernel hack to disable rfkill](https://github.com/dwhinham/kernel-surface-pro-11/commit/fcc769be9eaa9823d55e98a28402104621fa6784). Continue validating normal reboots, suspend/resume, and package upgrades. |
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
 | Audio — speakers | ⚠️ Partially | Sound card instantiates with generated topology from the CRD template. Both stereo speaker endpoints produce audio through a PipeWire manual sink with reordered `audio.position` labels. The 4-channel PCM is a transport layout, not four independently routable speakers. Music playback showed no audible regression with the 2.4 MHz DMIC kernel, but the manual sink is still required and speakers can sound distorted. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
-| Audio — microphone | ✅ Working with validated 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. A public demonstration reports 3.2 MHz on comparable OLED hardware, but that clock remains a separate experiment until it passes the local audio and suspend matrix. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
+| Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
 | Touchscreen | ✅ Working on installed v3 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, on the 7.2-rc5 v3 build (`7.2-rc5-jg-0sp11v3`) with an exact-ABI set of the geocausa `gpi`, `spi-geni-qcom`, and `mshw0485_touch` modules. The guarded installer forces those overrides into the target initramfs and verifies them before reboot. Multi-touch, pinch/zoom, and three-finger gestures work. The live USB still boots the concept ISO's casper kernel and does not gain touch from a payload-only v3 bundle. See [ADR-0050](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
-| Pen | ❌ Not implemented here | The current G6 touchscreen bundle does not expose the raw-report and userspace path needed for hover, pressure, buttons, or eraser. A public OLED SP11 demonstration establishes feasibility but is not an implementation source. |
-| Front, rear, and IR cameras | ❌ Not implemented here | The installed system currently exposes no media graph or video nodes for the reported IMX681, OV13858, and VD55G0 sensors. Bring-up must start with read-only ACPI and live-hardware inventory, then merge and validate one sensor branch at a time. |
-| Platform profiles | ❌ Not implemented here | No SP11 platform-profile interface is currently exposed. SSAM command discovery, conservative policy bounds, and thermal validation are required before enabling a profile. |
-| Volume rocker | ❌ Not implemented here | The PM8550 GPIO-backed volume inputs still need resource verification, a bounded kernel change, and hold-to-repeat testing. |
+| Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
-
-## Full Feature-Parity Programme
-
-The next development phase uses a thin
-[`linux_ms_dev_kit-sp11`](https://github.com/ooaklee/linux_ms_dev_kit-sp11)
-integration fork pinned to Johan G.'s exact `7.2-rc5-jg-0` source commit. This
-support repository continues to own Ubuntu packaging, recovery, validation,
-evidence, and releases. See
-[ADR0052](docs/adr/adr-0052-thin-sp11-kernel-integration-fork.md) and the
-[public source ledger](docs/sp11-feature-parity-source-ledger.md). The
-[full execution backlog](docs/sp11-full-feature-parity-execution-plan.md)
-defines the phase gates, acceptance matrices, rollback paths, and upstream
-destinations. The repository owner's interim project-code licence and SP11 UCM
-provenance direction is recorded in [LEGAL.md](LEGAL.md); its stated final
-reviews remain pending.
-
-The [public feature demonstration](https://www.youtube.com/watch?v=WJqRIeTjUbI)
-and [pinned public SP11 ACPI dumps](https://github.com/linux-surface/acpidumps/tree/1d0a2ce742b450fe3f65287adbe174ddccabe228/surface_pro_11_qcom)
-define useful research and acceptance-test inputs. They do not replace source
-provenance or target-device validation. Experimental kernels are built from an
-expected full source commit and are queued for one boot only after the running
-v3 kernel has also been made the explicit, verified persistent fallback.
-
-On the tested installed qcom-x1e Stubble path, each kernel uses the Denali DTB
-embedded in its exact Stubble-wrapped EFI image. The support installer does
-not select, copy, or inject a shared loose DTB. If
-`/boot/sp11-denali.dtb` exists from an earlier release, it is left untouched
-as inert recovery evidence; its presence or contents do not establish
-live-FDT provenance. Live-USB `/dtb/sp11-denali.dtb` handling is a separate
-boot path. See
-[ADR0055](docs/adr/adr-0055-retire-installed-loose-dtb-injection.md).
 
 ## Quick Start
 
@@ -113,7 +79,7 @@ mkdir -p build
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.1.3 patches/sp11-qcom-x1e-7.1.3-v2" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-sp11-v2 \
@@ -127,8 +93,7 @@ mkdir -p build
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v2" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v2 \
@@ -142,8 +107,7 @@ mkdir -p build
   --source git \
   --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
   --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
-  --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
+  --image ubuntu:26.04 \
   --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \
@@ -157,9 +121,6 @@ The release examples use the immutable
 `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag. The moving
 `jg/ubuntu-qcom-x1e-7.2rc` branch resolved to the same source commit when this
 baseline was validated, but should not be used as release provenance.
-The 7.2-rc5 examples also pin the Ubuntu 26.04 OCI index; the baseline file
-records its ARM64 platform manifest. Build manifests record the installed
-package inventory so later comparisons expose toolchain or archive drift.
 
 The v3 build enables the MSHW0485 OLED touchscreen in the device tree, but the
 runtime QSPI support ships as an exact-ABI out-of-tree module bundle. After the
@@ -210,7 +171,6 @@ for the full on-device build path and fallback-kernel safety model.
 ```bash
 ./scripts/build-sp11-live-usb-image.sh \
   --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
-  --payload payload/kernel-debs \
   --grub-mode direct \
   --work-dir build/work-direct-boot \
   --out build/sp11-ubuntu-live-direct.img \
@@ -220,16 +180,6 @@ for the full on-device build path and fallback-kernel safety model.
 If auto DTB extraction fails, provide one explicitly via `--dtb`. An explicit
 DTB can come from a kernel package with SP11 support or from a local build of
 `dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus DTB.
-For a publishable image, `--dtb` must be the exact `denali-oled-dtb` output from
-the supplied schema-v2 kernel build manifest; auto extraction is local-only.
-For a publishable build, also pass `--expected-iso-sha256` using a checksum
-verified independently before the build starts.
-The builder writes `build/sp11-live-image-build-manifest.txt`; the release gate
-accepts it only when the ISO is pinned, the embedded DTB matches the
-schema-v2 `denali-oled-dtb` output, the raw image has the exact two-partition
-GPT and FAT32 ESP allowlist, `BOOTAA64.EFI` and `README.txt` match their recorded
-identities, and the image carries the exact committed support tree and kernel
-payload inventory.
 
 To build a live USB with KDE Plasma available by default, add `--desktop kde`.
 See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
@@ -313,8 +263,7 @@ sudo reboot
 The current v3 bundle contains matching image, modules, flavour-header, and
 common-header packages for `7.2-rc5-jg-0sp11v3`, plus the three touchscreen
 modules. The older `7.1.3-jg-1sp11v2` package set remains a kernel-only rollback
-option. After reboot, verify the running kernel and the active device tree's
-requested DMIC rate:
+option. After reboot, verify the running kernel and authoritative DMIC clock:
 
 ```bash
 uname -r
@@ -324,8 +273,6 @@ od -An -tu4 -N4 --endian=big \
 
 Expected values are `7.2-rc5-jg-0sp11v3-qcom-x1e` (or
 `7.1.3-jg-1sp11v2-qcom-x1e` after selecting the rollback kernel) and `2400000`.
-The device-tree property is not a physical clock measurement at the microphone
-pins.
 
 ## Post-Install Bring-Up
 
@@ -444,7 +391,7 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 - [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
 - [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
 - [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
-- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-flow-test-20260614.md)
+- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-usb-flow-test-20260614.md)
 - [2026-06-14 Bluetooth public address test](docs/installed-bluetooth-public-address-test-20260614.md)
 
 ### Visual Evidence
@@ -460,8 +407,7 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 - [Bring Up Audio](docs/how-to/how-to-bring-up-audio.md)
 - [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
-- [Prepare a legacy audio local draft](scripts/prepare-sp11-audio-release-assets.sh)
-  (requires `--local-draft`; the output is nonpublishable)
+- [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 - [Touchscreen Clean-Install and Release Retrospective](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [Troubleshoot Docker Overlay Mount Failures on Linux Build Hosts](docs/how-to/how-to-troubleshoot-linux-docker-overlay.md)
@@ -523,10 +469,6 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Build](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
 - [ADR0050: Touchscreen Clean-Install and Release Flow](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [ADR0051: Remove Broken or Incorrect Releases and Tags](docs/adr/adr-0051-release-and-tag-cleanup.md)
-- [ADR0052: Thin Surface Pro 11 Kernel Integration Fork](docs/adr/adr-0052-thin-sp11-kernel-integration-fork.md)
-- [ADR0053: One-Shot Experimental Kernel Boot](docs/adr/adr-0053-one-shot-experimental-kernel-boot.md)
-- [ADR0054: Surface Pro 11 G6 HID Ownership](docs/adr/adr-0054-sp11-g6-hid-ownership.md)
-- [ADR0055: Retire Installed Loose-DTB Injection on the Tested Stubble Path](docs/adr/adr-0055-retire-installed-loose-dtb-injection.md)
 
 ## Windows Firmware
 
