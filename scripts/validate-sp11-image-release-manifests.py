@@ -29,6 +29,13 @@ FINGERPRINT = re.compile(r"(?:[0-9A-F]{2}:){31}[0-9A-F]{2}\Z")
 SERIAL = re.compile(r"[0-9A-F]+\Z")
 SOURCE_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
 PRINTABLE = re.compile(r"[ -~]{1,512}\Z")
+MODULE_SIGNING_POLICY = "sp11-controlled-rsa4096-sha512-v1"
+MODULE_SIGNING_CERTIFICATE = "sp11-module-signing-cert.x509"
+KERNEL_SIGNATURE_REPORT = "sp11-kernel-module-signatures.txt"
+KERNEL_SIGNATURE_REPORT_SCHEMA = "sp11-kernel-module-signature-verification-v1"
+KERNEL_UNSIGNED_ALLOWLIST = (
+    "config/kernel-signing/sp11-module-signing-allowed-unsigned.txt"
+)
 
 OUTPUT_PATHS = {
     "kernel-config": "debian/build/build-qcom-x1e/.config",
@@ -432,6 +439,225 @@ def validate_git_ref(repo: Path, source_ref: str) -> None:
     run_git(repo, ["check-ref-format", f"refs/heads/{source_ref}"])
 
 
+def validate_kernel_signature_report(
+    path: Path,
+    manifest: Manifest,
+    repo: Path,
+    support_commit: str,
+    abi: str,
+    debs: list[dict[str, str]],
+    certificate_sha: str,
+    certificate_fingerprint: str,
+    certificate_serial: str,
+) -> dict[str, str]:
+    regular_input(path, "kernel module signature report")
+    data = path.read_bytes()
+    require(
+        len(data) <= 16 * 1024 * 1024
+        and data.endswith(b"\n")
+        and b"\r" not in data
+        and b"\0" not in data,
+        "kernel module signature report is not canonical LF text",
+    )
+    try:
+        lines = data.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValidationError("kernel module signature report is not UTF-8") from exc
+    require(
+        len(lines) >= 16
+        and lines[0] == "# Surface Pro 11 Kernel Module Signature Report"
+        and lines[1] == "",
+        "kernel module signature report has the wrong header",
+    )
+    index = 2
+
+    def consume(label: str) -> str:
+        nonlocal index
+        require(index < len(lines), f"kernel module signature report is missing: {label}")
+        prefix = f"{label}: "
+        line = lines[index]
+        require(line.startswith(prefix) and len(line) > len(prefix), f"kernel module signature report has the wrong field: {label}")
+        index += 1
+        return line[len(prefix) :]
+
+    schema = consume("Schema")
+    report_abi = consume("Kernel ABI")
+    package_count_text = consume("Package count")
+    require(
+        schema == KERNEL_SIGNATURE_REPORT_SCHEMA
+        and report_abi == abi
+        and package_count_text in ("1", "2"),
+        "kernel module signature report schema, ABI, or package count is invalid",
+    )
+    package_count = int(package_count_text, 10)
+    package_debs = [deb for deb in debs if deb["role"] in ("modules", "modules-extra")]
+    require(
+        len(package_debs) == package_count
+        and [deb["role"] for deb in package_debs]
+        == (["modules"] if package_count == 1 else ["modules", "modules-extra"]),
+        "kernel module signature report package roles differ from build provenance",
+    )
+    package_modules = 0
+    package_signed = 0
+    package_unsigned = 0
+    for package_index, deb in enumerate(package_debs, 1):
+        role = consume(f"Package {package_index} role")
+        filename = consume(f"Package {package_index} file")
+        package = consume(f"Package {package_index} name")
+        version = consume(f"Package {package_index} version")
+        architecture = consume(f"Package {package_index} architecture")
+        size = consume(f"Package {package_index} size")
+        digest = consume(f"Package {package_index} SHA256")
+        module_count = consume(f"Package {package_index} module count")
+        signed_count = consume(
+            f"Package {package_index} cryptographically verified signed module count"
+        )
+        unsigned_count = consume(
+            f"Package {package_index} policy-allowed unsigned module count"
+        )
+        require(
+            (role, filename, package, version, architecture, size, digest)
+            == (
+                deb["role"],
+                deb["path"],
+                deb["package"],
+                deb["version"],
+                deb["architecture"],
+                deb["size"],
+                deb["sha"],
+            )
+            and bool(POSITIVE.fullmatch(module_count))
+            and module_count.isdigit()
+            and re.fullmatch(r"(?:0|[1-9][0-9]*)", signed_count) is not None
+            and re.fullmatch(r"(?:0|[1-9][0-9]*)", unsigned_count) is not None
+            and int(module_count, 10)
+            == int(signed_count, 10) + int(unsigned_count, 10),
+            f"kernel module signature report package {package_index} is inconsistent",
+        )
+        package_modules += int(module_count, 10)
+        package_signed += int(signed_count, 10)
+        package_unsigned += int(unsigned_count, 10)
+
+    require(
+        consume("Module signing policy") == MODULE_SIGNING_POLICY
+        and consume("Module signing hash algorithm") == "sha512"
+        and consume("Module signing certificate SHA256") == certificate_sha
+        and consume("Module signing certificate fingerprint") == certificate_fingerprint
+        and consume("Module signing certificate serial") == certificate_serial,
+        "kernel module signature report signing identity differs from build provenance",
+    )
+    total_text = consume("Total module count")
+    signed_text = consume("Cryptographically verified signed module count")
+    unsigned_text = consume("Policy-allowed unsigned module count")
+    inventory_sha = consume("Policy-allowed unsigned module path inventory SHA256")
+    require(
+        bool(POSITIVE.fullmatch(total_text))
+        and re.fullmatch(r"(?:0|[1-9][0-9]*)", signed_text) is not None
+        and re.fullmatch(r"(?:0|[1-9][0-9]*)", unsigned_text) is not None
+        and int(total_text, 10) == package_modules
+        and int(signed_text, 10) == package_signed
+        and int(unsigned_text, 10) == package_unsigned
+        and int(total_text, 10) == int(signed_text, 10) + int(unsigned_text, 10)
+        and bool(SHA256.fullmatch(inventory_sha))
+        and consume("Validation completed") == "true",
+        "kernel module signature report aggregate counts are inconsistent",
+    )
+    require(
+        index + 1 < len(lines)
+        and lines[index] == ""
+        and lines[index + 1] == "## Policy-allowed unsigned module paths",
+        "kernel module signature report unsigned-path section is malformed",
+    )
+    unsigned_paths = lines[index + 2 :]
+    require(
+        len(unsigned_paths) == package_unsigned
+        and unsigned_paths == sorted(unsigned_paths)
+        and len(unsigned_paths) == len(set(unsigned_paths)),
+        "kernel module signature report unsigned-path inventory is not exact",
+    )
+    normalized_paths: list[str] = []
+    for row in unsigned_paths:
+        require(row.startswith("- ") and len(row) > 2, "kernel module signature report has an invalid unsigned-path row")
+        value = row[2:]
+        require(
+            safe_relative_path(value)
+            and re.fullmatch(r"[A-Za-z0-9._+/-]+\.ko(?:\.(?:gz|xz|zst))?", value)
+            is not None,
+            "kernel module signature report has an unsafe unsigned module path",
+        )
+        normalized_paths.append(value)
+    calculated_inventory_sha = hashlib.sha256(
+        "".join(f"{value}\n" for value in normalized_paths).encode("ascii")
+    ).hexdigest()
+    require(
+        calculated_inventory_sha == inventory_sha,
+        "kernel module signature report unsigned-path inventory hash is false",
+    )
+
+    committed_allowlist = run_git(
+        repo,
+        ["show", f"{support_commit}:{KERNEL_UNSIGNED_ALLOWLIST}"],
+        binary=True,
+    )
+    assert isinstance(committed_allowlist, bytes)
+    require(
+        bool(committed_allowlist)
+        and committed_allowlist.endswith(b"\n")
+        and b"\r" not in committed_allowlist
+        and b"\0" not in committed_allowlist,
+        "committed kernel module unsigned allowlist is not canonical LF text",
+    )
+    try:
+        allowlist_paths = committed_allowlist.decode("ascii", "strict").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValidationError(
+            "committed kernel module unsigned allowlist is not canonical ASCII"
+        ) from exc
+    require(
+        bool(allowlist_paths)
+        and allowlist_paths == sorted(allowlist_paths)
+        and len(allowlist_paths) == len(set(allowlist_paths))
+        and all(
+            safe_relative_path(value)
+            and re.fullmatch(r"[A-Za-z0-9._+/-]+\.ko(?:\.(?:gz|xz|zst))?", value)
+            is not None
+            for value in allowlist_paths
+        ),
+        "committed kernel module unsigned allowlist is malformed",
+    )
+    require(
+        normalized_paths == allowlist_paths
+        and package_unsigned == len(allowlist_paths)
+        and inventory_sha == hashlib.sha256(committed_allowlist).hexdigest(),
+        "kernel module signature report differs from the committed unsigned allowlist",
+    )
+
+    report_sha = sha256_file(path)
+    report_size = str(file_size(path))
+    comparisons = {
+        "Kernel module signature report asset": KERNEL_SIGNATURE_REPORT,
+        "Kernel module signature report size": report_size,
+        "Kernel module signature report SHA256": report_sha,
+        "Kernel module signature report schema": KERNEL_SIGNATURE_REPORT_SCHEMA,
+        "Kernel module total count": total_text,
+        "Kernel module verified signed count": signed_text,
+        "Kernel module policy-allowed unsigned count": unsigned_text,
+        "Kernel module unsigned-path inventory SHA256": inventory_sha,
+    }
+    for label, expected in comparisons.items():
+        require(manifest.one(label) == expected, f"kernel build field does not match signature report: {label}")
+    return {
+        "asset": KERNEL_SIGNATURE_REPORT,
+        "size": report_size,
+        "sha": report_sha,
+        "schema": schema,
+        "total": total_text,
+        "signed": signed_text,
+        "unsigned": unsigned_text,
+        "inventory_sha": inventory_sha,
+    }
+
+
 def validate_build(manifest: Manifest, repo: Path, support_commit: str) -> dict[str, object]:
     scalar_labels = {
         "Provenance schema",
@@ -459,9 +685,19 @@ def validate_build(manifest: Manifest, repo: Path, support_commit: str) -> dict[
         "Required output roles",
         "Optional output roles",
         "Output count",
+        "Module signing policy",
+        "Module signing private material retained",
         "Signing certificate SHA256",
         "Signing certificate fingerprint",
         "Signing certificate serial",
+        "Kernel module signature report asset",
+        "Kernel module signature report size",
+        "Kernel module signature report SHA256",
+        "Kernel module signature report schema",
+        "Kernel module total count",
+        "Kernel module verified signed count",
+        "Kernel module policy-allowed unsigned count",
+        "Kernel module unsigned-path inventory SHA256",
         "Required Deb roles",
         "Optional Deb roles",
         "Deb count",
@@ -612,7 +848,9 @@ def validate_build(manifest: Manifest, repo: Path, support_commit: str) -> dict[
     require(set(outputs) == set(OUTPUT_PATHS), "build manifest is missing a required output role")
     certificate_sha = manifest.one("Signing certificate SHA256")
     require(
-        bool(SHA256.fullmatch(certificate_sha))
+        manifest.one("Module signing policy") == MODULE_SIGNING_POLICY
+        and manifest.one("Module signing private material retained") == "false"
+        and bool(SHA256.fullmatch(certificate_sha))
         and outputs["module-signing-certificate"]["sha"] == certificate_sha
         and bool(FINGERPRINT.fullmatch(manifest.one("Signing certificate fingerprint")))
         and bool(SERIAL.fullmatch(manifest.one("Signing certificate serial"))),
@@ -679,6 +917,7 @@ def validate_build(manifest: Manifest, repo: Path, support_commit: str) -> dict[
                 "package": package,
                 "version": version,
                 "architecture": architecture,
+                "size": size,
                 "sha": deb_sha,
             }
         )
@@ -693,6 +932,17 @@ def validate_build(manifest: Manifest, repo: Path, support_commit: str) -> dict[
         "build Deb roles, versions, or ABI identities are inconsistent",
     )
     debs_by_role = {deb["role"]: deb for deb in debs}
+    signature_report = validate_kernel_signature_report(
+        manifest.path.with_name(KERNEL_SIGNATURE_REPORT),
+        manifest,
+        repo,
+        support_commit,
+        abi,
+        debs,
+        certificate_sha,
+        manifest.one("Signing certificate fingerprint"),
+        manifest.one("Signing certificate serial"),
+    )
     return {
         "support": start,
         "source_head": source_head,
@@ -712,9 +962,14 @@ def validate_build(manifest: Manifest, repo: Path, support_commit: str) -> dict[
         "optional_outputs": manifest.one("Optional output roles"),
         "required_debs": manifest.one("Required Deb roles"),
         "optional_debs": manifest.one("Optional Deb roles"),
+        "module_signing_policy": manifest.one("Module signing policy"),
+        "module_signing_private_material_retained": manifest.one(
+            "Module signing private material retained"
+        ),
         "certificate_sha": certificate_sha,
         "certificate_fingerprint": manifest.one("Signing certificate fingerprint"),
         "certificate_serial": manifest.one("Signing certificate serial"),
+        "kernel_signature_report": signature_report,
         "config_sha": outputs["kernel-config"]["sha"],
         "symvers_sha": outputs["module-symvers"]["sha"],
         "abi": abi,
@@ -768,9 +1023,19 @@ def validate_release(
         "Optional output roles",
         "Required package roles",
         "Optional package roles",
+        "Module signing policy",
+        "Module signing private material retained",
         "Signing certificate SHA256",
         "Signing certificate fingerprint",
         "Signing certificate serial",
+        "Kernel module signature report asset",
+        "Kernel module signature report size",
+        "Kernel module signature report SHA256",
+        "Kernel module signature report schema",
+        "Kernel module total count",
+        "Kernel module verified signed count",
+        "Kernel module policy-allowed unsigned count",
+        "Kernel module unsigned-path inventory SHA256",
         "Package count",
         "Kernel source archive",
         "Kernel source archive SHA256",
@@ -893,9 +1158,19 @@ def validate_release(
         "Optional output roles",
         "Required package roles",
         "Optional package roles",
+        "Module signing policy",
+        "Module signing private material retained",
         "Signing certificate SHA256",
         "Signing certificate fingerprint",
         "Signing certificate serial",
+        "Kernel module signature report asset",
+        "Kernel module signature report size",
+        "Kernel module signature report SHA256",
+        "Kernel module signature report schema",
+        "Kernel module total count",
+        "Kernel module verified signed count",
+        "Kernel module policy-allowed unsigned count",
+        "Kernel module unsigned-path inventory SHA256",
         "Package count",
         ]
     )
@@ -960,6 +1235,10 @@ def validate_release(
         "Optional output roles": str(build["optional_outputs"]),
         "Required package roles": str(build["required_debs"]),
         "Optional package roles": str(build["optional_debs"]),
+        "Module signing policy": str(build["module_signing_policy"]),
+        "Module signing private material retained": str(
+            build["module_signing_private_material_retained"]
+        ),
         "Signing certificate SHA256": str(build["certificate_sha"]),
         "Signing certificate fingerprint": str(build["certificate_fingerprint"]),
         "Signing certificate serial": str(build["certificate_serial"]),
@@ -987,6 +1266,22 @@ def validate_release(
         "OCI platform manifest": attached["oci_platform_manifest"],
         "Publication state": "blocked",
     }
+    signature_report = build["kernel_signature_report"]
+    assert isinstance(signature_report, dict)
+    comparisons.update(
+        {
+            "Kernel module signature report asset": str(signature_report["asset"]),
+            "Kernel module signature report size": str(signature_report["size"]),
+            "Kernel module signature report SHA256": str(signature_report["sha"]),
+            "Kernel module signature report schema": str(signature_report["schema"]),
+            "Kernel module total count": str(signature_report["total"]),
+            "Kernel module verified signed count": str(signature_report["signed"]),
+            "Kernel module policy-allowed unsigned count": str(signature_report["unsigned"]),
+            "Kernel module unsigned-path inventory SHA256": str(
+                signature_report["inventory_sha"]
+            ),
+        }
+    )
     if has_retained_evidence:
         evidence_size = manifest.one("Retained evidence tar size")
         evidence_sha = manifest.one("Retained evidence tar SHA256")
@@ -1092,6 +1387,13 @@ def validate_module(
         "Module make identity",
         "Support repo commit",
         "Support repo dirty",
+        "Module signing policy",
+        "Module signing private material retained",
+        "Module signing hash algorithm",
+        "Module signing certificate asset",
+        "Module signing certificate SHA256",
+        "Module signing certificate fingerprint",
+        "Module signing certificate serial",
         "Required SPI parameter",
     }
     for name in MODULE_NAMES:
@@ -1100,6 +1402,10 @@ def validate_module(
                 f"Module {name} name",
                 f"Module {name} size",
                 f"Module {name} SHA256",
+                f"Module {name} payload size",
+                f"Module {name} payload SHA256",
+                f"Module {name} signature size",
+                f"Module {name} signature SHA256",
                 f"Module {name} vermagic",
                 f"Module {name} srcversion",
             }
@@ -1139,6 +1445,15 @@ def validate_module(
         "Kernel architecture headers Deb SHA256": str(build["headers_deb_sha"]),
         "Support repo commit": support_commit,
         "Support repo dirty": "false",
+        "Module signing policy": str(build["module_signing_policy"]),
+        "Module signing private material retained": str(
+            build["module_signing_private_material_retained"]
+        ),
+        "Module signing hash algorithm": "sha512",
+        "Module signing certificate asset": MODULE_SIGNING_CERTIFICATE,
+        "Module signing certificate SHA256": str(build["certificate_sha"]),
+        "Module signing certificate fingerprint": str(build["certificate_fingerprint"]),
+        "Module signing certificate serial": str(build["certificate_serial"]),
         "Required SPI parameter": "sp11_windows_se_init",
     }
     for label, expected in comparisons.items():
@@ -1150,11 +1465,29 @@ def validate_module(
     for label in ("Module compiler identity", "Module linker identity", "Module make identity"):
         require(bool(PRINTABLE.fullmatch(manifest.one(label))), f"unsafe or missing {label}")
 
+    certificate_path = manifest.path.with_name(MODULE_SIGNING_CERTIFICATE)
+    regular_input(certificate_path, "touchscreen module-signing certificate")
+    certificate_sha = sha256_file(certificate_path)
+    certificate_fingerprint = ":".join(
+        certificate_sha.upper()[index : index + 2] for index in range(0, 64, 2)
+    )
+    require(
+        certificate_sha == manifest.one("Module signing certificate SHA256")
+        and certificate_fingerprint
+        == manifest.one("Module signing certificate fingerprint")
+        and bool(SERIAL.fullmatch(manifest.one("Module signing certificate serial"))),
+        "touchscreen module-signing certificate asset does not match its manifest identity",
+    )
+
     module_shas: dict[str, str] = {}
     for name, expected_name in MODULE_NAMES.items():
         flat_sha = manifest.one(f"Module {name} SHA256")
         module_name = manifest.one(f"Module {name} name")
         module_size = manifest.one(f"Module {name} size")
+        module_payload_size = manifest.one(f"Module {name} payload size")
+        module_payload_sha = manifest.one(f"Module {name} payload SHA256")
+        module_signature_size = manifest.one(f"Module {name} signature size")
+        module_signature_sha = manifest.one(f"Module {name} signature SHA256")
         module_vermagic = manifest.one(f"Module {name} vermagic")
         module_srcversion = manifest.one(f"Module {name} srcversion")
         require(
@@ -1165,6 +1498,12 @@ def validate_module(
         require(
             module_name == expected_name
             and bool(POSITIVE.fullmatch(module_size))
+            and bool(POSITIVE.fullmatch(module_payload_size))
+            and bool(SHA256.fullmatch(module_payload_sha))
+            and bool(POSITIVE.fullmatch(module_signature_size))
+            and bool(SHA256.fullmatch(module_signature_sha))
+            and int(module_payload_size, 10) < int(module_size, 10)
+            and int(module_signature_size, 10) < int(module_size, 10)
             and module_vermagic.split(" ", 1)[0] == str(build["abi"])
             and bool(re.fullmatch(r"[0-9A-Fa-f]+", module_srcversion)),
             f"module detail identity is incomplete or inconsistent: {name}",
@@ -1194,6 +1533,9 @@ def write_expected_payload(
         assert module_manifest is not None
         for name in MODULE_NAMES:
             lines.append(f"{module_shas[name]}  {name}\n")
+        certificate_path = module_manifest.with_name(MODULE_SIGNING_CERTIFICATE)
+        regular_input(certificate_path, "touchscreen module-signing certificate")
+        lines.append(f"{sha256_file(certificate_path)}  {MODULE_SIGNING_CERTIFICATE}\n")
         lines.append(f"{sha256_file(module_manifest)}  {module_manifest.name}\n")
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:

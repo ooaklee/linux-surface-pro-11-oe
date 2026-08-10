@@ -44,7 +44,7 @@ done
 
 validate_list() {
   local file="$1" label="$2" sha name extra
-  local deb_count=0 gpi_count=0 spi_count=0 touch_count=0 manifest_count=0
+  local deb_count=0 gpi_count=0 spi_count=0 touch_count=0 certificate_count=0 manifest_count=0
   while read -r sha name extra; do
     [ -z "${extra:-}" ] && [[ "$sha" =~ ^[0-9a-f]{64}$ ]] ||
       die "$label identity list contains an invalid record"
@@ -56,18 +56,21 @@ validate_list() {
       gpi.ko) gpi_count=$((gpi_count + 1)) ;;
       spi-geni-qcom.ko) spi_count=$((spi_count + 1)) ;;
       mshw0485_touch.ko) touch_count=$((touch_count + 1)) ;;
+      sp11-module-signing-cert.x509) certificate_count=$((certificate_count + 1)) ;;
       sp11-touchscreen-modules-manifest.txt) manifest_count=$((manifest_count + 1)) ;;
       *) die "$label identity list contains an unexpected payload file: $name" ;;
     esac
   done < "$file"
   if [ "$MODE" = "kernel-only" ]; then
     [ "$deb_count" -ge 1 ] && [ "$gpi_count" -eq 0 ] && [ "$spi_count" -eq 0 ] &&
-      [ "$touch_count" -eq 0 ] && [ "$manifest_count" -eq 0 ] ||
+      [ "$touch_count" -eq 0 ] && [ "$certificate_count" -eq 0 ] &&
+      [ "$manifest_count" -eq 0 ] ||
       die "$label identity list does not contain an exact kernel-only payload"
   else
     [ "$deb_count" -ge 1 ] && [ "$gpi_count" -eq 1 ] && [ "$spi_count" -eq 1 ] &&
-      [ "$touch_count" -eq 1 ] && [ "$manifest_count" -eq 1 ] ||
-      die "$label identity list does not contain the exact module/manifest roles"
+      [ "$touch_count" -eq 1 ] && [ "$certificate_count" -eq 1 ] &&
+      [ "$manifest_count" -eq 1 ] ||
+      die "$label identity list does not contain the exact signed module/certificate/manifest roles"
   fi
   duplicate="$(awk '{print $2}' "$file" | LC_ALL=C sort | uniq -d | sed -n '1p')"
   [ -z "$duplicate" ] || die "$label identity list repeats filename: $duplicate"

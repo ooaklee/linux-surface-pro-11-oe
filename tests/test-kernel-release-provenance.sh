@@ -8,6 +8,7 @@ real_git="$(command -v git)"
 real_mv="$(command -v mv)"
 real_python3="$(command -v python3)"
 real_rm="$(command -v rm)"
+fixture_openssl="$(command -v openssl)"
 digest="sha256:db2cb7b11291904f12adeed10ae23fbc95e7bed27f27bd3e35ade0d501e302ce"
 container_image="ubuntu:26.04@$digest"
 source_url="https://github.com/example/linux.git"
@@ -17,6 +18,8 @@ kbuild_build_user="sp11-builder"
 kbuild_build_host="sp11-build"
 kbuild_build_timestamp="Sat Aug  1 06:51:25 UTC 2026"
 mock_bin=""
+validator_dtb_bin=""
+validator_dtb_call_log=""
 apt_decoder_root=""
 
 cleanup() {
@@ -45,6 +48,19 @@ regular_file_state() {
   case "$(uname -s)" in
     Darwin) metadata="$(stat -f '%d:%i:%z:%m:%c:%Lp:%l' "$path")" ;;
     *) metadata="$(stat -c '%d:%i:%s:%Y:%Z:%a:%h' -- "$path")" ;;
+  esac
+  digest="$(shasum -a 256 "$path" | awk '{print $1}')"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s:%s\n' "$metadata" "$digest"
+}
+
+renamed_regular_file_state() {
+  local path="$1" metadata digest
+
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  case "$(uname -s)" in
+    Darwin) metadata="$(stat -f '%d:%i:%z:%Lp:%l' "$path")" ;;
+    *) metadata="$(stat -c '%d:%i:%s:%a:%h' -- "$path")" ;;
   esac
   digest="$(shasum -a 256 "$path" | awk '{print $1}')"
   [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -100,9 +116,13 @@ assert_no_publication_success() {
   fi
 }
 
-for tool in awk cmp git grep mktemp python3 readlink sed shasum stat uname xz; do
+for tool in awk cmp git grep mktemp openssl python3 readlink sed shasum stat uname xz; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
+case "$($fixture_openssl version)" in
+  'OpenSSL 3.'*) ;;
+  *) die "the release provenance CMS fixture requires OpenSSL 3" ;;
+esac
 grep -Fq 'digest-pinned OCI/APT /usr, loader, libraries, Python' \
   "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" ||
   die "kernel builder does not state its pinned toolchain trust boundary"
@@ -163,7 +183,74 @@ rm "$private_container_root/"$'\n'
 support_seed="$temporary_root/support-seed"
 source_repo="$temporary_root/source-repository"
 mock_bin="$temporary_root/mock-bin"
-mkdir -p "$support_seed/scripts" "$support_seed/patches/release" "$source_repo" "$mock_bin"
+module_signing_fixture="$temporary_root/module-signing-fixture"
+mkdir -p \
+  "$support_seed/scripts" \
+  "$support_seed/patches/release" \
+  "$support_seed/config/kernel-signing" \
+  "$source_repo" \
+  "$mock_bin"
+mkdir -m 0700 "$module_signing_fixture"
+"$fixture_openssl" rand -hex 24 > "$module_signing_fixture/pin"
+chmod 0600 "$module_signing_fixture/pin"
+"$fixture_openssl" genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+  -aes-256-cbc -pass "file:$module_signing_fixture/pin" \
+  -out "$module_signing_fixture/key.pem" >/dev/null 2>&1
+"$fixture_openssl" req -new -x509 -sha512 \
+  -key "$module_signing_fixture/key.pem" \
+  -passin "file:$module_signing_fixture/pin" \
+  -subj /CN=sp11-release-provenance-fixture -days 1 \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature' \
+  -out "$module_signing_fixture/cert.pem" >/dev/null 2>&1
+chmod 0600 "$module_signing_fixture/key.pem"
+chmod 0644 "$module_signing_fixture/cert.pem"
+"$fixture_openssl" x509 -in "$module_signing_fixture/cert.pem" -outform DER \
+  -out "$module_signing_fixture/sp11-module-signing-cert.x509"
+chmod 0644 "$module_signing_fixture/sp11-module-signing-cert.x509"
+fixture_certificate_text="$(
+  "$fixture_openssl" x509 -in "$module_signing_fixture/cert.pem" -noout -text
+)"
+printf '%s\n' "$fixture_certificate_text" |
+  grep -Fq 'Signature Algorithm: sha512WithRSAEncryption' ||
+  die "provenance fixture certificate is not RSA/SHA-512"
+printf '%s\n' "$fixture_certificate_text" |
+  grep -A1 -F 'X509v3 Basic Constraints: critical' |
+  grep -Fq 'CA:FALSE' ||
+  die "provenance fixture certificate is not critical CA:false"
+[ "$(printf '%s\n' "$fixture_certificate_text" |
+    grep -A1 -F 'X509v3 Key Usage: critical' | tail -n 1 |
+    tr -d '[:space:]')" = DigitalSignature ] ||
+  die "provenance fixture certificate key usage is not exact"
+unset fixture_certificate_text
+fixture_certificate_sha="$(
+  shasum -a 256 "$module_signing_fixture/sp11-module-signing-cert.x509" |
+    awk '{print $1}'
+)"
+fixture_certificate_fingerprint="$(
+  "$fixture_openssl" x509 -in "$module_signing_fixture/cert.pem" \
+    -noout -sha256 -fingerprint
+)"
+fixture_certificate_fingerprint="${fixture_certificate_fingerprint#*=}"
+fixture_certificate_fingerprint="$(
+  printf '%s' "$fixture_certificate_fingerprint" | tr '[:lower:]' '[:upper:]'
+)"
+fixture_certificate_serial="$(
+  "$fixture_openssl" x509 -in "$module_signing_fixture/cert.pem" -noout -serial
+)"
+fixture_certificate_serial="$(
+  printf '%s' "${fixture_certificate_serial#*=}" | tr '[:lower:]' '[:upper:]'
+)"
+[[ "$fixture_certificate_sha" =~ ^[0-9a-f]{64}$ ]] ||
+  die "provenance fixture certificate SHA256 is malformed"
+[[ "$fixture_certificate_fingerprint" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] ||
+  die "provenance fixture certificate fingerprint is malformed"
+[[ "$fixture_certificate_serial" =~ ^[0-9A-F]+$ ]] ||
+  die "provenance fixture certificate serial is malformed"
+cp "$module_signing_fixture/cert.pem" \
+  "$support_seed/config/kernel-signing/sp11-module-signing-cert.pem"
+cp "$repo_dir/config/kernel-signing/sp11-module-signing-allowed-unsigned.txt" \
+  "$support_seed/config/kernel-signing/sp11-module-signing-allowed-unsigned.txt"
 
 cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" "$support_seed/scripts/"
@@ -171,6 +258,7 @@ cp "$repo_dir/scripts/prepare-sp11-kernel-release-assets.sh" "$support_seed/scri
 cp "$repo_dir/scripts/sp11-release-tree-state.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-source-archive.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-image-release-manifests.py" "$support_seed/scripts/"
+cp "$repo_dir/scripts/validate-sp11-signed-modules.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-oci-index.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/sp11-kernel-build-inputs.py" "$support_seed/scripts/"
 cp "$repo_dir/scripts/sp11-kernel-release-state.py" "$support_seed/scripts/"
@@ -179,6 +267,184 @@ cp "$repo_dir/scripts/validate-sp11-kernel-tree-symlinks.py" "$support_seed/scri
 cp "$repo_dir/scripts/validate-sp11-payload-identity-list.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-public-content.sh" "$support_seed/scripts/"
 cp "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" "$support_seed/scripts/"
+python3 -I - \
+  "$support_seed/scripts/validate-sp11-signed-modules.py" \
+  "$fixture_certificate_sha" <<'PY_REBIND_SIGNED_MODULE_VALIDATOR'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+replacement = sys.argv[2].encode("ascii")
+approved = b"8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b"
+data = path.read_bytes()
+if data.count(approved) != 1 or replacement == approved:
+    raise SystemExit("signed-module validator certificate rebind was not exact")
+path.write_bytes(data.replace(approved, replacement))
+PY_REBIND_SIGNED_MODULE_VALIDATOR
+cat > "$support_seed/scripts/validate-sp11-module-signatures.py" <<PY_SIGNATURE_SCANNER
+#!/usr/bin/env python3
+"""Emit canonical controlled-signing evidence for the synthetic package fixture."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import stat
+from pathlib import Path
+
+
+CERTIFICATE_SHA256 = "$fixture_certificate_sha"
+CERTIFICATE_FINGERPRINT = "$fixture_certificate_fingerprint"
+CERTIFICATE_SERIAL = "$fixture_certificate_serial"
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--controlled-certificate", required=True, type=Path)
+parser.add_argument("--allowed-unsigned-file", required=True, type=Path)
+report_sink = parser.add_mutually_exclusive_group(required=True)
+report_sink.add_argument("--report-out", type=Path)
+report_sink.add_argument("--report-fd", type=int)
+parser.add_argument("packages", nargs="+", type=Path)
+arguments = parser.parse_args()
+if (
+    len(arguments.packages) not in (1, 2)
+    or (arguments.report_out is not None and arguments.report_out.exists())
+    or (arguments.report_fd is not None and arguments.report_fd != 13)
+):
+    raise SystemExit(2)
+if os.environ.get("SP11_KERNEL_RELEASE_PUBLICATION_FIXTURE_HOOK") == (
+    "scanner-partial-report-failure"
+):
+    metadata = os.fstat(arguments.report_fd)
+    sentinel = b"partial controlled report sentinel\n"
+    if (
+        arguments.report_fd != 13
+        or not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or metadata.st_size != 0
+        or os.write(arguments.report_fd, sentinel) != len(sentinel)
+    ):
+        raise SystemExit(2)
+    os.fsync(arguments.report_fd)
+    raise SystemExit(88)
+
+allowlist_raw = arguments.allowed_unsigned_file.read_bytes()
+if not allowlist_raw.endswith(b"\n") or b"\r" in allowlist_raw:
+    raise SystemExit(2)
+allowlist = allowlist_raw.decode("ascii").splitlines()
+if not allowlist or allowlist != sorted(set(allowlist)):
+    raise SystemExit(2)
+
+records = []
+abi = ""
+for package_path in arguments.packages:
+    filename = package_path.name
+    try:
+        package, version, architecture = filename.removesuffix(".deb").rsplit("_", 2)
+    except ValueError as exc:
+        raise SystemExit(2) from exc
+    if package.startswith("linux-modules-extra-"):
+        role = "modules-extra"
+        package_abi = package.removeprefix("linux-modules-extra-")
+        unsigned = 0
+    elif package.startswith("linux-modules-"):
+        role = "modules"
+        package_abi = package.removeprefix("linux-modules-")
+        unsigned = len(allowlist)
+    else:
+        raise SystemExit(2)
+    if not abi:
+        abi = package_abi
+    if package_abi != abi or architecture != "arm64":
+        raise SystemExit(2)
+    records.append(
+        (role, filename, package, version, architecture, package_path, unsigned)
+    )
+if [record[0] for record in records] != (
+    ["modules"] if len(records) == 1 else ["modules", "modules-extra"]
+):
+    raise SystemExit(2)
+
+lines = [
+    "# Surface Pro 11 Kernel Module Signature Report",
+    "",
+    "Schema: sp11-kernel-module-signature-verification-v1",
+    f"Kernel ABI: {abi}",
+    f"Package count: {len(records)}",
+]
+for index, (role, filename, package, version, architecture, path, unsigned) in enumerate(
+    records, 1
+):
+    lines.extend(
+        (
+            f"Package {index} role: {role}",
+            f"Package {index} file: {filename}",
+            f"Package {index} name: {package}",
+            f"Package {index} version: {version}",
+            f"Package {index} architecture: {architecture}",
+            f"Package {index} size: {path.stat().st_size}",
+            f"Package {index} SHA256: {sha256(path)}",
+            f"Package {index} module count: {unsigned + 1}",
+            f"Package {index} cryptographically verified signed module count: 1",
+            f"Package {index} policy-allowed unsigned module count: {unsigned}",
+        )
+    )
+lines.extend(
+    (
+        "Module signing policy: sp11-controlled-rsa4096-sha512-v1",
+        "Module signing hash algorithm: sha512",
+        f"Module signing certificate SHA256: {CERTIFICATE_SHA256}",
+        f"Module signing certificate fingerprint: {CERTIFICATE_FINGERPRINT}",
+        f"Module signing certificate serial: {CERTIFICATE_SERIAL}",
+        f"Total module count: {len(records) + len(allowlist)}",
+        f"Cryptographically verified signed module count: {len(records)}",
+        f"Policy-allowed unsigned module count: {len(allowlist)}",
+        "Policy-allowed unsigned module path inventory SHA256: "
+        + hashlib.sha256(allowlist_raw).hexdigest(),
+        "Validation completed: true",
+        "",
+        "## Policy-allowed unsigned module paths",
+    )
+)
+lines.extend(f"- {path}" for path in allowlist)
+report_bytes = ("\n".join(lines) + "\n").encode("ascii")
+if arguments.report_fd is not None:
+    descriptor = arguments.report_fd
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or metadata.st_size != 0
+    ):
+        raise SystemExit(2)
+    offset = 0
+    while offset < len(report_bytes):
+        written = os.write(descriptor, report_bytes[offset:])
+        if written <= 0:
+            raise SystemExit(2)
+        offset += written
+    os.fsync(descriptor)
+else:
+    descriptor = os.open(
+        arguments.report_out,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(report_bytes)
+        output.flush()
+        os.fsync(output.fileno())
+PY_SIGNATURE_SCANNER
+chmod +x "$support_seed/scripts/validate-sp11-module-signatures.py"
 cat > "$support_seed/scripts/validate-sp11-kernel-baseline.sh" <<'EOF_BASELINE_VALIDATOR'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -209,6 +475,10 @@ fi
 [ "$SP11_KERNEL_KBUILD_BUILD_USER" = "sp11-builder" ]
 [ "$SP11_KERNEL_KBUILD_BUILD_HOST" = "sp11-build" ]
 [ "$SP11_KERNEL_KBUILD_BUILD_TIMESTAMP" = "Sat Aug  1 06:51:25 UTC 2026" ]
+[ "$SP11_KERNEL_MODULE_SIGNING_POLICY" = "sp11-controlled-rsa4096-sha512-v1" ]
+[ "$SP11_KERNEL_MODULE_SIGNING_KEY_PATH" = "/sp11-signing/signing.pem" ]
+[ "$SP11_KERNEL_MODULE_SIGNING_PIN_PATH" = "/sp11-signing/pin" ]
+[ "$SP11_KERNEL_MODULE_SIGNING_CERT_PATH" = "config/kernel-signing/sp11-module-signing-cert.pem" ]
 for variable in \
   SP11_KERNEL_BASELINE_ID \
   SP11_KERNEL_DOCKER_IMAGE \
@@ -221,6 +491,15 @@ for variable in \
   SP11_KERNEL_KBUILD_BUILD_USER \
   SP11_KERNEL_KBUILD_BUILD_HOST \
   SP11_KERNEL_KBUILD_BUILD_TIMESTAMP \
+  SP11_KERNEL_MODULE_SIGNING_POLICY \
+  SP11_KERNEL_MODULE_SIGNING_KEY_PATH \
+  SP11_KERNEL_MODULE_SIGNING_PIN_PATH \
+  SP11_KERNEL_MODULE_SIGNING_CERT_PATH \
+  SP11_KERNEL_MODULE_SIGNING_CERT_SHA256 \
+  SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT \
+  SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL \
+  SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH \
+  SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256 \
   SP11_KERNEL_BUILD_TARGET \
   SP11_KERNEL_PATCH_DIRS; do
   printf '%s\t%s\n' "$variable" "${!variable}"
@@ -309,24 +588,24 @@ printf 'fixture system map\n' > "$build_root/System.map"
 printf 'fixture EFI kernel\n' > "$build_root/arch/arm64/boot/vmlinuz.efi.stubble"
 printf 'fixture OLED DTB\n' > "$build_root/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled.dtb"
 printf 'fixture OLED EL2 DTB\n' > "$build_root/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled-el2.dtb"
-printf 'fixture public certificate\n' > "$build_root/certs/signing_key.x509"
-printf 'private fixture: must never enter provenance\n' > "$build_root/certs/signing_key.pem"
+openssl x509 -in "$FIXTURE_SUPPORT_CERTIFICATE" -outform DER \
+  > "$build_root/certs/signing_key.x509"
 if [ "${OMIT_REQUIRED_OUTPUT:-false}" = "true" ]; then
   rm -f "$build_root/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled-el2.dtb"
 fi
 
-printf 'common headers package\n' > ../linux-qcom-x1e-headers-7.2.0-1_7.2.0-1_all.deb
-printf 'headers package\n' > ../linux-headers-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb
+printf 'common headers package\n' > ../linux-qcom-x1e-headers-7.2-rc5-jg-0sp11v3r2_7.2-rc5-jg-0sp11v3r2_all.deb
+printf 'headers package\n' > ../linux-headers-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
 if [ "${UNSIGNED_IMAGE:-false}" = "true" ]; then
-  printf 'unsigned image package\n' > ../linux-image-unsigned-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb
+  printf 'unsigned image package\n' > ../linux-image-unsigned-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
 else
-  printf 'image package\n' > ../linux-image-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb
+  printf 'image package\n' > ../linux-image-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
 fi
 if [ "${OMIT_MODULES_DEB:-false}" != "true" ]; then
-  printf 'modules package\n' > ../linux-modules-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb
+  printf 'modules package\n' > ../linux-modules-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
 fi
 if [ "${INCLUDE_OPTIONAL_DEB:-false}" = "true" ]; then
-  printf 'optional modules-extra package\n' > ../linux-modules-extra-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb
+  printf 'optional modules-extra package\n' > ../linux-modules-extra-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
 fi
 
 if [ "${MUTATE_SUPPORT:-false}" = "true" ]; then
@@ -358,6 +637,17 @@ python3 "$repo_dir/tests/test-sp11-immutable-apt-provenance.py" \
   --emit-release-template "$apt_template" \
   "$support_seed/config/kernel-baselines/7.2-rc5-jg-0.env" \
   "$source_commit" fixture
+cat >> "$support_seed/config/kernel-baselines/7.2-rc5-jg-0.env" <<EOF_SIGNING_BASELINE
+SP11_KERNEL_MODULE_SIGNING_POLICY="sp11-controlled-rsa4096-sha512-v1"
+SP11_KERNEL_MODULE_SIGNING_KEY_PATH="/sp11-signing/signing.pem"
+SP11_KERNEL_MODULE_SIGNING_PIN_PATH="/sp11-signing/pin"
+SP11_KERNEL_MODULE_SIGNING_CERT_PATH="config/kernel-signing/sp11-module-signing-cert.pem"
+SP11_KERNEL_MODULE_SIGNING_CERT_SHA256="$fixture_certificate_sha"
+SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT="$fixture_certificate_fingerprint"
+SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL="$fixture_certificate_serial"
+SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH="config/kernel-signing/sp11-module-signing-allowed-unsigned.txt"
+SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256="eb507e006b37ad7d291a37524f3f2f6b5281c5a3f98738dc07056a3ca7cba800"
+EOF_SIGNING_BASELINE
 git -C "$support_seed" add config/kernel-baselines/7.2-rc5-jg-0.env
 git -C "$support_seed" -c user.name='SP11 CI fixture' \
   -c user.email='sp11-ci@example.invalid' commit --quiet -m 'Add immutable input fixture'
@@ -487,17 +777,17 @@ file="${2:-}"
 field="${3:-}"
 base="$(basename "$file")"
 case "$base" in
-  linux-qcom-x1e-headers-*) package="linux-qcom-x1e-headers-7.2.0-1"; architecture="all" ;;
-  linux-headers-*) package="linux-headers-7.2.0-1-qcom-x1e"; architecture="arm64" ;;
-  linux-image-unsigned-*) package="linux-image-unsigned-7.2.0-1-qcom-x1e"; architecture="arm64" ;;
-  linux-image-*) package="linux-image-7.2.0-1-qcom-x1e"; architecture="arm64" ;;
-  linux-modules-extra-*) package="linux-modules-extra-7.2.0-1-qcom-x1e"; architecture="arm64" ;;
-  linux-modules-*) package="linux-modules-7.2.0-1-qcom-x1e"; architecture="arm64" ;;
+  linux-qcom-x1e-headers-*) package="linux-qcom-x1e-headers-7.2-rc5-jg-0sp11v3r2"; architecture="all" ;;
+  linux-headers-*) package="linux-headers-7.2-rc5-jg-0sp11v3r2-qcom-x1e"; architecture="arm64" ;;
+  linux-image-unsigned-*) package="linux-image-unsigned-7.2-rc5-jg-0sp11v3r2-qcom-x1e"; architecture="arm64" ;;
+  linux-image-*) package="linux-image-7.2-rc5-jg-0sp11v3r2-qcom-x1e"; architecture="arm64" ;;
+  linux-modules-extra-*) package="linux-modules-extra-7.2-rc5-jg-0sp11v3r2-qcom-x1e"; architecture="arm64" ;;
+  linux-modules-*) package="linux-modules-7.2-rc5-jg-0sp11v3r2-qcom-x1e"; architecture="arm64" ;;
   *) exit 1 ;;
 esac
 case "$field" in
   Package) printf '%s\n' "$package" ;;
-  Version) printf '%s\n' '7.2.0-1' ;;
+  Version) printf '%s\n' '7.2-rc5-jg-0sp11v3r2' ;;
   Architecture) printf '%s\n' "$architecture" ;;
   *) exit 1 ;;
 esac
@@ -510,14 +800,166 @@ case " $* " in
   *signing_key.pem*) exit 99 ;;
 esac
 case " $* " in
-  *' -fingerprint '*)
-    awk 'BEGIN { printf "sha256 Fingerprint="; for (i = 1; i <= 32; i++) printf "%sAA", (i == 1 ? "" : ":"); print "" }'
-    ;;
-  *' -serial '*) printf '%s\n' 'serial=01' ;;
+  *' x509 '*) exec /usr/bin/openssl "$@" ;;
+  *' pkey '*' -text_pub '*) printf '%s\n' 'Public-Key: (4096 bit)' ;;
+  *' pkey '*' -pubout '*' -outform DER '*) printf '%s' 'fixture-public-key-der' ;;
   *) exit 1 ;;
 esac
 EOF_OPENSSL
+
+cat > "$mock_bin/modinfo" <<'EOF_MODINFO'
+#!/usr/bin/env bash
+set -euo pipefail
+field=""
+module=""
+case "${1:-}" in
+  -F)
+    [ "$#" -eq 3 ] || exit 2
+    field="$2"
+    module="${3##*/}"
+    ;;
+  -p)
+    [ "$#" -eq 2 ] || exit 2
+    [ "${2##*/}" = spi-geni-qcom.ko ] || exit 1
+    printf '%s\n' 'sp11_windows_se_init:fixture boolean parameter'
+    exit 0
+    ;;
+  *) exit 2 ;;
+esac
+case "$field:$module" in
+  name:gpi.ko) printf '%s\n' gpi ;;
+  name:spi-geni-qcom.ko) printf '%s\n' spi_geni_qcom ;;
+  name:mshw0485_touch.ko) printf '%s\n' mshw0485_touch ;;
+  vermagic:*) printf '%s\n' '7.2-rc5-jg-0sp11v3r2-qcom-x1e SMP' ;;
+  srcversion:gpi.ko) printf '%s\n' A1 ;;
+  srcversion:spi-geni-qcom.ko) printf '%s\n' B2 ;;
+  srcversion:mshw0485_touch.ko) printf '%s\n' C3 ;;
+  alias:mshw0485_touch.ko) printf '%s\n' 'of:N*T*Cmicrosoft,mshw0485' ;;
+  alias:*) exit 0 ;;
+  *) exit 1 ;;
+esac
+EOF_MODINFO
 chmod +x "$mock_bin/"*
+
+# Standalone release validation must traverse the packaged primary and EL2
+# Denali OLED DTBs.  Keep that authority out of the global build mocks: this
+# narrow PATH overlay delegates package metadata to the existing mock, emits a
+# real tar stream for only the exact modules Deb, and validates every fdtget
+# query against private byte-distinct fixture members.
+validator_dtb_bin="$temporary_root/validator-dtb-bin"
+validator_dtb_root="$temporary_root/validator-dtb-root"
+validator_dtb_call_log="$temporary_root/validator-dtb-calls"
+validator_dtb_expected_modules="$temporary_root/validator-dtb-modules.deb"
+validator_dtb_relative_root="usr/lib/firmware/7.2-rc5-jg-0sp11v3r2-qcom-x1e/device-tree/qcom"
+validator_dtb_primary_name="x1e80100-microsoft-denali-oled.dtb"
+validator_dtb_el2_name="x1e80100-microsoft-denali-oled-el2.dtb"
+validator_dtb_primary_marker="$validator_dtb_root/$validator_dtb_relative_root/$validator_dtb_primary_name"
+validator_dtb_el2_marker="$validator_dtb_root/$validator_dtb_relative_root/$validator_dtb_el2_name"
+mkdir -p "$validator_dtb_bin" "$(dirname "$validator_dtb_primary_marker")"
+printf 'fixture packaged primary Denali OLED DTB\n' > "$validator_dtb_primary_marker"
+printf 'fixture packaged EL2 Denali OLED DTB\n' > "$validator_dtb_el2_marker"
+printf 'modules package\n' > "$validator_dtb_expected_modules"
+: > "$validator_dtb_call_log"
+
+cat > "$validator_dtb_bin/dpkg-deb" <<'EOF_VALIDATOR_DPKG_DEB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -eq 2 ] && [ "$1" = "--fsys-tarfile" ]; then
+  modules_deb="$2"
+  modules_name="${modules_deb##*/}"
+  [ -f "$modules_deb" ] && [ ! -L "$modules_deb" ] || exit 2
+  [ "$modules_name" = \
+    "linux-modules-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb" ] || exit 2
+  /usr/bin/cmp -s "$modules_deb" "$FIXTURE_DTB_EXPECTED_MODULES_DEB" || exit 2
+  [ -d "$FIXTURE_DTB_ARCHIVE_ROOT" ] &&
+    [ ! -L "$FIXTURE_DTB_ARCHIVE_ROOT" ] || exit 2
+  [ -f "$FIXTURE_DTB_PRIMARY_MARKER" ] &&
+    [ ! -L "$FIXTURE_DTB_PRIMARY_MARKER" ] &&
+    [ -f "$FIXTURE_DTB_EL2_MARKER" ] &&
+    [ ! -L "$FIXTURE_DTB_EL2_MARKER" ] || exit 2
+  printf 'fsys-tarfile\t%s\n' "$modules_name" \
+    >> "$FIXTURE_DTB_CALL_LOG"
+  exec /usr/bin/tar -C "$FIXTURE_DTB_ARCHIVE_ROOT" -cf - \
+    "./$FIXTURE_DTB_RELATIVE_ROOT/x1e80100-microsoft-denali-oled.dtb" \
+    "./$FIXTURE_DTB_RELATIVE_ROOT/x1e80100-microsoft-denali-oled-el2.dtb"
+fi
+if [ "$#" -eq 3 ] && [ "$1" = "-f" ]; then
+  exec "$FIXTURE_BASE_DPKG_DEB" "$@"
+fi
+exit 2
+EOF_VALIDATOR_DPKG_DEB
+
+cat > "$validator_dtb_bin/fdtget" <<'EOF_VALIDATOR_FDTGET'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 3 ] || exit 2
+dtb="$1"
+node="$2"
+property="$3"
+[ -f "$dtb" ] && [ ! -L "$dtb" ] || exit 2
+case "$dtb" in
+  */modules/$FIXTURE_DTB_RELATIVE_ROOT/x1e80100-microsoft-denali-oled.dtb)
+    dtb_name="x1e80100-microsoft-denali-oled.dtb"
+    expected="$FIXTURE_DTB_PRIMARY_MARKER"
+    ;;
+  */modules/$FIXTURE_DTB_RELATIVE_ROOT/x1e80100-microsoft-denali-oled-el2.dtb)
+    dtb_name="x1e80100-microsoft-denali-oled-el2.dtb"
+    expected="$FIXTURE_DTB_EL2_MARKER"
+    ;;
+  *) exit 2 ;;
+esac
+/usr/bin/cmp -s "$dtb" "$expected" || exit 2
+printf 'fdtget\t%s\t%s\t%s\n' "$dtb_name" "$node" "$property" \
+  >> "$FIXTURE_DTB_CALL_LOG"
+case "$node:$property" in
+  /:compatible) printf '%s\n' 'microsoft,denali-oled' ;;
+  /soc@0/geniqup@ac0000/spi@a88000:status) printf '%s\n' 'okay' ;;
+  /soc@0/geniqup@ac0000/spi@a88000:compatible) printf '%s\n' 'qcom,geni-spi' ;;
+  /soc@0/geniqup@ac0000/spi@a88000:qcom,biosref-qspi) ;;
+  /soc@0/geniqup@ac0000/spi@a88000:qcom,enable-gsi-dma) ;;
+  /soc@0/geniqup@ac0000/spi@a88000/touchscreen@0:compatible)
+    printf '%s\n' 'microsoft,mshw0485'
+    ;;
+  *) exit 2 ;;
+esac
+EOF_VALIDATOR_FDTGET
+chmod 0755 "$validator_dtb_bin/dpkg-deb" "$validator_dtb_bin/fdtget"
+
+reset_validator_dtb_log() {
+  : > "$validator_dtb_call_log"
+}
+
+assert_validator_dtb_log() {
+  local actual="$temporary_root/validator-dtb-calls.actual"
+  local expected="$temporary_root/validator-dtb-calls.expected"
+  local dtb_name
+
+  {
+    printf 'fsys-tarfile\t%s\n' \
+      'linux-modules-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb'
+    printf 'fsys-tarfile\t%s\n' \
+      'linux-modules-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb'
+    for dtb_name in "$validator_dtb_primary_name" "$validator_dtb_el2_name"; do
+      printf 'fdtget\t%s\t/\tcompatible\n' "$dtb_name"
+      printf 'fdtget\t%s\t/soc@0/geniqup@ac0000/spi@a88000\tstatus\n' "$dtb_name"
+      printf 'fdtget\t%s\t/soc@0/geniqup@ac0000/spi@a88000\tcompatible\n' "$dtb_name"
+      printf 'fdtget\t%s\t/soc@0/geniqup@ac0000/spi@a88000\tqcom,biosref-qspi\n' "$dtb_name"
+      printf 'fdtget\t%s\t/soc@0/geniqup@ac0000/spi@a88000\tqcom,enable-gsi-dma\n' "$dtb_name"
+      printf 'fdtget\t%s\t/soc@0/geniqup@ac0000/spi@a88000/touchscreen@0\tcompatible\n' "$dtb_name"
+    done
+  } | LC_ALL=C sort > "$expected"
+  LC_ALL=C sort "$validator_dtb_call_log" > "$actual"
+  cmp "$expected" "$actual" ||
+    die "standalone validator did not perform the exact two-DTB package inspection"
+}
+
+openssl_mock_bin="$temporary_root/openssl-mock-bin"
+mkdir "$openssl_mock_bin"
+cp "$mock_bin/openssl" "$openssl_mock_bin/openssl"
+chmod +x "$openssl_mock_bin/openssl"
+
+signing_key_fixture="$module_signing_fixture/key.pem"
+signing_pin_fixture="$module_signing_fixture/pin"
 
 clone_support() {
   local name="$1"
@@ -538,6 +980,7 @@ run_release_build() {
     FIXTURE_REAL_RM="$real_rm" \
     FIXTURE_SOURCE_REPO="$source_repo" \
     FIXTURE_PUBLIC_SOURCE_URL="$source_url" \
+    FIXTURE_SUPPORT_CERTIFICATE="$support_dir/config/kernel-signing/sp11-module-signing-cert.pem" \
     FIXTURE_IDENTITY_LOG="$temporary_root/build-identity-environment.log" \
     SP11_KERNEL_RELEASE_TEST_FIXTURE="${SP11_KERNEL_RELEASE_TEST_FIXTURE_OVERRIDE:-sp11-kernel-release-provenance-v1}" \
     SP11_BUILD_CONTAINER_IMAGE="${FIXTURE_CONTAINER_IMAGE_OVERRIDE:-$container_image}" \
@@ -559,12 +1002,29 @@ run_release_build() {
       --min-free-gb 1 \
       --allow-non-arm64 \
       --release-build \
+      --module-signing-policy sp11-controlled-rsa4096-sha512-v1 \
       "$@"
 }
 
 manifest_value() {
   local file="$1" label="$2"
   sed -n "s/^$label: //p" "$file"
+}
+
+manifest_role_index() {
+  local file="$1" record="$2" role="$3" count index match=""
+  count="$(manifest_value "$file" "$record count")"
+  [[ "$count" =~ ^[1-9][0-9]*$ ]] || return 1
+  index=1
+  while [ "$index" -le "$count" ]; do
+    if [ "$(manifest_value "$file" "$record $index role")" = "$role" ]; then
+      [ -z "$match" ] || return 1
+      match="$index"
+    fi
+    index=$((index + 1))
+  done
+  [ -n "$match" ] || return 1
+  printf '%s\n' "$match"
 }
 
 seal_provenance_volume() {
@@ -781,6 +1241,8 @@ make_provenance_work() {
     "$volume_work/sp11-oci-index.json"
   cp "$build_work/sp11-kernel-build-manifest.txt" \
     "$volume_work/artifacts/sp11-kernel-build-manifest.txt"
+  cp "$build_work/sp11-kernel-module-signatures.txt" \
+    "$volume_work/artifacts/sp11-kernel-module-signatures.txt"
   cp "$build_work/sp11-kernel-debs.txt" \
     "$volume_work/artifacts/sp11-kernel-debs.txt"
   while IFS= read -r deb; do
@@ -825,6 +1287,7 @@ make_provenance_work() {
   chmod 0644 "$provenance_work/sp11-kernel-retained-evidence.tar"
   for fixed_name in \
     sp11-kernel-build-manifest.txt \
+    sp11-kernel-module-signatures.txt \
     sp11-kernel-debs.txt \
     sp11-kernel-apt-provenance.txt \
     sp11-kernel-build-inputs.txt; do
@@ -867,6 +1330,12 @@ refresh_build_manifest_envelope_binding() {
 
 support_a="$(clone_support support-a)"
 support_b="$(clone_support support-b)"
+docker_signing_args=(
+  --module-signing-key "$signing_key_fixture"
+  --module-signing-certificate \
+    "$support_a/config/kernel-signing/sp11-module-signing-cert.pem"
+  --module-signing-pin-file "$signing_pin_fixture"
+)
 work_a="$temporary_root/work-a"
 work_b="$temporary_root/work-b"
 unsafe_source_index=0
@@ -895,14 +1364,18 @@ for unsafe_source_url in \
         --min-free-gb 1 \
         --allow-non-arm64 \
         --release-build \
+        --module-signing-policy sp11-controlled-rsa4096-sha512-v1 \
         > "$temporary_root/unsafe-inner-$unsafe_source_index.log" 2>&1; then
     die "inner release build accepted non-public source URL: $unsafe_source_url"
   fi
   grep -Fq 'requires a public HTTPS kernel source URL' \
-    "$temporary_root/unsafe-inner-$unsafe_source_index.log" ||
-    die "inner release build did not explain its non-public source rejection"
+    "$temporary_root/unsafe-inner-$unsafe_source_index.log" || {
+      cat "$temporary_root/unsafe-inner-$unsafe_source_index.log" >&2
+      die "inner release build did not explain its non-public source rejection"
+    }
 
-  if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+  if PATH="$openssl_mock_bin:/usr/bin:/bin" \
+    "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
       --source git \
       --git-url "$unsafe_source_url" \
       --git-branch fixture \
@@ -912,6 +1385,7 @@ for unsafe_source_url in \
       --patch-dir patches/release \
       --build-target "binary-indep binary-qcom-x1e" \
       --work-dir "$support_a/build/unsafe-url-$unsafe_source_index" \
+      "${docker_signing_args[@]}" \
       --release-build \
       --dry-run \
       > "$temporary_root/unsafe-docker-$unsafe_source_index.log" 2>&1; then
@@ -1008,8 +1482,17 @@ make_provenance_work "$support_b" "$work_b" "$provenance_b"
 
 manifest_a="$work_a/sp11-kernel-build-manifest.txt"
 manifest_b="$work_b/sp11-kernel-build-manifest.txt"
+signature_report_a="$work_a/sp11-kernel-module-signatures.txt"
+signature_report_b="$work_b/sp11-kernel-module-signatures.txt"
 [ -f "$manifest_a" ] && [ ! -L "$manifest_a" ] || die "build A did not produce a regular final manifest"
 [ -f "$manifest_b" ] && [ ! -L "$manifest_b" ] || die "build B did not produce a regular final manifest"
+[ -f "$signature_report_a" ] && [ ! -L "$signature_report_a" ] ||
+  die "build A did not produce its regular module-signature report"
+[ -f "$signature_report_b" ] && [ ! -L "$signature_report_b" ] ||
+  die "build B did not produce its regular module-signature report"
+[ "$(directory_permission_mode "$signature_report_a")" = 644 ] &&
+  [ "$(directory_permission_mode "$signature_report_b")" = 644 ] ||
+  die "successful module-signature reports were not terminally sealed mode 0644"
 grep -Fxq 'Provenance schema: sp11-kernel-build-v2' "$manifest_a" || die "schema v2 is missing"
 grep -Fxq 'Release build: true' "$manifest_a" || die "release marker is missing"
 grep -Fxq 'Build completed: true' "$manifest_a" || die "completion marker is missing"
@@ -1018,13 +1501,49 @@ grep -Fxq 'Patch 2 disposition: applied' "$manifest_a" ||
   die "unsafe-link deletion patch disposition is missing"
 grep -Fxq 'Output 2 role: module-symvers' "$manifest_a" || die "Module.symvers output role is missing"
 grep -Fxq 'Output 7 role: module-signing-certificate' "$manifest_a" || die "certificate output role is missing"
+grep -Fxq 'Module signing policy: sp11-controlled-rsa4096-sha512-v1' "$manifest_a" ||
+  die "controlled module-signing policy is missing"
+grep -Fxq 'Module signing private material retained: false' "$manifest_a" ||
+  die "private module-signing material disposition is missing"
+grep -Fxq \
+  "Signing certificate SHA256: $fixture_certificate_sha" \
+  "$manifest_a" || die "reviewed public signing certificate digest is missing"
+grep -Fxq 'Kernel module signature report asset: sp11-kernel-module-signatures.txt' \
+  "$manifest_a" || die "module-signature report asset binding is missing"
+grep -Fxq 'Kernel module signature report schema: sp11-kernel-module-signature-verification-v1' \
+  "$manifest_a" || die "module-signature report schema binding is missing"
+grep -Fxq 'Kernel module total count: 86' "$manifest_a" ||
+  die "required-package module count is not bound"
+grep -Fxq 'Kernel module verified signed count: 1' "$manifest_a" ||
+  die "required-package signed-module count is not bound"
+grep -Fxq 'Kernel module policy-allowed unsigned count: 85' "$manifest_a" ||
+  die "required-package unsigned-module count is not bound"
+grep -Fxq \
+  'Kernel module unsigned-path inventory SHA256: eb507e006b37ad7d291a37524f3f2f6b5281c5a3f98738dc07056a3ca7cba800' \
+  "$manifest_a" || die "approved unsigned-module inventory is not bound"
+grep -Fxq 'Kernel module total count: 87' "$manifest_b" ||
+  die "optional-package module count is not bound"
+grep -Fxq 'Kernel module verified signed count: 2' "$manifest_b" ||
+  die "optional-package signed-module count is not bound"
+grep -Fxq 'Package count: 1' "$signature_report_a" ||
+  die "required-package report package count is wrong"
+grep -Fxq 'Package count: 2' "$signature_report_b" ||
+  die "optional-package report package count is wrong"
+grep -Fxq 'Policy-allowed unsigned module count: 85' "$signature_report_a" ||
+  die "module-signature report omits the approved unsigned inventory"
+[ "$(manifest_value "$manifest_a" 'Kernel module signature report size')" = \
+  "$(wc -c < "$signature_report_a" | tr -d '[:space:]')" ] ||
+  die "module-signature report size binding is false"
+[ "$(manifest_value "$manifest_a" 'Kernel module signature report SHA256')" = \
+  "$(shasum -a 256 "$signature_report_a" | awk '{print $1}')" ] ||
+  die "module-signature report digest binding is false"
 grep -Fxq 'Optional output roles: none' "$manifest_a" || die "optional output contract is ambiguous"
 grep -Fxq 'Optional Deb roles: modules-extra' "$manifest_a" || die "optional package role is missing"
 grep -Fxq 'Deb count: 4' "$manifest_a" || die "required package set is missing"
 grep -Fxq 'Deb count: 5' "$manifest_b" || die "present optional package was not recorded"
 grep -Eq '^Deb [1-9][0-9]* role: modules-extra$' "$manifest_b" ||
   die "optional package role was not recorded"
-grep -Eq '^Deb [1-9][0-9]* path: linux-image-unsigned-7\.2\.0-1-qcom-x1e_7\.2\.0-1_arm64\.deb$' \
+grep -Eq '^Deb [1-9][0-9]* path: linux-image-unsigned-7\.2-rc5-jg-0sp11v3r2-qcom-x1e_7\.2-rc5-jg-0sp11v3r2_arm64\.deb$' \
   "$manifest_b" || die "unsigned image package was not recorded as the image role"
 optional_deb_index="$(sed -n 's/^Deb \([1-9][0-9]*\) role: modules-extra$/\1/p' "$manifest_b")"
 grep -Fxq "Deb $optional_deb_index required: false" "$manifest_b" ||
@@ -1096,7 +1615,7 @@ fi
   die "unsafe exact-tree preflight allowed build output"
 
 # Publication terminal checks bind the requested work-root name as well as
-# both held output inodes. A fixture-only persistent root substitution after
+# all three held output inodes. A fixture-only persistent root substitution after
 # all byte hashes must fail and scrub only the original held output inodes.
 support_publication_root="$(clone_support support-publication-root)"
 work_publication_root="$temporary_root/work-publication-root"
@@ -1105,10 +1624,14 @@ mkdir -p "$publication_victim"
 printf 'victim package list\n' > "$publication_victim/sp11-kernel-debs.txt"
 printf 'victim manifest\n' > \
   "$publication_victim/sp11-kernel-build-manifest.txt"
+printf 'victim signature report\n' > \
+  "$publication_victim/sp11-kernel-module-signatures.txt"
 victim_deb_state="$(regular_file_state \
   "$publication_victim/sp11-kernel-debs.txt")"
 victim_manifest_state="$(regular_file_state \
   "$publication_victim/sp11-kernel-build-manifest.txt")"
+victim_report_state="$(regular_file_state \
+  "$publication_victim/sp11-kernel-module-signatures.txt")"
 if SP11_KERNEL_RELEASE_PUBLICATION_FIXTURE_HOOK=swap-work-root-terminal \
    run_release_build "$support_publication_root" "$work_publication_root" \
      > "$temporary_root/publication-root-swap.log" 2>&1; then
@@ -1124,14 +1647,75 @@ grep -Fq 'Could not seal the held release outputs' \
   "$work_publication_root/sp11-kernel-build-manifest.txt")" = \
   "$victim_manifest_state" ] ||
   die "terminal work-root refusal changed the victim manifest"
+[ "$(regular_file_state \
+  "$work_publication_root/sp11-kernel-module-signatures.txt")" = \
+  "$victim_report_state" ] ||
+  die "terminal work-root refusal changed the victim signature report"
 assert_zero_regular \
   "$work_publication_root.publication-held/sp11-kernel-debs.txt"
 assert_zero_regular \
   "$work_publication_root.publication-held/sp11-kernel-build-manifest.txt"
+assert_zero_regular \
+  "$work_publication_root.publication-held/sp11-kernel-module-signatures.txt"
 assert_no_publication_success "$temporary_root/publication-root-swap.log"
 
+# A terminal report-name replacement cannot redirect FD13 cleanup into a
+# substitute. The creation-owned report inode is scrubbed through its held
+# descriptor while the planted final-name victim remains byte-identical.
+support_publication_report_swap="$(clone_support support-publication-report-swap)"
+work_publication_report_swap="$temporary_root/work-publication-report-swap"
+mkdir -p "$work_publication_report_swap"
+printf 'report victim bytes\n' \
+  > "$work_publication_report_swap/.sp11-publication-report-victim"
+chmod 0600 "$work_publication_report_swap/.sp11-publication-report-victim"
+report_swap_victim_state="$(renamed_regular_file_state \
+  "$work_publication_report_swap/.sp11-publication-report-victim")"
+if SP11_KERNEL_RELEASE_PUBLICATION_FIXTURE_HOOK=swap-report-name-terminal \
+   run_release_build "$support_publication_report_swap" \
+     "$work_publication_report_swap" \
+     > "$temporary_root/publication-report-swap.log" 2>&1; then
+  die "release publication accepted a terminal report-name substitution"
+fi
+grep -Fq 'Could not seal the held release outputs' \
+  "$temporary_root/publication-report-swap.log" ||
+  die "terminal report-name substitution refusal was not explicit"
+[ "$(renamed_regular_file_state \
+  "$work_publication_report_swap/sp11-kernel-module-signatures.txt")" = \
+  "$report_swap_victim_state" ] ||
+  die "terminal report-name refusal changed the substitute victim"
+assert_zero_regular \
+  "$work_publication_report_swap/.sp11-kernel-module-signatures.publication-held"
+assert_zero_regular "$work_publication_report_swap/sp11-kernel-debs.txt"
+assert_zero_regular \
+  "$work_publication_report_swap/sp11-kernel-build-manifest.txt"
+assert_no_publication_success "$temporary_root/publication-report-swap.log"
+
+# A scanner that fails after a bounded, fsynced partial FD13 write cannot
+# strand its sentinel or publish either companion output.
+support_publication_report_partial="$(clone_support support-publication-report-partial)"
+work_publication_report_partial="$temporary_root/work-publication-report-partial"
+if SP11_KERNEL_RELEASE_PUBLICATION_FIXTURE_HOOK=scanner-partial-report-failure \
+   run_release_build "$support_publication_report_partial" \
+     "$work_publication_report_partial" \
+     > "$temporary_root/publication-report-partial.log" 2>&1; then
+  die "release publication accepted a partial scanner report"
+fi
+grep -Fxq 'Packaged kernel module signature verification failed.' \
+  "$temporary_root/publication-report-partial.log" ||
+  die "partial scanner report failure was not exact and explicit"
+assert_zero_regular "$work_publication_report_partial/sp11-kernel-debs.txt"
+assert_zero_regular \
+  "$work_publication_report_partial/sp11-kernel-build-manifest.txt"
+assert_zero_regular \
+  "$work_publication_report_partial/sp11-kernel-module-signatures.txt"
+if grep -R -Fq 'partial controlled report sentinel' \
+    "$work_publication_report_partial"; then
+  die "partial scanner report sentinel survived exact-FD cleanup"
+fi
+assert_no_publication_success "$temporary_root/publication-report-partial.log"
+
 # A stable in-place mutation of FD10 after its first hash is detected by the
-# collective second hash/pass, and both exact output inodes are scrubbed.
+# collective second hash/pass, and all three exact output inodes are scrubbed.
 support_publication_fd10="$(clone_support support-publication-fd10)"
 work_publication_fd10="$temporary_root/work-publication-fd10"
 if SP11_KERNEL_RELEASE_PUBLICATION_FIXTURE_HOOK=mutate-fd10-after-primary \
@@ -1144,6 +1728,8 @@ grep -Fq 'Could not seal the held release outputs' \
   die "post-primary FD10 mutation refusal was not explicit"
 assert_zero_regular "$work_publication_fd10/sp11-kernel-debs.txt"
 assert_zero_regular "$work_publication_fd10/sp11-kernel-build-manifest.txt"
+assert_zero_regular \
+  "$work_publication_fd10/sp11-kernel-module-signatures.txt"
 assert_no_publication_success "$temporary_root/publication-fd10.log"
 
 # Intended fingerprints are fixed before the first seal. Mutation before that
@@ -1168,6 +1754,8 @@ grep -Fxq 'double-term-survived' \
   die "double TERM delivery interrupted exact-FD publication cleanup"
 assert_zero_regular "$work_publication_signal/sp11-kernel-debs.txt"
 assert_zero_regular "$work_publication_signal/sp11-kernel-build-manifest.txt"
+assert_zero_regular \
+  "$work_publication_signal/sp11-kernel-module-signatures.txt"
 assert_no_publication_success "$temporary_root/publication-signal.log"
 
 # The late exact creator refuses special/symlinked targets with O_EXCL before
@@ -1217,10 +1805,34 @@ grep -Fq 'Could not exclusively create the release output names' \
   die "late symlink output refusal was not explicit"
 assert_no_publication_success "$temporary_root/publication-symlink.log"
 
+# A report final-name collision injected after the early preflight is preserved
+# exactly. Earlier creation-owned outputs are removed rather than stranded.
+support_publication_report_preopen="$(clone_support support-publication-report-preopen)"
+work_publication_report_preopen="$temporary_root/work-publication-report-preopen"
+if SP11_KERNEL_RELEASE_PUBLICATION_FIXTURE_HOOK=inject-report-before-open \
+   run_release_build "$support_publication_report_preopen" \
+     "$work_publication_report_preopen" \
+     > "$temporary_root/publication-report-preopen.log" 2>&1; then
+  die "release publication adopted a late report output target"
+fi
+[ "$(cat "$work_publication_report_preopen/sp11-kernel-module-signatures.txt")" = \
+  'late report victim' ] ||
+  die "late report output target bytes were changed"
+[ "$(directory_permission_mode \
+  "$work_publication_report_preopen/sp11-kernel-module-signatures.txt")" = 600 ] ||
+  die "late report output target metadata was changed"
+[ ! -e "$work_publication_report_preopen/sp11-kernel-debs.txt" ] &&
+  [ ! -e "$work_publication_report_preopen/sp11-kernel-build-manifest.txt" ] ||
+  die "late report output refusal stranded earlier creation-owned outputs"
+grep -Fq 'Could not exclusively create the release output names' \
+  "$temporary_root/publication-report-preopen.log" ||
+  die "late report output refusal was not explicit"
+assert_no_publication_success "$temporary_root/publication-report-preopen.log"
+
 # Linux procfs handoff treats newly opened candidates as unowned until their
 # READY inode and exact held-name mappings both verify. A mismatched candidate
 # is closed without truncating its unrelated inode; the authenticated opener
-# alone scrubs the two intended empty outputs.
+# alone scrubs all three intended empty outputs.
 if [ "$(uname -s)" = Linux ]; then
   support_publication_procfd="$(clone_support support-publication-procfd)"
   work_publication_procfd="$temporary_root/work-publication-procfd"
@@ -1246,6 +1858,8 @@ if [ "$(uname -s)" = Linux ]; then
   assert_zero_regular "$work_publication_procfd/sp11-kernel-debs.txt"
   assert_zero_regular \
     "$work_publication_procfd/sp11-kernel-build-manifest.txt"
+  assert_zero_regular \
+    "$work_publication_procfd/sp11-kernel-module-signatures.txt"
   assert_no_publication_success "$temporary_root/publication-procfd.log"
 fi
 
@@ -1271,12 +1885,35 @@ if grep -Fq 'Wrote completed schema-v2 release build manifest' \
   die "preexisting release-output refusal printed a success claim"
 fi
 
+support_stale_report="$(clone_support support-stale-report)"
+work_stale_report="$temporary_root/work-stale-report"
+mkdir -p "$work_stale_report"
+printf 'stale signature report\n' \
+  > "$work_stale_report/sp11-kernel-module-signatures.txt"
+stale_report_state="$(regular_file_state \
+  "$work_stale_report/sp11-kernel-module-signatures.txt")"
+if run_release_build "$support_stale_report" "$work_stale_report" \
+    > "$temporary_root/stale-report.log" 2>&1; then
+  die "release build adopted a preexisting module-signature report"
+fi
+[ "$(regular_file_state \
+  "$work_stale_report/sp11-kernel-module-signatures.txt")" = \
+  "$stale_report_state" ] ||
+  die "release refusal changed the preexisting module-signature report"
+[ ! -e "$work_stale_report/sp11-kernel-debs.txt" ] &&
+  [ ! -e "$work_stale_report/sp11-kernel-build-manifest.txt" ] ||
+  die "preexisting module-signature report refusal created publication outputs"
+grep -Fq \
+  'Release output already exists; refusing replacement: sp11-kernel-module-signatures.txt' \
+  "$temporary_root/stale-report.log" ||
+  die "preexisting module-signature report refusal was not explicit"
+
 # A prior package cannot satisfy a later successful build that omits that role.
 support_stale_deb="$(clone_support support-stale-deb)"
 work_stale_deb="$temporary_root/work-stale-deb"
 mkdir -p "$work_stale_deb/source"
 printf 'stale modules package\n' \
-  > "$work_stale_deb/source/linux-modules-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb"
+  > "$work_stale_deb/source/linux-modules-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb"
 if OMIT_MODULES_DEB=true \
    run_release_build "$support_stale_deb" "$work_stale_deb" > "$temporary_root/stale-deb.log" 2>&1; then
   die "release build accepted a stale package from an earlier build"
@@ -1299,6 +1936,8 @@ stale_manifest_state="$(
   regular_file_state "$work_stale/sp11-kernel-build-manifest.txt"
 )"
 stale_deb_list_state="$(regular_file_state "$work_stale/sp11-kernel-debs.txt")"
+stale_signature_report_state="$(regular_file_state \
+  "$work_stale/sp11-kernel-module-signatures.txt")"
 git -C "$work_stale/source/git-fixture" reset --hard --quiet HEAD
 git -C "$work_stale/source/git-fixture" clean -ffd --quiet
 if run_release_build "$support_stale" "$work_stale" > "$temporary_root/stale-second.log" 2>&1; then
@@ -1310,6 +1949,10 @@ fi
 [ "$(regular_file_state "$work_stale/sp11-kernel-debs.txt")" = \
   "$stale_deb_list_state" ] ||
   die "reused work-directory refusal changed the prior package list"
+[ "$(regular_file_state \
+  "$work_stale/sp11-kernel-module-signatures.txt")" = \
+  "$stale_signature_report_state" ] ||
+  die "reused work-directory refusal changed the prior signature report"
 grep -Fq 'Release output already exists; refusing replacement' \
   "$temporary_root/stale-second.log" ||
   die "reused work-directory output refusal was not explicit"
@@ -1412,7 +2055,8 @@ grep -Fq 'Could not inspect the support repository worktree state' "$temporary_r
 docker_work="$support_a/build/docker-work"
 mkdir -p "$docker_work/artifacts"
 chmod 0700 "$docker_work" "$docker_work/artifacts"
-if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+if PATH="$openssl_mock_bin:/usr/bin:/bin" \
+  "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --source git \
     --git-url "$source_url" \
     --git-branch fixture \
@@ -1422,6 +2066,7 @@ if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --patch-dirs patches/release \
     --build-target "binary-indep binary-qcom-x1e" \
     --work-dir "$docker_work-invalid" \
+    "${docker_signing_args[@]}" \
     --release-build \
     --dry-run > "$temporary_root/docker-invalid.log" 2>&1; then
   die "Docker release mode accepted a floating image"
@@ -1429,7 +2074,8 @@ fi
 grep -Fq 'requires an explicit --image pinned with @sha256' "$temporary_root/docker-invalid.log" ||
   die "floating image failure was not explicit"
 
-if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+if PATH="$openssl_mock_bin:/usr/bin:/bin" \
+  "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --source git \
     --git-url "$source_url" \
     --git-branch fixture \
@@ -1438,6 +2084,7 @@ if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --patch-dir patches/release \
     --build-target "binary-indep binary-qcom-x1e" \
     --work-dir "$docker_work-no-platform" \
+    "${docker_signing_args[@]}" \
     --release-build \
     --dry-run > "$temporary_root/docker-platform.log" 2>&1; then
   die "Docker release mode accepted an implicit platform"
@@ -1445,7 +2092,8 @@ fi
 grep -Fq 'requires an explicit --platform' "$temporary_root/docker-platform.log" ||
   die "implicit platform failure was not explicit"
 
-if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+if PATH="$openssl_mock_bin:/usr/bin:/bin" \
+  "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --source git \
     --git-url "$source_url" \
     --git-branch fixture \
@@ -1456,6 +2104,7 @@ if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --build-target "binary-indep binary-qcom-x1e" \
     --work-dir "$support_a/build/docker-overlap" \
     --container-work-dir /repo \
+    "${docker_signing_args[@]}" \
     --release-build \
     --dry-run > "$temporary_root/docker-overlap.log" 2>&1; then
   die "Docker wrapper accepted a work volume over the trusted /repo mount"
@@ -1467,7 +2116,8 @@ grep -Fq 'must not overlap a container control or support-repository mount' \
 reserved_control_index=0
 for reserved_control_path in /sp11-control /sp11-control/nested; do
   reserved_control_index=$((reserved_control_index + 1))
-  if "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+  if PATH="$openssl_mock_bin:/usr/bin:/bin" \
+    "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
       --source git \
       --git-url "$source_url" \
       --git-branch fixture \
@@ -1478,6 +2128,7 @@ for reserved_control_path in /sp11-control /sp11-control/nested; do
       --build-target "binary-indep binary-qcom-x1e" \
       --work-dir "$support_a/build/docker-control-overlap-$reserved_control_index" \
       --container-work-dir "$reserved_control_path" \
+      "${docker_signing_args[@]}" \
       --release-build \
       --dry-run > "$temporary_root/docker-control-overlap-$reserved_control_index.log" 2>&1; then
     die "Docker wrapper accepted reserved control mount overlap: $reserved_control_path"
@@ -1487,9 +2138,21 @@ for reserved_control_path in /sp11-control /sp11-control/nested; do
     die "reserved control-mount overlap rejection was not explicit: $reserved_control_path"
 done
 
+docker_valid_support="$(clone_support support-docker-valid)"
+docker_valid_signing_dir="$module_signing_fixture"
+docker_valid_signing_args=(
+  --module-signing-key "$docker_valid_signing_dir/key.pem"
+  --module-signing-certificate \
+    "$docker_valid_support/config/kernel-signing/sp11-module-signing-cert.pem"
+  --module-signing-pin-file "$docker_valid_signing_dir/pin"
+)
+docker_work="$docker_valid_support/build/docker-work"
+mkdir -p "$docker_work/artifacts"
+chmod 0700 "$docker_work" "$docker_work/artifacts"
+
 if ! GIT_DIR="$source_repo/.git" GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true \
-    "$support_a/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+    "$docker_valid_support/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --source git \
     --git-url "$source_url" \
     --git-branch fixture \
@@ -1499,6 +2162,7 @@ if ! GIT_DIR="$source_repo/.git" GIT_CONFIG_COUNT=1 \
     --patch-dirs patches/release \
     --build-target "binary-indep binary-qcom-x1e" \
     --work-dir "$docker_work" \
+    "${docker_valid_signing_args[@]}" \
     --release-build \
     --dry-run > "$temporary_root/docker-valid.log" 2>&1; then
   cat "$temporary_root/docker-valid.log" >&2
@@ -1510,7 +2174,7 @@ grep -Fq "SP11_BUILD_CONTAINER_PLATFORM=linux/arm64/v8" "$temporary_root/docker-
   die "container platform was not forwarded"
 grep -Fq "SP11_PRIVATE_SUPPORT_SNAPSHOT=true" "$temporary_root/docker-valid.log" ||
   die "wrapper-private support marker was not forwarded"
-if grep -Fq "$support_a:/repo:ro" "$temporary_root/docker-valid.log"; then
+if grep -Fq "$docker_valid_support:/repo:ro" "$temporary_root/docker-valid.log"; then
   die "release Docker command mounted the original live support worktree"
 fi
 grep -Fq '/sp11-kernel-support.' "$temporary_root/docker-valid.log" ||
@@ -1538,7 +2202,8 @@ for identity_argument in \
     die "Docker release build did not retain identity argument: $identity_argument"
 done
 
-if "$support_status_failure/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+if PATH="$openssl_mock_bin:/usr/bin:/bin" \
+  "$support_status_failure/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --source git \
     --git-url "$source_url" \
     --git-branch fixture \
@@ -1548,12 +2213,300 @@ if "$support_status_failure/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
     --patch-dir patches/release \
     --build-target "binary-indep binary-qcom-x1e" \
     --work-dir "$support_status_failure/build/docker-status-failure" \
+    "${docker_signing_args[@]}" \
     --release-build \
     --dry-run > "$temporary_root/status-docker.log" 2>&1; then
   die "Docker release wrapper interpreted a failed support status as clean"
 fi
 grep -Fq 'Could not inspect the support repository worktree state' "$temporary_root/status-docker.log" ||
   die "Docker release status failure was not explicit"
+
+touchscreen_source_url=https://github.com/example/sp11-touchscreen-fixture.git
+touchscreen_source_repo="$temporary_root/touchscreen-source-repository"
+touchscreen_bundle_dir="$temporary_root/touchscreen-signed-bundle"
+mkdir -p \
+  "$touchscreen_source_repo/phase55/modules" \
+  "$touchscreen_bundle_dir"
+chmod 0700 "$touchscreen_bundle_dir"
+printf '%s\n' 'SP11 touchscreen source fixture license' \
+  > "$touchscreen_source_repo/LICENSE"
+printf '%s\n' 'obj-m += fixture.o' \
+  > "$touchscreen_source_repo/phase55/modules/Makefile"
+printf '%s\n' 'int sp11_touchscreen_source_fixture;' \
+  > "$touchscreen_source_repo/phase55/modules/fixture.c"
+git -C "$touchscreen_source_repo" init --quiet --initial-branch=fixture
+git -C "$touchscreen_source_repo" config user.name 'SP11 CI fixture'
+git -C "$touchscreen_source_repo" config user.email sp11-ci@example.invalid
+git -C "$touchscreen_source_repo" add .
+GIT_AUTHOR_DATE="$source_date_epoch +0000" \
+GIT_COMMITTER_DATE="$source_date_epoch +0000" \
+  git -C "$touchscreen_source_repo" commit --quiet \
+    -m 'Create touchscreen source fixture'
+touchscreen_source_commit="$(
+  git -C "$touchscreen_source_repo" rev-parse 'HEAD^{commit}'
+)"
+touchscreen_source_object_format="$(
+  git -C "$touchscreen_source_repo" rev-parse --show-object-format
+)"
+touchscreen_source_modules_tree="$(
+  git -C "$touchscreen_source_repo" rev-parse \
+    "$touchscreen_source_commit:phase55/modules"
+)"
+touchscreen_source_license_blob="$(
+  git -C "$touchscreen_source_repo" rev-parse \
+    "$touchscreen_source_commit:LICENSE"
+)"
+[[ "$touchscreen_source_commit" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] &&
+  [[ "$touchscreen_source_modules_tree" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] &&
+  [[ "$touchscreen_source_license_blob" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
+  die "touchscreen source fixture object identities are malformed"
+case "$touchscreen_source_object_format" in sha1|sha256) ;; *)
+  die "touchscreen source fixture object format is unsupported" ;;
+esac
+
+cp "$module_signing_fixture/sp11-module-signing-cert.x509" \
+  "$touchscreen_bundle_dir/sp11-module-signing-cert.x509"
+for touchscreen_module in gpi.ko spi-geni-qcom.ko mshw0485_touch.ko; do
+  touchscreen_payload="$touchscreen_bundle_dir/$touchscreen_module.payload"
+  touchscreen_signature="$touchscreen_bundle_dir/$touchscreen_module.signature"
+  printf 'ELF provenance fixture payload for %s\n' "$touchscreen_module" \
+    > "$touchscreen_payload"
+  "$fixture_openssl" cms -sign -binary \
+    -in "$touchscreen_payload" \
+    -signer "$module_signing_fixture/cert.pem" \
+    -inkey "$module_signing_fixture/key.pem" \
+    -passin "file:$module_signing_fixture/pin" \
+    -md sha512 -noattr -nocerts -outform DER \
+    -out "$touchscreen_signature" >/dev/null 2>&1 ||
+    die "could not create a real CMS touchscreen module signature"
+  python3 -I - \
+    "$touchscreen_payload" "$touchscreen_signature" \
+    "$touchscreen_bundle_dir/$touchscreen_module" <<'PY_APPEND_MODULE_SIGNATURE'
+from pathlib import Path
+import struct
+import sys
+
+payload = Path(sys.argv[1]).read_bytes()
+signature = Path(sys.argv[2]).read_bytes()
+descriptor = struct.pack(">BBBBB3sI", 0, 0, 2, 0, 0, b"\0\0\0", len(signature))
+Path(sys.argv[3]).write_bytes(
+    payload + signature + descriptor + b"~Module signature appended~\n"
+)
+PY_APPEND_MODULE_SIGNATURE
+  unlink "$touchscreen_payload"
+  unlink "$touchscreen_signature"
+done
+chmod 0644 "$touchscreen_bundle_dir"/*.ko \
+  "$touchscreen_bundle_dir/sp11-module-signing-cert.x509"
+
+touchscreen_signature_report="$(
+  python3 -I "$support_a/scripts/validate-sp11-signed-modules.py" \
+    --certificate "$touchscreen_bundle_dir/sp11-module-signing-cert.x509" \
+    --module "$touchscreen_bundle_dir/gpi.ko" \
+    --module "$touchscreen_bundle_dir/spi-geni-qcom.ko" \
+    --module "$touchscreen_bundle_dir/mshw0485_touch.ko"
+)" || die "real CMS touchscreen bundle failed signature prevalidation"
+touchscreen_tamper_dir="$temporary_root/touchscreen-signature-tamper"
+cp -R "$touchscreen_bundle_dir" "$touchscreen_tamper_dir"
+python3 -I - "$touchscreen_tamper_dir/gpi.ko" <<'PY_TAMPER_CMS_SIGNATURE'
+from pathlib import Path
+import struct
+import sys
+
+path = Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+marker = b"~Module signature appended~\n"
+descriptor_start = len(data) - len(marker) - 12
+signature_size = struct.unpack(">BBBBB3sI", data[descriptor_start:descriptor_start + 12])[-1]
+signature_start = descriptor_start - signature_size
+if signature_size < 32 or signature_start <= 0:
+    raise SystemExit("fixture CMS signature is unexpectedly small")
+data[descriptor_start - 1] ^= 1
+path.write_bytes(data)
+PY_TAMPER_CMS_SIGNATURE
+set +e
+python3 -I "$support_a/scripts/validate-sp11-signed-modules.py" \
+    --certificate "$touchscreen_tamper_dir/sp11-module-signing-cert.x509" \
+    --module "$touchscreen_tamper_dir/gpi.ko" \
+    --module "$touchscreen_tamper_dir/spi-geni-qcom.ko" \
+    --module "$touchscreen_tamper_dir/mshw0485_touch.ko" \
+    > "$temporary_root/touchscreen-signature-tamper.log" 2>&1
+touchscreen_tamper_status=$?
+set -e
+[ "$touchscreen_tamper_status" -eq 1 ] ||
+  die "real signed-module verifier misclassified a flipped CMS signature byte"
+[ "$(cat "$temporary_root/touchscreen-signature-tamper.log")" = \
+  'error: openssl rejected gpi.ko signature' ] ||
+  die "flipped CMS signature did not reach exact cryptographic verification"
+if grep -Fq 'Traceback (most recent call last)' \
+    "$temporary_root/touchscreen-signature-tamper.log"; then
+  die "flipped CMS signature rejection leaked a traceback"
+fi
+touchscreen_kernel_config_sha="$(manifest_value "$manifest_a" 'Output 1 SHA256')"
+touchscreen_kernel_symvers_sha="$(manifest_value "$manifest_a" 'Output 2 SHA256')"
+touchscreen_common_headers_index="$(
+  manifest_role_index "$manifest_a" Deb common-headers
+)" || die "build manifest does not contain one exact common-headers Deb role"
+touchscreen_headers_index="$(
+  manifest_role_index "$manifest_a" Deb headers
+)" || die "build manifest does not contain one exact headers Deb role"
+touchscreen_common_headers_deb="$(
+  manifest_value "$manifest_a" "Deb $touchscreen_common_headers_index path"
+)"
+touchscreen_common_headers_sha="$(
+  manifest_value "$manifest_a" "Deb $touchscreen_common_headers_index SHA256"
+)"
+touchscreen_headers_deb="$(
+  manifest_value "$manifest_a" "Deb $touchscreen_headers_index path"
+)"
+touchscreen_headers_sha="$(
+  manifest_value "$manifest_a" "Deb $touchscreen_headers_index SHA256"
+)"
+for touchscreen_digest in \
+  "$touchscreen_kernel_config_sha" "$touchscreen_kernel_symvers_sha" \
+  "$touchscreen_common_headers_sha" \
+  "$touchscreen_headers_sha"; do
+  [[ "$touchscreen_digest" =~ ^[0-9a-f]{64}$ ]] ||
+    die "touchscreen fixture kernel input digest is malformed"
+done
+cat > "$touchscreen_bundle_dir/sp11-touchscreen-modules-manifest.txt" <<EOF_TOUCHSCREEN_MANIFEST
+# Surface Pro 11 Touchscreen Module Build Manifest
+
+Source URL: $touchscreen_source_url
+Source ref: fixture
+Source commit: $touchscreen_source_commit
+Source archive contract: sp11-touchscreen-source-v1
+Source object format: $touchscreen_source_object_format
+Source modules path: phase55/modules
+Source modules tree ID: $touchscreen_source_modules_tree
+Source license path: LICENSE
+Source license mode: 100644
+Source license blob ID: $touchscreen_source_license_blob
+Target release: 7.2-rc5-jg-0sp11v3r2-qcom-x1e
+Kernel config SHA256: $touchscreen_kernel_config_sha
+Kernel Module.symvers SHA256: $touchscreen_kernel_symvers_sha
+Kernel headers input mode: extracted-debs-v1
+Kernel common headers Deb: $touchscreen_common_headers_deb
+Kernel common headers Deb SHA256: $touchscreen_common_headers_sha
+Kernel architecture headers Deb: $touchscreen_headers_deb
+Kernel architecture headers Deb SHA256: $touchscreen_headers_sha
+Module compiler identity: cc fixture 1.0
+Module linker identity: ld fixture 1.0
+Module make identity: make fixture 1.0
+$touchscreen_signature_report
+
+## Modules
+
+- gpi.ko
+  - Name: gpi
+  - Srcversion: A1
+  - Vermagic: 7.2-rc5-jg-0sp11v3r2-qcom-x1e SMP
+  - SHA256: $(shasum -a 256 "$touchscreen_bundle_dir/gpi.ko" | awk '{print $1}')
+- spi-geni-qcom.ko
+  - Name: spi_geni_qcom
+  - Srcversion: B2
+  - Vermagic: 7.2-rc5-jg-0sp11v3r2-qcom-x1e SMP
+  - SHA256: $(shasum -a 256 "$touchscreen_bundle_dir/spi-geni-qcom.ko" | awk '{print $1}')
+- mshw0485_touch.ko
+  - Name: mshw0485_touch
+  - Srcversion: C3
+  - Vermagic: 7.2-rc5-jg-0sp11v3r2-qcom-x1e SMP
+  - SHA256: $(shasum -a 256 "$touchscreen_bundle_dir/mshw0485_touch.ko" | awk '{print $1}')
+EOF_TOUCHSCREEN_MANIFEST
+chmod 0644 "$touchscreen_bundle_dir/sp11-touchscreen-modules-manifest.txt"
+for touchscreen_manifest_line in \
+    '- gpi.ko' \
+    '  - Name: gpi' \
+    '  - Srcversion: A1' \
+    '- spi-geni-qcom.ko' \
+    '  - Name: spi_geni_qcom' \
+    '  - Srcversion: B2' \
+    '- mshw0485_touch.ko' \
+    '  - Name: mshw0485_touch' \
+    '  - Srcversion: C3'; do
+  [ "$(grep -Fxc -- "$touchscreen_manifest_line" \
+      "$touchscreen_bundle_dir/sp11-touchscreen-modules-manifest.txt")" = 1 ] ||
+    die "touchscreen fixture manifest human module rows are not exact"
+done
+python3 -I "$support_a/scripts/validate-sp11-signed-modules.py" \
+  --certificate "$touchscreen_bundle_dir/sp11-module-signing-cert.x509" \
+  --module "$touchscreen_bundle_dir/gpi.ko" \
+  --module "$touchscreen_bundle_dir/spi-geni-qcom.ko" \
+  --module "$touchscreen_bundle_dir/mshw0485_touch.ko" \
+  --manifest "$touchscreen_bundle_dir/sp11-touchscreen-modules-manifest.txt" \
+  >/dev/null || die "real CMS touchscreen manifest failed exact prevalidation"
+
+touchscreen_source_archive_name="sp11-touchscreen-modules-source-$touchscreen_source_commit.tar.xz"
+touchscreen_source_archive_seed="$temporary_root/$touchscreen_source_archive_name"
+git -C "$touchscreen_source_repo" archive \
+  --format=tar \
+  --prefix="sp11-touchscreen-modules-source-$touchscreen_source_commit/" \
+  "$touchscreen_source_commit" |
+  xz --threads=1 -6 > "$touchscreen_source_archive_seed"
+python3 -I "$support_a/scripts/validate-sp11-source-archive.py" touchscreen \
+  --archive "$touchscreen_source_archive_seed" \
+  --expected-modules-tree "$touchscreen_source_modules_tree" \
+  --expected-license-blob "$touchscreen_source_license_blob" \
+  --license-mode 100644 \
+  --expected-archive-comment "$touchscreen_source_commit" >/dev/null ||
+  die "touchscreen corresponding-source archive failed exact prevalidation"
+for touchscreen_support in "$support_a" "$support_b"; do
+  mkdir -p "$touchscreen_support/build/release-source"
+  cp "$touchscreen_source_archive_seed" \
+    "$touchscreen_support/build/release-source/$touchscreen_source_archive_name"
+done
+
+assert_no_disposable_signing_leak() {
+  python3 -I - \
+    "$module_signing_fixture/key.pem" \
+    "$module_signing_fixture/pin" \
+    "$module_signing_fixture" "$@" <<'PY_ASSERT_NO_SIGNING_LEAK'
+from pathlib import Path
+import os
+import stat
+import sys
+
+key_path = Path(sys.argv[1])
+pin_path = Path(sys.argv[2])
+private_root = Path(sys.argv[3])
+forbidden = (
+    key_path.read_bytes(),
+    pin_path.read_bytes(),
+    pin_path.read_bytes().rstrip(b"\n"),
+    os.fsencode(str(key_path)),
+    os.fsencode(str(pin_path)),
+    os.fsencode(str(private_root)),
+    b"-----BEGIN ENCRYPTED " + b"PRIVATE KEY-----",
+)
+if any(not value for value in forbidden):
+    raise SystemExit("empty signing-leak fixture sentinel")
+for root_text in sys.argv[4:]:
+    candidates = []
+    root_metadata = os.lstat(root_text)
+    if stat.S_ISREG(root_metadata.st_mode):
+        candidates.append(root_text)
+    elif stat.S_ISDIR(root_metadata.st_mode):
+        for root, directories, files in os.walk(root_text, followlinks=False):
+            directories[:] = sorted(directories)
+            candidates.extend(os.path.join(root, name) for name in sorted(files))
+    for path in candidates:
+        try:
+            metadata = os.lstat(path)
+        except OSError:
+            raise SystemExit("could not inspect a signing-leak output")
+        if not stat.S_ISREG(metadata.st_mode):
+            continue
+        data = Path(path).read_bytes()
+        if any(value in data for value in forbidden):
+            raise SystemExit("disposable signing authority leaked into a public fixture output")
+PY_ASSERT_NO_SIGNING_LEAK
+}
+assert_no_disposable_signing_leak \
+  "$support_seed" "$support_a" "$support_b" "$touchscreen_bundle_dir"
+if [ "${SP11_REAL_CMS_FIXTURE_FOCUSED:-false}" = true ]; then
+  printf 'real CMS touchscreen fixture prevalidation passed\n'
+  exit 0
+fi
 
 run_preparer() {
   local support_dir="$1" artifacts_dir="$2" release_name="$3"
@@ -1562,7 +2515,11 @@ run_preparer() {
   local output_dir="$support_dir/build/release/$release_name"
   local -a source_args=(--allow-missing-source)
   if [ -n "$source_asset" ]; then
-    source_args+=(--source-asset "$source_asset")
+    source_args=(
+      --source-asset "$source_asset"
+      --source-asset \
+        "$support_dir/build/release-source/$touchscreen_source_archive_name"
+    )
   fi
   mkdir -p "$support_dir/build/release"
   if [ ! -e "$output_dir" ]; then
@@ -1585,6 +2542,9 @@ run_preparer() {
       --patch-dir "$support_dir/patches/release" \
       --release-name "$release_name" \
       --out-dir "build/release/$release_name" \
+      --touchscreen-modules-dir "$touchscreen_bundle_dir" \
+      --touchscreen-source-url "$touchscreen_source_url" \
+      --touchscreen-source-ref "$touchscreen_source_commit" \
       "${source_args[@]}"
 }
 
@@ -1601,6 +2561,13 @@ fi
   die "successful release preparation did not commit its root as mode 0500"
 [ "$(directory_permission_mode "$support_b/build/release/fixture-v2-optional")" = 500 ] ||
   die "optional release preparation did not commit its root as mode 0500"
+assert_no_disposable_signing_leak \
+  "$support_a/build" "$support_b/build" "$touchscreen_bundle_dir" \
+  "$temporary_root/prepare-valid.log" "$temporary_root/prepare-optional.log"
+if [ "${SP11_REAL_CMS_PREPARER_FOCUSED:-false}" = true ]; then
+  printf 'real CMS touchscreen release preparation passed\n'
+  exit 0
+fi
 
 run_preparer_hook_failure() {
   local hook="$1" provenance_work="$2" release_name="$3" log
@@ -1756,20 +2723,29 @@ grep -Fq 'Retained release-evidence tar validation failed.' \
   die "flat-envelope/evidence mismatch rejection was not explicit"
 cp "$provenance_valid" "$provenance_a/artifacts/sp11-kernel-build-inputs.txt"
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
-  if PATH="$mock_bin:/usr/bin:/bin" \
+  reset_validator_dtb_log
+  if PATH="$validator_dtb_bin:$mock_bin:/usr/bin:/bin" \
       GIT_DIR="$source_repo/.git" \
       GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true \
       FIXTURE_REAL_GIT="$real_git" \
       FIXTURE_SOURCE_REPO="$source_repo" \
       FIXTURE_PUBLIC_SOURCE_URL="$source_url" \
       FIXTURE_REAL_PYTHON3="$real_python3" \
+      FIXTURE_BASE_DPKG_DEB="$mock_bin/dpkg-deb" \
+      FIXTURE_DTB_ARCHIVE_ROOT="$validator_dtb_root" \
+      FIXTURE_DTB_EXPECTED_MODULES_DEB="$validator_dtb_expected_modules" \
+      FIXTURE_DTB_RELATIVE_ROOT="$validator_dtb_relative_root" \
+      FIXTURE_DTB_PRIMARY_MARKER="$validator_dtb_primary_marker" \
+      FIXTURE_DTB_EL2_MARKER="$validator_dtb_el2_marker" \
+      FIXTURE_DTB_CALL_LOG="$validator_dtb_call_log" \
       "$support_a/scripts/validate-sp11-touchscreen-release.sh" \
         --local-prepared-candidate \
         --dir "$support_a/build/release/fixture-v2" \
         > "$temporary_root/validate-source-less-v2.log" 2>&1; then
     die "standalone release validator accepted a source-less schema-v2 draft"
   fi
-  grep -Fq 'missing or unsafe kernel source archive name' \
+  grep -Fxq \
+    'ERROR: schema-v2 release manifest has missing or unsafe source-archive names.' \
     "$temporary_root/validate-source-less-v2.log" ||
     die "source-less schema-v2 rejection was not explicit"
 else
@@ -1783,6 +2759,7 @@ grep -Fq 'Could not inspect the support repository worktree state' "$temporary_r
   die "release preparer status failure was not explicit"
 release_manifest="$support_a/build/release/fixture-v2/sp11-kernel-release-manifest.txt"
 attached_build_manifest="$support_a/build/release/fixture-v2/sp11-kernel-build-manifest.txt"
+attached_signature_report="$support_a/build/release/fixture-v2/sp11-kernel-module-signatures.txt"
 attached_apt_provenance="$support_a/build/release/fixture-v2/sp11-kernel-apt-provenance.txt"
 attached_build_inputs="$support_a/build/release/fixture-v2/sp11-kernel-build-inputs.txt"
 release_notes="$support_a/build/release/fixture-v2/RELEASE-NOTES.md"
@@ -1795,6 +2772,8 @@ if ! cmp "$manifest_a" "$attached_build_manifest"; then
   find "$support_a/build/release" -mindepth 1 -maxdepth 2 -print >&2 || true
   die "kernel release did not attach the exact validated schema-v2 build manifest"
 fi
+cmp "$signature_report_a" "$attached_signature_report" ||
+  die "kernel release did not attach the exact validated module-signature report"
 cmp "$provenance_a/artifacts/sp11-kernel-apt-provenance.txt" "$attached_apt_provenance" ||
   die "kernel release did not attach the exact validated APT sidecar"
 cmp "$provenance_a/artifacts/sp11-kernel-build-inputs.txt" "$attached_build_inputs" ||
@@ -1808,6 +2787,9 @@ grep -Fq '  sp11-kernel-apt-provenance.txt' \
 grep -Fq '  sp11-kernel-build-inputs.txt' \
   "$support_a/build/release/fixture-v2/SHA256SUMS" ||
   die "kernel release checksums omitted the build-inputs envelope"
+grep -Fq '  sp11-kernel-module-signatures.txt' \
+  "$support_a/build/release/fixture-v2/SHA256SUMS" ||
+  die "kernel release checksums omitted the module-signature report"
 grep -Fxq 'Kernel release schema: sp11-kernel-release-v1' "$release_manifest" ||
   die "release manifest omitted its outer v1 schema"
 grep -Fxq 'Build envelope creation propagation: incomplete' "$release_manifest" ||
@@ -1822,6 +2804,27 @@ grep -Fxq "Container platform: linux/arm64/v8" "$release_manifest" ||
   die "release manifest omitted the container platform"
 grep -Fxq "Patched diff SHA256: $diff_a" "$release_manifest" ||
   die "release manifest omitted the patched diff identity"
+grep -Fxq 'Module signing policy: sp11-controlled-rsa4096-sha512-v1' "$release_manifest" ||
+  die "release manifest omitted the controlled module-signing policy"
+grep -Fxq 'Module signing private material retained: false' "$release_manifest" ||
+  die "release manifest omitted the private-material disposition"
+for report_binding in \
+  'Kernel module signature report asset: sp11-kernel-module-signatures.txt' \
+  'Kernel module signature report schema: sp11-kernel-module-signature-verification-v1' \
+  'Kernel module total count: 86' \
+  'Kernel module verified signed count: 1' \
+  'Kernel module policy-allowed unsigned count: 85' \
+  'Kernel module unsigned-path inventory SHA256: eb507e006b37ad7d291a37524f3f2f6b5281c5a3f98738dc07056a3ca7cba800'; do
+  grep -Fxq "$report_binding" "$release_manifest" ||
+    die "release manifest omitted module-signature report binding: $report_binding"
+done
+for report_identity_label in \
+  'Kernel module signature report size' \
+  'Kernel module signature report SHA256'; do
+  [ "$(manifest_value "$release_manifest" "$report_identity_label")" = \
+    "$(manifest_value "$manifest_a" "$report_identity_label")" ] ||
+    die "release manifest changed $report_identity_label"
+done
 if grep -Fq "$temporary_root" "$release_manifest"; then
   die "release manifest leaked an absolute fixture path"
 fi
@@ -1873,13 +2876,20 @@ fi
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   validate_schema_v2_dir() {
     local support_dir="$1" release_name="$2" log_name="$3"
-    PATH="$mock_bin:/usr/bin:/bin" \
+    PATH="$validator_dtb_bin:$mock_bin:/usr/bin:/bin" \
       GIT_DIR="$source_repo/.git" \
       GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.bare GIT_CONFIG_VALUE_0=true \
       FIXTURE_REAL_GIT="$real_git" \
       FIXTURE_SOURCE_REPO="$source_repo" \
       FIXTURE_PUBLIC_SOURCE_URL="$source_url" \
       FIXTURE_REAL_PYTHON3="$real_python3" \
+      FIXTURE_BASE_DPKG_DEB="$mock_bin/dpkg-deb" \
+      FIXTURE_DTB_ARCHIVE_ROOT="$validator_dtb_root" \
+      FIXTURE_DTB_EXPECTED_MODULES_DEB="$validator_dtb_expected_modules" \
+      FIXTURE_DTB_RELATIVE_ROOT="$validator_dtb_relative_root" \
+      FIXTURE_DTB_PRIMARY_MARKER="$validator_dtb_primary_marker" \
+      FIXTURE_DTB_EL2_MARKER="$validator_dtb_el2_marker" \
+      FIXTURE_DTB_CALL_LOG="$validator_dtb_call_log" \
       "$support_dir/scripts/validate-sp11-touchscreen-release.sh" \
         --local-prepared-candidate \
         --dir "$support_dir/build/release/$release_name" --tag "$release_name" \
@@ -1918,16 +2928,20 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
 
   git -C "$support_a" tag fixture-v2-source
   git -C "$support_b" tag fixture-v2-optional-source
+  reset_validator_dtb_log
   if ! validate_schema_v2_dir "$support_a" fixture-v2-source \
       validate-flat-v2-source.log; then
     cat "$temporary_root/validate-flat-v2-source.log" >&2
     die "standalone release validator rejected a fully bound schema-v2 kernel release"
   fi
+  assert_validator_dtb_log
+  reset_validator_dtb_log
   if ! validate_schema_v2_dir "$support_b" fixture-v2-optional-source \
       validate-flat-v2-optional-source.log; then
     cat "$temporary_root/validate-flat-v2-optional-source.log" >&2
     die "standalone release validator rejected source-bound optional/unsigned schema-v2 assets"
   fi
+  assert_validator_dtb_log
 
   bound_release_dir="$support_a/build/release/fixture-v2-source"
   original_candidate_state="$(local_candidate_state "$bound_release_dir")"
@@ -2003,6 +3017,8 @@ git -C "$support_no_origin" remote remove origin
 mkdir -p "$support_no_origin/build/release-source"
 no_origin_source="$support_no_origin/build/release-source/fixture-v2-patched-source.tar.xz"
 cp "$kernel_source_archive" "$no_origin_source"
+cp "$touchscreen_source_archive_seed" \
+  "$support_no_origin/build/release-source/$touchscreen_source_archive_name"
 if run_preparer "$support_no_origin" "$provenance_a/artifacts" fixture-v2-no-origin \
     "$work_a/source" "$no_origin_source" \
     > "$temporary_root/prepare-no-origin.log" 2>&1; then
@@ -2187,7 +3203,7 @@ refresh_build_manifest_envelope_binding "$bad_patch_artifacts"
 expect_prepare_failure "$bad_patch_artifacts/artifacts" fixture-bad-patch \
   'Retained release-evidence tar validation failed.'
 
-image_deb="$work_a/source/linux-image-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb"
+image_deb="$work_a/source/linux-image-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb"
 cp "$image_deb" "$temporary_root/image.deb.backup"
 printf 'tampered\n' >> "$image_deb"
 expect_prepare_failure "$provenance_a/artifacts" fixture-tampered-deb 'does not match its build provenance'

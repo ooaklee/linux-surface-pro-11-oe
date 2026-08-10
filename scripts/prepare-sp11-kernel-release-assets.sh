@@ -54,6 +54,8 @@ TOUCHSCREEN_MODULE_FILES=(
   "mshw0485_touch.ko"
 )
 TOUCHSCREEN_MODULE_MANIFEST="sp11-touchscreen-modules-manifest.txt"
+TOUCHSCREEN_SIGNING_CERTIFICATE="sp11-module-signing-cert.x509"
+MODULE_SIGNING_POLICY="sp11-controlled-rsa4096-sha512-v1"
 FINAL_OUT_DIR=""
 OUTPUT_ROOT_FD=52
 OUTPUT_ROOT_IDENTITY=""
@@ -1402,6 +1404,10 @@ touchscreen_module_vermagic=()
 touchscreen_module_srcversions=()
 touchscreen_module_sizes=()
 touchscreen_module_shas=()
+touchscreen_module_payload_sizes=()
+touchscreen_module_payload_shas=()
+touchscreen_module_signature_sizes=()
+touchscreen_module_signature_shas=()
 touchscreen_source_contract=""
 touchscreen_source_object_format=""
 touchscreen_source_modules_path=""
@@ -1420,6 +1426,16 @@ touchscreen_module_compiler_identity=""
 touchscreen_module_linker_identity=""
 touchscreen_module_make_identity=""
 input_touchscreen_module_shas=()
+input_touchscreen_module_sizes=()
+touchscreen_signing_policy=""
+touchscreen_signing_private_material_retained=""
+touchscreen_signing_hash_algorithm=""
+touchscreen_signing_certificate_asset=""
+touchscreen_signing_certificate_sha256=""
+touchscreen_signing_certificate_fingerprint=""
+touchscreen_signing_certificate_serial=""
+touchscreen_signing_certificate_size=""
+touchscreen_windows_se_init_default=""
 
 if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
   if [ ! -d "$TOUCHSCREEN_MODULES_DIR" ] || [ -L "$TOUCHSCREEN_MODULES_DIR" ]; then
@@ -1434,11 +1450,13 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
     touchscreen_entries+=("$entry")
   done < <(find "$TOUCHSCREEN_MODULES_DIR" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)
 
-  expected_touchscreen_entries="$(printf '%s\n' "${TOUCHSCREEN_MODULE_FILES[@]}" | sort)"
+  expected_touchscreen_entries="$(
+    printf '%s\n' "${TOUCHSCREEN_MODULE_FILES[@]}" "$TOUCHSCREEN_SIGNING_CERTIFICATE" | sort
+  )"
   actual_touchscreen_entries="$(printf '%s\n' "${touchscreen_entries[@]}" | sort)"
-  if [ "${#touchscreen_entries[@]}" -ne "${#TOUCHSCREEN_MODULE_FILES[@]}" ] || \
+  if [ "${#touchscreen_entries[@]}" -ne "$(( ${#TOUCHSCREEN_MODULE_FILES[@]} + 1 ))" ] || \
      [ "$actual_touchscreen_entries" != "$expected_touchscreen_entries" ]; then
-    echo "Touchscreen modules directory must contain exactly: ${TOUCHSCREEN_MODULE_FILES[*]}" >&2
+    echo "Touchscreen modules directory must contain exactly: ${TOUCHSCREEN_MODULE_FILES[*]} $TOUCHSCREEN_SIGNING_CERTIFICATE" >&2
     exit 1
   fi
 
@@ -1459,6 +1477,63 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
       echo "Touchscreen build manifest targets $input_target_release, expected $kernel_abi." >&2
       exit 1
     }
+    touchscreen_signing_policy="$(required_manifest_value "$input_touchscreen_manifest" "Module signing policy")"
+    touchscreen_signing_private_material_retained="$(required_manifest_value "$input_touchscreen_manifest" "Module signing private material retained")"
+    touchscreen_signing_hash_algorithm="$(required_manifest_value "$input_touchscreen_manifest" "Module signing hash algorithm")"
+    touchscreen_signing_certificate_asset="$(required_manifest_value "$input_touchscreen_manifest" "Module signing certificate asset")"
+    touchscreen_signing_certificate_sha256="$(required_manifest_value "$input_touchscreen_manifest" "Module signing certificate SHA256")"
+    touchscreen_signing_certificate_fingerprint="$(required_manifest_value "$input_touchscreen_manifest" "Module signing certificate fingerprint")"
+    touchscreen_signing_certificate_serial="$(required_manifest_value "$input_touchscreen_manifest" "Module signing certificate serial")"
+    touchscreen_windows_se_init_default="$(required_manifest_value "$input_touchscreen_manifest" "Windows SE init default")"
+    if [ "$touchscreen_signing_policy" != "$MODULE_SIGNING_POLICY" ] ||
+       [ "$touchscreen_signing_private_material_retained" != "false" ] ||
+       [ "$touchscreen_signing_hash_algorithm" != "sha512" ] ||
+       [ "$touchscreen_windows_se_init_default" != "disabled" ] ||
+       [ "$touchscreen_signing_certificate_asset" != "$TOUCHSCREEN_SIGNING_CERTIFICATE" ] ||
+       ! [[ "$touchscreen_signing_certificate_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+       ! [[ "$touchscreen_signing_certificate_fingerprint" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] ||
+       ! [[ "$touchscreen_signing_certificate_serial" =~ ^[0-9A-F]+$ ]]; then
+      echo "Touchscreen build manifest has an invalid controlled module-signing contract." >&2
+      exit 1
+    fi
+    signing_certificate_path="$TOUCHSCREEN_MODULES_DIR/$TOUCHSCREEN_SIGNING_CERTIFICATE"
+    signing_certificate_identity="$(
+      trusted_regular_file_fingerprint "$signing_certificate_path" 1048576
+    )" || exit 1
+    if ! [[ "$signing_certificate_identity" =~ ^([1-9][0-9]*)\ ([0-9a-f]{64})$ ]] ||
+       [ "${BASH_REMATCH[2]}" != "$touchscreen_signing_certificate_sha256" ]; then
+      echo "Touchscreen public signing certificate does not match its build manifest." >&2
+      exit 1
+    fi
+    touchscreen_signing_certificate_size="${BASH_REMATCH[1]}"
+    calculated_signing_fingerprint="$(
+      printf '%s' "$touchscreen_signing_certificate_sha256" |
+        sed 's/../&:/g; s/:$//' | tr '[:lower:]' '[:upper:]'
+    )"
+    if [ "$calculated_signing_fingerprint" != "$touchscreen_signing_certificate_fingerprint" ]; then
+      echo "Touchscreen public signing certificate SHA256 and fingerprint disagree." >&2
+      exit 1
+    fi
+    for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
+      input_touchscreen_module_sizes+=(
+        "$(required_manifest_value "$input_touchscreen_manifest" "Module $module_file size")"
+      )
+      input_touchscreen_module_shas+=(
+        "$(required_manifest_value "$input_touchscreen_manifest" "Module $module_file SHA256")"
+      )
+      touchscreen_module_payload_sizes+=(
+        "$(required_manifest_value "$input_touchscreen_manifest" "Module $module_file payload size")"
+      )
+      touchscreen_module_payload_shas+=(
+        "$(required_manifest_value "$input_touchscreen_manifest" "Module $module_file payload SHA256")"
+      )
+      touchscreen_module_signature_sizes+=(
+        "$(required_manifest_value "$input_touchscreen_manifest" "Module $module_file signature size")"
+      )
+      touchscreen_module_signature_shas+=(
+        "$(required_manifest_value "$input_touchscreen_manifest" "Module $module_file signature SHA256")"
+      )
+    done
     if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
       touchscreen_source_contract="$(required_manifest_value "$input_touchscreen_manifest" "Source archive contract")"
       touchscreen_source_object_format="$(required_manifest_value "$input_touchscreen_manifest" "Source object format")"
@@ -1513,16 +1588,11 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
             }
           ;;
       esac
-      for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
-        input_touchscreen_module_shas+=(
-          "$(required_manifest_value "$input_touchscreen_manifest" "Module $module_file SHA256")"
-        )
-      done
     fi
   elif [ -e "$input_touchscreen_manifest" ]; then
     echo "Touchscreen build manifest is not a regular file: $input_touchscreen_manifest" >&2
     exit 1
-  elif [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
+  else
     echo "Publishable touchscreen assets require $input_touchscreen_manifest." >&2
     exit 1
   fi
@@ -1598,17 +1668,23 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
     echo "mshw0485_touch.ko is missing the microsoft,mshw0485 device-tree alias." >&2
     exit 1
   fi
-  if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
-    module_index=0
-    while [ "$module_index" -lt "${#TOUCHSCREEN_MODULE_FILES[@]}" ]; do
-      if ! [[ "${input_touchscreen_module_shas[$module_index]}" =~ ^[0-9a-f]{64}$ ]] ||
-         [ "${input_touchscreen_module_shas[$module_index]}" != "${touchscreen_module_shas[$module_index]}" ]; then
-        echo "Touchscreen module does not match its build manifest: ${TOUCHSCREEN_MODULE_FILES[$module_index]}" >&2
-        exit 1
-      fi
-      module_index=$((module_index + 1))
-    done
-  fi
+  module_index=0
+  while [ "$module_index" -lt "${#TOUCHSCREEN_MODULE_FILES[@]}" ]; do
+    if ! [[ "${input_touchscreen_module_sizes[$module_index]}" =~ ^[1-9][0-9]*$ ]] ||
+       ! [[ "${input_touchscreen_module_shas[$module_index]}" =~ ^[0-9a-f]{64}$ ]] ||
+       ! [[ "${touchscreen_module_payload_sizes[$module_index]}" =~ ^[1-9][0-9]*$ ]] ||
+       ! [[ "${touchscreen_module_payload_shas[$module_index]}" =~ ^[0-9a-f]{64}$ ]] ||
+       ! [[ "${touchscreen_module_signature_sizes[$module_index]}" =~ ^[1-9][0-9]*$ ]] ||
+       ! [[ "${touchscreen_module_signature_shas[$module_index]}" =~ ^[0-9a-f]{64}$ ]] ||
+       [ "${input_touchscreen_module_sizes[$module_index]}" != "${touchscreen_module_sizes[$module_index]}" ] ||
+       [ "${input_touchscreen_module_shas[$module_index]}" != "${touchscreen_module_shas[$module_index]}" ] ||
+       [ "${touchscreen_module_payload_sizes[$module_index]}" -ge "${touchscreen_module_sizes[$module_index]}" ] ||
+       [ "${touchscreen_module_signature_sizes[$module_index]}" -ge "${touchscreen_module_sizes[$module_index]}" ]; then
+      echo "Touchscreen module does not match its signed build manifest: ${TOUCHSCREEN_MODULE_FILES[$module_index]}" >&2
+      exit 1
+    fi
+    module_index=$((module_index + 1))
+  done
 fi
 
 version_deb="${debs[0]}"
@@ -1690,6 +1766,7 @@ verify_held_output_root
 build_manifest="$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
 apt_provenance="$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
 build_inputs="$ARTIFACTS_DIR/sp11-kernel-build-inputs.txt"
+kernel_signature_report="$ARTIFACTS_DIR/sp11-kernel-module-signatures.txt"
 artifacts_abs="$(cd "$ARTIFACTS_DIR" && pwd -P)"
 build_work_dir="$(dirname "$artifacts_abs")"
 if [ "$(basename "$artifacts_abs")" != "artifacts" ]; then
@@ -1724,7 +1801,9 @@ if ! cd "$build_artifacts_previous_directory"; then
   exit 1
 fi
 verify_held_build_artifacts_root
-for provenance_input in "$build_manifest" "$apt_provenance" "$build_inputs"; do
+for provenance_input in \
+  "$build_manifest" "$apt_provenance" "$build_inputs" \
+  "$kernel_signature_report"; do
   if [ ! -f "$provenance_input" ] || [ -L "$provenance_input" ]; then
     echo "Refusing assets without a regular, non-symlinked immutable provenance input: $provenance_input" >&2
     exit 1
@@ -1834,6 +1913,7 @@ case "${#repo_commit}" in
 esac
 build_inputs_helper_relative="scripts/sp11-kernel-build-inputs.py"
 manifest_validator_relative="scripts/validate-sp11-image-release-manifests.py"
+signed_module_validator_relative="scripts/validate-sp11-signed-modules.py"
 build_inputs_helper_record="$(
   committed_blob_authority \
     "$repo_commit" "$build_inputs_helper_relative" 100755
@@ -1862,6 +1942,61 @@ IFS=$'\t' read -r \
   echo "Committed manifest-validator authority is not canonical." >&2
   exit 1
 }
+signed_module_validator_record="$(
+  committed_blob_authority \
+    "$repo_commit" "$signed_module_validator_relative" 100755
+)" || {
+  echo "Could not bind the committed signed-module validator authority." >&2
+  exit 1
+}
+IFS=$'\t' read -r \
+  signed_module_validator_size signed_module_validator_sha \
+  signed_module_validator_object_id signed_module_validator_remainder \
+  <<< "$signed_module_validator_record"
+[ -z "$signed_module_validator_remainder" ] || {
+  echo "Committed signed-module validator authority is not canonical." >&2
+  exit 1
+}
+
+if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+  expected_signed_module_report="$(
+    {
+      echo "Module signing policy: $touchscreen_signing_policy"
+      echo "Module signing private material retained: $touchscreen_signing_private_material_retained"
+      echo "Module signing hash algorithm: $touchscreen_signing_hash_algorithm"
+      echo "Module signing certificate asset: $TOUCHSCREEN_SIGNING_CERTIFICATE"
+      echo "Module signing certificate SHA256: $touchscreen_signing_certificate_sha256"
+      echo "Module signing certificate fingerprint: $touchscreen_signing_certificate_fingerprint"
+      echo "Module signing certificate serial: $touchscreen_signing_certificate_serial"
+      echo "Windows SE init default: $touchscreen_windows_se_init_default"
+      module_index=0
+      while [ "$module_index" -lt "${#TOUCHSCREEN_MODULE_FILES[@]}" ]; do
+        module_file="${TOUCHSCREEN_MODULE_FILES[$module_index]}"
+        echo "Module $module_file size: ${touchscreen_module_sizes[$module_index]}"
+        echo "Module $module_file SHA256: ${touchscreen_module_shas[$module_index]}"
+        echo "Module $module_file payload size: ${touchscreen_module_payload_sizes[$module_index]}"
+        echo "Module $module_file payload SHA256: ${touchscreen_module_payload_shas[$module_index]}"
+        echo "Module $module_file signature size: ${touchscreen_module_signature_sizes[$module_index]}"
+        echo "Module $module_file signature SHA256: ${touchscreen_module_signature_shas[$module_index]}"
+        module_index=$((module_index + 1))
+      done
+    }
+  )"
+  if ! signed_module_report="$(
+    run_committed_python_helper \
+      "$signed_module_validator_relative" \
+      "$signed_module_validator_sha" \
+      "$signed_module_validator_object_id" \
+      --certificate "$TOUCHSCREEN_MODULES_DIR/$TOUCHSCREEN_SIGNING_CERTIFICATE" \
+      --module "$TOUCHSCREEN_MODULES_DIR/gpi.ko" \
+      --module "$TOUCHSCREEN_MODULES_DIR/spi-geni-qcom.ko" \
+      --module "$TOUCHSCREEN_MODULES_DIR/mshw0485_touch.ko" \
+      --manifest "$input_touchscreen_manifest"
+  )" || [ "$signed_module_report" != "$expected_signed_module_report" ]; then
+    echo "Touchscreen producer manifest or bundle failed cryptographic signature validation." >&2
+    exit 1
+  fi
+fi
 
 baseline_container_authority="$(
   trusted_baseline_container_authority \
@@ -2061,6 +2196,7 @@ verify_retained_evidence_tar() {
 build_manifest="$artifacts_abs/sp11-kernel-build-manifest.txt"
 apt_provenance="$artifacts_abs/sp11-kernel-apt-provenance.txt"
 build_inputs="$artifacts_abs/sp11-kernel-build-inputs.txt"
+kernel_signature_report="$artifacts_abs/sp11-kernel-module-signatures.txt"
 verify_retained_flat_file "$build_manifest" "sp11-kernel-build-manifest.txt"
 build_manifest_snapshot_size="$RETAINED_FLAT_SIZE"
 build_manifest_snapshot_sha="$RETAINED_FLAT_SHA256"
@@ -2070,6 +2206,22 @@ apt_provenance_snapshot_sha="$RETAINED_FLAT_SHA256"
 verify_retained_flat_file "$build_inputs" "sp11-kernel-build-inputs.txt"
 build_inputs_snapshot_size="$RETAINED_FLAT_SIZE"
 build_inputs_snapshot_sha="$RETAINED_FLAT_SHA256"
+verify_retained_flat_file \
+  "$kernel_signature_report" "sp11-kernel-module-signatures.txt"
+kernel_signature_report_snapshot_size="$RETAINED_FLAT_SIZE"
+kernel_signature_report_snapshot_sha="$RETAINED_FLAT_SHA256"
+
+run_committed_python_helper \
+  "$manifest_validator_relative" \
+  "$manifest_validator_sha" \
+  "$manifest_validator_object_id" \
+  --repo-dir "$repo_dir" \
+  --support-commit "$repo_commit" \
+  --build-only \
+  --kernel-build-manifest "$build_manifest" >/dev/null || {
+  echo "Kernel module signature report failed committed build-provenance validation." >&2
+  exit 1
+}
 if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
   [ -x "$public_content_validator" ] && [ ! -L "$public_content_validator" ] || {
     echo "Missing executable public-content validator." >&2
@@ -2079,6 +2231,7 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
     --file "$build_manifest"
     --file "$apt_provenance"
     --file "$build_inputs"
+    --file "$kernel_signature_report"
   )
   if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
     public_input_args+=(--file "$input_touchscreen_manifest")
@@ -2112,9 +2265,19 @@ patched_tree_id="$(required_manifest_value "$build_manifest" "Patched tree ID")"
 required_output_role_set="$(required_manifest_value "$build_manifest" "Required output roles")"
 optional_output_role_set="$(required_manifest_value "$build_manifest" "Optional output roles")"
 output_count="$(required_manifest_value "$build_manifest" "Output count")"
+module_signing_policy="$(required_manifest_value "$build_manifest" "Module signing policy")"
+module_signing_private_material_retained="$(required_manifest_value "$build_manifest" "Module signing private material retained")"
 signing_certificate_sha256="$(required_manifest_value "$build_manifest" "Signing certificate SHA256")"
 signing_certificate_fingerprint="$(required_manifest_value "$build_manifest" "Signing certificate fingerprint")"
 signing_certificate_serial="$(required_manifest_value "$build_manifest" "Signing certificate serial")"
+kernel_signature_report_asset="$(required_manifest_value "$build_manifest" "Kernel module signature report asset")"
+kernel_signature_report_size="$(required_manifest_value "$build_manifest" "Kernel module signature report size")"
+kernel_signature_report_sha256="$(required_manifest_value "$build_manifest" "Kernel module signature report SHA256")"
+kernel_signature_report_schema="$(required_manifest_value "$build_manifest" "Kernel module signature report schema")"
+kernel_module_total_count="$(required_manifest_value "$build_manifest" "Kernel module total count")"
+kernel_module_verified_signed_count="$(required_manifest_value "$build_manifest" "Kernel module verified signed count")"
+kernel_module_policy_allowed_unsigned_count="$(required_manifest_value "$build_manifest" "Kernel module policy-allowed unsigned count")"
+kernel_module_unsigned_path_inventory_sha256="$(required_manifest_value "$build_manifest" "Kernel module unsigned-path inventory SHA256")"
 required_deb_role_set="$(required_manifest_value "$build_manifest" "Required Deb roles")"
 optional_deb_role_set="$(required_manifest_value "$build_manifest" "Optional Deb roles")"
 manifest_deb_count="$(required_manifest_value "$build_manifest" "Deb count")"
@@ -2216,10 +2379,29 @@ if [ "$output_count" -ne 7 ] ||
   echo "Build manifest has an unexpected required-output or optional-package cardinality." >&2
   exit 1
 fi
-if ! [[ "$signing_certificate_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+if [ "$module_signing_policy" != "$MODULE_SIGNING_POLICY" ] ||
+   [ "$module_signing_private_material_retained" != "false" ] ||
+   ! [[ "$signing_certificate_sha256" =~ ^[0-9a-f]{64}$ ]] ||
    ! [[ "$signing_certificate_fingerprint" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] ||
    ! [[ "$signing_certificate_serial" =~ ^[0-9A-F]+$ ]]; then
   echo "Build manifest has incomplete public X.509 signing-certificate identity." >&2
+  exit 1
+fi
+if [ "$kernel_signature_report_asset" != "sp11-kernel-module-signatures.txt" ] ||
+   [ "$kernel_signature_report_schema" != "sp11-kernel-module-signature-verification-v1" ] ||
+   [ "$kernel_signature_report_size" != "$kernel_signature_report_snapshot_size" ] ||
+   [ "$kernel_signature_report_sha256" != "$kernel_signature_report_snapshot_sha" ] ||
+   ! [[ "$kernel_signature_report_size" =~ ^[1-9][0-9]*$ ]] ||
+   ! [[ "$kernel_signature_report_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+   ! [[ "$kernel_module_total_count" =~ ^[1-9][0-9]*$ ]] ||
+   ! [[ "$kernel_module_verified_signed_count" =~ ^(0|[1-9][0-9]*)$ ]] ||
+   ! [[ "$kernel_module_policy_allowed_unsigned_count" =~ ^(0|[1-9][0-9]*)$ ]] ||
+   ! [[ "$kernel_module_unsigned_path_inventory_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+   [ "$kernel_module_total_count" -ne $((
+     10#$kernel_module_verified_signed_count +
+       10#$kernel_module_policy_allowed_unsigned_count
+   )) ]; then
+  echo "Build manifest has incomplete or false kernel module signature-report bindings." >&2
   exit 1
 fi
 
@@ -2331,6 +2513,15 @@ while [ "$required_index" -lt "${#required_output_roles[@]}" ]; do
 done
 if [ "$certificate_output_sha" != "$signing_certificate_sha256" ]; then
   echo "Build manifest signing-certificate hashes disagree." >&2
+  exit 1
+fi
+if [ "$TOUCHSCREEN_ENABLED" = "true" ] &&
+   { [ "$touchscreen_signing_policy" != "$module_signing_policy" ] ||
+     [ "$touchscreen_signing_private_material_retained" != "$module_signing_private_material_retained" ] ||
+     [ "$touchscreen_signing_certificate_sha256" != "$signing_certificate_sha256" ] ||
+     [ "$touchscreen_signing_certificate_fingerprint" != "$signing_certificate_fingerprint" ] ||
+     [ "$touchscreen_signing_certificate_serial" != "$signing_certificate_serial" ]; }; then
+  echo "Touchscreen signing policy or public certificate identity does not match the kernel build." >&2
   exit 1
 fi
 if [ "$TOUCHSCREEN_ENABLED" = "true" ] && [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
@@ -3493,7 +3684,20 @@ if not committed:
 validate_prepared_semantics() {
   local root="$1"
   local index=0 payload_path payload_fingerprint fingerprint_re='^([0-9]+) ([0-9a-f]{64})$'
+  local staged_signed_module_report=""
   local -a validator_args public_output_args
+
+  run_committed_python_helper \
+    "$manifest_validator_relative" \
+    "$manifest_validator_sha" \
+    "$manifest_validator_object_id" \
+    --repo-dir "$repo_dir" \
+    --support-commit "$repo_commit" \
+    --build-only \
+    --kernel-build-manifest "$root/sp11-kernel-build-manifest.txt" >/dev/null || {
+    echo "Prepared kernel module signature report failed committed validation." >&2
+    return 1
+  }
 
   if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
     validator_args=(
@@ -3523,6 +3727,22 @@ validate_prepared_semantics() {
       "${validator_args[@]}" >/dev/null
   fi
 
+  if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
+    if ! staged_signed_module_report="$(
+      run_committed_python_helper \
+        "$signed_module_validator_relative" \
+        "$signed_module_validator_sha" \
+        "$signed_module_validator_object_id" \
+        --certificate "$root/$TOUCHSCREEN_SIGNING_CERTIFICATE" \
+        --module "$root/gpi.ko" \
+        --module "$root/spi-geni-qcom.ko" \
+        --module "$root/mshw0485_touch.ko"
+    )" || [ "$staged_signed_module_report" != "$expected_signed_module_report" ]; then
+      echo "Prepared touchscreen bundle failed cryptographic signature validation." >&2
+      return 1
+    fi
+  fi
+
   while [ "$index" -lt "${#manifest_deb_paths[@]}" ]; do
     payload_path="$root/${manifest_deb_paths[$index]}"
     payload_fingerprint="$(trusted_regular_file_fingerprint "$payload_path" 4294967296)" || return 1
@@ -3539,6 +3759,7 @@ validate_prepared_semantics() {
     --file "$root/sp11-kernel-build-manifest.txt"
     --file "$root/sp11-kernel-apt-provenance.txt"
     --file "$root/sp11-kernel-build-inputs.txt"
+    --file "$root/sp11-kernel-module-signatures.txt"
     --file "$root/sp11-kernel-release-manifest.txt"
     --file "$root/sp11-kernel-debs.txt"
     --file "$root/RELEASE-NOTES.md"
@@ -3583,6 +3804,9 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
   for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
     append_upload_asset "$module_file" "$TOUCHSCREEN_MODULES_DIR/$module_file"
   done
+  append_upload_asset \
+    "$TOUCHSCREEN_SIGNING_CERTIFICATE" \
+    "$TOUCHSCREEN_MODULES_DIR/$TOUCHSCREEN_SIGNING_CERTIFICATE"
   append_upload_asset "$TOUCHSCREEN_MODULE_MANIFEST" "generated touchscreen module manifest"
 fi
 
@@ -3591,6 +3815,9 @@ append_upload_asset "sp11-kernel-debs.txt" "generated kernel package list"
 append_upload_asset "sp11-kernel-build-manifest.txt" "schema-v2 kernel build provenance"
 append_upload_asset "sp11-kernel-apt-provenance.txt" "immutable APT provenance"
 append_upload_asset "sp11-kernel-build-inputs.txt" "immutable build-input envelope"
+append_upload_asset \
+  "sp11-kernel-module-signatures.txt" \
+  "controlled kernel-module signature evidence"
 
 FINAL_OUT_DIR="$OUT_DIR"
 verify_held_output_root
@@ -3627,6 +3854,18 @@ register_expected_output \
 build_inputs="$OUT_DIR/sp11-kernel-build-inputs.txt"
 if ! verify_retained_flat_file "$build_inputs" "sp11-kernel-build-inputs.txt"; then
   echo "Staged build-input envelope changed after validation." >&2
+  exit 1
+fi
+copy_verified_regular_exclusive \
+  "$kernel_signature_report" "$OUT_DIR/sp11-kernel-module-signatures.txt" \
+  "$kernel_signature_report_snapshot_size" "$kernel_signature_report_snapshot_sha"
+register_expected_output \
+  sp11-kernel-module-signatures.txt \
+  "$kernel_signature_report_snapshot_size" "$kernel_signature_report_snapshot_sha"
+kernel_signature_report="$OUT_DIR/sp11-kernel-module-signatures.txt"
+if ! verify_retained_flat_file \
+  "$kernel_signature_report" "sp11-kernel-module-signatures.txt"; then
+  echo "Staged kernel module signature report changed after provenance validation." >&2
   exit 1
 fi
 
@@ -3676,6 +3915,15 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
       "${touchscreen_module_shas[$module_index]}"
     module_index=$((module_index + 1))
   done
+  copy_verified_regular_exclusive \
+    "$TOUCHSCREEN_MODULES_DIR/$TOUCHSCREEN_SIGNING_CERTIFICATE" \
+    "$OUT_DIR/$TOUCHSCREEN_SIGNING_CERTIFICATE" \
+    "$touchscreen_signing_certificate_size" \
+    "$touchscreen_signing_certificate_sha256"
+  register_expected_output \
+    "$TOUCHSCREEN_SIGNING_CERTIFICATE" \
+    "$touchscreen_signing_certificate_size" \
+    "$touchscreen_signing_certificate_sha256"
 fi
 
 actual_index=0
@@ -3719,6 +3967,10 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
     fi
     module_index=$((module_index + 1))
   done
+  if [ "$(shasum -a 256 "$OUT_DIR/$TOUCHSCREEN_SIGNING_CERTIFICATE" | awk '{print $1}')" != "$touchscreen_signing_certificate_sha256" ]; then
+    echo "Staged touchscreen public signing certificate changed after provenance validation." >&2
+    exit 1
+  fi
 fi
 
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -3750,12 +4002,23 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
     echo "Module make identity: $touchscreen_module_make_identity"
     echo "Support repo commit: $repo_commit"
     echo "Support repo dirty: $dirty"
+    echo "Module signing policy: $touchscreen_signing_policy"
+    echo "Module signing private material retained: $touchscreen_signing_private_material_retained"
+    echo "Module signing hash algorithm: $touchscreen_signing_hash_algorithm"
+    echo "Module signing certificate asset: $TOUCHSCREEN_SIGNING_CERTIFICATE"
+    echo "Module signing certificate SHA256: $touchscreen_signing_certificate_sha256"
+    echo "Module signing certificate fingerprint: $touchscreen_signing_certificate_fingerprint"
+    echo "Module signing certificate serial: $touchscreen_signing_certificate_serial"
     echo "Required SPI parameter: sp11_windows_se_init"
     module_index=0
     for module_file in "${TOUCHSCREEN_MODULE_FILES[@]}"; do
       echo "Module $module_file name: ${touchscreen_module_names[$module_index]}"
       echo "Module $module_file size: ${touchscreen_module_sizes[$module_index]}"
       echo "Module $module_file SHA256: ${touchscreen_module_shas[$module_index]}"
+      echo "Module $module_file payload size: ${touchscreen_module_payload_sizes[$module_index]}"
+      echo "Module $module_file payload SHA256: ${touchscreen_module_payload_shas[$module_index]}"
+      echo "Module $module_file signature size: ${touchscreen_module_signature_sizes[$module_index]}"
+      echo "Module $module_file signature SHA256: ${touchscreen_module_signature_shas[$module_index]}"
       echo "Module $module_file vermagic: ${touchscreen_module_vermagic[$module_index]}"
       echo "Module $module_file srcversion: ${touchscreen_module_srcversions[$module_index]}"
       module_index=$((module_index + 1))
@@ -3819,9 +4082,19 @@ release_manifest_record="$(
   echo "Optional output roles: $optional_output_role_set"
   echo "Required package roles: $required_deb_role_set"
   echo "Optional package roles: $optional_deb_role_set"
+  echo "Module signing policy: $module_signing_policy"
+  echo "Module signing private material retained: $module_signing_private_material_retained"
   echo "Signing certificate SHA256: $signing_certificate_sha256"
   echo "Signing certificate fingerprint: $signing_certificate_fingerprint"
   echo "Signing certificate serial: $signing_certificate_serial"
+  echo "Kernel module signature report asset: $kernel_signature_report_asset"
+  echo "Kernel module signature report size: $kernel_signature_report_size"
+  echo "Kernel module signature report SHA256: $kernel_signature_report_sha256"
+  echo "Kernel module signature report schema: $kernel_signature_report_schema"
+  echo "Kernel module total count: $kernel_module_total_count"
+  echo "Kernel module verified signed count: $kernel_module_verified_signed_count"
+  echo "Kernel module policy-allowed unsigned count: $kernel_module_policy_allowed_unsigned_count"
+  echo "Kernel module unsigned-path inventory SHA256: $kernel_module_unsigned_path_inventory_sha256"
   echo "Package count: ${#debs[@]}"
   package_index=0
   while [ "$package_index" -lt "${#debs[@]}" ]; do
@@ -3874,9 +4147,10 @@ cat <<EOF
 
 Experimental prebuilt qcom-x1e kernel packages for Surface Pro 11.
 
-These artifacts are optional conveniences. They are unsigned, are not an apt
-repository, and should be used only with a known-good fallback qcom-x1e kernel
-still installed.
+These artifacts are optional conveniences, are not an apt repository, and
+should be used only with a known-good fallback qcom-x1e kernel still installed.
+The release asset set has no separate detached signature; its kernel and
+touchscreen modules use the controlled signing policy recorded below.
 
 ## Verify
 
@@ -3933,7 +4207,8 @@ cat <<EOF
 
 See \`sp11-kernel-release-manifest.txt\` for package hashes, source metadata,
 support repository commit, patch checksums, and exact hashes for the attached
-schema-v2 build manifest, v1 APT sidecar, and v1 build-inputs envelope.
+schema-v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, and
+\`sp11-kernel-module-signatures.txt\` controlled-signature verification report.
 
 Recorded source:
 
@@ -3946,6 +4221,11 @@ echo "- Docker image: \`$DOCKER_IMAGE\`"
 echo "- Container platform: \`$manifest_container_platform\`"
 echo "- Patched tree ID: \`$patched_tree_id\`"
 echo "- Patched diff SHA256: \`$patched_diff_sha256\`"
+echo "- Module signing policy: \`$module_signing_policy\`"
+echo "- Module signing private material retained: \`$module_signing_private_material_retained\`"
+echo "- Module signing certificate SHA256: \`$signing_certificate_sha256\`"
+echo "- Cryptographically verified signed kernel modules: \`$kernel_module_verified_signed_count\`"
+echo "- Policy-allowed unsigned kernel modules: \`$kernel_module_policy_allowed_unsigned_count\`"
 echo "- APT snapshot: \`$apt_snapshot_id\`"
 echo "- OCI platform manifest: \`$oci_platform_manifest\`"
 
@@ -3956,6 +4236,7 @@ if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
 - Touchscreen source URL: \`$TOUCHSCREEN_SOURCE_URL\`
 - Touchscreen source commit: \`$TOUCHSCREEN_SOURCE_REF\`
 - Touchscreen manifest: \`$TOUCHSCREEN_MODULE_MANIFEST\`
+- Touchscreen public signing certificate: \`$TOUCHSCREEN_SIGNING_CERTIFICATE\`
 EOF
 fi
 
@@ -3963,8 +4244,8 @@ cat <<EOF
 
 These artifacts were built from recorded inputs; they are not claimed to be
 bit-for-bit reproducible. Kernel-release provenance propagation is complete,
-but publication remains blocked by the independent real-build, signing,
-recovery, corresponding-source, and release-authorization gates. The interim
+but publication remains blocked by the independent real-build, recovery,
+corresponding-source, and release-authorization gates. The interim
 licence/UCM direction is recorded in LEGAL.md with final reviews pending; those
 reviews are disclosure obligations rather than a blanket block on newly
 authored artifacts. This preparer deliberately emits no publication command.

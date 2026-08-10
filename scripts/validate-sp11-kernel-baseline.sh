@@ -1,5 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
+
+export PATH=/usr/bin:/bin
+unset BASH_ENV CDPATH ENV GLOBIGNORE
+while read -r _ _ inherited_function; do
+  unset -f "$inherited_function"
+done < <(declare -F)
+unset inherited_function
 
 repo_dir=""
 baseline=""
@@ -82,6 +89,15 @@ SP11_KERNEL_SOURCE_DATE_EPOCH
 SP11_KERNEL_KBUILD_BUILD_USER
 SP11_KERNEL_KBUILD_BUILD_HOST
 SP11_KERNEL_KBUILD_BUILD_TIMESTAMP
+SP11_KERNEL_MODULE_SIGNING_POLICY
+SP11_KERNEL_MODULE_SIGNING_KEY_PATH
+SP11_KERNEL_MODULE_SIGNING_PIN_PATH
+SP11_KERNEL_MODULE_SIGNING_CERT_PATH
+SP11_KERNEL_MODULE_SIGNING_CERT_SHA256
+SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT
+SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL
+SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH
+SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256
 SP11_KERNEL_FORK_URL
 SP11_KERNEL_FORK_BASE_REF
 SP11_KERNEL_FORK_BASE_COMMIT
@@ -294,6 +310,311 @@ EOF
 [ "$SP11_KERNEL_KBUILD_BUILD_HOST" = "sp11-build" ] ||
   die "SP11_KERNEL_KBUILD_BUILD_HOST does not match the reviewed release identity"
 
+[ "$SP11_KERNEL_MODULE_SIGNING_POLICY" = "sp11-controlled-rsa4096-sha512-v1" ] ||
+  die "SP11_KERNEL_MODULE_SIGNING_POLICY does not match the reviewed release policy"
+[ "$SP11_KERNEL_MODULE_SIGNING_KEY_PATH" = "/sp11-signing/signing.pem" ] ||
+  die "SP11_KERNEL_MODULE_SIGNING_KEY_PATH must use the reviewed container path"
+[ "$SP11_KERNEL_MODULE_SIGNING_PIN_PATH" = "/sp11-signing/pin" ] ||
+  die "SP11_KERNEL_MODULE_SIGNING_PIN_PATH must use the reviewed container path"
+[ "$SP11_KERNEL_MODULE_SIGNING_CERT_PATH" = \
+  "config/kernel-signing/sp11-module-signing-cert.pem" ] ||
+  die "SP11_KERNEL_MODULE_SIGNING_CERT_PATH must use the reviewed repository path"
+[[ "$SP11_KERNEL_MODULE_SIGNING_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+  die "SP11_KERNEL_MODULE_SIGNING_CERT_SHA256 must be a lowercase SHA-256"
+[[ "$SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] ||
+  die "SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT must be a SHA-256 fingerprint"
+[[ "$SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL" =~ ^[0-9A-F]+$ ]] ||
+  die "SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL must be uppercase hexadecimal"
+[ "$SP11_KERNEL_MODULE_SIGNING_CERT_SHA256" = \
+  "8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b" ] ||
+  die "module-signing certificate SHA-256 does not match the reviewed certificate"
+[ "$SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT" = \
+  "8A:D9:B4:02:33:9B:5C:EF:F8:E7:FC:9D:FC:C7:DD:36:8B:24:66:FC:E0:E9:0D:97:55:30:59:BC:DC:66:E9:9B" ] ||
+  die "module-signing certificate fingerprint does not match the reviewed certificate"
+[ "$SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL" = \
+  "A48577E23557D28F5963279767D1C038" ] ||
+  die "module-signing certificate serial does not match the reviewed certificate"
+[ "$SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH" = \
+  "config/kernel-signing/sp11-module-signing-allowed-unsigned.txt" ] ||
+  die "module-signing allowed-unsigned path does not match the reviewed policy"
+[ "$SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" = \
+  "eb507e006b37ad7d291a37524f3f2f6b5281c5a3f98738dc07056a3ca7cba800" ] ||
+  die "module-signing allowed-unsigned SHA-256 does not match the reviewed inventory"
+
+signing_certificate="$repo_dir/$SP11_KERNEL_MODULE_SIGNING_CERT_PATH"
+[ "$(cd "$(dirname "$signing_certificate")" && pwd -P)/$(basename "$signing_certificate")" = \
+  "$signing_certificate" ] ||
+  die "reviewed module-signing certificate path is not canonical"
+git -C "$repo_dir" ls-files --error-unmatch -- \
+  "$SP11_KERNEL_MODULE_SIGNING_CERT_PATH" >/dev/null 2>&1 ||
+  die "reviewed module-signing certificate is not tracked"
+if ! /usr/bin/env -i \
+    PATH=/usr/bin:/bin \
+    LC_ALL=C \
+    OPENSSL_CONF=/dev/null \
+    /usr/bin/python3 -I -c '
+# SP11_BASELINE_CERTIFICATE_AUTHORITY_BEGIN
+import hashlib
+import os
+import re
+import stat
+import subprocess
+import sys
+
+path, expected_sha256, expected_fingerprint, expected_serial = sys.argv[1:5]
+openssl = "/usr/bin/openssl"
+directory_descriptor = -1
+certificate_descriptor = -1
+
+def identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
+def openssl_identity():
+    descriptor = -1
+    try:
+        directory = os.fstat(directory_descriptor)
+        mapped_directory = os.stat("/usr/bin", follow_symlinks=False)
+        target = os.stat("openssl", dir_fd=directory_descriptor, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(directory.st_mode)
+            or directory.st_uid != 0
+            or stat.S_IMODE(directory.st_mode) & 0o022
+            or identity(mapped_directory) != identity(directory)
+            or not stat.S_ISREG(target.st_mode)
+            or target.st_uid != 0
+            or stat.S_IMODE(target.st_mode) & 0o022
+            or not stat.S_IMODE(target.st_mode) & 0o111
+            or not 0 < target.st_size <= 256 * 1024 * 1024
+            or target.st_nlink < 1
+        ):
+            raise OSError
+        descriptor = os.open(
+            "openssl",
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory_descriptor,
+        )
+        held = os.fstat(descriptor)
+        if identity(held) != identity(target) or not os.pread(descriptor, 1, 0):
+            raise OSError
+        return identity(directory) + identity(target)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+def run(arguments, input_bytes):
+    if openssl_identity() != expected_openssl_identity:
+        raise OSError
+    completed = subprocess.run(
+        arguments,
+        input=input_bytes,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        close_fds=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "LC_ALL": "C",
+            "OPENSSL_CONF": "/dev/null",
+        },
+    )
+    if (
+        completed.returncode != 0
+        or openssl_identity() != expected_openssl_identity
+    ):
+        raise OSError
+    return completed.stdout
+
+try:
+    if sys.flags.isolated != 1:
+        raise OSError
+    directory_descriptor = os.open(
+        "/usr/bin",
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+    )
+    expected_openssl_identity = openssl_identity()
+    # SP11_BASELINE_OPENSSL_AUTHORITY_AFTER_CAPTURE
+    certificate_descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+    )
+    before = os.fstat(certificate_descriptor)
+    mapped_before = os.lstat(path)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(mapped_before.st_mode)
+        or identity(before) != identity(mapped_before)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or not 0 < before.st_size <= 65536
+        or (stat.S_IMODE(before.st_mode) & 0o022)
+    ):
+        raise OSError
+    content = bytearray()
+    while len(content) < before.st_size:
+        chunk = os.pread(
+            certificate_descriptor,
+            before.st_size - len(content),
+            len(content),
+        )
+        if not chunk:
+            raise OSError
+        content.extend(chunk)
+    after = os.fstat(certificate_descriptor)
+    mapped_after = os.lstat(path)
+    if identity(after) != identity(before) or identity(mapped_after) != identity(before):
+        raise OSError
+    pattern = re.compile(
+        br"-----BEGIN CERTIFICATE-----\n"
+        br"(?:[A-Za-z0-9+/]{1,64}\n)*"
+        br"[A-Za-z0-9+/]{1,64}={0,2}\n"
+        br"-----END CERTIFICATE-----\n\Z"
+    )
+    if pattern.fullmatch(content) is None:
+        raise OSError
+    certificate = bytes(content)
+    certificate_der = run(
+        [openssl, "x509", "-inform", "PEM", "-outform", "DER"],
+        certificate,
+    )
+    digest = hashlib.sha256(certificate_der).digest()
+    actual_sha256 = digest.hex()
+    actual_fingerprint = ":".join(f"{value:02X}" for value in digest)
+    serial_output = run(
+        [openssl, "x509", "-inform", "PEM", "-noout", "-serial"],
+        certificate,
+    ).decode("ascii").strip()
+    if not serial_output.startswith("serial="):
+        raise OSError
+    actual_serial = serial_output[7:].upper()
+    public_pem = run(
+        [openssl, "x509", "-inform", "PEM", "-pubkey", "-noout"],
+        certificate,
+    )
+    public_text = run(
+        [openssl, "pkey", "-pubin", "-text_pub", "-noout"],
+        public_pem,
+    ).decode("ascii")
+    certificate_text = run(
+        [openssl, "x509", "-inform", "PEM", "-noout", "-text"],
+        certificate,
+    ).decode("ascii")
+    if (
+        actual_sha256 != expected_sha256
+        or actual_fingerprint != expected_fingerprint
+        or actual_serial != expected_serial
+        or "Public-Key: (4096 bit)" not in public_text
+        or "Signature Algorithm: sha512WithRSAEncryption" not in certificate_text
+        or re.search(
+            r"X509v3 Basic Constraints: critical\s*\n\s*CA:FALSE(?:\s*\n)",
+            certificate_text,
+        ) is None
+        or re.search(
+            r"X509v3 Key Usage: critical\s*\n\s*Digital Signature(?:\s*\n)",
+            certificate_text,
+        ) is None
+        or openssl_identity() != expected_openssl_identity
+    ):
+        raise OSError
+finally:
+    if certificate_descriptor >= 0:
+        os.close(certificate_descriptor)
+    if directory_descriptor >= 0:
+        os.close(directory_descriptor)
+# SP11_BASELINE_CERTIFICATE_AUTHORITY_END
+' "$signing_certificate" \
+    "$SP11_KERNEL_MODULE_SIGNING_CERT_SHA256" \
+    "$SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT" \
+    "$SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL"; then
+  die "reviewed module-signing certificate failed fixed-tool identity validation"
+fi
+
+signing_allowed_unsigned="$repo_dir/$SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH"
+[ "$(cd "$(dirname "$signing_allowed_unsigned")" && pwd -P)/$(basename "$signing_allowed_unsigned")" = \
+  "$signing_allowed_unsigned" ] ||
+  die "reviewed module-signing allowed-unsigned path is not canonical"
+git -C "$repo_dir" ls-files --error-unmatch -- \
+  "$SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH" >/dev/null 2>&1 ||
+  die "reviewed module-signing allowed-unsigned inventory is not tracked"
+/usr/bin/env -i \
+  PATH=/usr/bin:/bin \
+  LC_ALL=C \
+  OPENSSL_CONF=/dev/null \
+  /usr/bin/python3 -I -c '
+import hashlib
+import os
+import posixpath
+import re
+import stat
+import sys
+
+path, expected_digest = sys.argv[1:3]
+descriptor = os.open(
+    path,
+    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+)
+try:
+    before = os.fstat(descriptor)
+    mapped_before = os.lstat(path)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(mapped_before.st_mode)
+        or stable(before) != stable(mapped_before)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or not 0 < before.st_size <= 65536
+        or stat.S_IMODE(before.st_mode) & 0o022
+    ):
+        raise OSError
+    content = bytearray()
+    while len(content) < before.st_size:
+        chunk = os.read(descriptor, before.st_size - len(content))
+        if not chunk:
+            raise OSError
+        content.extend(chunk)
+    after = os.fstat(descriptor)
+    mapped_after = os.lstat(path)
+    if stable(after) != stable(before) or stable(mapped_after) != stable(before):
+        raise OSError
+finally:
+    os.close(descriptor)
+if hashlib.sha256(content).hexdigest() != expected_digest or not content.endswith(b"\n"):
+    raise OSError
+try:
+    rows = bytes(content).decode("ascii").splitlines()
+except UnicodeDecodeError as exc:
+    raise OSError from exc
+if len(rows) != 85 or rows != sorted(set(rows)):
+    raise OSError
+pattern = re.compile(r"drivers/staging/[A-Za-z0-9_+.-]+(?:/[A-Za-z0-9_+.-]+)*\.ko(?:\.(?:gz|xz|zst))?")
+if any(
+    pattern.fullmatch(row) is None
+    or posixpath.normpath(row) != row
+    for row in rows
+):
+    raise OSError
+' "$signing_allowed_unsigned" \
+  "$SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" ||
+  die "reviewed module-signing allowed-unsigned inventory is unsafe or noncanonical"
+
 [[ "$SP11_KERNEL_DOCKER_IMAGE" =~ ^[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]] ||
   die "SP11_KERNEL_DOCKER_IMAGE must include an immutable sha256 digest"
 [ "$SP11_KERNEL_DOCKER_PLATFORM" = "linux/arm64/v8" ] ||
@@ -456,6 +777,15 @@ if [ "$emit_release_values" = "true" ]; then
     SP11_KERNEL_KBUILD_BUILD_USER \
     SP11_KERNEL_KBUILD_BUILD_HOST \
     SP11_KERNEL_KBUILD_BUILD_TIMESTAMP \
+    SP11_KERNEL_MODULE_SIGNING_POLICY \
+    SP11_KERNEL_MODULE_SIGNING_KEY_PATH \
+    SP11_KERNEL_MODULE_SIGNING_PIN_PATH \
+    SP11_KERNEL_MODULE_SIGNING_CERT_PATH \
+    SP11_KERNEL_MODULE_SIGNING_CERT_SHA256 \
+    SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT \
+    SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL \
+    SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH \
+    SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256 \
     SP11_KERNEL_BUILD_TARGET \
     SP11_KERNEL_PATCH_DIRS; do
     printf '%s\t%s\n' "$variable" "${!variable}"

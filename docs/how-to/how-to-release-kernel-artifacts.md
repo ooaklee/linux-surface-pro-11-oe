@@ -36,7 +36,9 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
 > build-time state; the outer manifest records kernel-release propagation as
 > complete while keeping `Publication state: blocked`. The preparer emits
 > **NO-PUBLISH** and no publication command. One real immutable-input build is
-> now recorded, but byte reproducibility, the signing policy,
+> now recorded. ADR-0056 selects controlled reproducible module signing; its
+> implementation and hostile fixture gates are part of the current release
+> path, but a fresh real C/D byte result,
 > recovery/hardware evidence, corresponding-source/release-candidate review,
 > and explicit release authorization remain open and still block this kernel
 > release candidate. P0.3's final file-level licence/UCM reviews also remain
@@ -47,6 +49,10 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
 ## Prerequisites
 
 - A clean repository checkout on the release branch.
+- The ADR-0056 encrypted RSA-4096 private key, its PIN file, and the separately
+  retained public certificate, supplied from owner-controlled storage outside
+  the repository. Never copy their host paths or private contents into tracked
+  files, work directories, logs, manifests, retained evidence, or assets.
 - Enough disk space and an ARM64 Docker environment for the fresh release-mode
   build performed below. Its package set, v2 kernel manifest, v1 APT sidecar,
   v1 build-inputs envelope, and canonical retained-evidence tar representing
@@ -61,7 +67,8 @@ This procedure follows [ADR026](../adr/adr-0026-prebuilt-kernel-release-artifact
   shipping corresponding source with the module binaries.
 - For an `sp11v3` release, the exact-ABI `gpi.ko`, `spi-geni-qcom.ko`, and
   `mshw0485_touch.ko` bundle produced by
-  `scripts/build-sp11-touchscreen-modules.sh`, including its build manifest.
+  `scripts/build-sp11-touchscreen-modules.sh`, including its public signing
+  certificate and build manifest.
 - A human review that the selected source assets are sufficient for the binary
   packages in the local candidate.
 
@@ -105,18 +112,25 @@ before the schema-v2 gate. Use one new host artifact directory and one new
 Linux Docker volume for the whole candidate workflow:
 
 ```bash
-RELEASE_WORK_DIR=build/docker-sp11-qcom-x1e-kernel-release-r2
-LINUX_WORK_VOLUME=sp11-qcom-x1e-kernel-release-r2
+RELEASE_WORK_DIR=build/docker-sp11-qcom-x1e-kernel-sp11v3r2-c
+LINUX_WORK_VOLUME=sp11-qcom-x1e-kernel-sp11v3r2-c
 ARTIFACTS_DIR="$RELEASE_WORK_DIR/artifacts"
-RELEASE_SOURCE_DIR=build/release-source/release-r2
-TOUCH_MODULES_DIR=build/release-r2-touchscreen-modules
+RELEASE_SOURCE_DIR=build/release-source/sp11v3r2-c
+TOUCH_MODULES_DIR=build/sp11v3r2-c-touchscreen-modules
 TOUCH_BUILD_SOURCE="$RELEASE_SOURCE_DIR/SP11X1e-touchscreen-build"
-RELEASE_ABI=7.2-rc5-jg-0sp11v3-qcom-x1e
+RELEASE_ABI=7.2-rc5-jg-0sp11v3r2-qcom-x1e
 BUILD_IMAGE=ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03
+SIGNING_DIR="<owner-controlled-private-signing-directory>"
+SIGNING_KEY="$SIGNING_DIR/sp11-module-signing-key.pem"
+SIGNING_CERT="$SIGNING_DIR/sp11-module-signing-cert.pem"
+SIGNING_PIN_FILE="$SIGNING_DIR/sp11-module-signing-pin.txt"
 
 test ! -e "$RELEASE_WORK_DIR"
 test ! -e "$RELEASE_SOURCE_DIR"
 test ! -e "$TOUCH_MODULES_DIR"
+test -f "$SIGNING_KEY"
+test -f "$SIGNING_CERT"
+test -f "$SIGNING_PIN_FILE"
 if docker volume inspect "$LINUX_WORK_VOLUME" >/dev/null 2>&1; then
   echo "Choose a new LINUX_WORK_VOLUME; this one already exists." >&2
   exit 1
@@ -136,17 +150,20 @@ mkdir -p "$RELEASE_SOURCE_DIR"
   --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
   --image "$BUILD_IMAGE" \
   --platform linux/arm64/v8 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3 patches/sp11-qcom-x1e-7.2-rc5-release-signing-v1" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir "$RELEASE_WORK_DIR" \
   --linux-work-volume "$LINUX_WORK_VOLUME" \
+  --module-signing-key "$SIGNING_KEY" \
+  --module-signing-certificate "$SIGNING_CERT" \
+  --module-signing-pin-file "$SIGNING_PIN_FILE" \
   --reset-source \
   --release-build \
   --jobs 8
 ```
 
 After the build, require the retained evidence record, its controller files,
-and the complete flat provenance trio:
+and the complete flat provenance set:
 
 ```bash
 test -s "$RELEASE_WORK_DIR/sp11-kernel-retained-evidence.tar"
@@ -154,8 +171,11 @@ test -s "$RELEASE_WORK_DIR/docker-build-args.txt"
 test -s "$RELEASE_WORK_DIR/docker-build-inside.sh"
 test -s "$RELEASE_WORK_DIR/sp11-oci-index.json"
 test -f "$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
+test -f "$ARTIFACTS_DIR/sp11-kernel-module-signatures.txt"
 test -f "$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
 test -f "$ARTIFACTS_DIR/sp11-kernel-build-inputs.txt"
+grep -Fx 'Validation completed: true' \
+  "$ARTIFACTS_DIR/sp11-kernel-module-signatures.txt"
 grep -Fx 'APT provenance complete: true' \
   "$ARTIFACTS_DIR/sp11-kernel-apt-provenance.txt"
 grep -Fx 'Publication schema propagation: incomplete' \
@@ -164,9 +184,9 @@ grep -Fx 'Publication schema propagation: incomplete' \
 
 The final `grep` preserves the envelope's immutable build-time state. It is not
 a waiver or an instruction to edit the envelope. The outer release manifest
-later validates the exact attached trio and records kernel-release propagation
-as complete. That completion closes the propagation gap only; it does not open
-publication.
+later validates the exact attached four-file provenance set and records
+kernel-release propagation as complete. That completion closes the propagation
+gap only; it does not open publication.
 
 Do not reuse either path from a prior build. The release gate rejects stale
 package output, and the source archive must come from this same Linux
@@ -180,6 +200,31 @@ test -s "$ARTIFACTS_DIR/sp11-kernel-build-manifest.txt"
 
 Expect exactly one common-headers, architecture-headers, image, and modules
 package, plus at most one manifest-recorded `modules-extra` package.
+
+Repeat the complete reservation and build as member D with a different fresh
+host work directory, source volume, retained-state volume, release-source
+directory, and touchscreen output directory. Use the same clean support commit,
+immutable inputs, patch order, and controlled signing files. Never run C and D
+against the same Docker volume. Before generating candidate source or modules,
+require the raw matched-pair comparator to pass:
+
+```bash
+REPO_ROOT="$(pwd -P)"
+SUPPORT_HEAD="$(git rev-parse --verify HEAD)"
+python3 -I ./scripts/compare-sp11-kernel-raw-builds.py \
+  --baseline "$REPO_ROOT/config/kernel-baselines/7.2-rc5-jg-0.env" \
+  --support-repo "$REPO_ROOT" \
+  --support-head "$SUPPORT_HEAD" \
+  --build-a "$REPO_ROOT/build/docker-sp11-qcom-x1e-kernel-sp11v3r2-c" \
+  --build-b "$REPO_ROOT/build/docker-sp11-qcom-x1e-kernel-sp11v3r2-d"
+```
+
+Continue with member C only after raw package bytes, all seven source-tree
+outputs, signing policy, certificate identity, kernel-module signature report,
+and exact policy-allowed unsigned-path inventory match. Every appended module
+signature must verify against the approved certificate. A mismatch or an
+unapproved unsigned module is a blocker, not a reason to normalize or replace
+either build.
 
 For a git-source release, use the committed deterministic generator with the
 exact Git tree recorded as `Patched tree ID` in a fresh schema-v2 manifest. Do
@@ -204,7 +249,7 @@ the generator invocation is:
     /linux-work/source/git-jg-ubuntu-qcom-x1e-7.2-rc5-jg-0 \
   --scratch-parent /tmp \
   --output \
-    /release-source/sp11-qcom-x1e-future-sp11v3-patched-source.tar.xz
+    /release-source/sp11-qcom-x1e-future-sp11v3r2-patched-source.tar.xz
 ```
 
 The retained 2026-08-08 four-patch tree cannot satisfy this gate: independent
@@ -279,17 +324,21 @@ docker run --rm --platform linux/arm64/v8 \
   -e "ARCH_HEADERS_DEB=$ARCH_HEADERS_DEB" \
   -e "TOUCH_BUILD_SOURCE=$TOUCH_BUILD_SOURCE" \
   -e "TOUCH_MODULES_DIR=$TOUCH_MODULES_DIR" \
+  -v "$SIGNING_DIR:/sp11-signing-input:ro" \
   -v "$PWD:/repo" -w /repo \
   "$BUILD_IMAGE" \
   bash -ceu '
     apt-get update >/dev/null
     apt-get install --yes --no-install-recommends \
-      build-essential ca-certificates git kmod >/dev/null
+      build-essential ca-certificates git kmod openssl python3 >/dev/null
     ./scripts/build-sp11-touchscreen-modules.sh \
       --release "$RELEASE_ABI" \
       --source-dir "$TOUCH_BUILD_SOURCE" \
       --kernel-common-headers-deb "$COMMON_HEADERS_DEB" \
       --kernel-headers-deb "$ARCH_HEADERS_DEB" \
+      --module-signing-key /sp11-signing-input/sp11-module-signing-key.pem \
+      --module-signing-certificate /sp11-signing-input/sp11-module-signing-cert.pem \
+      --module-signing-pin-file /sp11-signing-input/sp11-module-signing-pin.txt \
       --out-dir "$TOUCH_MODULES_DIR"
   '
 ```
@@ -340,7 +389,7 @@ The preparer validates the canonical
 sidecar, v1 build-inputs envelope, and their bound controller files. The full
 APT cache, indexes, list targets, and package inventories remain represented by
 that tar rather than recreated as host directory trees. The preparer attaches
-the three flat provenance files and records the retained tar identity in the
+the four flat provenance files and records the retained tar identity in the
 outer release manifest. It rejects missing, changed, extra, and legacy
 publishable inputs. Legacy r1 output remains immutable and cannot be passed
 back through this gate. An `sp11vN` candidate must also supply the ABI-matched
@@ -361,7 +410,7 @@ and the complete checksum and semantic validation below still apply. This
 example uses a new candidate name and output directory:
 
 ```bash
-TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
+TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3r2-experimental-r1
 RELEASE_OUT="build/release/$TAG"
 test ! -e "$RELEASE_OUT"
 install -d -m 0700 "$RELEASE_OUT"
@@ -375,9 +424,10 @@ test -z "$RELEASE_FIRST_ENTRY"
   --artifacts-dir "$ARTIFACTS_DIR" \
   --patch-dir patches/jglathe-qcom-x1e-7.2-rc5 \
   --patch-dir patches/sp11-qcom-x1e-7.2-rc5-v3 \
+  --patch-dir patches/sp11-qcom-x1e-7.2-rc5-release-signing-v1 \
   --release-name "$TAG" \
   --out-dir "$RELEASE_OUT" \
-  --source-asset "$RELEASE_SOURCE_DIR/sp11-qcom-x1e-future-sp11v3-patched-source.tar.xz" \
+  --source-asset "$RELEASE_SOURCE_DIR/sp11-qcom-x1e-future-sp11v3r2-patched-source.tar.xz" \
   --source-asset "$RELEASE_SOURCE_DIR/sp11-touchscreen-modules-source-6bbcf7a4759a73014047a57e819219dd7f34951a.tar.xz" \
   --touchscreen-modules-dir "$TOUCH_MODULES_DIR" \
   --touchscreen-source-url https://github.com/geocausa/SP11X1e-touchscreen.git \
@@ -433,7 +483,7 @@ local preparer transaction or publication authority; it cannot manufacture
 the mode-`0500` local commit marker. Do not silently relax this local gate.
 
 ```bash
-TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2
+TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3r2-experimental-r1
 find "build/release/$TAG" -maxdepth 1 -type f -print | sort
 sed -n '1,220p' "build/release/$TAG/sp11-kernel-release-manifest.txt"
 sed -n '1,220p' "build/release/$TAG/RELEASE-NOTES.md"
@@ -445,6 +495,7 @@ Check that the directory contains:
   `modules-extra` package only when recorded by schema v2,
 - `SHA256SUMS`,
 - the exact snapshotted `sp11-kernel-build-manifest.txt` used by the preparer,
+- the exact snapshotted `sp11-kernel-module-signatures.txt`,
 - the exact snapshotted `sp11-kernel-apt-provenance.txt`,
 - the exact snapshotted `sp11-kernel-build-inputs.txt`,
 - `sp11-kernel-release-manifest.txt`,
@@ -453,19 +504,22 @@ Check that the directory contains:
 - for `sp11v3`, both the patched kernel source and exact touchscreen-module
   source archive,
 - for `sp11v3`, all three touchscreen modules and
-  `sp11-touchscreen-modules-manifest.txt`,
+  `sp11-touchscreen-modules-manifest.txt`, plus the exact public
+  `sp11-module-signing-cert.x509` used to verify their appended signatures,
 - `RELEASE-NOTES.md`.
 
 6. Verify checksums from inside the generated release directory.
 
 ```bash
-(cd build/release/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-experimental-r2 && \
+(cd build/release/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3r2-experimental-r1 && \
   shasum -a 256 -c SHA256SUMS)
 ```
 
-Then run the semantic validator. It checks the exact immutable provenance trio,
+Then run the semantic validator. It checks the exact immutable provenance set,
 outer release binding, package identities, exact asset and checksum coverage,
-module metadata, and the packaged Denali OLED touchscreen device tree. The
+the live package signature rescan and transported-report byte identity, signed
+touchscreen module/certificate bindings, module metadata, and the packaged
+Denali OLED touchscreen device tree. The
 validator requires Bash 4 and Linux package inspection tools, so run it in the
 same digest-pinned ARM64 build image rather than directly under macOS Bash 3.2:
 
@@ -497,7 +551,8 @@ validate_release_dir() {
     bash -ceu '
       apt-get update >/dev/null
       apt-get install --yes --no-install-recommends \
-        coreutils device-tree-compiler dpkg git kmod python3 tar xz-utils \
+        coreutils device-tree-compiler dpkg git kmod openssl python3 tar \
+        xz-utils zstd \
         >/dev/null
       ./scripts/validate-sp11-touchscreen-release.sh \
         --local-prepared-candidate --dir /release "$@"
@@ -550,11 +605,12 @@ The local release directory should contain a flat asset set:
 - `sp11-kernel-build-manifest.txt`,
 - `sp11-kernel-apt-provenance.txt`,
 - `sp11-kernel-build-inputs.txt`,
+- `sp11-kernel-module-signatures.txt`,
 - `sp11-kernel-release-manifest.txt`,
 - `sp11-kernel-debs.txt`,
 - one or more corresponding source assets,
-- for `sp11v3`, `gpi.ko`, `spi-geni-qcom.ko`, `mshw0485_touch.ko`, and their
-  provenance manifest,
+- for `sp11v3`, `gpi.ko`, `spi-geni-qcom.ko`, `mshw0485_touch.ko`,
+  `sp11-module-signing-cert.x509`, and their provenance manifest,
 - `RELEASE-NOTES.md`.
 
 For reference only, the already-published historical r1 upload set was the
@@ -584,7 +640,7 @@ uploaded asset. That statement documents the immutable historical set; it is
 not a current publication instruction.
 
 The current local candidate includes the packages, checksums, manifests,
-immutable provenance trio, source assets, and `RELEASE-NOTES.md` shown above.
+immutable provenance set, source assets, and `RELEASE-NOTES.md` shown above.
 
 ## Validation
 
@@ -601,7 +657,8 @@ for public_name in \
   RELEASE-NOTES.md SHA256SUMS SOURCE-SHA256SUMS \
   sp11-kernel-build-manifest.txt sp11-kernel-apt-provenance.txt \
   sp11-kernel-build-inputs.txt sp11-kernel-release-manifest.txt \
-  sp11-touchscreen-modules-manifest.txt sp11-kernel-debs.txt; do
+  sp11-kernel-module-signatures.txt sp11-touchscreen-modules-manifest.txt \
+  sp11-kernel-debs.txt; do
   test ! -e "$release_dir/$public_name" ||
     public_args+=(--file "$release_dir/$public_name")
 done
@@ -633,9 +690,12 @@ During offline review, check that candidate assets do not include:
 - private apt source files or authenticated repository URLs,
 - unsupported claims of bit-for-bit reproducibility.
 
-Prebuilt kernel packages are experimental and unsigned. Keep a known-good
-fallback qcom-x1e kernel installed on the Surface Pro 11 and keep recovery
-media available.
+Prebuilt kernel packages remain experimental. ADR-0056 signs packaged in-tree
+kernel modules and the exact-ABI touchscreen modules with one controlled
+certificate for deterministic identity, but the Stubble image is not
+PE/Authenticode signed and no firmware trust or key-enrollment contract exists.
+Keep Secure Boot disabled, retain a known-good fallback qcom-x1e kernel, and
+keep recovery media available.
 
 ## Troubleshooting
 

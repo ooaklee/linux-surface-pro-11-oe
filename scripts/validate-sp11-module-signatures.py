@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import gzip
 import hashlib
 import io
@@ -11,11 +12,13 @@ import lzma
 import os
 import posixpath
 import re
-import shutil
+import signal
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -44,6 +47,12 @@ MAX_CONSECUTIVE_GNU_METADATA = 2
 MAX_XZ_DECODER_MEMORY = 256 * 1024 * 1024
 MAX_MEMBERS = 500_000
 MAX_PATH_BYTES = 4096
+MAX_SIGNATURE_BYTES = 2 * 1024 * 1024
+SIGNING_POLICY = "sp11-controlled-rsa4096-sha512-v1"
+CONTROLLED_REPORT_SCHEMA = "sp11-kernel-module-signature-verification-v1"
+APPROVED_CERTIFICATE_DER_SHA256 = (
+    "8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b"
+)
 PACKAGE_PATTERN = re.compile(r"linux-modules-(?:extra-)?[a-z0-9][a-z0-9.+~-]*\Z")
 VERSION_PATTERN = re.compile(r"[0-9][0-9A-Za-z.+:~_-]*\Z")
 ABI_PATTERN = re.compile(r"[a-z0-9][a-z0-9.+~-]*-qcom-x1e\Z")
@@ -79,11 +88,15 @@ class PackageScan:
     """A complete signature inventory for one stable input package."""
 
     identity: PackageIdentity
+    file_name: str
+    size: int
     sha256: str
     module_count: int
     signed_count: int
     unsigned_count: int
     compression_counts: tuple[int, int, int, int]
+    signed_paths: tuple[str, ...]
+    unsigned_paths: tuple[str, ...]
 
 
 class PreadSlice(io.RawIOBase):
@@ -445,21 +458,285 @@ def compression_kind(path: str) -> str | None:
     return None
 
 
-def zstd_program() -> str:
-    program = shutil.which("zstd")
-    if program is None:
-        raise ValidationError("zstd is required to inspect Zstandard-compressed content")
-    return program
+def fixed_program(name: str) -> Path:
+    if sys.platform.startswith("linux"):
+        candidate = Path("/usr/bin") / name
+    elif sys.platform == "darwin":
+        candidates = (
+            Path(f"/opt/homebrew/bin/{name}"),
+            Path(f"/usr/local/bin/{name}"),
+        )
+        candidate = next((path for path in candidates if path.exists()), Path("/nonexistent"))
+        candidate = Path(os.path.realpath(candidate))
+    else:
+        candidate = Path("/nonexistent")
+    try:
+        metadata = os.stat(candidate, follow_symlinks=False)
+    except OSError as exc:
+        raise ValidationError(f"fixed {name} authority is unavailable") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or not metadata.st_mode & 0o111
+        or (sys.platform.startswith("linux") and metadata.st_uid != 0)
+    ):
+        raise ValidationError(f"fixed {name} authority has unsafe metadata")
+    return candidate
+
+
+def executable_identity(path: Path) -> tuple[int, int, int, int, int, int, int]:
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise ValidationError("fixed validation-tool mapping disappeared") from exc
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_uid,
+    )
+
+
+class ControlledSignatureVerifier:
+    """Verify sign-file CMS trailers against one captured public certificate."""
+
+    def __init__(self, certificate_path: Path, temporary_root: Path) -> None:
+        self.openssl = fixed_program("openssl")
+        self.openssl_identity = executable_identity(self.openssl)
+        self.temporary_root = temporary_root
+        certificate = read_stable_file(certificate_path, 1024 * 1024, "certificate")
+        lines = certificate.splitlines()
+        if (
+            len(lines) < 3
+            or lines[0] != b"-----BEGIN CERTIFICATE-----"
+            or lines[-1] != b"-----END CERTIFICATE-----"
+            or not certificate.endswith(b"\n")
+            or any(not re.fullmatch(rb"[A-Za-z0-9+/=]+", line) for line in lines[1:-1])
+        ):
+            raise ValidationError("controlled certificate is not one exact PEM certificate")
+        self.certificate_der = self.run(
+            ["x509", "-inform", "PEM", "-outform", "DER"],
+            "controlled certificate",
+            certificate,
+        )
+        self.sha256 = hashlib.sha256(self.certificate_der).hexdigest()
+        if self.sha256 != APPROVED_CERTIFICATE_DER_SHA256:
+            raise ValidationError(
+                "controlled certificate does not match the approved public identity"
+            )
+        details = self.run(
+            ["x509", "-inform", "DER", "-text", "-noout"],
+            "controlled certificate",
+            self.certificate_der,
+        ).decode("utf-8", "strict")
+        if len(re.findall(r"Public-Key:\s*\(4096 bit\)", details)) != 1:
+            raise ValidationError("controlled certificate does not contain an RSA-4096 key")
+        if len(re.findall(r"Public Key Algorithm:\s*rsaEncryption\b", details)) != 1:
+            raise ValidationError("controlled certificate does not use an RSA public key")
+        if len(re.findall(r"Signature Algorithm:\s*sha512WithRSAEncryption\b", details)) != 2:
+            raise ValidationError("controlled certificate does not use an RSA/SHA-512 signature")
+        if not re.search(
+            r"X509v3 Basic Constraints:\s*critical\s*\n\s*CA:FALSE\s*$",
+            details,
+            re.MULTILINE,
+        ):
+            raise ValidationError("controlled certificate does not declare critical CA:FALSE")
+        usage = re.search(r"X509v3 Key Usage:\s*critical\s*\n\s*([^\n]+)", details)
+        if usage is None or usage.group(1).strip() != "Digital Signature":
+            raise ValidationError("controlled certificate has the wrong critical key usage")
+        fingerprint_output = self.run(
+            ["x509", "-inform", "DER", "-sha256", "-fingerprint", "-noout"],
+            "controlled certificate fingerprint",
+            self.certificate_der,
+        ).decode("ascii", "strict").strip()
+        match = re.fullmatch(
+            r"SHA256 Fingerprint=((?:[0-9A-F]{2}:){31}[0-9A-F]{2})",
+            fingerprint_output,
+            re.IGNORECASE,
+        )
+        if match is None:
+            raise ValidationError("controlled certificate fingerprint is invalid")
+        self.fingerprint = match.group(1).upper()
+        serial_output = self.run(
+            ["x509", "-inform", "DER", "-serial", "-noout"],
+            "controlled certificate serial",
+            self.certificate_der,
+        ).decode("ascii", "strict").strip()
+        serial_match = re.fullmatch(r"serial=([0-9A-F]+)", serial_output, re.IGNORECASE)
+        if serial_match is None:
+            raise ValidationError("controlled certificate serial is invalid")
+        self.serial = serial_match.group(1).upper()
+        self.certificate_pem_path = temporary_root / "certificate.pem"
+        self.certificate_pem_path.write_bytes(certificate)
+        os.chmod(self.certificate_pem_path, 0o400)
+
+    def run(
+        self, arguments: list[str], label: str, input_data: bytes | None = None
+    ) -> bytes:
+        before = executable_identity(self.openssl)
+        if before != self.openssl_identity:
+            raise ValidationError("fixed OpenSSL authority mapping changed")
+        try:
+            result = subprocess.run(
+                [str(self.openssl), *arguments],
+                input=input_data,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=30,
+                env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValidationError(f"OpenSSL could not validate {label}") from exc
+        if result.returncode != 0:
+            raise ValidationError(f"OpenSSL rejected {label}")
+        if executable_identity(self.openssl) != before:
+            raise ValidationError("fixed OpenSSL authority mapping changed during validation")
+        return result.stdout
+
+    def verify_module(self, module_path: Path, module_size: int) -> None:
+        with module_path.open("r+b", buffering=0) as module:
+            marker_count = 0
+            overlap = b""
+            module.seek(0)
+            while True:
+                chunk = module.read(COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                combined = overlap + chunk
+                marker_count += combined.count(MODULE_SIGNATURE_MARKER)
+                overlap = combined[-(len(MODULE_SIGNATURE_MARKER) - 1) :]
+            if marker_count != 1:
+                raise ValidationError("signed module does not contain one exact signature marker")
+            marker_length = len(MODULE_SIGNATURE_MARKER)
+            if module_size <= marker_length + 12:
+                raise ValidationError("signed module has a truncated signature trailer")
+            module.seek(module_size - marker_length)
+            if module.read(marker_length) != MODULE_SIGNATURE_MARKER:
+                raise ValidationError("signed module has no terminal signature marker")
+            info_start = module_size - marker_length - 12
+            module.seek(info_start)
+            descriptor = module.read(12)
+            algorithm, digest, identifier, signer_length, key_length, padding, signature_length = struct.unpack(
+                ">BBBBB3sI", descriptor
+            )
+            if (algorithm, digest, identifier, signer_length, key_length, padding) != (
+                0,
+                0,
+                2,
+                0,
+                0,
+                b"\0\0\0",
+            ):
+                raise ValidationError("signed module has a non-canonical signature descriptor")
+            if signature_length <= 0 or signature_length > MAX_SIGNATURE_BYTES:
+                raise ValidationError("signed module has an invalid CMS signature length")
+            signature_start = info_start - signature_length
+            if signature_start <= 0:
+                raise ValidationError("signed module has a truncated CMS signature")
+            module.seek(signature_start)
+            signature = module.read(signature_length)
+            if len(signature) != signature_length:
+                raise ValidationError("signed module CMS length does not match its descriptor")
+            module.truncate(signature_start)
+        signature_path = self.temporary_root / "signature.der"
+        if signature_path.exists():
+            os.chmod(signature_path, 0o600)
+        signature_path.write_bytes(signature)
+        os.chmod(signature_path, 0o400)
+        structure = self.run(
+            ["cms", "-inform", "DER", "-cmsout", "-print"],
+            "module CMS structure",
+            signature,
+        ).decode("utf-8", "strict")
+        if (
+            structure.count("algorithm: sha512 ") != 2
+            or structure.count("algorithm: rsaEncryption ") != 1
+            or structure.count("d.issuerAndSerialNumber:") != 1
+            or not re.search(r"certificates:\s*\n\s*<ABSENT>", structure)
+            or not re.search(r"signedAttrs:\s*\n\s*<ABSENT>", structure)
+            or not re.search(r"unsignedAttrs:\s*\n\s*<ABSENT>", structure)
+        ):
+            raise ValidationError("module CMS does not match the controlled SHA-512 RSA contract")
+        self.run(
+            [
+                "cms",
+                "-verify",
+                "-binary",
+                "-inform",
+                "DER",
+                "-in",
+                str(signature_path),
+                "-content",
+                str(module_path),
+                "-nointern",
+                "-certfile",
+                str(self.certificate_pem_path),
+                "-noverify",
+                "-out",
+                os.devnull,
+            ],
+            "module CMS signature",
+        )
+
+
+def read_stable_file(
+    path: Path, maximum: int, label: str, allow_empty: bool = False
+) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags)
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or (before.st_size <= 0 and not allow_empty)
+            or before.st_size > maximum
+        ):
+            raise ValidationError(f"{label} must be one bounded regular non-symlinked file")
+        data = b""
+        while len(data) <= maximum:
+            chunk = os.read(descriptor, min(COPY_CHUNK_BYTES, maximum + 1 - len(data)))
+            if not chunk:
+                break
+            data += chunk
+        after = os.fstat(descriptor)
+        mapped = os.stat(path, follow_symlinks=False)
+        if (
+            len(data) != before.st_size
+            or stable_metadata(before) != stable_metadata(after)
+            or stable_metadata(before) != stable_metadata(mapped)
+        ):
+            raise ValidationError(f"{label} changed while it was read")
+        return data
+    except OSError as exc:
+        raise ValidationError(f"{label} could not be opened safely") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 @contextmanager
 def external_zstd_stream(source: BinaryIO) -> Iterator[BinaryIO]:
-    process = subprocess.Popen(
-        [zstd_program(), "--decompress", "--stdout", "--quiet"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
+    program = fixed_program("zstd")
+    program_identity = executable_identity(program)
+    try:
+        process = subprocess.Popen(
+            [str(program), "--decompress", "--stdout", "--quiet"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"},
+        )
+    except OSError as exc:
+        raise ValidationError("fixed zstd authority could not be executed") from exc
+    if executable_identity(program) != program_identity:
+        process.kill()
+        process.wait()
+        raise ValidationError("fixed zstd authority mapping changed during validation")
     assert process.stdin is not None
     assert process.stdout is not None
     feed_error: list[BaseException] = []
@@ -491,6 +768,8 @@ def external_zstd_stream(source: BinaryIO) -> Iterator[BinaryIO]:
         process.stdout.close()
         feeder.join()
         return_code = process.wait()
+        if executable_identity(program) != program_identity:
+            raise ValidationError("fixed zstd authority mapping changed during validation")
         if body_error is None and (feed_error or return_code != 0):
             raise ValidationError("package contains malformed or truncated Zstandard content")
 
@@ -677,14 +956,54 @@ def inspect_module(stream: BinaryIO) -> tuple[bool, int]:
     return bytes(tail) == MODULE_SIGNATURE_MARKER, total
 
 
-def scan_module(item_stream: BinaryIO, compression: str) -> tuple[bool, int]:
+def scan_module(
+    item_stream: BinaryIO,
+    compression: str,
+    verifier: ControlledSignatureVerifier | None = None,
+) -> tuple[bool, int]:
     with decompressed_stream(item_stream, compression) as stream:
-        return inspect_module(stream)
+        if verifier is None:
+            return inspect_module(stream)
+        module_path = verifier.temporary_root / "module.bin"
+        total = 0
+        prefix = bytearray()
+        tail = bytearray()
+        with module_path.open("wb", buffering=0) as output:
+            os.chmod(module_path, 0o600)
+            while True:
+                chunk = stream.read(COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_MODULE_BYTES:
+                    raise ValidationError("module exceeds the expanded-size validation limit")
+                if len(prefix) < 4:
+                    prefix.extend(chunk[: 4 - len(prefix)])
+                tail.extend(chunk)
+                if len(tail) > len(MODULE_SIGNATURE_MARKER):
+                    del tail[: len(tail) - len(MODULE_SIGNATURE_MARKER)]
+                output.write(chunk)
+        if bytes(prefix) != b"\x7fELF":
+            raise ValidationError("module payload is not an ELF file")
+        signed = bytes(tail) == MODULE_SIGNATURE_MARKER
+        if signed:
+            verifier.verify_module(module_path, total)
+        return signed, total
 
 
 def scan_data_archive(
-    descriptor: int, member: ArMember, identity: PackageIdentity
-) -> tuple[int, int, int, tuple[int, int, int, int]]:
+    descriptor: int,
+    member: ArMember,
+    identity: PackageIdentity,
+    verifier: ControlledSignatureVerifier | None = None,
+) -> tuple[
+    int,
+    int,
+    int,
+    tuple[int, int, int, int],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
     source = io.BufferedReader(PreadSlice(descriptor, member.offset, member.size))
     module_root = f"usr/lib/modules/{identity.abi}/kernel"
     prefix = module_root + "/"
@@ -693,6 +1012,8 @@ def scan_data_archive(
     module_count = 0
     module_bytes = 0
     signed_count = 0
+    signed_paths: list[str] = []
+    unsigned_paths: list[str] = []
     compression_counts = {"none": 0, "gzip": 0, "xz": 0, "zstd": 0}
     compression = tar_compression(member.name)
     try:
@@ -725,7 +1046,7 @@ def scan_data_archive(
                         if extracted is None:
                             raise ValidationError("module payload could not be read")
                         with extracted:
-                            signed, expanded_size = scan_module(extracted, kind)
+                            signed, expanded_size = scan_module(extracted, kind, verifier)
                         module_count += 1
                         module_bytes += expanded_size
                         if module_bytes > MAX_TOTAL_MODULE_BYTES:
@@ -733,6 +1054,11 @@ def scan_data_archive(
                                 "modules exceed the total expanded-size validation limit"
                             )
                         signed_count += int(signed)
+                        relative_path = name[len(prefix) :]
+                        if signed:
+                            signed_paths.append(relative_path)
+                        else:
+                            unsigned_paths.append(relative_path)
                         compression_counts[kind] += 1
                     elif item.isdir():
                         seen[name] = "directory"
@@ -763,7 +1089,14 @@ def scan_data_archive(
         compression_counts["xz"],
         compression_counts["zstd"],
     )
-    return module_count, signed_count, module_count - signed_count, counts
+    return (
+        module_count,
+        signed_count,
+        module_count - signed_count,
+        counts,
+        tuple(sorted(signed_paths)),
+        tuple(sorted(unsigned_paths)),
+    )
 
 
 def stable_metadata(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -776,7 +1109,9 @@ def stable_metadata(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
-def scan_package(path: Path) -> PackageScan:
+def scan_package(
+    path: Path, verifier: ControlledSignatureVerifier | None = None
+) -> PackageScan:
     flags = os.O_RDONLY
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
@@ -803,23 +1138,29 @@ def scan_package(path: Path) -> PackageScan:
             value for key, value in members.items() if key.startswith("data.tar")
         )
         identity = control_identity(descriptor, control_member, path.name)
-        module_count, signed_count, unsigned_count, counts = scan_data_archive(
-            descriptor, data_member, identity
+        module_count, signed_count, unsigned_count, counts, signed_paths, unsigned_paths = scan_data_archive(
+            descriptor, data_member, identity, verifier
         )
         digest_after = hash_descriptor(descriptor, before.st_size)
         after = os.fstat(descriptor)
+        mapped = os.stat(path, follow_symlinks=False)
         if (
             stable_metadata(before) != stable_metadata(after)
+            or stable_metadata(before) != stable_metadata(mapped)
             or digest_before != digest_after
         ):
             raise ValidationError("package changed during validation")
         return PackageScan(
             identity,
+            path.name,
+            before.st_size,
             digest_before,
             module_count,
             signed_count,
             unsigned_count,
             counts,
+            signed_paths,
+            unsigned_paths,
         )
     except OSError as exc:
         raise ValidationError("input package could not be opened or read safely") from exc
@@ -904,6 +1245,175 @@ def render_report(scans: list[PackageScan], expectation: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def unsigned_path_inventory(scans: list[PackageScan]) -> tuple[str, ...]:
+    paths = [path for scan in scans for path in scan.unsigned_paths]
+    if len(paths) != len(set(paths)):
+        raise ValidationError("module packages contain a duplicate normalized unsigned path")
+    return tuple(sorted(paths))
+
+
+def module_path_inventory(scans: list[PackageScan]) -> tuple[str, ...]:
+    paths = [
+        path
+        for scan in scans
+        for path in (*scan.signed_paths, *scan.unsigned_paths)
+    ]
+    if len(paths) != len(set(paths)):
+        raise ValidationError("module packages contain a duplicate normalized module path")
+    return tuple(sorted(paths))
+
+
+def read_allowed_unsigned_paths(path: Path) -> tuple[str, ...]:
+    data = read_stable_file(path, 4 * 1024 * 1024, "allowed-unsigned list", True)
+    if data and not data.endswith(b"\n"):
+        raise ValidationError("allowed-unsigned list must end with LF")
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise ValidationError("allowed-unsigned list must be ASCII text") from exc
+    paths = tuple(text.splitlines())
+    if paths != tuple(sorted(set(paths))):
+        raise ValidationError("allowed-unsigned list must be bytewise sorted and unique")
+    for path_text in paths:
+        if (
+            not path_text
+            or not path_text.startswith("drivers/staging/")
+            or path_text.startswith(("/", "."))
+            or "//" in path_text
+            or "\\" in path_text
+            or posixpath.normpath(path_text) != path_text
+            or any(part in ("", ".", "..") for part in PurePosixPath(path_text).parts)
+            or not re.fullmatch(r"[A-Za-z0-9_+.-]+(?:/[A-Za-z0-9_+.-]+)*\.ko(?:\.(?:gz|xz|zst))?", path_text)
+        ):
+            raise ValidationError("allowed-unsigned list contains a non-canonical module path")
+    return paths
+
+
+def render_controlled_report(
+    scans: list[PackageScan],
+    verifier: ControlledSignatureVerifier,
+    allowed_unsigned: tuple[str, ...],
+) -> str:
+    module_path_inventory(scans)
+    actual_unsigned = unsigned_path_inventory(scans)
+    if actual_unsigned != allowed_unsigned:
+        raise ValidationError(
+            "actual unsigned module paths do not exactly match the reviewed allowlist"
+        )
+    total_modules = sum(scan.module_count for scan in scans)
+    total_signed = sum(scan.signed_count for scan in scans)
+    inventory_bytes = "".join(f"{path}\n" for path in actual_unsigned).encode("ascii")
+    lines = [
+        "# Surface Pro 11 Kernel Module Signature Report",
+        "",
+        f"Schema: {CONTROLLED_REPORT_SCHEMA}",
+        f"Kernel ABI: {scans[0].identity.abi}",
+        f"Package count: {len(scans)}",
+    ]
+    for index, scan in enumerate(scans, 1):
+        identity = scan.identity
+        lines.extend(
+            [
+                f"Package {index} role: {identity.role}",
+                f"Package {index} file: {scan.file_name}",
+                f"Package {index} name: {identity.package}",
+                f"Package {index} version: {identity.version}",
+                f"Package {index} architecture: {identity.architecture}",
+                f"Package {index} size: {scan.size}",
+                f"Package {index} SHA256: {scan.sha256}",
+                f"Package {index} module count: {scan.module_count}",
+                f"Package {index} cryptographically verified signed module count: {scan.signed_count}",
+                f"Package {index} policy-allowed unsigned module count: {scan.unsigned_count}",
+            ]
+        )
+    lines.extend(
+        [
+            f"Module signing policy: {SIGNING_POLICY}",
+            "Module signing hash algorithm: sha512",
+            f"Module signing certificate SHA256: {verifier.sha256}",
+            f"Module signing certificate fingerprint: {verifier.fingerprint}",
+            f"Module signing certificate serial: {verifier.serial}",
+            f"Total module count: {total_modules}",
+            f"Cryptographically verified signed module count: {total_signed}",
+            f"Policy-allowed unsigned module count: {len(actual_unsigned)}",
+            "Policy-allowed unsigned module path inventory SHA256: "
+            f"{hashlib.sha256(inventory_bytes).hexdigest()}",
+            "Validation completed: true",
+            "",
+            "## Policy-allowed unsigned module paths",
+        ]
+    )
+    lines.extend(f"- {path}" for path in actual_unsigned)
+    return "\n".join(lines) + "\n"
+
+
+def write_exclusive(path: Path, data: bytes, label: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        offset = 0
+        while offset < len(data):
+            written = os.write(descriptor, data[offset:])
+            if written <= 0:
+                raise OSError
+            offset += written
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise ValidationError(f"could not write exclusive {label}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def write_held_report(descriptor: int, data: bytes) -> None:
+    """Write a controlled report only to the fixed inherited publication FD."""
+
+    if descriptor != 13:
+        raise ValidationError("controlled report descriptor must be inherited fd 13")
+    try:
+        before = os.fstat(descriptor)
+        immutable = lambda value: (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_nlink,
+            value.st_uid,
+            value.st_gid,
+        )
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or before.st_size != 0
+            or os.lseek(descriptor, 0, os.SEEK_CUR) != 0
+            or fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE
+            != os.O_RDWR
+        ):
+            raise OSError
+        offset = 0
+        while offset < len(data):
+            written = os.write(descriptor, data[offset:])
+            if written <= 0:
+                raise OSError
+            offset += written
+        os.fsync(descriptor)
+        after = os.fstat(descriptor)
+        if (
+            immutable(after) != immutable(before)
+            or after.st_size != len(data)
+            or os.lseek(descriptor, 0, os.SEEK_CUR) != len(data)
+        ):
+            raise OSError
+    except OSError as exc:
+        raise ValidationError("could not write held controlled report") from exc
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -917,6 +1427,15 @@ def parse_args() -> argparse.Namespace:
         default="any",
         help="optional all-module signature expectation; default: any",
     )
+    parser.add_argument(
+        "--unsigned-paths-out",
+        type=Path,
+        help="write the sorted normalized unsigned-module path inventory exclusively",
+    )
+    parser.add_argument("--controlled-certificate", type=Path)
+    parser.add_argument("--allowed-unsigned-file", type=Path)
+    parser.add_argument("--report-out", type=Path)
+    parser.add_argument("--report-fd", type=int)
     parser.add_argument("packages", nargs="+", type=Path, metavar="DEB")
     return parser.parse_args()
 
@@ -924,8 +1443,63 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     arguments = parse_args()
     try:
+        if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL:
+            raise ValidationError(
+                "module signature validation requires the default SIGCHLD disposition"
+            )
+        controlled_values = (
+            arguments.controlled_certificate,
+            arguments.allowed_unsigned_file,
+            arguments.report_out,
+            arguments.report_fd,
+        )
+        controlled = (
+            arguments.controlled_certificate is not None
+            and arguments.allowed_unsigned_file is not None
+            and (arguments.report_out is None) != (arguments.report_fd is None)
+        )
+        if any(value is not None for value in controlled_values) and not controlled:
+            raise ValidationError(
+                "controlled verification requires a certificate, allowlist, "
+                "and exactly one report sink"
+            )
+        if controlled and (arguments.expect != "any" or arguments.unsigned_paths_out is not None):
+            raise ValidationError("controlled verification cannot be combined with inventory expectations")
+        if controlled:
+            old_umask = os.umask(0o077)
+            try:
+                with tempfile.TemporaryDirectory(prefix="sp11-module-signatures-") as temporary:
+                    temporary_root = Path(temporary)
+                    verifier = ControlledSignatureVerifier(
+                        arguments.controlled_certificate, temporary_root
+                    )
+                    scans = validate_package_set(
+                        [scan_package(path, verifier) for path in arguments.packages]
+                    )
+                    allowed = read_allowed_unsigned_paths(arguments.allowed_unsigned_file)
+                    report = render_controlled_report(scans, verifier, allowed)
+                    encoded_report = report.encode("utf-8")
+                    if arguments.report_fd is not None:
+                        write_held_report(arguments.report_fd, encoded_report)
+                    else:
+                        write_exclusive(
+                            arguments.report_out,
+                            encoded_report,
+                            "controlled report",
+                        )
+            finally:
+                os.umask(old_umask)
+            return 0
+
         scans = validate_package_set([scan_package(path) for path in arguments.packages])
         report = render_report(scans, arguments.expect)
+        if arguments.unsigned_paths_out is not None:
+            inventory = unsigned_path_inventory(scans)
+            write_exclusive(
+                arguments.unsigned_paths_out,
+                "".join(f"{path}\n" for path in inventory).encode("utf-8"),
+                "unsigned path inventory",
+            )
     except ValidationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

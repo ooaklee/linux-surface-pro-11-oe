@@ -31,6 +31,11 @@ RELEASE_ROOT_FD=52
 RELEASE_ROOT_STATE=""
 LOCAL_PREPARED_CANDIDATE="false"
 DOWNLOADED_RELEASE="false"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SIGNED_MODULE_VALIDATOR="$REPO_DIR/scripts/validate-sp11-signed-modules.py"
+KERNEL_MODULE_SIGNATURE_VALIDATOR="$REPO_DIR/scripts/validate-sp11-module-signatures.py"
+KERNEL_MODULE_SIGNING_CERTIFICATE="$REPO_DIR/config/kernel-signing/sp11-module-signing-cert.pem"
+KERNEL_MODULE_UNSIGNED_ALLOWLIST="$REPO_DIR/config/kernel-signing/sp11-module-signing-allowed-unsigned.txt"
 
 usage() {
   cat <<EOF
@@ -190,6 +195,73 @@ single_manifest_value() {
   printf '%s\n' "${values[0]}"
 }
 
+validate_controlled_kernel_module_report() {
+  local transported_report temporary report_out scanner_stdout
+  local package_arguments=()
+
+  transported_report="$RELEASE_DIR/sp11-kernel-module-signatures.txt"
+  for helper in \
+    "$KERNEL_MODULE_SIGNATURE_VALIDATOR" \
+    "$KERNEL_MODULE_SIGNING_CERTIFICATE" \
+    "$KERNEL_MODULE_UNSIGNED_ALLOWLIST"; do
+    if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+      error "controlled kernel module signature authority is unavailable: $(basename "$helper")"
+      return
+    fi
+  done
+  if [ ! -x /usr/bin/python3 ] || [ ! -x /usr/bin/cmp ] ||
+     [ ! -x /usr/bin/mktemp ] || [ ! -x /bin/chmod ]; then
+    error "trusted system Python, cmp, mktemp, and chmod are required for controlled kernel module signature validation."
+    return
+  fi
+  if [ ! -f "$transported_report" ] || [ -L "$transported_report" ]; then
+    error "schema-v2 release is missing its regular kernel module signature report."
+    return
+  fi
+  if [ "${ROLE_COUNTS[modules]}" -ne 1 ]; then
+    error "controlled kernel module signature validation requires the exact modules package."
+    return
+  fi
+  package_arguments+=("${ROLE_FILES[modules]}")
+  if [ "${ROLE_COUNTS[modules_extra]}" -eq 1 ]; then
+    package_arguments+=("${ROLE_FILES[modules_extra]}")
+  fi
+
+  temporary="$(/usr/bin/mktemp -d 2>/dev/null || true)"
+  if [ -z "$temporary" ] || [ ! -d "$temporary" ]; then
+    error "could not create a private kernel module signature validation directory."
+    return
+  fi
+  TEMP_DIRS+=("$temporary")
+  /bin/chmod 0700 "$temporary" 2>/dev/null || {
+    error "could not protect the kernel module signature validation directory."
+    return
+  }
+  report_out="$temporary/sp11-kernel-module-signatures.txt"
+  scanner_stdout="$temporary/scanner.stdout"
+  if ! /usr/bin/python3 -I "$KERNEL_MODULE_SIGNATURE_VALIDATOR" \
+      --controlled-certificate "$KERNEL_MODULE_SIGNING_CERTIFICATE" \
+      --allowed-unsigned-file "$KERNEL_MODULE_UNSIGNED_ALLOWLIST" \
+      --report-out "$report_out" \
+      "${package_arguments[@]}" > "$scanner_stdout"; then
+    error "release kernel module packages failed controlled cryptographic signature validation."
+    return
+  fi
+  if [ -s "$scanner_stdout" ]; then
+    error "controlled kernel module signature scanner emitted unexpected stdout."
+    return
+  fi
+  if [ ! -f "$report_out" ] || [ -L "$report_out" ]; then
+    error "controlled kernel module signature scanner did not publish its private report."
+    return
+  fi
+  if ! /usr/bin/cmp -s -- "$report_out" "$transported_report"; then
+    error "transported kernel module signature report differs from live package cryptographic verification."
+    return
+  fi
+  checked
+}
+
 validate_schema_v2_touchscreen_bindings() {
   local repo_dir validator archive_validator identity_validator build_manifest apt_provenance build_inputs
   local kernel_archive_name touch_archive_name kernel_archive touch_archive
@@ -290,6 +362,7 @@ validate_schema_v2_touchscreen_bindings() {
     "$RELEASE_DIR/gpi.ko" \
     "$RELEASE_DIR/spi-geni-qcom.ko" \
     "$RELEASE_DIR/mshw0485_touch.ko" \
+    "$RELEASE_DIR/sp11-module-signing-cert.x509" \
     "$touchscreen_manifest"; do
     if [ ! -f "$asset" ] || [ -L "$asset" ]; then
       error "schema-v2 payload binding input is missing: $(basename "$asset")"
@@ -419,6 +492,7 @@ validate_schema_v2_asset_inventory() {
     sp11-kernel-build-manifest.txt \
     sp11-kernel-apt-provenance.txt \
     sp11-kernel-build-inputs.txt \
+    sp11-kernel-module-signatures.txt \
     sp11-kernel-release-manifest.txt \
     sp11-kernel-debs.txt; do
     allowed_assets["$asset_name"]=1
@@ -467,6 +541,7 @@ validate_schema_v2_asset_inventory() {
       gpi.ko \
       spi-geni-qcom.ko \
       mshw0485_touch.ko \
+      sp11-module-signing-cert.x509 \
       sp11-touchscreen-modules-manifest.txt; do
       allowed_assets["$asset_name"]=1
     done
@@ -1077,6 +1152,11 @@ if [ "$touchscreen_release" = "true" ]; then
     error "sp11v3 release must contain exactly three touchscreen .ko files; found ${#present_ko_files[@]}."
   fi
 
+  touchscreen_certificate="$RELEASE_DIR/sp11-module-signing-cert.x509"
+  if [ ! -f "$touchscreen_certificate" ] || [ -L "$touchscreen_certificate" ]; then
+    error "sp11v3 release is missing the regular public module-signing certificate asset."
+  fi
+
   touchscreen_manifest="$RELEASE_DIR/sp11-touchscreen-modules-manifest.txt"
   touchscreen_source_commit=""
   if [ ! -f "$touchscreen_manifest" ] || [ -L "$touchscreen_manifest" ]; then
@@ -1117,6 +1197,35 @@ if [ "$touchscreen_release" = "true" ]; then
       elif [ -n "$touchscreen_source_commit" ] && [ "${ref_values[0],,}" != "$touchscreen_source_commit" ]; then
         error "touchscreen provenance Source ref and Source commit differ."
       fi
+    fi
+  fi
+
+  if [ ! -x /usr/bin/python3 ]; then
+    error "trusted /usr/bin/python3 is required for controlled touchscreen module signature validation."
+  elif [ ! -f "$SIGNED_MODULE_VALIDATOR" ] || [ -L "$SIGNED_MODULE_VALIDATOR" ]; then
+    error "controlled touchscreen module signature validator is unavailable."
+  elif [ -f "$touchscreen_certificate" ] && [ ! -L "$touchscreen_certificate" ] &&
+       [ -f "$RELEASE_DIR/gpi.ko" ] && [ ! -L "$RELEASE_DIR/gpi.ko" ] &&
+       [ -f "$RELEASE_DIR/spi-geni-qcom.ko" ] && [ ! -L "$RELEASE_DIR/spi-geni-qcom.ko" ] &&
+       [ -f "$RELEASE_DIR/mshw0485_touch.ko" ] && [ ! -L "$RELEASE_DIR/mshw0485_touch.ko" ]; then
+    signed_module_arguments=(
+      --certificate "$touchscreen_certificate"
+      --module "$RELEASE_DIR/gpi.ko"
+      --module "$RELEASE_DIR/spi-geni-qcom.ko"
+      --module "$RELEASE_DIR/mshw0485_touch.ko"
+    )
+    if [ "$schema_v2" = "true" ] && [ -f "$touchscreen_manifest" ] &&
+       [ ! -L "$touchscreen_manifest" ]; then
+      signed_module_arguments+=(
+        --manifest "$touchscreen_manifest"
+        --manifest-format release
+      )
+    fi
+    if /usr/bin/python3 -I "$SIGNED_MODULE_VALIDATOR" \
+        "${signed_module_arguments[@]}" >/dev/null; then
+      checked
+    else
+      error "controlled touchscreen module signatures or certificate are invalid."
     fi
   fi
 
@@ -1264,12 +1373,16 @@ else
   if [ -e "$RELEASE_DIR/sp11-touchscreen-modules-manifest.txt" ]; then
     error "non-sp11v3 release contains an unexpected touchscreen provenance manifest."
   fi
+  if [ -e "$RELEASE_DIR/sp11-module-signing-cert.x509" ]; then
+    error "non-sp11v3 release contains an unexpected touchscreen module-signing certificate."
+  fi
 fi
 
 if [ "$schema_v2" = "true" ] && [ "$touchscreen_release" != "true" ]; then
   validate_schema_v2_kernel_bindings
 fi
 if [ "$schema_v2" = "true" ]; then
+  validate_controlled_kernel_module_report
   validate_schema_v2_asset_inventory
 fi
 

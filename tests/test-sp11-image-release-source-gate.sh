@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 helper="$repo_dir/scripts/prepare-sp11-image-release-assets.sh"
 identity_helper="$repo_dir/scripts/validate-sp11-payload-identity-list.sh"
 test_root="$repo_dir/build/test-image-release-source-gate"
@@ -155,6 +155,7 @@ hash_b="$(printf 'b%.0s' {1..64})"
 hash_c="$(printf 'c%.0s' {1..64})"
 hash_d="$(printf 'd%.0s' {1..64})"
 hash_e="$(printf 'e%.0s' {1..64})"
+hash_f="$(printf 'f%.0s' {1..64})"
 expected_payload="$test_root/expected-payload"
 actual_payload="$test_root/actual-payload"
 printf '%s  %s\n' \
@@ -162,7 +163,8 @@ printf '%s  %s\n' \
   "$hash_b" gpi.ko \
   "$hash_c" spi-geni-qcom.ko \
   "$hash_d" mshw0485_touch.ko \
-  "$hash_e" sp11-touchscreen-modules-manifest.txt \
+  "$hash_e" sp11-module-signing-cert.x509 \
+  "$hash_f" sp11-touchscreen-modules-manifest.txt \
   > "$expected_payload"
 cp "$expected_payload" "$actual_payload"
 "$identity_helper" --expected "$expected_payload" --actual "$actual_payload" >/dev/null
@@ -184,7 +186,7 @@ wrong_module="$test_root/wrong-module"
 sed "s/^$hash_b  gpi\.ko$/$hash_a  gpi.ko/" "$actual_payload" > "$wrong_module"
 expect_identity_failure wrong-module "$expected_payload" "$wrong_module"
 wrong_manifest="$test_root/wrong-manifest"
-sed "s/^$hash_e  sp11-touchscreen-modules-manifest\.txt$/$hash_a  sp11-touchscreen-modules-manifest.txt/" \
+sed "s/^$hash_f  sp11-touchscreen-modules-manifest\.txt$/$hash_a  sp11-touchscreen-modules-manifest.txt/" \
   "$actual_payload" > "$wrong_manifest"
 expect_identity_failure wrong-manifest "$expected_payload" "$wrong_manifest"
 extra_payload="$test_root/extra-payload"
@@ -403,12 +405,12 @@ esp_boot_size=4096
 esp_boot_sha="$(printf '4%.0s' {1..64})"
 esp_readme_size=81
 esp_readme_sha=6163777e9eeca7cfb031dab492007471ed514ae99baea73c7da7de9ab51d0443
-kernel_abi=7.2.0-1-sp11v3-qcom-x1e
-package_version=7.2.0-1
-common_headers_name=linux-qcom-x1e-headers-7.2.0-1-sp11v3_7.2.0-1_all.deb
-headers_name=linux-headers-7.2.0-1-sp11v3-qcom-x1e_7.2.0-1_arm64.deb
-image_name=linux-image-7.2.0-1-sp11v3-qcom-x1e_7.2.0-1_arm64.deb
-modules_name=linux-modules-7.2.0-1-sp11v3-qcom-x1e_7.2.0-1_arm64.deb
+kernel_abi=7.2-rc5-jg-0sp11v3r2-qcom-x1e
+package_version=7.2-rc5-jg-0sp11v3r2
+common_headers_name=linux-qcom-x1e-headers-7.2-rc5-jg-0sp11v3r2_7.2-rc5-jg-0sp11v3r2_all.deb
+headers_name=linux-headers-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
+image_name=linux-image-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
+modules_name=linux-modules-7.2-rc5-jg-0sp11v3r2-qcom-x1e_7.2-rc5-jg-0sp11v3r2_arm64.deb
 standalone_release="$test_root/standalone-release"
 mkdir -p "$standalone_release"
 printf 'common headers fixture\n' > "$standalone_release/$common_headers_name"
@@ -418,6 +420,46 @@ printf 'kernel modules fixture\n' > "$standalone_release/$modules_name"
 printf 'gpi module fixture\n' > "$standalone_release/gpi.ko"
 printf 'spi module fixture\n' > "$standalone_release/spi-geni-qcom.ko"
 printf 'touch module fixture\n' > "$standalone_release/mshw0485_touch.ko"
+fixture_signing_key="$test_root/fixture-module-signing-key.pem"
+fixture_signing_certificate="$test_root/fixture-module-signing-cert.pem"
+/usr/bin/openssl req -x509 -newkey rsa:4096 -sha512 -nodes \
+  -keyout "$fixture_signing_key" \
+  -out "$fixture_signing_certificate" \
+  -days 1 \
+  -set_serial 0xA1 \
+  -subj '/CN=SP11 release test fixture/' \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature' \
+  >/dev/null 2>&1
+chmod 0600 "$fixture_signing_key"
+/usr/bin/openssl x509 \
+  -in "$fixture_signing_certificate" \
+  -outform DER \
+  > "$standalone_release/sp11-module-signing-cert.x509"
+for signed_module_name in gpi.ko spi-geni-qcom.ko mshw0485_touch.ko; do
+  signed_module_payload="$test_root/$signed_module_name.payload"
+  signed_module_signature="$test_root/$signed_module_name.signature"
+  mv "$standalone_release/$signed_module_name" "$signed_module_payload"
+  /usr/bin/openssl cms -sign -binary -noattr -nocerts -md sha512 \
+    -signer "$fixture_signing_certificate" \
+    -inkey "$fixture_signing_key" \
+    -in "$signed_module_payload" \
+    -outform DER \
+    -out "$signed_module_signature"
+  python3 - "$signed_module_payload" "$signed_module_signature" \
+    "$standalone_release/$signed_module_name" <<'PY_SIGNED_MODULE'
+import struct
+import sys
+from pathlib import Path
+
+payload = Path(sys.argv[1]).read_bytes()
+signature = Path(sys.argv[2]).read_bytes()
+descriptor = struct.pack(">BBBBB3sI", 0, 0, 2, 0, 0, b"\0\0\0", len(signature))
+Path(sys.argv[3]).write_bytes(
+    payload + signature + descriptor + b"~Module signature appended~\n"
+)
+PY_SIGNED_MODULE
+done
 common_headers_sha="$(shasum -a 256 "$standalone_release/$common_headers_name" | awk '{print $1}')"
 headers_sha="$(shasum -a 256 "$standalone_release/$headers_name" | awk '{print $1}')"
 image_package_sha="$(shasum -a 256 "$standalone_release/$image_name" | awk '{print $1}')"
@@ -425,12 +467,31 @@ modules_package_sha="$(shasum -a 256 "$standalone_release/$modules_name" | awk '
 gpi_sha="$(shasum -a 256 "$standalone_release/gpi.ko" | awk '{print $1}')"
 spi_sha="$(shasum -a 256 "$standalone_release/spi-geni-qcom.ko" | awk '{print $1}')"
 touch_sha="$(shasum -a 256 "$standalone_release/mshw0485_touch.ko" | awk '{print $1}')"
+certificate_sha="$(shasum -a 256 "$standalone_release/sp11-module-signing-cert.x509" | awk '{print $1}')"
+signing_fingerprint="$(printf '%s' "$certificate_sha" | sed 's/../&:/g; s/:$//' | tr '[:lower:]' '[:upper:]')"
+gpi_size="$(wc -c < "$standalone_release/gpi.ko" | tr -d '[:space:]')"
+spi_size="$(wc -c < "$standalone_release/spi-geni-qcom.ko" | tr -d '[:space:]')"
+touch_size="$(wc -c < "$standalone_release/mshw0485_touch.ko" | tr -d '[:space:]')"
+gpi_payload_size="$(wc -c < "$test_root/gpi.ko.payload" | tr -d '[:space:]')"
+spi_payload_size="$(wc -c < "$test_root/spi-geni-qcom.ko.payload" | tr -d '[:space:]')"
+touch_payload_size="$(wc -c < "$test_root/mshw0485_touch.ko.payload" | tr -d '[:space:]')"
+gpi_payload_sha="$(shasum -a 256 "$test_root/gpi.ko.payload" | awk '{print $1}')"
+spi_payload_sha="$(shasum -a 256 "$test_root/spi-geni-qcom.ko.payload" | awk '{print $1}')"
+touch_payload_sha="$(shasum -a 256 "$test_root/mshw0485_touch.ko.payload" | awk '{print $1}')"
+gpi_signature_size="$(wc -c < "$test_root/gpi.ko.signature" | tr -d '[:space:]')"
+spi_signature_size="$(wc -c < "$test_root/spi-geni-qcom.ko.signature" | tr -d '[:space:]')"
+touch_signature_size="$(wc -c < "$test_root/mshw0485_touch.ko.signature" | tr -d '[:space:]')"
+gpi_signature_sha="$(shasum -a 256 "$test_root/gpi.ko.signature" | awk '{print $1}')"
+spi_signature_sha="$(shasum -a 256 "$test_root/spi-geni-qcom.ko.signature" | awk '{print $1}')"
+touch_signature_sha="$(shasum -a 256 "$test_root/mshw0485_touch.ko.signature" | awk '{print $1}')"
 patch_path="$(git -C "$repo_dir" ls-files 'patches/*.patch' 'patches/**/*.patch' |
   LC_ALL=C sort | sed -n '1p')"
 [ -n "$patch_path" ]
 patch_sha="$(git -C "$repo_dir" show "$support_commit:$patch_path" | shasum -a 256 | awk '{print $1}')"
 kernel_build_manifest="$test_root/sp11-kernel-build-manifest.txt"
 kernel_release_manifest="$test_root/sp11-kernel-release-manifest.txt"
+kernel_signature_report="$test_root/sp11-kernel-module-signatures.txt"
+kernel_unsigned_allowlist="$repo_dir/config/kernel-signing/sp11-module-signing-allowed-unsigned.txt"
 apt_provenance="$test_root/sp11-kernel-apt-provenance.txt"
 build_inputs="$test_root/sp11-kernel-build-inputs.txt"
 module_manifest="$test_root/sp11-touchscreen-modules-manifest.txt"
@@ -443,6 +504,156 @@ image_fixture_size="$(wc -c < "$image" | tr -d '[:space:]')"
 image_sector_count=$((image_fixture_size / 512))
 data_end=$((image_sector_count - 2049))
 data_sectors=$((data_end - 1050624 + 1))
+kernel_unsigned_count="$(wc -l < "$kernel_unsigned_allowlist" | tr -d '[:space:]')"
+kernel_unsigned_inventory_sha="$(shasum -a 256 "$kernel_unsigned_allowlist" | awk '{print $1}')"
+cat > "$kernel_signature_report" <<EOF_KERNEL_SIGNATURE_REPORT
+# Surface Pro 11 Kernel Module Signature Report
+
+Schema: sp11-kernel-module-signature-verification-v1
+Kernel ABI: $kernel_abi
+Package count: 1
+Package 1 role: modules
+Package 1 file: $modules_name
+Package 1 name: linux-modules-$kernel_abi
+Package 1 version: $package_version
+Package 1 architecture: arm64
+Package 1 size: 1
+Package 1 SHA256: $modules_package_sha
+Package 1 module count: $((kernel_unsigned_count + 1))
+Package 1 cryptographically verified signed module count: 1
+Package 1 policy-allowed unsigned module count: $kernel_unsigned_count
+Module signing policy: sp11-controlled-rsa4096-sha512-v1
+Module signing hash algorithm: sha512
+Module signing certificate SHA256: $certificate_sha
+Module signing certificate fingerprint: $signing_fingerprint
+Module signing certificate serial: A1
+Total module count: $((kernel_unsigned_count + 1))
+Cryptographically verified signed module count: 1
+Policy-allowed unsigned module count: $kernel_unsigned_count
+Policy-allowed unsigned module path inventory SHA256: $kernel_unsigned_inventory_sha
+Validation completed: true
+
+## Policy-allowed unsigned module paths
+EOF_KERNEL_SIGNATURE_REPORT
+sed 's/^/- /' "$kernel_unsigned_allowlist" >> "$kernel_signature_report"
+kernel_signature_report_size="$(wc -c < "$kernel_signature_report" | tr -d '[:space:]')"
+kernel_signature_report_sha="$(shasum -a 256 "$kernel_signature_report" | awk '{print $1}')"
+fixture_signature_scanner="$test_root/fixture-validate-sp11-module-signatures.py"
+fixture_signed_module_validator="$test_root/fixture-validate-sp11-signed-modules.py"
+fixture_touchscreen_validator="$test_root/fixture-validate-sp11-touchscreen-release.sh"
+fixture_image_helper="$test_root/fixture-prepare-sp11-image-release-assets.sh"
+cat > "$fixture_signature_scanner" <<'PY_FIXTURE_SIGNATURE_SCANNER'
+#!/usr/bin/env python3
+"""Test-only controlled scanner output for the release-validator byte fence."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+
+arguments = sys.argv[1:]
+try:
+    report_out = Path(arguments[arguments.index("--report-out") + 1])
+except (ValueError, IndexError) as exc:
+    raise SystemExit(2) from exc
+template = Path(__file__).with_name("sp11-kernel-module-signatures.txt").read_bytes()
+if os.environ.get("FIXTURE_SIGNATURE_REPORT_MUTATION") == "true":
+    template = template.replace(
+        b"Validation completed: true\n", b"Validation completed: false\n"
+    )
+descriptor = os.open(
+    report_out,
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+    0o600,
+)
+with os.fdopen(descriptor, "wb") as output:
+    output.write(template)
+PY_FIXTURE_SIGNATURE_SCANNER
+/usr/bin/python3 - \
+  "$repo_dir/scripts/validate-sp11-signed-modules.py" \
+  "$fixture_signed_module_validator" "$certificate_sha" \
+  <<'PY_PATCH_SIGNED_MODULE_VALIDATOR'
+import sys
+from pathlib import Path
+
+source, destination = map(Path, sys.argv[1:3])
+certificate_sha = sys.argv[3]
+approved_sha = "8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b"
+text = source.read_text(encoding="utf-8")
+if text.count(approved_sha) != 1:
+    raise SystemExit("signed-module fixture certificate patch point changed")
+with destination.open("w", encoding="utf-8", newline="\n") as output:
+    output.write(text.replace(approved_sha, certificate_sha))
+destination.chmod(0o700)
+PY_PATCH_SIGNED_MODULE_VALIDATOR
+/usr/bin/python3 - \
+  "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+  "$fixture_touchscreen_validator" "$repo_dir" "$fixture_signature_scanner" \
+  "$fixture_signed_module_validator" \
+  <<'PY_PATCH_TOUCHSCREEN_VALIDATOR'
+import shlex
+import sys
+from pathlib import Path
+
+source, destination, repo, scanner, signed_validator = map(Path, sys.argv[1:])
+repo = repo.resolve()
+text = source.read_text(encoding="utf-8")
+repo_assignment = 'REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"'
+scanner_assignment = (
+    'KERNEL_MODULE_SIGNATURE_VALIDATOR='
+    '"$REPO_DIR/scripts/validate-sp11-module-signatures.py"'
+)
+signed_assignment = (
+    'SIGNED_MODULE_VALIDATOR="$REPO_DIR/scripts/validate-sp11-signed-modules.py"'
+)
+if (
+    text.count(repo_assignment) != 1
+    or text.count(scanner_assignment) != 1
+    or text.count(signed_assignment) != 1
+):
+    raise SystemExit("release-validator fixture patch points changed")
+text = text.replace(repo_assignment, f"REPO_DIR={shlex.quote(str(repo))}")
+text = text.replace(
+    scanner_assignment,
+    f"KERNEL_MODULE_SIGNATURE_VALIDATOR={shlex.quote(str(scanner))}",
+)
+text = text.replace(
+    signed_assignment,
+    f"SIGNED_MODULE_VALIDATOR={shlex.quote(str(signed_validator))}",
+)
+with destination.open("w", encoding="utf-8", newline="\n") as output:
+    output.write(text)
+destination.chmod(0o700)
+PY_PATCH_TOUCHSCREEN_VALIDATOR
+/usr/bin/python3 - \
+  "$repo_dir/scripts/prepare-sp11-image-release-assets.sh" \
+  "$fixture_image_helper" "$repo_dir" "$fixture_signed_module_validator" \
+  <<'PY_PATCH_IMAGE_HELPER'
+import shlex
+import sys
+from pathlib import Path
+
+source, destination, repo, signed_validator = map(Path, sys.argv[1:])
+repo = repo.resolve()
+text = source.read_text(encoding="utf-8")
+repo_assignment = 'repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"'
+signed_assignment = (
+    'signed_module_validator="$repo_dir/scripts/validate-sp11-signed-modules.py"'
+)
+if text.count(repo_assignment) != 1 or text.count(signed_assignment) != 1:
+    raise SystemExit("image-helper fixture patch points changed")
+text = text.replace(repo_assignment, f"repo_dir={shlex.quote(str(repo))}")
+text = text.replace(
+    signed_assignment,
+    f"signed_module_validator={shlex.quote(str(signed_validator))}",
+)
+with destination.open("w", encoding="utf-8", newline="\n") as output:
+    output.write(text)
+destination.chmod(0o700)
+PY_PATCH_IMAGE_HELPER
+helper="$fixture_image_helper"
 cat > "$image_build_manifest" <<EOF_IMAGE_BUILD
 Schema: sp11-live-image-build-v1
 Build completed: true
@@ -558,16 +769,26 @@ Output 7 required: true
 Output 7 path: debian/build/build-qcom-x1e/certs/signing_key.x509
 Output 7 size: 1
 Output 7 SHA256: $certificate_sha
+Module signing policy: sp11-controlled-rsa4096-sha512-v1
+Module signing private material retained: false
 Signing certificate SHA256: $certificate_sha
 Signing certificate fingerprint: $signing_fingerprint
 Signing certificate serial: A1
+Kernel module signature report asset: sp11-kernel-module-signatures.txt
+Kernel module signature report size: $kernel_signature_report_size
+Kernel module signature report SHA256: $kernel_signature_report_sha
+Kernel module signature report schema: sp11-kernel-module-signature-verification-v1
+Kernel module total count: $((kernel_unsigned_count + 1))
+Kernel module verified signed count: 1
+Kernel module policy-allowed unsigned count: $kernel_unsigned_count
+Kernel module unsigned-path inventory SHA256: $kernel_unsigned_inventory_sha
 Required Deb roles: common-headers headers image modules
 Optional Deb roles: modules-extra
 Deb count: 4
 Deb 1 role: common-headers
 Deb 1 required: true
 Deb 1 path: $common_headers_name
-Deb 1 package: linux-qcom-x1e-headers-7.2.0-1-sp11v3
+Deb 1 package: linux-qcom-x1e-headers-7.2-rc5-jg-0sp11v3r2
 Deb 1 version: $package_version
 Deb 1 architecture: all
 Deb 1 size: 1
@@ -655,20 +876,39 @@ Module linker identity: ld fixture 1.0
 Module make identity: make fixture 1.0
 Support repo commit: $support_commit
 Support repo dirty: false
+Module signing policy: sp11-controlled-rsa4096-sha512-v1
+Module signing private material retained: false
+Module signing hash algorithm: sha512
+Module signing certificate asset: sp11-module-signing-cert.x509
+Module signing certificate SHA256: $certificate_sha
+Module signing certificate fingerprint: $signing_fingerprint
+Module signing certificate serial: A1
 Required SPI parameter: sp11_windows_se_init
 Module gpi.ko name: gpi
-Module gpi.ko size: 1
+Module gpi.ko size: $gpi_size
 Module gpi.ko SHA256: $gpi_sha
+Module gpi.ko payload size: $gpi_payload_size
+Module gpi.ko payload SHA256: $gpi_payload_sha
+Module gpi.ko signature size: $gpi_signature_size
+Module gpi.ko signature SHA256: $gpi_signature_sha
 Module gpi.ko vermagic: $kernel_abi SMP
 Module gpi.ko srcversion: A1
 Module spi-geni-qcom.ko name: spi_geni_qcom
-Module spi-geni-qcom.ko size: 1
+Module spi-geni-qcom.ko size: $spi_size
 Module spi-geni-qcom.ko SHA256: $spi_sha
+Module spi-geni-qcom.ko payload size: $spi_payload_size
+Module spi-geni-qcom.ko payload SHA256: $spi_payload_sha
+Module spi-geni-qcom.ko signature size: $spi_signature_size
+Module spi-geni-qcom.ko signature SHA256: $spi_signature_sha
 Module spi-geni-qcom.ko vermagic: $kernel_abi SMP
 Module spi-geni-qcom.ko srcversion: B2
 Module mshw0485_touch.ko name: mshw0485_touch
-Module mshw0485_touch.ko size: 1
+Module mshw0485_touch.ko size: $touch_size
 Module mshw0485_touch.ko SHA256: $touch_sha
+Module mshw0485_touch.ko payload size: $touch_payload_size
+Module mshw0485_touch.ko payload SHA256: $touch_payload_sha
+Module mshw0485_touch.ko signature size: $touch_signature_size
+Module mshw0485_touch.ko signature SHA256: $touch_signature_sha
 Module mshw0485_touch.ko vermagic: $kernel_abi SMP
 Module mshw0485_touch.ko srcversion: C3
 EOF_MODULE_MANIFEST
@@ -722,9 +962,19 @@ Required output roles: kernel-config module-symvers system-map kernel-efi-stubbl
 Optional output roles: none
 Required package roles: common-headers headers image modules
 Optional package roles: modules-extra
+Module signing policy: sp11-controlled-rsa4096-sha512-v1
+Module signing private material retained: false
 Signing certificate SHA256: $certificate_sha
 Signing certificate fingerprint: $signing_fingerprint
 Signing certificate serial: A1
+Kernel module signature report asset: sp11-kernel-module-signatures.txt
+Kernel module signature report size: $kernel_signature_report_size
+Kernel module signature report SHA256: $kernel_signature_report_sha
+Kernel module signature report schema: sp11-kernel-module-signature-verification-v1
+Kernel module total count: $((kernel_unsigned_count + 1))
+Kernel module verified signed count: 1
+Kernel module policy-allowed unsigned count: $kernel_unsigned_count
+Kernel module unsigned-path inventory SHA256: $kernel_unsigned_inventory_sha
 Package count: 4
 Package 1 file: $common_headers_name
 Package 1 SHA256: $common_headers_sha
@@ -763,6 +1013,7 @@ printf '%s  %s\n' \
   "$gpi_sha" gpi.ko \
   "$spi_sha" spi-geni-qcom.ko \
   "$touch_sha" mshw0485_touch.ko \
+  "$certificate_sha" sp11-module-signing-cert.x509 \
   "$(shasum -a 256 "$module_manifest" | awk '{print $1}')" sp11-touchscreen-modules-manifest.txt \
   > "$bound_actual_payload"
 
@@ -1134,6 +1385,7 @@ export FIXTURE_REAL_RM="$real_rm"
 export FIXTURE_REAL_RMDIR="$real_rmdir"
 
 cp "$kernel_build_manifest" "$standalone_release/sp11-kernel-build-manifest.txt"
+  cp "$kernel_signature_report" "$standalone_release/sp11-kernel-module-signatures.txt"
   cp "$kernel_release_manifest" "$standalone_release/sp11-kernel-release-manifest.txt"
   cp "$apt_provenance" "$standalone_release/sp11-kernel-apt-provenance.txt"
   cp "$build_inputs" "$standalone_release/sp11-kernel-build-inputs.txt"
@@ -1157,7 +1409,7 @@ validator_env=(
     FIXTURE_PACKAGE_VERSION="$package_version"
   )
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
-  if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+  if env "${validator_env[@]}" "$fixture_touchscreen_validator" \
       --dir "$standalone_release" > "$test_root/standalone-missing-authority.log" 2>&1; then
     echo 'Standalone validator accepted an omitted authority mode.' >&2
     exit 1
@@ -1165,7 +1417,7 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   grep -F 'choose exactly one authority mode: --local-prepared-candidate or --downloaded-release' \
     "$test_root/standalone-missing-authority.log" >/dev/null
 
-  if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+  if env "${validator_env[@]}" "$fixture_touchscreen_validator" \
       --local-prepared-candidate --downloaded-release --dir "$standalone_release" \
       > "$test_root/standalone-conflicting-authority.log" 2>&1; then
     echo 'Standalone validator accepted conflicting authority modes.' >&2
@@ -1174,7 +1426,7 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   grep -F 'choose exactly one authority mode: --local-prepared-candidate or --downloaded-release' \
     "$test_root/standalone-conflicting-authority.log" >/dev/null
 
-  if ! env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+  if ! env "${validator_env[@]}" "$fixture_touchscreen_validator" \
       --downloaded-release --dir "$standalone_release" > "$test_root/standalone-valid.log" 2>&1; then
     cat "$test_root/standalone-valid.log" >&2
     echo 'Standalone validator rejected a complete flat schema-v2 touchscreen release.' >&2
@@ -1183,9 +1435,19 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   grep -Fx 'Validation authority: downloaded-content-only; no local commit or publication authority.' \
     "$test_root/standalone-valid.log" >/dev/null
 
+  if env "${validator_env[@]}" FIXTURE_SIGNATURE_REPORT_MUTATION=true \
+      "$fixture_touchscreen_validator" \
+      --downloaded-release --dir "$standalone_release" \
+      > "$test_root/standalone-package-report-mismatch.log" 2>&1; then
+    echo 'Standalone validator accepted a transported package report that differed from live rescan output.' >&2
+    exit 1
+  fi
+  grep -F 'transported kernel module signature report differs from live package cryptographic verification' \
+    "$test_root/standalone-package-report-mismatch.log" >/dev/null
+
   printf 'checksummed but not manifest-bound\n' > "$standalone_release/unexpected.txt"
   write_standalone_checksums
-  if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+  if env "${validator_env[@]}" "$fixture_touchscreen_validator" \
       --downloaded-release --dir "$standalone_release" > "$test_root/standalone-extra-asset.log" 2>&1; then
     echo 'Standalone validator accepted an unexpected checksummed schema-v2 asset.' >&2
     exit 1
@@ -1202,7 +1464,7 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
        } { print }' "$test_root/standalone-release-manifest.original" \
     > "$standalone_release/sp11-kernel-release-manifest.txt"
   write_standalone_checksums
-  if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+  if env "${validator_env[@]}" "$fixture_touchscreen_validator" \
       --downloaded-release --dir "$standalone_release" > "$test_root/standalone-source-tamper.log" 2>&1; then
     echo 'Standalone validator accepted a recomputed-checksum source binding tamper.' >&2
     exit 1
@@ -1212,7 +1474,7 @@ if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
   cp "$standalone_release/gpi.ko" "$test_root/gpi.ko.original"
   printf 'different gpi payload\n' > "$standalone_release/gpi.ko"
   write_standalone_checksums
-  if env "${validator_env[@]}" "$repo_dir/scripts/validate-sp11-touchscreen-release.sh" \
+  if env "${validator_env[@]}" "$fixture_touchscreen_validator" \
       --downloaded-release --dir "$standalone_release" > "$test_root/standalone-payload-tamper.log" 2>&1; then
     echo 'Standalone validator accepted a recomputed-checksum payload tamper.' >&2
     exit 1
@@ -1648,7 +1910,11 @@ retirement_boundary_output="$(env "${fixture_binding_env[@]}" \
 retirement_boundary_status=$?
 set -e
 [ "$retirement_boundary_status" -eq 1 ]
-grep -Fxq 'retirement-boundary' "$retirement_boundary_install_marker"
+if ! grep -Fxq 'retirement-boundary' "$retirement_boundary_install_marker"; then
+  printf '%s\n' "$retirement_boundary_output" >&2
+  echo 'Retirement-boundary fixture failed before the installed-output mutation hook.' >&2
+  exit 1
+fi
 grep -Fxq 'failed candidate changed before retirement' "$retirement_boundary_marker"
 grep -Fxq 'prior output sentinel' "$retirement_boundary_dir/prior-output"
 [ "$(find "$retirement_boundary_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')" -eq 1 ]
@@ -2074,6 +2340,27 @@ grep -F 'Validated complete schema-v2 image release manifest bindings.' \
   exit 1
 }
 
+certificate_mismatch_dir="$test_root/manifest-validator-certificate-mismatch"
+mkdir "$certificate_mismatch_dir"
+cp "$module_manifest" \
+  "$certificate_mismatch_dir/sp11-touchscreen-modules-manifest.txt"
+printf 'different public DER certificate fixture\n' \
+  > "$certificate_mismatch_dir/sp11-module-signing-cert.x509"
+certificate_mismatch_args=("${release_manifest_validator_args[@]}")
+for certificate_arg_index in "${!certificate_mismatch_args[@]}"; do
+  if [ "${certificate_mismatch_args[$certificate_arg_index]}" = "$module_manifest" ]; then
+    certificate_mismatch_args[$certificate_arg_index]="$certificate_mismatch_dir/sp11-touchscreen-modules-manifest.txt"
+  fi
+done
+if /usr/bin/python3 -I "$release_manifest_validator" \
+    "${certificate_mismatch_args[@]}" \
+    > "$certificate_mismatch_dir/validator.log" 2>&1; then
+  echo 'Manifest validator accepted a different public module-signing certificate.' >&2
+  exit 1
+fi
+grep -F 'touchscreen module-signing certificate asset does not match its manifest identity' \
+  "$certificate_mismatch_dir/validator.log" >/dev/null
+
 manifest_nonzero_git_bin="$test_root/manifest-validator-nonzero-git-bin"
 manifest_nonzero_git_state="$test_root/manifest-validator-nonzero-git-state"
 mkdir "$manifest_nonzero_git_bin" "$manifest_nonzero_git_state"
@@ -2201,6 +2488,8 @@ for url_contract_index in "${!url_contract_labels[@]}"; do
   mkdir "$url_contract_dir"
   sed "s#^Source URL: .*#Source URL: $url_contract_value#" \
     "$kernel_build_manifest" > "$url_contract_dir/sp11-kernel-build-manifest.txt"
+  cp "$kernel_signature_report" \
+    "$url_contract_dir/sp11-kernel-module-signatures.txt"
   if /usr/bin/python3 -I \
       "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
       --repo-dir "$repo_dir" \
@@ -2216,6 +2505,8 @@ for url_contract_index in "${!url_contract_labels[@]}"; do
 
   sed "s#^Touchscreen source URL: .*#Touchscreen source URL: $url_contract_value#" \
     "$module_manifest" > "$url_contract_dir/sp11-touchscreen-modules-manifest.txt"
+  cp "$standalone_release/sp11-module-signing-cert.x509" \
+    "$url_contract_dir/sp11-module-signing-cert.x509"
   if /usr/bin/python3 -I \
       "$repo_dir/scripts/validate-sp11-image-release-manifests.py" \
       --repo-dir "$repo_dir" \
@@ -2277,10 +2568,12 @@ printf '%s\n' "$bound_output" | grep -F 'Local draft only:' >/dev/null
 bound_dir="$repo_dir/build/release/$release_prefix-bound"
 for attached in \
   sp11-kernel-build-manifest.txt \
+  sp11-kernel-module-signatures.txt \
   sp11-kernel-release-manifest.txt \
   sp11-kernel-apt-provenance.txt \
   sp11-kernel-build-inputs.txt \
   sp11-touchscreen-modules-manifest.txt \
+  sp11-module-signing-cert.x509 \
   sp11-live-image-build-manifest.txt; do
   [ -s "$bound_dir/$attached" ]
   grep -F "  $attached" "$bound_dir/SHA256SUMS" >/dev/null
@@ -2292,6 +2585,22 @@ grep -Fxq 'Kernel release schema: sp11-kernel-release-v1' "$outer_manifest"
 grep -Fxq 'Build envelope creation propagation: incomplete' "$outer_manifest"
 grep -Fxq 'Kernel release propagation: complete' "$outer_manifest"
 grep -Fxq 'Kernel provenance propagation: complete' "$outer_manifest"
+grep -Fxq 'Module signing policy: sp11-controlled-rsa4096-sha512-v1' "$outer_manifest"
+grep -Fxq 'Module signing private material retained: false' "$outer_manifest"
+grep -Fxq 'Module signing hash algorithm: sha512' "$outer_manifest"
+grep -Fxq 'Module signing certificate asset: sp11-module-signing-cert.x509' "$outer_manifest"
+grep -Fxq "Module signing certificate SHA256: $certificate_sha" "$outer_manifest"
+grep -Fxq "Module signing certificate fingerprint: $signing_fingerprint" "$outer_manifest"
+grep -Fxq 'Module signing certificate serial: A1' "$outer_manifest"
+grep -Fxq 'Kernel module signature report asset: sp11-kernel-module-signatures.txt' \
+  "$outer_manifest"
+grep -Fxq 'Kernel module signature report schema: sp11-kernel-module-signature-verification-v1' \
+  "$outer_manifest"
+grep -Fxq "Kernel module total count: $((kernel_unsigned_count + 1))" \
+  "$outer_manifest"
+grep -Fxq 'Kernel module verified signed count: 1' "$outer_manifest"
+grep -Fxq "Kernel module policy-allowed unsigned count: $kernel_unsigned_count" \
+  "$outer_manifest"
 grep -Fxq 'Publication state: blocked' "$outer_manifest"
 grep -F 'propagation attestation is complete' "$bound_dir/RELEASE-NOTES.md" >/dev/null
 printf '%s\n' "$bound_output" | grep -F 'NO-PUBLISH:' >/dev/null

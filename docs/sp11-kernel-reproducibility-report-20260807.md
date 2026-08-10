@@ -415,7 +415,7 @@ release/image preparation paths validate and attach the exact v2 manifest, v1
 APT sidecar, and v1 build-inputs envelope, then attest their propagation in
 outer manifests. The envelope's literal incomplete state remains unchanged as
 a build-time fact. Publication remains closed because byte reproducibility,
-the release-signing model, recovery/hardware evidence,
+fresh controlled-signing build evidence, recovery/hardware evidence,
 corresponding-source/release-candidate review, and explicit release
 authorization remain open. The interim licence/UCM direction in
 [`LEGAL.md`](../LEGAL.md) is pending final review but is no longer an
@@ -428,9 +428,21 @@ signing-independent kernel/Deb build identity. The committed baseline now fixes
 `SOURCE_DATE_EPOCH`, `KBUILD_BUILD_USER`, `KBUILD_BUILD_HOST`, and
 `KBUILD_BUILD_TIMESTAMP`; release mode validates them against the exact source
 commit and propagates them through build-dependency generation and both Debian
-kernel-package targets. This implementation is fixture-tested. It neither
-selects a release-signing model nor claims that generated signing material is
-reproducible.
+kernel-package targets. This implementation was fixture-tested before a
+release-signing model was selected and does not make the historical generated
+signing material reproducible.
+
+On 2026-08-09 the owner selected the controlled model recorded in
+[ADR-0056](adr/adr-0056-controlled-sp11-module-signing.md). Release builds use
+one encrypted owner-controlled RSA-4096 key and fixed X.509 identity for
+packaged in-tree kernel modules and exact-ABI touchscreen modules. Only the
+public certificate identity may enter repository or release evidence. Every
+appended signature must be cryptographically verified, while any Ubuntu-policy
+unsigned modules must form one exact reviewed path inventory shared by both
+builds; Secure Boot remains disabled. The implementation and hostile fixture
+validation are part of the
+current release path, but neither is a new build result. A fresh identical C/D
+pair remains required.
 
 The separate `sp11-kernel-raw-matched-pair-v1` comparator is implemented,
 reviewed, and wired into CI with hostile synthetic fixtures. It validates that
@@ -443,7 +455,8 @@ when both sets match and always records publication as unauthorized.
 No fresh clean C/D pair has yet exercised that foundation. Fixture success is
 tooling evidence, not a new build result: P0.4b remains failed/open, P0.4
 remains open overall, and P0.4c still consists of the single 2026-08-08 real
-immutable-input build. The signing model awaits an owner decision, and
+immutable-input build. The signing model is selected but has not yet produced
+a fresh matched pair, and
 the deterministic patched-source generator is implemented. Its real offline
 replay passed the immutable APT sub-gate but correctly rejected the retained
 2026-08-08 exact tree's escaping tracked symlink before installing an archive.
@@ -458,10 +471,13 @@ do not impose a blanket stop on newly authored artifacts.
 1. Preserve the implemented baseline-bound `SOURCE_DATE_EPOCH`,
    `KBUILD_BUILD_USER`, `KBUILD_BUILD_HOST`, and `KBUILD_BUILD_TIMESTAMP`
    contract, and verify its effect with two new clean builds.
-2. Adopt an explicit release-signing model. Either use a controlled release
-   certificate through a reproducible signing process or keep unsigned build
-   payload production separate from release signing. Never generate an
-   unrecorded ephemeral certificate while claiming byte reproducibility.
+2. Preserve and exercise the implemented ADR-0056 controlled-signing model in
+   both fresh builds. Require the same pinned certificate for packaged in-tree
+   kernel modules and exact-ABI touchscreen modules, keep the
+   encrypted private key and PIN outside every retained/public artifact, and
+   reject an unrecorded or unapproved certificate, unverifiable signature, or
+   unsigned module outside the exact reviewed path inventory before claiming
+   byte reproducibility.
 3. Preserve the completed 2026-08-08 real-build result and its exact attached
    trio as immutable-input provenance evidence. Do not treat the single run as
    a byte-reproducibility result or publication authorization.
@@ -474,8 +490,9 @@ do not impose a blanket stop on newly authored artifacts.
    preserve the historical semantic comparator as an independent defense
    against accidentally identical packaging of incorrect content.
 6. Repeat two clean builds after the signing decision. Require identical raw
-   package hashes and all seven manifest output identities for a
-   byte-reproducible pass.
+   package hashes, all seven source-tree output identities, cryptographic
+   module-signature reports, and policy-allowed unsigned-path inventories for
+   a byte-reproducible pass.
 7. Keep the historical four-patch tree as failed immutable evidence. Remove
    its stale absolute symbolic link only through a new ordered source patch,
    audit the exact post-patch Git tree before compilation, and validate repeated
@@ -500,7 +517,8 @@ historical pair's inputs or byte result.
 P0.4 remains open overall. Its P0.4a historical semantic-evidence facet is
 complete; P0.4b remains open because all four package byte identities differ;
 and P0.4c is complete for one real immutable-input build. Publication remains
-blocked on byte-reproducibility remediation, signing, corresponding-source and
+blocked on byte-reproducibility remediation, fresh controlled-signing evidence,
+corresponding-source and
 release-candidate review, recovery/hardware evidence, and explicit release
 authorization even though outer-schema propagation is implemented. The
 historical semantic result and the later immutable-input result support

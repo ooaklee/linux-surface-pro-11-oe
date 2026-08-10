@@ -36,6 +36,8 @@ KERNEL_RELEASE_MANIFEST=""
 APT_PROVENANCE=""
 BUILD_INPUTS=""
 TOUCHSCREEN_MODULE_MANIFEST=""
+TOUCHSCREEN_SIGNING_CERTIFICATE=""
+KERNEL_SIGNATURE_REPORT=""
 IMAGE_BUILD_MANIFEST=""
 SOURCE_SNAPSHOT_DIR=""
 IMAGE_SNAPSHOT_DIR=""
@@ -63,6 +65,9 @@ SOURCE_CHECKSUM_NAME="SOURCE-SHA256SUMS"
 IMAGE_BUILD_MANIFEST_NAME="sp11-live-image-build-manifest.txt"
 APT_PROVENANCE_NAME="sp11-kernel-apt-provenance.txt"
 BUILD_INPUTS_NAME="sp11-kernel-build-inputs.txt"
+TOUCHSCREEN_SIGNING_CERTIFICATE_NAME="sp11-module-signing-cert.x509"
+KERNEL_SIGNATURE_REPORT_NAME="sp11-kernel-module-signatures.txt"
+MODULE_SIGNING_POLICY="sp11-controlled-rsa4096-sha512-v1"
 
 usage() {
   cat <<EOF
@@ -818,12 +823,22 @@ if [ "$binding_complete" = "true" ]; then
   APT_PROVENANCE="$(canonical_source_file "$APT_PROVENANCE")"
   BUILD_INPUTS="$(canonical_source_file "$BUILD_INPUTS")"
   TOUCHSCREEN_MODULE_MANIFEST="$(canonical_source_file "$TOUCHSCREEN_MODULE_MANIFEST")"
+  TOUCHSCREEN_SIGNING_CERTIFICATE="$(
+    canonical_source_file \
+      "$(dirname "$TOUCHSCREEN_MODULE_MANIFEST")/$TOUCHSCREEN_SIGNING_CERTIFICATE_NAME"
+  )"
+  KERNEL_SIGNATURE_REPORT="$(
+    canonical_source_file \
+      "$(dirname "$KERNEL_BUILD_MANIFEST")/$KERNEL_SIGNATURE_REPORT_NAME"
+  )"
   IMAGE_BUILD_MANIFEST="$(canonical_source_file "$IMAGE_BUILD_MANIFEST")"
   kernel_build_manifest_base="$(basename "$KERNEL_BUILD_MANIFEST")"
   kernel_release_manifest_base="$(basename "$KERNEL_RELEASE_MANIFEST")"
   apt_provenance_base="$(basename "$APT_PROVENANCE")"
   build_inputs_base="$(basename "$BUILD_INPUTS")"
   touchscreen_module_manifest_base="$(basename "$TOUCHSCREEN_MODULE_MANIFEST")"
+  touchscreen_signing_certificate_base="$(basename "$TOUCHSCREEN_SIGNING_CERTIFICATE")"
+  kernel_signature_report_base="$(basename "$KERNEL_SIGNATURE_REPORT")"
   image_build_manifest_base="$(basename "$IMAGE_BUILD_MANIFEST")"
   [ "$kernel_build_manifest_base" = "sp11-kernel-build-manifest.txt" ] || {
     echo "Kernel build manifest basename must be sp11-kernel-build-manifest.txt." >&2
@@ -845,6 +860,14 @@ if [ "$binding_complete" = "true" ]; then
     echo "Touchscreen module manifest basename must be sp11-touchscreen-modules-manifest.txt." >&2
     exit 2
   }
+  [ "$touchscreen_signing_certificate_base" = "$TOUCHSCREEN_SIGNING_CERTIFICATE_NAME" ] || {
+    echo "Touchscreen signing certificate basename must be $TOUCHSCREEN_SIGNING_CERTIFICATE_NAME." >&2
+    exit 2
+  }
+  [ "$kernel_signature_report_base" = "$KERNEL_SIGNATURE_REPORT_NAME" ] || {
+    echo "Kernel signature-report basename must be $KERNEL_SIGNATURE_REPORT_NAME." >&2
+    exit 2
+  }
   [ "$image_build_manifest_base" = "$IMAGE_BUILD_MANIFEST_NAME" ] || {
     echo "Image build manifest basename must be $IMAGE_BUILD_MANIFEST_NAME." >&2
     exit 2
@@ -855,6 +878,8 @@ if [ "$binding_complete" = "true" ]; then
     "$APT_PROVENANCE"
     "$BUILD_INPUTS"
     "$TOUCHSCREEN_MODULE_MANIFEST"
+    "$TOUCHSCREEN_SIGNING_CERTIFICATE"
+    "$KERNEL_SIGNATURE_REPORT"
     "$IMAGE_BUILD_MANIFEST"
   )
   for binding_path_index in "${!binding_paths[@]}"; do
@@ -870,6 +895,7 @@ if [ "$binding_complete" = "true" ]; then
 fi
 
 if [ "$source_complete" = "true" ] && [ "$binding_complete" = "true" ]; then
+  touchscreen_candidate_dir="$(dirname "$TOUCHSCREEN_MODULE_MANIFEST")"
   kernel_candidate_inputs=(
     "$KERNEL_SOURCE_ASSET"
     "$TOUCHSCREEN_SOURCE_ASSET"
@@ -878,6 +904,11 @@ if [ "$source_complete" = "true" ] && [ "$binding_complete" = "true" ]; then
     "$APT_PROVENANCE"
     "$BUILD_INPUTS"
     "$TOUCHSCREEN_MODULE_MANIFEST"
+    "$TOUCHSCREEN_SIGNING_CERTIFICATE"
+    "$KERNEL_SIGNATURE_REPORT"
+    "$touchscreen_candidate_dir/gpi.ko"
+    "$touchscreen_candidate_dir/spi-geni-qcom.ko"
+    "$touchscreen_candidate_dir/mshw0485_touch.ko"
   )
   KERNEL_CANDIDATE_ROOT="$(dirname "${kernel_candidate_inputs[0]}")"
   for kernel_candidate_input in "${kernel_candidate_inputs[@]}"; do
@@ -1143,6 +1174,8 @@ if [ "$source_complete" = "true" ] || [ "$binding_complete" = "true" ]; then
       "$APT_PROVENANCE"
       "$BUILD_INPUTS"
       "$TOUCHSCREEN_MODULE_MANIFEST"
+      "$TOUCHSCREEN_SIGNING_CERTIFICATE"
+      "$KERNEL_SIGNATURE_REPORT"
       "$IMAGE_BUILD_MANIFEST"
     )
   fi
@@ -1173,6 +1206,8 @@ if [ "$source_complete" = "true" ] || [ "$binding_complete" = "true" ]; then
     APT_PROVENANCE="$SOURCE_SNAPSHOT_DIR/$apt_provenance_base"
     BUILD_INPUTS="$SOURCE_SNAPSHOT_DIR/$build_inputs_base"
     TOUCHSCREEN_MODULE_MANIFEST="$SOURCE_SNAPSHOT_DIR/$touchscreen_module_manifest_base"
+    TOUCHSCREEN_SIGNING_CERTIFICATE="$SOURCE_SNAPSHOT_DIR/$touchscreen_signing_certificate_base"
+    KERNEL_SIGNATURE_REPORT="$SOURCE_SNAPSHOT_DIR/$kernel_signature_report_base"
     IMAGE_BUILD_MANIFEST="$SOURCE_SNAPSHOT_DIR/$image_build_manifest_base"
   fi
 fi
@@ -1201,12 +1236,16 @@ if [ "$binding_complete" = "true" ]; then
   apt_provenance_size="$(file_size "$APT_PROVENANCE")"
   build_inputs_size="$(file_size "$BUILD_INPUTS")"
   touchscreen_module_manifest_size="$(file_size "$TOUCHSCREEN_MODULE_MANIFEST")"
+  touchscreen_signing_certificate_size="$(file_size "$TOUCHSCREEN_SIGNING_CERTIFICATE")"
+  kernel_signature_report_size="$(file_size "$KERNEL_SIGNATURE_REPORT")"
   image_build_manifest_size="$(file_size "$IMAGE_BUILD_MANIFEST")"
   kernel_build_manifest_snapshot_sha="$(shasum -a 256 "$KERNEL_BUILD_MANIFEST" | awk '{print $1}')"
   kernel_release_manifest_snapshot_sha="$(shasum -a 256 "$KERNEL_RELEASE_MANIFEST" | awk '{print $1}')"
   apt_provenance_snapshot_sha="$(shasum -a 256 "$APT_PROVENANCE" | awk '{print $1}')"
   build_inputs_snapshot_sha="$(shasum -a 256 "$BUILD_INPUTS" | awk '{print $1}')"
   touchscreen_module_manifest_snapshot_sha="$(shasum -a 256 "$TOUCHSCREEN_MODULE_MANIFEST" | awk '{print $1}')"
+  touchscreen_signing_certificate_snapshot_sha="$(shasum -a 256 "$TOUCHSCREEN_SIGNING_CERTIFICATE" | awk '{print $1}')"
+  kernel_signature_report_snapshot_sha="$(shasum -a 256 "$KERNEL_SIGNATURE_REPORT" | awk '{print $1}')"
   image_build_manifest_snapshot_sha="$(shasum -a 256 "$IMAGE_BUILD_MANIFEST" | awk '{print $1}')"
 fi
 
@@ -1222,6 +1261,7 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     --file "$APT_PROVENANCE" \
     --file "$BUILD_INPUTS" \
     --file "$TOUCHSCREEN_MODULE_MANIFEST" \
+    --file "$KERNEL_SIGNATURE_REPORT" \
     --file "$IMAGE_BUILD_MANIFEST"
   source_archive_validator="$repo_dir/scripts/validate-sp11-source-archive.py"
   [ -f "$source_archive_validator" ] && [ ! -L "$source_archive_validator" ] || {
@@ -1278,6 +1318,19 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   build_support_end="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Support end HEAD")"
   build_source_head="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Source HEAD")"
   build_patched_tree="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Patched tree ID")"
+  build_module_signing_policy="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Module signing policy")"
+  build_module_signing_private_material_retained="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Module signing private material retained")"
+  build_signing_certificate_sha="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Signing certificate SHA256")"
+  build_signing_certificate_fingerprint="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Signing certificate fingerprint")"
+  build_signing_certificate_serial="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Signing certificate serial")"
+  build_kernel_signature_report_asset="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module signature report asset")"
+  build_kernel_signature_report_size="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module signature report size")"
+  build_kernel_signature_report_sha="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module signature report SHA256")"
+  build_kernel_signature_report_schema="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module signature report schema")"
+  build_kernel_module_total_count="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module total count")"
+  build_kernel_module_verified_signed_count="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module verified signed count")"
+  build_kernel_module_policy_allowed_unsigned_count="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module policy-allowed unsigned count")"
+  build_kernel_module_unsigned_path_inventory_sha="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Kernel module unsigned-path inventory SHA256")"
   build_output_count="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Output count")"
   build_deb_count="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Deb count")"
   if [ "$build_schema" != "sp11-kernel-build-v2" ] || [ "$build_release" != "true" ] ||
@@ -1285,6 +1338,23 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     ! [[ "$build_support_start" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]] ||
     ! [[ "$build_source_head" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]] ||
     ! [[ "$build_patched_tree" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]] ||
+    [ "$build_module_signing_policy" != "$MODULE_SIGNING_POLICY" ] ||
+    [ "$build_module_signing_private_material_retained" != "false" ] ||
+    ! [[ "$build_signing_certificate_sha" =~ ^[0-9a-f]{64}$ ]] ||
+    ! [[ "$build_signing_certificate_fingerprint" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] ||
+    ! [[ "$build_signing_certificate_serial" =~ ^[0-9A-F]+$ ]] ||
+    [ "$build_kernel_signature_report_asset" != "$KERNEL_SIGNATURE_REPORT_NAME" ] ||
+    [ "$build_kernel_signature_report_size" != "$kernel_signature_report_size" ] ||
+    [ "$build_kernel_signature_report_sha" != "$kernel_signature_report_snapshot_sha" ] ||
+    [ "$build_kernel_signature_report_schema" != "sp11-kernel-module-signature-verification-v1" ] ||
+    ! [[ "$build_kernel_module_total_count" =~ ^[1-9][0-9]*$ ]] ||
+    ! [[ "$build_kernel_module_verified_signed_count" =~ ^(0|[1-9][0-9]*)$ ]] ||
+    ! [[ "$build_kernel_module_policy_allowed_unsigned_count" =~ ^(0|[1-9][0-9]*)$ ]] ||
+    ! [[ "$build_kernel_module_unsigned_path_inventory_sha" =~ ^[0-9a-f]{64}$ ]] ||
+    [ "$build_kernel_module_total_count" -ne $((
+      10#$build_kernel_module_verified_signed_count +
+        10#$build_kernel_module_policy_allowed_unsigned_count
+    )) ] ||
     ! [[ "$build_output_count" =~ ^[1-9][0-9]*$ ]] ||
     ! [[ "$build_deb_count" =~ ^[1-9][0-9]*$ ]]; then
     echo "Kernel build manifest is not complete schema-v2 release provenance." >&2
@@ -1297,6 +1367,7 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   build_kernel_config_sha=""
   build_kernel_symvers_sha=""
   build_kernel_dtb_sha=""
+  build_signing_certificate_output_sha=""
   binding_index=1
   while [ "$binding_index" -le "$build_output_count" ]; do
     build_output_role="$(required_manifest_value "$KERNEL_BUILD_MANIFEST" "Output $binding_index role")"
@@ -1323,6 +1394,12 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
         exit 1
       }
       build_kernel_dtb_sha="$build_output_sha"
+    elif [ "$build_output_role" = "module-signing-certificate" ]; then
+      [ -z "$build_signing_certificate_output_sha" ] || {
+        echo "Kernel build manifest contains duplicate module-signing-certificate outputs." >&2
+        exit 1
+      }
+      build_signing_certificate_output_sha="$build_output_sha"
     fi
     binding_index=$((binding_index + 1))
   done
@@ -1336,6 +1413,10 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   }
   [ -n "$build_kernel_dtb_sha" ] || {
     echo "Kernel build manifest is missing its denali-oled-dtb output identity." >&2
+    exit 1
+  }
+  [ "$build_signing_certificate_output_sha" = "$build_signing_certificate_sha" ] || {
+    echo "Kernel build manifest signing certificate output and metadata disagree." >&2
     exit 1
   }
   if ! python3 "$image_build_manifest_validator" \
@@ -1387,6 +1468,19 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   release_support="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Support repo commit")"
   release_source_head="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Source HEAD")"
   release_patched_tree="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Patched tree ID")"
+  release_module_signing_policy="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Module signing policy")"
+  release_module_signing_private_material_retained="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Module signing private material retained")"
+  release_signing_certificate_sha="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Signing certificate SHA256")"
+  release_signing_certificate_fingerprint="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Signing certificate fingerprint")"
+  release_signing_certificate_serial="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Signing certificate serial")"
+  release_kernel_signature_report_asset="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module signature report asset")"
+  release_kernel_signature_report_size="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module signature report size")"
+  release_kernel_signature_report_sha="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module signature report SHA256")"
+  release_kernel_signature_report_schema="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module signature report schema")"
+  release_kernel_module_total_count="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module total count")"
+  release_kernel_module_verified_signed_count="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module verified signed count")"
+  release_kernel_module_policy_allowed_unsigned_count="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module policy-allowed unsigned count")"
+  release_kernel_module_unsigned_path_inventory_sha="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel module unsigned-path inventory SHA256")"
   release_kernel_source="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel source archive")"
   release_kernel_source_sha="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel source archive SHA256")"
   release_kernel_source_tree="$(required_manifest_value "$KERNEL_RELEASE_MANIFEST" "Kernel source tree ID")"
@@ -1445,6 +1539,19 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     [ "$release_completed" != "true" ] || [ "$release_support" != "$build_support_start" ] ||
     [ "$release_source_head" != "$build_source_head" ] ||
     [ "$release_patched_tree" != "$build_patched_tree" ] ||
+    [ "$release_module_signing_policy" != "$build_module_signing_policy" ] ||
+    [ "$release_module_signing_private_material_retained" != "$build_module_signing_private_material_retained" ] ||
+    [ "$release_signing_certificate_sha" != "$build_signing_certificate_sha" ] ||
+    [ "$release_signing_certificate_fingerprint" != "$build_signing_certificate_fingerprint" ] ||
+    [ "$release_signing_certificate_serial" != "$build_signing_certificate_serial" ] ||
+    [ "$release_kernel_signature_report_asset" != "$build_kernel_signature_report_asset" ] ||
+    [ "$release_kernel_signature_report_size" != "$build_kernel_signature_report_size" ] ||
+    [ "$release_kernel_signature_report_sha" != "$build_kernel_signature_report_sha" ] ||
+    [ "$release_kernel_signature_report_schema" != "$build_kernel_signature_report_schema" ] ||
+    [ "$release_kernel_module_total_count" != "$build_kernel_module_total_count" ] ||
+    [ "$release_kernel_module_verified_signed_count" != "$build_kernel_module_verified_signed_count" ] ||
+    [ "$release_kernel_module_policy_allowed_unsigned_count" != "$build_kernel_module_policy_allowed_unsigned_count" ] ||
+    [ "$release_kernel_module_unsigned_path_inventory_sha" != "$build_kernel_module_unsigned_path_inventory_sha" ] ||
     [ "$release_kernel_source_tree" != "$build_patched_tree" ] ||
     [ "$release_kernel_source" != "$kernel_source_base" ] ||
     [ "$release_touch_source" != "$touchscreen_source_base" ] ||
@@ -1519,6 +1626,28 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
   module_kernel_config_sha="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Kernel config SHA256")"
   module_kernel_symvers_sha="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Kernel Module.symvers SHA256")"
   module_kernel_headers_mode="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Kernel headers input mode")"
+  module_signing_policy="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module signing policy")"
+  module_signing_private_material_retained="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module signing private material retained")"
+  module_signing_hash_algorithm="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module signing hash algorithm")"
+  module_signing_certificate_asset="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module signing certificate asset")"
+  module_signing_certificate_sha="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module signing certificate SHA256")"
+  module_signing_certificate_fingerprint="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module signing certificate fingerprint")"
+  module_signing_certificate_serial="$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module signing certificate serial")"
+  module_names=(gpi.ko spi-geni-qcom.ko mshw0485_touch.ko)
+  module_sizes=()
+  module_shas=()
+  module_payload_sizes=()
+  module_payload_shas=()
+  module_signature_sizes=()
+  module_signature_shas=()
+  for module_name in "${module_names[@]}"; do
+    module_sizes+=("$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module $module_name size")")
+    module_shas+=("$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module $module_name SHA256")")
+    module_payload_sizes+=("$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module $module_name payload size")")
+    module_payload_shas+=("$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module $module_name payload SHA256")")
+    module_signature_sizes+=("$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module $module_name signature size")")
+    module_signature_shas+=("$(required_manifest_value "$TOUCHSCREEN_MODULE_MANIFEST" "Module $module_name signature SHA256")")
+  done
   if [ "$module_contract" != "sp11-touchscreen-source-v1" ] ||
     [ "$bound_module_release_name" != "$bound_kernel_release_name" ] ||
     { [ "$module_object_format" != "sha1" ] && [ "$module_object_format" != "sha256" ]; } ||
@@ -1530,8 +1659,55 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     [ "$module_kernel_config_sha" != "$build_kernel_config_sha" ] ||
     [ "$module_kernel_symvers_sha" != "$build_kernel_symvers_sha" ] ||
     [ "$module_kernel_headers_mode" != "extracted-debs-v1" ] ||
-    [ "$module_kernel_headers_mode" != "$release_touch_headers_mode" ]; then
+    [ "$module_kernel_headers_mode" != "$release_touch_headers_mode" ] ||
+    [ "$module_signing_policy" != "$build_module_signing_policy" ] ||
+    [ "$module_signing_private_material_retained" != "$build_module_signing_private_material_retained" ] ||
+    [ "$module_signing_hash_algorithm" != "sha512" ] ||
+    [ "$module_signing_certificate_asset" != "$TOUCHSCREEN_SIGNING_CERTIFICATE_NAME" ] ||
+    [ "$module_signing_certificate_sha" != "$build_signing_certificate_sha" ] ||
+    [ "$module_signing_certificate_fingerprint" != "$build_signing_certificate_fingerprint" ] ||
+    [ "$module_signing_certificate_serial" != "$build_signing_certificate_serial" ] ||
+    [ "$touchscreen_signing_certificate_snapshot_sha" != "$module_signing_certificate_sha" ]; then
     echo "Touchscreen module manifest does not match the kernel/source identity contract." >&2
+    exit 1
+  fi
+
+  expected_signed_module_report="$(
+    {
+      echo "Module signing policy: $module_signing_policy"
+      echo "Module signing private material retained: $module_signing_private_material_retained"
+      echo "Module signing hash algorithm: $module_signing_hash_algorithm"
+      echo "Module signing certificate asset: $module_signing_certificate_asset"
+      echo "Module signing certificate SHA256: $module_signing_certificate_sha"
+      echo "Module signing certificate fingerprint: $module_signing_certificate_fingerprint"
+      echo "Module signing certificate serial: $module_signing_certificate_serial"
+      echo "Windows SE init default: disabled"
+      module_index=0
+      while [ "$module_index" -lt "${#module_names[@]}" ]; do
+        module_name="${module_names[$module_index]}"
+        echo "Module $module_name size: ${module_sizes[$module_index]}"
+        echo "Module $module_name SHA256: ${module_shas[$module_index]}"
+        echo "Module $module_name payload size: ${module_payload_sizes[$module_index]}"
+        echo "Module $module_name payload SHA256: ${module_payload_shas[$module_index]}"
+        echo "Module $module_name signature size: ${module_signature_sizes[$module_index]}"
+        echo "Module $module_name signature SHA256: ${module_signature_shas[$module_index]}"
+        module_index=$((module_index + 1))
+      done
+    }
+  )"
+  signed_module_validator="$repo_dir/scripts/validate-sp11-signed-modules.py"
+  [ -x "$signed_module_validator" ] && [ ! -L "$signed_module_validator" ] || {
+    echo "Committed controlled signed-module validator is unavailable." >&2
+    exit 1
+  }
+  if ! signed_module_report="$(
+    /usr/bin/python3 -I "$signed_module_validator" \
+      --certificate "$touchscreen_candidate_dir/$TOUCHSCREEN_SIGNING_CERTIFICATE_NAME" \
+      --module "$touchscreen_candidate_dir/gpi.ko" \
+      --module "$touchscreen_candidate_dir/spi-geni-qcom.ko" \
+      --module "$touchscreen_candidate_dir/mshw0485_touch.ko"
+  )" || [ "$signed_module_report" != "$expected_signed_module_report" ]; then
+    echo "Touchscreen release manifest or bundle failed cryptographic signature validation." >&2
     exit 1
   fi
 
@@ -1602,6 +1778,9 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     }
     printf '%s  %s\n' "$payload_sha" "$payload_name" >> "$shell_expected_payload"
   done
+  printf '%s  %s\n' \
+    "$touchscreen_signing_certificate_snapshot_sha" \
+    "$touchscreen_signing_certificate_base" >> "$shell_expected_payload"
   printf '%s  %s\n' \
     "$touchscreen_module_manifest_snapshot_sha" \
     "$touchscreen_module_manifest_base" >> "$shell_expected_payload"
@@ -1814,18 +1993,24 @@ if [ "$source_complete" = "true" ]; then
     mv "$APT_PROVENANCE" "$OUT_DIR/$apt_provenance_base"
     mv "$BUILD_INPUTS" "$OUT_DIR/$build_inputs_base"
     mv "$TOUCHSCREEN_MODULE_MANIFEST" "$OUT_DIR/$touchscreen_module_manifest_base"
+    mv "$TOUCHSCREEN_SIGNING_CERTIFICATE" "$OUT_DIR/$touchscreen_signing_certificate_base"
+    mv "$KERNEL_SIGNATURE_REPORT" "$OUT_DIR/$kernel_signature_report_base"
     mv "$IMAGE_BUILD_MANIFEST" "$OUT_DIR/$image_build_manifest_base"
     KERNEL_BUILD_MANIFEST="$OUT_DIR/$kernel_build_manifest_base"
     KERNEL_RELEASE_MANIFEST="$OUT_DIR/$kernel_release_manifest_base"
     APT_PROVENANCE="$OUT_DIR/$apt_provenance_base"
     BUILD_INPUTS="$OUT_DIR/$build_inputs_base"
     TOUCHSCREEN_MODULE_MANIFEST="$OUT_DIR/$touchscreen_module_manifest_base"
+    TOUCHSCREEN_SIGNING_CERTIFICATE="$OUT_DIR/$touchscreen_signing_certificate_base"
+    KERNEL_SIGNATURE_REPORT="$OUT_DIR/$kernel_signature_report_base"
     IMAGE_BUILD_MANIFEST="$OUT_DIR/$image_build_manifest_base"
     if [ "$(shasum -a 256 "$KERNEL_BUILD_MANIFEST" | awk '{print $1}')" != "$kernel_build_manifest_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$KERNEL_RELEASE_MANIFEST" | awk '{print $1}')" != "$kernel_release_manifest_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$APT_PROVENANCE" | awk '{print $1}')" != "$apt_provenance_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$BUILD_INPUTS" | awk '{print $1}')" != "$build_inputs_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$TOUCHSCREEN_MODULE_MANIFEST" | awk '{print $1}')" != "$touchscreen_module_manifest_snapshot_sha" ] ||
+      [ "$(shasum -a 256 "$TOUCHSCREEN_SIGNING_CERTIFICATE" | awk '{print $1}')" != "$touchscreen_signing_certificate_snapshot_sha" ] ||
+      [ "$(shasum -a 256 "$KERNEL_SIGNATURE_REPORT" | awk '{print $1}')" != "$kernel_signature_report_snapshot_sha" ] ||
       [ "$(shasum -a 256 "$IMAGE_BUILD_MANIFEST" | awk '{print $1}')" != "$image_build_manifest_snapshot_sha" ]; then
       echo "Staged source-binding manifests changed after validation." >&2
       exit 1
@@ -1836,6 +2021,8 @@ if [ "$source_complete" = "true" ]; then
       "$apt_provenance_base"
       "$build_inputs_base"
       "$touchscreen_module_manifest_base"
+      "$touchscreen_signing_certificate_base"
+      "$kernel_signature_report_base"
       "$image_build_manifest_base"
     )
   fi
@@ -1873,6 +2060,22 @@ fi
     echo "Touchscreen module manifest asset: $touchscreen_module_manifest_base"
     echo "Touchscreen module manifest size: $touchscreen_module_manifest_size"
     echo "Touchscreen module manifest SHA256: $touchscreen_module_manifest_snapshot_sha"
+    echo "Module signing policy: $module_signing_policy"
+    echo "Module signing private material retained: $module_signing_private_material_retained"
+    echo "Module signing hash algorithm: $module_signing_hash_algorithm"
+    echo "Module signing certificate asset: $touchscreen_signing_certificate_base"
+    echo "Module signing certificate size: $touchscreen_signing_certificate_size"
+    echo "Module signing certificate SHA256: $touchscreen_signing_certificate_snapshot_sha"
+    echo "Module signing certificate fingerprint: $module_signing_certificate_fingerprint"
+    echo "Module signing certificate serial: $module_signing_certificate_serial"
+    echo "Kernel module signature report asset: $kernel_signature_report_base"
+    echo "Kernel module signature report size: $kernel_signature_report_size"
+    echo "Kernel module signature report SHA256: $kernel_signature_report_snapshot_sha"
+    echo "Kernel module signature report schema: $build_kernel_signature_report_schema"
+    echo "Kernel module total count: $build_kernel_module_total_count"
+    echo "Kernel module verified signed count: $build_kernel_module_verified_signed_count"
+    echo "Kernel module policy-allowed unsigned count: $build_kernel_module_policy_allowed_unsigned_count"
+    echo "Kernel module unsigned-path inventory SHA256: $build_kernel_module_unsigned_path_inventory_sha"
     echo "Image build manifest asset: $image_build_manifest_base"
     echo "Image build manifest size: $image_build_manifest_size"
     echo "Image build manifest SHA256: $image_build_manifest_snapshot_sha"
@@ -1939,6 +2142,8 @@ fi
         "$apt_provenance_base" \
         "$build_inputs_base" \
         "$touchscreen_module_manifest_base" \
+        "$touchscreen_signing_certificate_base" \
+        "$kernel_signature_report_base" \
         "$image_build_manifest_base"; do
         echo "- $binding_file"
         echo "  - SHA256: $(shasum -a 256 "$OUT_DIR/$binding_file" | awk '{print $1}')"
@@ -1982,6 +2187,22 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     'Touchscreen module manifest asset' \
     'Touchscreen module manifest size' \
     'Touchscreen module manifest SHA256' \
+    'Module signing policy' \
+    'Module signing private material retained' \
+    'Module signing hash algorithm' \
+    'Module signing certificate asset' \
+    'Module signing certificate size' \
+    'Module signing certificate SHA256' \
+    'Module signing certificate fingerprint' \
+    'Module signing certificate serial' \
+    'Kernel module signature report asset' \
+    'Kernel module signature report size' \
+    'Kernel module signature report SHA256' \
+    'Kernel module signature report schema' \
+    'Kernel module total count' \
+    'Kernel module verified signed count' \
+    'Kernel module policy-allowed unsigned count' \
+    'Kernel module unsigned-path inventory SHA256' \
     'Image build manifest asset' \
     'Image build manifest size' \
     'Image build manifest SHA256' \
@@ -2059,6 +2280,8 @@ outer_manifest_sha="$(shasum -a 256 "$OUT_DIR/$MANIFEST_NAME" | awk '{print $1}'
         "$apt_provenance_base"
         "$build_inputs_base"
         "$touchscreen_module_manifest_base"
+        "$touchscreen_signing_certificate_base"
+        "$kernel_signature_report_base"
         "$image_build_manifest_base"
       )
     fi
@@ -2078,8 +2301,11 @@ cat > "$OUT_DIR/RELEASE-NOTES.md" <<RELEASE_NOTES_END
 
 Experimental direct-boot Ubuntu live USB raw disk image for Surface Pro 11.
 
-This image is an optional convenience artifact. It is not signed, is not an
-installer ISO, and should be written only to the intended removable device.
+This image is an optional convenience artifact. The raw image has no separate
+release-asset signature, is not an installer ISO, and should be written only to
+the intended removable device. Its embedded kernel and touchscreen modules use
+the controlled signing policy recorded in the release manifest, with public
+certificate `$TOUCHSCREEN_SIGNING_CERTIFICATE_NAME` included for verification.
 
 ## Installed-system payloads
 
@@ -2136,7 +2362,9 @@ $(if [ "$source_complete" = "true" ]; then
     "The release includes \`$kernel_source_base\`," \
     "\`$touchscreen_source_base\`, \`$SOURCE_NOTICE_NAME\`, and" \
     "\`$SOURCE_CHECKSUM_NAME\`. The supplied image-build, kernel-build," \
-    "kernel-release, APT-provenance, build-inputs, and module manifests" \
+    "kernel-release, APT-provenance, build-inputs, and module manifests, plus" \
+    "the public module-signing certificate and" \
+    "\`$KERNEL_SIGNATURE_REPORT_NAME\` verification report," \
     "cryptographically bind those archives," \
     "the embedded ISO/DTB/support tree, and the image payload." \
     "Together they cover the patched kernel and exact" \
@@ -2148,8 +2376,9 @@ fi)
 
 ## Provenance
 
-See \`$MANIFEST_NAME\` for image size, checksum, support repository commit, and
-validation status. The raw image is intentionally split into compressed parts
+See \`$MANIFEST_NAME\` for image size, checksum, support repository commit,
+controlled kernel-module signature counts, and validation status. The raw image
+is intentionally split into compressed parts
 because GitHub release assets must be smaller than $GITHUB_ASSET_LIMIT_BYTES
 bytes each.
 
@@ -2161,8 +2390,8 @@ Publication remains blocked. $(if [ "$VALIDATE_IMAGE" = "true" ] &&
   printf '%s' 'The immutable APT and build-input propagation attestation is complete, but'
 else
   printf '%s' 'This local draft has incomplete kernel-provenance propagation, and'
-fi) this preparation does not waive the independent real-build, signing,
-recovery, corresponding-source, or release-authorization gates. The interim
+fi) this preparation does not waive the independent real-build, recovery,
+corresponding-source, or release-authorization gates. The interim
 licence/UCM direction is recorded in LEGAL.md with final reviews pending; those
 reviews are disclosure obligations rather than a blanket block on newly
 authored artifacts.
@@ -2180,6 +2409,7 @@ if [ "$VALIDATE_IMAGE" = "true" ]; then
     --file "$OUT_DIR/$apt_provenance_base"
     --file "$OUT_DIR/$build_inputs_base"
     --file "$OUT_DIR/$touchscreen_module_manifest_base"
+    --file "$OUT_DIR/$kernel_signature_report_base"
     --file "$OUT_DIR/$image_build_manifest_base"
     --file "$OUT_DIR/SHA256SUMS"
     --file "$OUT_DIR/RELEASE-NOTES.md"
@@ -2206,6 +2436,8 @@ if [ "$source_complete" = "true" ]; then
       "$apt_provenance_base"
       "$build_inputs_base"
       "$touchscreen_module_manifest_base"
+      "$touchscreen_signing_certificate_base"
+      "$kernel_signature_report_base"
       "$image_build_manifest_base"
     )
   fi
@@ -2331,6 +2563,8 @@ verify_prepared_output() {
       "$apt_provenance_base"
       "$build_inputs_base"
       "$touchscreen_module_manifest_base"
+      "$touchscreen_signing_certificate_base"
+      "$kernel_signature_report_base"
       "$image_build_manifest_base"
     )
     local binding_labels=(
@@ -2339,6 +2573,8 @@ verify_prepared_output() {
       'APT provenance'
       'Build inputs'
       'Touchscreen module manifest'
+      'Touchscreen public signing certificate'
+      'Kernel module signature report'
       'Image build manifest'
     )
     local binding_sizes=(
@@ -2347,6 +2583,8 @@ verify_prepared_output() {
       "$apt_provenance_size"
       "$build_inputs_size"
       "$touchscreen_module_manifest_size"
+      "$touchscreen_signing_certificate_size"
+      "$kernel_signature_report_size"
       "$image_build_manifest_size"
     )
     local binding_shas=(
@@ -2355,6 +2593,8 @@ verify_prepared_output() {
       "$apt_provenance_snapshot_sha"
       "$build_inputs_snapshot_sha"
       "$touchscreen_module_manifest_snapshot_sha"
+      "$touchscreen_signing_certificate_snapshot_sha"
+      "$kernel_signature_report_snapshot_sha"
       "$image_build_manifest_snapshot_sha"
     )
     binding_index=0
@@ -2423,6 +2663,22 @@ verify_prepared_output() {
       'Touchscreen module manifest asset'
       'Touchscreen module manifest size'
       'Touchscreen module manifest SHA256'
+      'Module signing policy'
+      'Module signing private material retained'
+      'Module signing hash algorithm'
+      'Module signing certificate asset'
+      'Module signing certificate size'
+      'Module signing certificate SHA256'
+      'Module signing certificate fingerprint'
+      'Module signing certificate serial'
+      'Kernel module signature report asset'
+      'Kernel module signature report size'
+      'Kernel module signature report SHA256'
+      'Kernel module signature report schema'
+      'Kernel module total count'
+      'Kernel module verified signed count'
+      'Kernel module policy-allowed unsigned count'
+      'Kernel module unsigned-path inventory SHA256'
       'Image build manifest asset'
       'Image build manifest size'
       'Image build manifest SHA256'
@@ -2459,6 +2715,22 @@ verify_prepared_output() {
       "$touchscreen_module_manifest_base"
       "$touchscreen_module_manifest_size"
       "$touchscreen_module_manifest_snapshot_sha"
+      "$module_signing_policy"
+      "$module_signing_private_material_retained"
+      "$module_signing_hash_algorithm"
+      "$touchscreen_signing_certificate_base"
+      "$touchscreen_signing_certificate_size"
+      "$touchscreen_signing_certificate_snapshot_sha"
+      "$module_signing_certificate_fingerprint"
+      "$module_signing_certificate_serial"
+      "$kernel_signature_report_base"
+      "$kernel_signature_report_size"
+      "$kernel_signature_report_snapshot_sha"
+      "$build_kernel_signature_report_schema"
+      "$build_kernel_module_total_count"
+      "$build_kernel_module_verified_signed_count"
+      "$build_kernel_module_policy_allowed_unsigned_count"
+      "$build_kernel_module_unsigned_path_inventory_sha"
       "$image_build_manifest_base"
       "$image_build_manifest_size"
       "$image_build_manifest_snapshot_sha"
@@ -2582,6 +2854,7 @@ verify_prepared_output() {
         --file "$prepared_dir/$apt_provenance_base"
         --file "$prepared_dir/$build_inputs_base"
         --file "$prepared_dir/$touchscreen_module_manifest_base"
+        --file "$prepared_dir/$kernel_signature_report_base"
         --file "$prepared_dir/$image_build_manifest_base"
       )
     fi
@@ -2741,4 +3014,4 @@ if [ "$VALIDATE_IMAGE" != "true" ] || [ "$source_complete" != "true" ] ||
 else
   echo "Validated preparation only: immutable kernel provenance propagation is complete."
 fi
-echo "NO-PUBLISH: independent real-build, signing, recovery, corresponding-source, and release-authorization gates remain open; final licence/UCM reviews remain disclosed in LEGAL.md."
+echo "NO-PUBLISH: independent real-build, recovery, corresponding-source, and release-authorization gates remain open; final licence/UCM reviews remain disclosed in LEGAL.md."

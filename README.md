@@ -91,6 +91,16 @@ live-FDT provenance. Live-USB `/dtb/sp11-denali.dtb` handling is a separate
 boot path. See
 [ADR0055](docs/adr/adr-0055-retire-installed-loose-dtb-injection.md).
 
+Future release candidates must use the owner-controlled module-signing identity selected
+in [ADR0056](docs/adr/adr-0056-controlled-sp11-module-signing.md). The encrypted
+private key remains outside Git; only the fixed public certificate identity is
+bound into kernel and exact-ABI touchscreen evidence. The approved public
+certificate is tracked at
+[`config/kernel-signing/sp11-module-signing-cert.pem`](config/kernel-signing/sp11-module-signing-cert.pem).
+Release evidence must verify every appended signature and enumerate the exact
+reviewed Ubuntu-policy unsigned-module paths.
+Secure Boot remains disabled and unsupported.
+
 ## Quick Start
 
 The custom live-USB builder creates a small ARM64 GRUB boot shim, stores the
@@ -277,10 +287,11 @@ sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
 If networking is unavailable, mount the Windows partition and use Windows
 firmware instead: `--windows-root "$WINROOT"` (see the script `--help`).
 
-Then install the patched kernel payload from the USB. For an `sp11v3` payload,
-keep `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` beside the `.deb`
-files; the same command installs the exact-ABI module set and verifies the
-rebuilt initramfs:
+Then install the patched kernel payload from the USB. For a published
+controlled-signing `sp11v3r2` payload, keep `gpi.ko`, `spi-geni-qcom.ko`,
+`mshw0485_touch.ko`, `sp11-module-signing-cert.x509`, and
+`sp11-touchscreen-modules-manifest.txt` beside the `.deb` files. The same
+command installs the exact-ABI module set and verifies the rebuilt initramfs:
 
 ```bash
 cd "$SP11DATA/support"
@@ -291,16 +302,17 @@ sudo reboot
 Keep the previous qcom-x1e kernel as a GRUB fallback until the patched kernel
 has booted and Wi-Fi rfkill state has been validated.
 
-The installer refuses an `sp11v3` kernel with a missing or mismatched module
-bundle before invoking `apt`. `--skip-touchscreen-modules` is available for a
-deliberate kernel-development install, but touch will remain unavailable until
+The installer refuses an `sp11v3r2` kernel with a missing or mismatched module
+bundle, certificate, or manifest before invoking `apt`.
+`--skip-touchscreen-modules` is available for a deliberate kernel-development
+install, but touch will remain unavailable until
 `install-sp11-touchscreen.sh` completes.
 
 For a direct local installation instead of the USB payload flow, place all four
 matching `.deb` packages in one directory and run the same helper against that
-directory. An `sp11v3` directory must also contain the release's matching
-`gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files. For example, with
-the verified release assets downloaded to `$HOME/Downloads`:
+directory. An `sp11v3r2` directory must also contain the release's matching
+three modules, public certificate, and module manifest listed above. For
+example, with the verified release assets downloaded to `$HOME/Downloads`:
 
 ```bash
 cd /path/to/linux-surface-pro-11-oe
@@ -310,11 +322,15 @@ cd /path/to/linux-surface-pro-11-oe
 sudo reboot
 ```
 
-The current v3 bundle contains matching image, modules, flavour-header, and
-common-header packages for `7.2-rc5-jg-0sp11v3`, plus the three touchscreen
-modules. The older `7.1.3-jg-1sp11v2` package set remains a kernel-only rollback
-option. After reboot, verify the running kernel and the active device tree's
-requested DMIC rate:
+No fresh `sp11v3r2` bundle has been published yet; use this flow only after its
+release tag and complete controlled-signing asset set exist. The historical
+unsigned `sp11v3-r1` assets are not compatible with this checkout's current
+installer; use that release's immutable tagged checkout and instructions
+instead. The older `7.1.3-jg-1sp11v2` package set remains a kernel-only rollback
+option. See the
+[reinstallation guide](docs/how-to/how-to-reinstall-patched-kernel-from-usb.md)
+for the exact historical/current split. After reboot, verify the running kernel
+and the active device tree's requested DMIC rate:
 
 ```bash
 uname -r
@@ -322,7 +338,7 @@ od -An -tu4 -N4 --endian=big \
   /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
 ```
 
-Expected values are `7.2-rc5-jg-0sp11v3-qcom-x1e` (or
+Expected values are `7.2-rc5-jg-0sp11v3r2-qcom-x1e` (or
 `7.1.3-jg-1sp11v2-qcom-x1e` after selecting the rollback kernel) and `2400000`.
 The device-tree property is not a physical clock measurement at the microphone
 pins.
@@ -527,6 +543,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0053: One-Shot Experimental Kernel Boot](docs/adr/adr-0053-one-shot-experimental-kernel-boot.md)
 - [ADR0054: Surface Pro 11 G6 HID Ownership](docs/adr/adr-0054-sp11-g6-hid-ownership.md)
 - [ADR0055: Retire Installed Loose-DTB Injection on the Tested Stubble Path](docs/adr/adr-0055-retire-installed-loose-dtb-injection.md)
+- [ADR0056: Use Controlled Reproducible Module Signing for SP11 Releases](docs/adr/adr-0056-controlled-sp11-module-signing.md)
 
 ## Windows Firmware
 

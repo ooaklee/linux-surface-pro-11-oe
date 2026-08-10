@@ -52,7 +52,7 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 # Print only file names. A CI log must not echo a secret that this check finds.
-prohibited_pattern='(/Users/[[:alnum:]_.-]+/|/home/[[:alnum:]_.-]+/|[[:alnum:].-]+\.ngrok(-free)?\.(app|io)(:[0-9]+)?|BEGIN ((RSA|OPENSSH|EC|DSA) )?PRIVATE KEY|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|AnyDesk|Live Share)'
+prohibited_pattern='(/Users/[[:alnum:]_.-]+/|/home/[[:alnum:]_.-]+/|start\.1password\.com/open/|[[:alnum:].-]+\.ngrok(-free)?\.(app|io)(:[0-9]+)?|BEGIN ((ENCRYPTED|RSA|OPENSSH|EC|DSA) )?PRIVATE KEY|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|AnyDesk|Live Share)'
 
 matches=""
 if [ "${#explicit_files[@]}" -gt 0 ]; then

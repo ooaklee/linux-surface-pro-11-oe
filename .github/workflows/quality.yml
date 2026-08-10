@@ -75,6 +75,10 @@ jobs:
             tests/test-sp11-image-release-source-gate.sh \
             tests/test-sp11-image-binding-extractor.sh \
             tests/test-sp11-live-image-path-safety.sh \
+            tests/test-sp11-controlled-module-signing.sh \
+            tests/test-sp11-controlled-signing-inner.sh \
+            tests/test-sp11-controlled-signing-lifecycle.sh \
+            tests/test-sp11-kernel-baseline-signing-authority.sh \
             tests/test-sp11-module-signature-policy.sh \
             tests/test-sp11-support-tree-binding.sh \
             tests/test-sp11-audio-topology.sh \
@@ -83,12 +87,15 @@ jobs:
 
       - name: Check Python helper syntax
         run: |
-          python3 -c 'from pathlib import Path; [compile(path.read_text(), str(path), "exec") for path in (Path("scripts/compare-sp11-kernel-builds.py"), Path("scripts/compare-sp11-kernel-raw-builds.py"), Path("scripts/generate-sp11-kernel-source-archive.py"), Path("scripts/sp11-support-tree-manifest.py"), Path("scripts/sp11-release-tree-state.py"), Path("scripts/sp11-kernel-release-state.py"), Path("scripts/validate-sp11-image-build-manifest.py"), Path("scripts/validate-sp11-kernel-tree-symlinks.py"), Path("scripts/validate-sp11-module-signatures.py"), Path("scripts/validate-sp11-source-archive.py"), Path("scripts/validate-sp11-image-release-manifests.py"), Path("scripts/validate-sp11-oci-index.py"), Path("scripts/write-sp11-apt-provenance.py"), Path("scripts/sp11-kernel-build-inputs.py"), Path("tests/test-sp11-immutable-apt-provenance.py"), Path("tests/test-sp11-kernel-build-comparison.py"), Path("tests/test-sp11-kernel-raw-build-comparison.py"), Path("tests/test-sp11-kernel-release-state.py"))]'
+          python3 -c 'from pathlib import Path; [compile(path.read_text(), str(path), "exec") for path in (Path("scripts/compare-sp11-kernel-builds.py"), Path("scripts/compare-sp11-kernel-raw-builds.py"), Path("scripts/generate-sp11-kernel-source-archive.py"), Path("scripts/sp11-support-tree-manifest.py"), Path("scripts/sp11-release-tree-state.py"), Path("scripts/sp11-kernel-release-state.py"), Path("scripts/validate-sp11-image-build-manifest.py"), Path("scripts/validate-sp11-kernel-tree-symlinks.py"), Path("scripts/validate-sp11-module-signatures.py"), Path("scripts/validate-sp11-signed-modules.py"), Path("scripts/validate-sp11-source-archive.py"), Path("scripts/validate-sp11-image-release-manifests.py"), Path("scripts/validate-sp11-oci-index.py"), Path("scripts/write-sp11-apt-provenance.py"), Path("scripts/sp11-kernel-build-inputs.py"), Path("tests/test-sp11-immutable-apt-provenance.py"), Path("tests/test-sp11-kernel-build-comparison.py"), Path("tests/test-sp11-kernel-raw-build-comparison.py"), Path("tests/test-sp11-kernel-release-state.py"))]'
 
       - name: Validate provenance ledger
         run: |
           ./scripts/validate-sp11-source-ledger.sh
           ./scripts/validate-sp11-kernel-baseline.sh
+
+      - name: Test kernel baseline signing authority
+        run: ./tests/test-sp11-kernel-baseline-signing-authority.sh
 
       - name: Validate public thin-fork refs
         run: ./scripts/validate-sp11-kernel-fork-refs.sh
@@ -162,6 +169,15 @@ jobs:
       - name: Test module-signature package scanner
         run: ./tests/test-sp11-module-signature-policy.sh
 
+      - name: Test controlled module-signing verification
+        run: ./tests/test-sp11-controlled-module-signing.sh
+
+      - name: Test controlled module-signing lifecycle
+        run: ./tests/test-sp11-controlled-signing-lifecycle.sh
+
+      - name: Test controlled module-signing inner bridge
+        run: ./tests/test-sp11-controlled-signing-inner.sh
+
       - name: Test installed Stubble loose-DTB retirement
         run: sudo ./tests/test-install-sp11-support-stubble-retirement.sh
 
@@ -174,12 +190,11 @@ jobs:
       - name: Smoke-test patches against pinned kernel source
         run: ./scripts/test-sp11-kernel-patches.sh
 
-      - name: Exercise pinned kernel build command
+      - name: Exercise pinned non-release kernel build command
         run: |
           . config/kernel-baselines/7.2-rc5-jg-0.env
-          QUALITY_RELEASE_WORK=build/quality-kernel-release-dry-run
-          install -d -m 0700 "$QUALITY_RELEASE_WORK"
-          install -d -m 0700 "$QUALITY_RELEASE_WORK/artifacts"
+          QUALITY_KERNEL_WORK=build/quality-kernel-dry-run
+          install -d -m 0700 "$QUALITY_KERNEL_WORK"
           ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
             --source git \
             --git-url "$SP11_KERNEL_UPSTREAM_URL" \
@@ -189,6 +204,5 @@ jobs:
             --platform "$SP11_KERNEL_DOCKER_PLATFORM" \
             --patch-dirs "$SP11_KERNEL_PATCH_DIRS" \
             --build-target "$SP11_KERNEL_BUILD_TARGET" \
-            --work-dir "$QUALITY_RELEASE_WORK" \
-            --release-build \
+            --work-dir "$QUALITY_KERNEL_WORK" \
             --dry-run

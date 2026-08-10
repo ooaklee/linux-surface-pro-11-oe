@@ -35,6 +35,7 @@ REPO = Path(__file__).resolve().parents[1]
 SOURCE_COMPARATOR = REPO / "scripts/compare-sp11-kernel-raw-builds.py"
 APT_FIXTURES = REPO / "tests/test-sp11-immutable-apt-provenance.py"
 SUPPORT_FILES = (
+    "config/kernel-signing/sp11-module-signing-allowed-unsigned.txt",
     "scripts/compare-sp11-kernel-raw-builds.py",
     "scripts/sp11-kernel-build-inputs.py",
     "scripts/validate-sp11-image-release-manifests.py",
@@ -64,7 +65,7 @@ OUTPUTS = (
         "debian/build/build-qcom-x1e/certs/signing_key.x509",
     ),
 )
-VERSION = "7.2.0-1"
+VERSION = "7.2-rc5-jg-0sp11v3r2"
 ABI = f"{VERSION}-qcom-x1e"
 PACKAGE_IDENTITIES = {
     "common-headers": (f"linux-qcom-x1e-headers-{VERSION}", "all"),
@@ -397,11 +398,90 @@ class PairFixture:
                 )
             )
         certificate_sha = output_identities["module-signing-certificate"][1]
+        certificate_fingerprint = ":".join(
+            certificate_sha.upper()[index : index + 2]
+            for index in range(0, len(certificate_sha), 2)
+        )
+        signature_packages = [role for role in roles if role in ("modules", "modules-extra")]
+        unsigned_allowlist_raw = (
+            self.support
+            / "config/kernel-signing/sp11-module-signing-allowed-unsigned.txt"
+        ).read_bytes()
+        unsigned_allowlist = unsigned_allowlist_raw.decode("ascii").splitlines()
+        unsigned_count = len(unsigned_allowlist)
+        unsigned_inventory_sha = digest(unsigned_allowlist_raw)
+        signature_report_lines = [
+            "# Surface Pro 11 Kernel Module Signature Report",
+            "",
+            "Schema: sp11-kernel-module-signature-verification-v1",
+            f"Kernel ABI: {ABI}",
+            f"Package count: {len(signature_packages)}",
+        ]
+        for index, role in enumerate(signature_packages, 1):
+            package, architecture = PACKAGE_IDENTITIES[role]
+            filename = f"{package}_{VERSION}_{architecture}.deb"
+            raw = (artifacts / filename).read_bytes()
+            package_unsigned_count = unsigned_count if role == "modules" else 0
+            signature_report_lines.extend(
+                (
+                    f"Package {index} role: {role}",
+                    f"Package {index} file: {filename}",
+                    f"Package {index} name: {package}",
+                    f"Package {index} version: {VERSION}",
+                    f"Package {index} architecture: {architecture}",
+                    f"Package {index} size: {len(raw)}",
+                    f"Package {index} SHA256: {digest(raw)}",
+                    f"Package {index} module count: {1 + package_unsigned_count}",
+                    f"Package {index} cryptographically verified signed module count: 1",
+                    "Package "
+                    f"{index} policy-allowed unsigned module count: {package_unsigned_count}",
+                )
+            )
+        signature_report_lines.extend(
+            (
+                "Module signing policy: sp11-controlled-rsa4096-sha512-v1",
+                "Module signing hash algorithm: sha512",
+                f"Module signing certificate SHA256: {certificate_sha}",
+                f"Module signing certificate fingerprint: {certificate_fingerprint}",
+                "Module signing certificate serial: 01",
+                f"Total module count: {len(signature_packages) + unsigned_count}",
+                "Cryptographically verified signed module count: "
+                f"{len(signature_packages)}",
+                f"Policy-allowed unsigned module count: {unsigned_count}",
+                "Policy-allowed unsigned module path inventory SHA256: "
+                + unsigned_inventory_sha,
+                "Validation completed: true",
+                "",
+                "## Policy-allowed unsigned module paths",
+            )
+        )
+        signature_report_lines.extend(f"- {path}" for path in unsigned_allowlist)
+        signature_report_path = artifacts / "sp11-kernel-module-signatures.txt"
+        signature_report_path.write_text(
+            "\n".join(signature_report_lines) + "\n", encoding="utf-8"
+        )
+        signature_report_raw = signature_report_path.read_bytes()
         lines.extend(
             (
+                "Module signing policy: sp11-controlled-rsa4096-sha512-v1",
+                "Module signing private material retained: false",
                 f"Signing certificate SHA256: {certificate_sha}",
-                "Signing certificate fingerprint: " + ":".join(["AA"] * 32),
+                f"Signing certificate fingerprint: {certificate_fingerprint}",
                 "Signing certificate serial: 01",
+                "Kernel module signature report asset: "
+                "sp11-kernel-module-signatures.txt",
+                f"Kernel module signature report size: {len(signature_report_raw)}",
+                "Kernel module signature report SHA256: "
+                f"{digest(signature_report_raw)}",
+                "Kernel module signature report schema: "
+                "sp11-kernel-module-signature-verification-v1",
+                "Kernel module total count: "
+                f"{len(signature_packages) + unsigned_count}",
+                "Kernel module verified signed count: "
+                f"{len(signature_packages)}",
+                f"Kernel module policy-allowed unsigned count: {unsigned_count}",
+                "Kernel module unsigned-path inventory SHA256: "
+                + unsigned_inventory_sha,
                 "Required Deb roles: common-headers headers image modules",
                 "Optional Deb roles: modules-extra",
                 f"Deb count: {len(roles)}",
@@ -635,6 +715,18 @@ def positive_and_mismatch_cases(fixture: PairFixture) -> None:
     report = first.stdout
     assert "Kernel raw matched-pair schema: sp11-kernel-raw-matched-pair-v1\n" in report
     assert "Comparison policy: sp11-kernel-zero-normalization-v1\n" in report
+    assert "Module signing policy: sp11-controlled-rsa4096-sha512-v1\n" in report
+    assert "Module signing private material retained: false\n" in report
+    assert "Signing certificate SHA256: " in report
+    assert "Signing certificate fingerprint: " in report
+    assert "Signing certificate serial: 01\n" in report
+    assert (
+        "Kernel module signature report schema: "
+        "sp11-kernel-module-signature-verification-v1\n" in report
+    )
+    assert "Kernel module total count: 86\n" in report
+    assert "Kernel module verified signed count: 1\n" in report
+    assert "Kernel module policy-allowed unsigned count: 85\n" in report
     assert "Kernel package count: 4\n" in report
     assert sum(
         line.startswith("Package ") and line.endswith(" raw identical: true")
@@ -677,6 +769,10 @@ def positive_and_mismatch_cases(fixture: PairFixture) -> None:
     for label, relative in (
         ("Build manifest", "artifacts/sp11-kernel-build-manifest.txt"),
         ("Build-inputs envelope", "artifacts/sp11-kernel-build-inputs.txt"),
+        (
+            "Kernel module signature report",
+            "artifacts/sp11-kernel-module-signatures.txt",
+        ),
         ("Docker build arguments", "docker-build-args.txt"),
         ("Docker entrypoint", "docker-build-inside.sh"),
         ("OCI index", "sp11-oci-index.json"),

@@ -181,6 +181,48 @@ grep -Fq 'docs/private.txt' <<< "$public_output" || {
   exit 1
 }
 
+# Password protection does not make private-key material public. Keep the
+# marker split in this tracked fixture so the repository-wide scanner does not
+# incorrectly flag the test source itself.
+encrypted_key_fixture="$test_root/encrypted-private-key.txt"
+printf '%s%s\n%s\n' \
+  '-----BEGIN ENCRYPTED ' 'PRIVATE KEY-----' \
+  'fixture bytes are deliberately not a real key' > "$encrypted_key_fixture"
+public_status=0
+public_output="$(
+  "$public_repo/scripts/validate-sp11-public-content.sh" \
+    --file "$encrypted_key_fixture" 2>&1
+)" || public_status=$?
+[ "$public_status" -eq 1 ] || {
+  printf 'public validator accepted an encrypted private-key marker:\n%s\n' \
+    "$public_output" >&2
+  exit 1
+}
+grep -Fq 'public text input 1' <<< "$public_output" || {
+  printf 'public validator did not identify the encrypted-key input safely:\n%s\n' \
+    "$public_output" >&2
+  exit 1
+}
+if grep -Fq 'fixture bytes' <<< "$public_output"; then
+  die 'public validator disclosed encrypted-key fixture contents'
+fi
+
+private_item_fixture="$test_root/private-secret-store-item.txt"
+printf '%s%s\n' 'https://start.1password.com/' 'open/fixture-item-identifier' > \
+  "$private_item_fixture"
+public_status=0
+public_output="$(
+  "$public_repo/scripts/validate-sp11-public-content.sh" \
+    --file "$private_item_fixture" 2>&1
+)" || public_status=$?
+[ "$public_status" -eq 1 ] ||
+  die 'public validator accepted a private secret-store item link'
+grep -Fq 'public text input 1' <<< "$public_output" ||
+  die 'public validator did not identify the private secret-store link safely'
+if grep -Fq 'fixture-item-identifier' <<< "$public_output"; then
+  die 'public validator disclosed the private secret-store fixture identifier'
+fi
+
 # The patch smoke test must fetch the declared tag under a sanitized Git
 # environment and compare FETCH_HEAD with the exact pinned commit.
 patch_repo="$test_root/patch-repo"

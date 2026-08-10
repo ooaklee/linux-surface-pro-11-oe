@@ -146,6 +146,12 @@ byte-for-byte untouched as inert evidence and does not use it for live-FDT
 provenance. Each v3 or experimental Stubble image carries its exact
 authoritative DTB.
 
+For the new `sp11v3r2` candidate, [ADR-0056](adr-0056-controlled-sp11-module-signing.md)
+supersedes this historical unsigned-module flow. The three exact-ABI modules
+must carry signatures from the same pinned certificate as the kernel build;
+the public certificate is a required bundle member and the encrypted private
+key remains outside Git and release output. Secure Boot remains disabled.
+
 ## Consequences
 
 - The v3 kernel boots with the touchscreen DTB enabled; the MSHW0485 controller

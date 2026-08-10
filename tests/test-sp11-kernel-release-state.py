@@ -242,6 +242,39 @@ def build_state(parent: Path, extra_manifest_fields: int = 0) -> Tuple[Path, Dic
     downloaded_bytes = b"downloaded-deb\n"
     for _role, kernel_name, _package, _architecture, kernel_bytes in kernel_debs:
         write(work / "artifacts" / kernel_name, kernel_bytes)
+    module_role, module_name, module_package, module_architecture, module_bytes = kernel_debs[-1]
+    assert module_role == "modules"
+    unsigned_inventory = b""
+    signature_report = (
+        "# Surface Pro 11 Kernel Module Signature Report\n"
+        "\n"
+        "Schema: sp11-kernel-module-signature-verification-v1\n"
+        "Kernel ABI: 7.2.0-1-qcom-x1e\n"
+        "Package count: 1\n"
+        "Package 1 role: modules\n"
+        f"Package 1 file: {module_name}\n"
+        f"Package 1 name: {module_package}\n"
+        "Package 1 version: 7.2.0-1\n"
+        f"Package 1 architecture: {module_architecture}\n"
+        f"Package 1 size: {len(module_bytes)}\n"
+        f"Package 1 SHA256: {sha256(module_bytes)}\n"
+        "Package 1 module count: 1\n"
+        "Package 1 cryptographically verified signed module count: 1\n"
+        "Package 1 policy-allowed unsigned module count: 0\n"
+        "Module signing policy: sp11-controlled-rsa4096-sha512-v1\n"
+        "Module signing hash algorithm: sha512\n"
+        f"Module signing certificate SHA256: {'7' * 64}\n"
+        f"Module signing certificate fingerprint: {':'.join(['AA'] * 32)}\n"
+        "Module signing certificate serial: 01\n"
+        "Total module count: 1\n"
+        "Cryptographically verified signed module count: 1\n"
+        "Policy-allowed unsigned module count: 0\n"
+        f"Policy-allowed unsigned module path inventory SHA256: {sha256(unsigned_inventory)}\n"
+        "Validation completed: true\n"
+        "\n"
+        "## Policy-allowed unsigned module paths\n"
+    ).encode("ascii")
+    write(work / "artifacts/sp11-kernel-module-signatures.txt", signature_report)
     write(work / "artifacts" / local_name, local_bytes)
     write(work / "apt-archives" / downloaded_name, downloaded_bytes)
     write(work / "apt-archives" / "lock", b"")
@@ -329,6 +362,14 @@ def build_state(parent: Path, extra_manifest_fields: int = 0) -> Tuple[Path, Dic
             ("Signing certificate SHA256", "7" * 64),
             ("Signing certificate fingerprint", ":".join(["AA"] * 32)),
             ("Signing certificate serial", "01"),
+            ("Kernel module signature report asset", "sp11-kernel-module-signatures.txt"),
+            ("Kernel module signature report size", len(signature_report)),
+            ("Kernel module signature report SHA256", sha256(signature_report)),
+            ("Kernel module signature report schema", "sp11-kernel-module-signature-verification-v1"),
+            ("Kernel module total count", 1),
+            ("Kernel module verified signed count", 1),
+            ("Kernel module policy-allowed unsigned count", 0),
+            ("Kernel module unsigned-path inventory SHA256", sha256(unsigned_inventory)),
             ("Required Deb roles", "common-headers headers image modules"),
             ("Optional Deb roles", "modules-extra"),
             ("Deb count", len(kernel_debs)),
@@ -849,22 +890,29 @@ def test_published_acquisition_scrub(parent: Path) -> None:
         original_killpg = module.os.killpg
         original_handlers = {
             handled: signal.getsignal(handled)
-            for handled in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+            for handled in (
+                signal.SIGHUP,
+                signal.SIGINT,
+                signal.SIGTERM,
+                signal.SIGQUIT,
+            )
         }
 
         def waitpid_with_pending_signal(pid: int, _options: int) -> Tuple[int, int]:
             waited, status = original_waitpid(pid, 0)
             waited_status.append(status)
             current_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
-            assert signal.SIGTERM in current_mask
-            os.kill(os.getpid(), signal.SIGTERM)
+            assert signal.SIGQUIT in current_mask
+            os.kill(os.getpid(), signal.SIGQUIT)
             return waited, status
 
         def forbidden_killpg(pid: int, number: int) -> None:
             killpg_calls.append((pid, number))
             raise AssertionError("reaped release-state child was killed by PID")
 
-        def interrupted(_number: int, _frame: object) -> None:
+        def interrupted(number: int, _frame: object) -> None:
+            if number == signal.SIGQUIT:
+                raise module.ReleaseStateQuit
             raise KeyboardInterrupt
 
         module.os.waitpid = waitpid_with_pending_signal
@@ -874,10 +922,10 @@ def test_published_acquisition_scrub(parent: Path) -> None:
         try:
             try:
                 child.finish()
-            except KeyboardInterrupt:
+            except module.ReleaseStateQuit:
                 pass
             else:
-                raise AssertionError("pending terminal signal was discarded after waitpid")
+                raise AssertionError("pending SIGQUIT was discarded after waitpid")
             assert len(waited_status) == 1
             assert child.status == waited_status[0]
             child.abort()
@@ -1088,7 +1136,12 @@ def import_once(
         command,
         expect=(
             fault in ("none", "shell-emitter")
-            and fixture_hook in ("", "pending-signal-after-commit")
+            and fixture_hook
+            in (
+                "",
+                "pending-signal-after-commit",
+                "pending-quit-after-commit",
+            )
         ),
         environment=environment,
         inherited_sigchld_ignored=inherited_sigchld_ignored,
@@ -1353,6 +1406,7 @@ def tests() -> None:
         "sp11-kernel-build-inputs.txt",
         "sp11-kernel-build-manifest.txt",
         "sp11-kernel-debs.txt",
+        "sp11-kernel-module-signatures.txt",
         "linux-qcom-x1e-headers-7.2.0-1_7.2.0-1_all.deb",
         "linux-headers-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb",
         "linux-image-7.2.0-1-qcom-x1e_7.2.0-1_arm64.deb",
@@ -1403,6 +1457,7 @@ def tests() -> None:
         "unknown-work",
         "unknown-artifact",
         "flat-tamper",
+        "signature-report-tamper",
         "work-mode",
         "artifacts-mode",
     ):
@@ -1413,6 +1468,10 @@ def tests() -> None:
             (case / "artifacts/unexpected.deb").write_bytes(b"unexpected\n")
         elif label == "flat-tamper":
             (case / "artifacts/sp11-kernel-debs.txt").write_bytes(b"tampered\n")
+        elif label == "signature-report-tamper":
+            (case / "artifacts/sp11-kernel-module-signatures.txt").write_bytes(
+                b"tampered\n"
+            )
         elif label == "work-mode":
             case.chmod(0o755)
         else:
@@ -1555,6 +1614,19 @@ def tests() -> None:
     assert_zero_outputs(pending_import)
     assert not any(docker_state.iterdir())
 
+    pending_quit_result, pending_quit_import = import_once(
+        parent,
+        state,
+        digests,
+        docker,
+        fixture_hook="pending-quit-before-success",
+    )
+    assert pending_quit_result.returncode == 128 + signal.SIGQUIT
+    assert IMPORT_SUCCESS not in pending_quit_result.stdout
+    assert b"Traceback" not in pending_quit_result.stderr
+    assert_zero_outputs(pending_quit_import)
+    assert not any(docker_state.iterdir())
+
     committed_pending_result, committed_pending_import = import_once(
         parent,
         state,
@@ -1566,6 +1638,22 @@ def tests() -> None:
     assert b"Traceback" not in committed_pending_result.stderr
     assert {
         path.name for path in (committed_pending_import / "artifacts").iterdir()
+    } == published_names
+    assert not any(docker_state.iterdir())
+
+    committed_pending_quit_result, committed_pending_quit_import = import_once(
+        parent,
+        state,
+        digests,
+        docker,
+        fixture_hook="pending-quit-after-commit",
+    )
+    assert committed_pending_quit_result.returncode == 0
+    assert IMPORT_SUCCESS in committed_pending_quit_result.stdout
+    assert b"Traceback" not in committed_pending_quit_result.stderr
+    assert {
+        path.name
+        for path in (committed_pending_quit_import / "artifacts").iterdir()
     } == published_names
     assert not any(docker_state.iterdir())
 
@@ -1638,68 +1726,76 @@ def tests() -> None:
     assert victim_after == victim_before and b"Traceback" not in result.stderr
     assert not (preexisting / "sp11-kernel-retained-evidence.tar").exists()
 
-    interrupted = parent / "interrupted"
-    interrupted_artifacts = prepare_import_root(interrupted, state)
-    marker = parent / "exporter.pid"
-    command = [
-        sys.executable, "-I", str(HELPER), "import-tar",
-        "--work-root", str(interrupted),
-        "--work-root-identity", *directory_identity_args(interrupted),
-        "--artifacts-root", str(interrupted_artifacts),
-        "--artifacts-root-identity", *directory_identity_args(interrupted_artifacts),
-        "--docker-path", str(docker),
-        "--retained-volume-name", RETAINED_VOLUME,
-        "--container-platform", "linux/arm64",
-        "--build-args-identity", *control_identity_args(interrupted / "docker-build-args.txt"),
-        "--entrypoint-identity", *control_identity_args(interrupted / "docker-build-inside.sh"),
-        "--oci-index-identity", *control_identity_args(interrupted / "sp11-oci-index.json"),
-        *common_args(state, digests), "--", *mock_create_command(
-            docker,
-            state,
-            "hang",
-            marker,
-            image_digest=digests["sp11-oci-index.json"],
-        ),
-    ]
-    interrupted_environment = dict(os.environ)
-    interrupted_environment["SP11_RELEASE_STATE_MOCK_STAGE"] = str(
-        state / ".sp11-release-export-v1"
-    )
-    interrupted_environment["SP11_RELEASE_STATE_MOCK_FAULT"] = "hang"
-    interrupted_environment["SP11_RELEASE_STATE_MOCK_MARKER"] = str(marker)
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=interrupted_environment,
-    )
-    try:
-        deadline = time.monotonic() + 10
-        marker_value = ""
-        while time.monotonic() < deadline:
-            if marker.exists():
-                marker_value = marker.read_text(encoding="ascii")
-                if marker_value.isdigit():
-                    break
-            time.sleep(0.02)
-        assert marker_value.isdigit()
-        exporter_pid = int(marker_value)
-        process.send_signal(signal.SIGTERM)
-        process.send_signal(signal.SIGTERM)
-        stdout, stderr = process.communicate(timeout=15)
-        assert process.returncode != 0 and stdout == b"" and b"Traceback" not in stderr
+    def assert_interrupted_import(
+        label: str,
+        handled_signal: signal.Signals,
+        expected_returncode: int,
+    ) -> None:
+        interrupted = parent / label
+        interrupted_artifacts = prepare_import_root(interrupted, state)
+        marker = parent / (label + "-exporter.pid")
+        command = [
+            sys.executable, "-I", str(HELPER), "import-tar",
+            "--work-root", str(interrupted),
+            "--work-root-identity", *directory_identity_args(interrupted),
+            "--artifacts-root", str(interrupted_artifacts),
+            "--artifacts-root-identity", *directory_identity_args(interrupted_artifacts),
+            "--docker-path", str(docker),
+            "--retained-volume-name", RETAINED_VOLUME,
+            "--container-platform", "linux/arm64",
+            "--build-args-identity", *control_identity_args(interrupted / "docker-build-args.txt"),
+            "--entrypoint-identity", *control_identity_args(interrupted / "docker-build-inside.sh"),
+            "--oci-index-identity", *control_identity_args(interrupted / "sp11-oci-index.json"),
+            *common_args(state, digests), "--", *mock_create_command(
+                docker,
+                state,
+                "hang",
+                marker,
+                image_digest=digests["sp11-oci-index.json"],
+            ),
+        ]
+        interrupted_environment = dict(os.environ)
+        interrupted_environment["SP11_RELEASE_STATE_MOCK_STAGE"] = str(
+            state / ".sp11-release-export-v1"
+        )
+        interrupted_environment["SP11_RELEASE_STATE_MOCK_FAULT"] = "hang"
+        interrupted_environment["SP11_RELEASE_STATE_MOCK_MARKER"] = str(marker)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=interrupted_environment,
+        )
         try:
-            os.kill(exporter_pid, 0)
-        except ProcessLookupError:
-            pass
-        else:
-            raise AssertionError("interrupted exporter child survived")
-        assert_zero_outputs(interrupted)
-        assert not any(docker_state.iterdir())
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
+            deadline = time.monotonic() + 10
+            marker_value = ""
+            while time.monotonic() < deadline:
+                if marker.exists():
+                    marker_value = marker.read_text(encoding="ascii")
+                    if marker_value.isdigit():
+                        break
+                time.sleep(0.02)
+            assert marker_value.isdigit()
+            exporter_pid = int(marker_value)
+            process.send_signal(handled_signal)
+            stdout, stderr = process.communicate(timeout=15)
+            assert process.returncode == expected_returncode
+            assert stdout == b"" and b"Traceback" not in stderr
+            try:
+                os.kill(exporter_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise AssertionError("interrupted exporter child survived")
+            assert_zero_outputs(interrupted)
+            assert not any(docker_state.iterdir())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+    assert_interrupted_import("interrupted", signal.SIGTERM, 130)
+    assert_interrupted_import("quit-interrupted", signal.SIGQUIT, 131)
 
     print("Validated retained kernel release-state seal/import hostile boundaries.")
 

@@ -59,7 +59,7 @@ The starting state is intentionally conservative:
 
 | Area | Recorded starting point | Programme state |
 |---|---|---|
-| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Deterministic signing-independent kernel/Deb identity and the raw matched-pair gate are implemented and fixture-tested, but no fresh C/D pair exists; one earlier real clean build verified the immutable-APT/provenance path, while byte reproducibility, signing, recovery, corresponding-source, and release authorization remain open; `LEGAL.md` records the pending-review licence/UCM direction |
+| Kernel baseline | Johan G. tag `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` is pinned to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169` | Deterministic identity, controlled signing, and the raw matched-pair gate are implemented and fixture-tested, but no fresh signed C/D pair exists; one earlier real clean build verified the immutable-APT/provenance path, while byte reproducibility, recovery, corresponding-source, and release authorization remain open; `LEGAL.md` records the pending-review licence/UCM direction |
 | Thin fork | The immutable base remains at `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; CI foundation commit `971b5af85ed0c7283ffb33430badeac9b5575057` is merged to the protected integration branch | Base and integration rules are active and thin-fork CI is green; no parity feature is accepted by branch presence |
 | Recovery | `7.2-rc5-jg-0sp11v3-qcom-x1e` is running and named by the effective static `GRUB_DEFAULT`, while `grubenv`'s stale `saved_entry` still names v2 | ADR0053 deliberately rejects mixed static/saved semantics; one-shot apply is blocked until `GRUB_DEFAULT=saved` and `saved_entry` both resolve to known-good v3, then P0 must capture the no-op canary and physical-recovery evidence |
 | Installed DTB path | Repository support retires its loose-DTB helper and kernel hooks under ADR0055; the exact Stubble image is authoritative | Target migration, successful normal GRUB regeneration, absence of project-managed loose-DTB lines, and packaged/embedded/active-FDT pairing remain pending P0 evidence |
@@ -211,7 +211,7 @@ state.
 | P0.1 | None | Verify the Johan G. baseline ref resolves to `8f953dd060bc6e8fb86ca2ea8a92f258141c0169`; make build scripts reject any other source HEAD before applying patches | Passing exact-commit build preflight and manifest containing expected and actual source commits |
 | P0.2 | P0.1 | Verify protected `sp11/base-jg-7.2-rc5-jg-0` and development `sp11/integration-7.2-rc5` begin at the same commit; prohibit force-push/deletion of the base branch | Public fork settings and CI output showing both branch identities |
 | P0.3 | None | Validate `config/source-ledger.tsv`; resolve licences before importing candidates; keep ACPI and the video evidence-only; preserve third-party per-file terms; record and maintain the owner's interim project-code and SP11 UCM direction in `LEGAL.md` while the final reviews remain pending | Passing ledger validator, reviewed source-ledger update, recorded interim owner decision, and final file-level provenance review before claiming that affected third-party material is cleared |
-| P0.4 | P0.1 | Build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, and dated APT snapshot in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report, three bound provenance artifacts, and exact outer release/image propagation; every unexplained difference is a blocker, and publication stays closed while byte-reproducibility, signing, recovery/hardware, corresponding-source, and authorization gates remain open |
+| P0.4 | P0.1 | Under ADR-0056, build `binary-indep binary-qcom-x1e` twice in clean work areas from the pinned source, OCI index, dated APT snapshot, and same owner-controlled signing identity in `config/kernel-baselines/7.2-rc5-jg-0.env`; retain the v2 build manifest, v1 APT sidecar, v1 build-inputs envelope, exact module-signature report, pre/post package inventories, all authenticated indexes and Debs, then compare source/config/DTB/package outputs | Reproducibility report, four bound provenance artifacts, signing-certificate identity, and exact outer release/image propagation; every unexplained difference is a blocker, and publication stays closed while byte reproducibility, recovery/hardware, corresponding-source, and authorization gates remain open |
 | P0.5 | P0.1-P0.3 | Require shell syntax checks, public-content scan, source-ledger validation, exact remote-ref validation, patch-apply smoke test, and build dry-run in CI | Required green CI for this repository and the thin-fork branch |
 | P0.6 | None | Run `scripts/collect-sp11-feature-parity-inventory.sh` read-only; separately capture an optional sanitized kernel-log section; manually review both | Baseline inventory with no serial, UUID, MAC/IP, account, credential, or access-endpoint data |
 | P0.7 | P0.4, P0.6 | Migrate the target with the current support installer; require the retire-only transaction to commit, successful live-root GRUB regeneration, no project-managed loose-DTB lines, and unchanged `grubenv` and historical loose-DTB identity; verify the exact recovery ABI from `config/kernel-baselines/7.2-rc5-jg-0.env` is installed, running, boot-tested, and has matching image/initramfs/modules plus packaged, embedded, and active-FDT evidence | Migration transcript, transaction postchecks, recovery checklist, and checksums; any old loose DTB remains byte-for-byte unchanged and inert; any obstructed rollback blocks reboot and package operations until its private recovery backup is reconciled |
@@ -244,8 +244,16 @@ post-patch Git-tree symlink-containment preflight, but neither has been exercise
 by a fresh real release build. The next candidate requires that fresh clean
 build with a new v2 manifest, APT sidecar, and build-inputs envelope, then fresh
 offline repeated archive generation and independent validation. No fresh C/D
-pair has yet used this foundation, so P0.4b and P0.4 remain open. The signing
-model still awaits an owner decision; recovery/hardware, legal
+pair has yet used this foundation, so P0.4b and P0.4 remain open. The owner
+selected the controlled signing model in
+[ADR-0056](adr/adr-0056-controlled-sp11-module-signing.md): one encrypted
+RSA-4096 key signs packaged in-tree kernel modules and the exact-ABI
+touchscreen modules, only its pinned public certificate identity propagates,
+every appended signature is independently verified, any policy-unsigned
+modules are bound by one reviewed exact path inventory, and Secure Boot remains
+disabled. The implementation and hostile
+fixture validation are now part of the release path, but that is not real build
+evidence; a fresh identical C/D pair remains required. Recovery/hardware, legal
 corresponding-source/release-candidate review, and explicit release
 authorization remain **NO-PUBLISH** gates. [`LEGAL.md`](../LEGAL.md) records
 the interim MIT direction for project-authored code and the upstream
@@ -300,6 +308,8 @@ P0 passes only when all of the following are true:
   owner-reviewed licence basis;
 - two clean builds have no unexplained source, config, embedded-DTB, package,
   or checksum difference;
+- both builds and their exact-ABI touchscreen bundles use the same pinned
+  controlled certificate, retain no private material, and match as raw bytes;
 - the sanitized inventory has passed manual privacy review;
 - the running fallback exact ABI matches the configured recovery ABI;
 - a no-op canary has booted once through `next_entry`, the persistent default

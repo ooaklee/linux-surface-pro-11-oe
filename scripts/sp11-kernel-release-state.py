@@ -88,6 +88,7 @@ FIXED_ARTIFACTS = (
     "sp11-kernel-build-inputs.txt",
     "sp11-kernel-build-manifest.txt",
     "sp11-kernel-debs.txt",
+    "sp11-kernel-module-signatures.txt",
 )
 INPUT_ROLES = (
     "docker-build-arguments",
@@ -100,6 +101,10 @@ INPUT_ROLES = (
 
 class ReleaseStateError(Exception):
     """A path-neutral, expected release-state refusal."""
+
+
+class ReleaseStateQuit(KeyboardInterrupt):
+    """A handled SIGQUIT that retains its conventional exit status."""
 
 
 def refuse(message: str) -> NoReturn:
@@ -763,6 +768,31 @@ def semantic_source_set(
     expected_deb_list = "".join(name + "\n" for name in kernel_debs).encode("ascii")
     if text["artifacts/sp11-kernel-debs.txt"] != expected_deb_list:
         refuse("kernel Deb list does not match the exact manifest order")
+    signature_report_name = safe_basename(
+        required(
+            manifest,
+            "Kernel module signature report asset",
+            "kernel build manifest",
+        ),
+        "kernel module signature report",
+    )
+    if signature_report_name != "sp11-kernel-module-signatures.txt":
+        refuse("kernel module signature report has the wrong fixed asset name")
+    expect_entry(
+        records,
+        "artifacts/" + signature_report_name,
+        required(
+            manifest,
+            "Kernel module signature report size",
+            "kernel build manifest",
+        ),
+        required(
+            manifest,
+            "Kernel module signature report SHA256",
+            "kernel build manifest",
+        ),
+        "kernel module signature report",
+    )
     del manifest
 
     sidecar = parse_fields(text["artifacts/sp11-kernel-apt-provenance.txt"], "APT provenance", MAX_TEXT_BYTES)
@@ -1612,7 +1642,7 @@ def acquire_published(
     parent: int,
     name: str,
 ) -> PublishedFile:
-    blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+    blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
         output = create_published(parent, name)
@@ -1753,7 +1783,7 @@ class SpawnedChild:
         self.status: Optional[int] = None
         self.stdout: Optional[BinaryIO] = None
         self.stderr: Optional[BinaryIO] = None
-        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
         descriptors: List[int] = []
         try:
@@ -1774,7 +1804,12 @@ class SpawnedChild:
                 file_actions=actions,
                 setpgroup=0,
                 setsigmask=tuple(previous if child_signal_mask is None else child_signal_mask),
-                setsigdef=(signal.SIGINT, signal.SIGTERM, signal.SIGHUP),
+                setsigdef=(
+                    signal.SIGINT,
+                    signal.SIGTERM,
+                    signal.SIGHUP,
+                    signal.SIGQUIT,
+                ),
             )
             for descriptor in (stdin_read, stdin_write, stdout_write, stderr_write):
                 os.close(descriptor)
@@ -1802,7 +1837,7 @@ class SpawnedChild:
 
         if self.pid is None or self.status is not None:
             refuse("release-state child ownership is incomplete")
-        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
         try:
             waited, status = os.waitpid(self.pid, options)
@@ -1825,7 +1860,7 @@ class SpawnedChild:
                 break
             time.sleep(0.01)
         if self.status is None:
-            blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+            blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
             previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
             try:
                 self.abort()
@@ -1877,7 +1912,7 @@ def acquire_exporter(
     owner: List[ExporterProcess],
     command: Sequence[str],
 ) -> ExporterProcess:
-    blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+    blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
         child = ExporterProcess(command, child_signal_mask=previous)
@@ -2086,7 +2121,7 @@ class ExporterContainer:
         ]
 
     def create(self) -> str:
-        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
         child: Optional[SpawnedChild] = None
         try:
@@ -2229,17 +2264,20 @@ def install_signal_handlers() -> None:
     except (OSError, RuntimeError, ValueError):
         refuse("release-state child reaping disposition is unavailable")
 
-    def interrupted(_number: int, _frame: object) -> None:
+    def interrupted(number: int, _frame: object) -> None:
+        if number == signal.SIGQUIT:
+            raise ReleaseStateQuit
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGHUP, interrupted)
+    signal.signal(signal.SIGQUIT, interrupted)
 
 
 @contextlib.contextmanager
 def cleanup_signal_mask() -> Iterator[Set[signal.Signals]]:
-    blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+    blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
         yield previous
@@ -2978,7 +3016,7 @@ def import_release_state(args: argparse.Namespace, success_output: bytes) -> Non
     container: Optional[ExporterContainer] = None
     committed = False
     try:
-        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
+        blocked = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT}
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
         try:
             work_fd = open_expected_directory(
@@ -3115,6 +3153,8 @@ def import_release_state(args: argparse.Namespace, success_output: bytes) -> Non
                 os.fsync(outputs[0].descriptor)
             elif args.fixture_hook == "pending-signal-before-success":
                 os.kill(os.getpid(), signal.SIGTERM)
+            elif args.fixture_hook == "pending-quit-before-success":
+                os.kill(os.getpid(), signal.SIGQUIT)
             verify_terminal_output_boundary(
                 outputs,
                 held_controls,
@@ -3125,13 +3165,23 @@ def import_release_state(args: argparse.Namespace, success_output: bytes) -> Non
                 expected_work,
                 expected_artifacts,
             )
-            if signal.sigpending() & blocked:
+            pending = signal.sigpending() & blocked
+            if signal.SIGQUIT in pending:
+                raise ReleaseStateQuit
+            if pending:
                 raise KeyboardInterrupt
             committed = True
             try:
                 if args.fixture_hook == "pending-signal-after-commit":
                     os.kill(os.getpid(), signal.SIGTERM)
-                for handled in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                elif args.fixture_hook == "pending-quit-after-commit":
+                    os.kill(os.getpid(), signal.SIGQUIT)
+                for handled in (
+                    signal.SIGINT,
+                    signal.SIGTERM,
+                    signal.SIGHUP,
+                    signal.SIGQUIT,
+                ):
                     signal.signal(handled, signal.SIG_IGN)
                 os.set_blocking(1, False)
                 view = memoryview(success_output)
@@ -3281,6 +3331,8 @@ def parse_args() -> argparse.Namespace:
             "mutate-before-success",
             "pending-signal-before-success",
             "pending-signal-after-commit",
+            "pending-quit-before-success",
+            "pending-quit-after-commit",
         ),
         default="",
         help=argparse.SUPPRESS,
@@ -3378,6 +3430,9 @@ def main() -> int:
     except ReleaseStateError as exc:
         print("error: " + str(exc), file=sys.stderr)
         return 1
+    except ReleaseStateQuit:
+        print("error: release-state operation interrupted", file=sys.stderr)
+        return 128 + signal.SIGQUIT
     except KeyboardInterrupt:
         print("error: release-state operation interrupted", file=sys.stderr)
         return 130

@@ -12,6 +12,7 @@ depmod_snapshot_fingerprint="$test_root/depmod-snapshot.fingerprint"
 initrd_snapshot_fingerprint="$test_root/initrd-snapshot.fingerprint"
 release="7.2-rc5-jg-0sp11v3-test-qcom-x1e"
 real_ln="$(command -v ln)"
+signed_module_validator="$repo_dir/scripts/validate-sp11-signed-modules.py"
 case_output=""
 case_status=0
 
@@ -28,6 +29,48 @@ trap cleanup_test EXIT HUP INT TERM
 
 mkdir -p "$mock_bin" "$private_tmp"
 : > "$command_log"
+
+signing_fixture="$test_root/signing-fixture"
+mkdir "$signing_fixture"
+chmod 0700 "$signing_fixture"
+if ! openssl req -new -x509 -newkey rsa:4096 -nodes -sha512 -days 2 \
+    -set_serial 0x3001 -subj '/CN=SP11 installer signing fixture/' \
+    -addext 'basicConstraints=critical,CA:FALSE' \
+    -addext 'keyUsage=critical,digitalSignature' \
+    -keyout "$signing_fixture/private-key.pem" \
+    -out "$signing_fixture/certificate.pem" >/dev/null 2>&1; then
+  echo "Error: could not create installer signing fixture" >&2
+  exit 1
+fi
+chmod 0600 "$signing_fixture/private-key.pem"
+openssl x509 -in "$signing_fixture/certificate.pem" -outform DER \
+  -out "$signing_fixture/sp11-module-signing-cert.x509" >/dev/null 2>&1
+
+fixture_certificate_sha256="$(
+  openssl dgst -sha256 "$signing_fixture/sp11-module-signing-cert.x509" | awk '{print $NF}'
+)"
+fixture_support_repo="$test_root/support-repo"
+mkdir -p "$fixture_support_repo/scripts"
+cp "$repo_dir/scripts/install-sp11-touchscreen.sh" \
+  "$repo_dir/scripts/validate-sp11-signed-modules.py" \
+  "$fixture_support_repo/scripts/"
+python3 - "$fixture_support_repo/scripts/validate-sp11-signed-modules.py" \
+  "$fixture_certificate_sha256" <<'PY_BIND_FIXTURE_CERTIFICATE'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = path.read_bytes()
+reviewed = b"8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b"
+replacement = sys.argv[2].encode("ascii")
+if data.count(reviewed) != 1:
+    raise SystemExit("fixture validator did not contain one reviewed certificate identity")
+path.write_bytes(data.replace(reviewed, replacement))
+PY_BIND_FIXTURE_CERTIFICATE
+chmod 0755 "$fixture_support_repo/scripts/install-sp11-touchscreen.sh" \
+  "$fixture_support_repo/scripts/validate-sp11-signed-modules.py"
+installer="$fixture_support_repo/scripts/install-sp11-touchscreen.sh"
+signed_module_validator="$fixture_support_repo/scripts/validate-sp11-signed-modules.py"
 
 cat > "$mock_bin/id" <<'EOF_ID'
 #!/bin/sh
@@ -56,7 +99,7 @@ done
 if [ -x /usr/bin/realpath ] && /usr/bin/realpath -e -- "$1" >/dev/null 2>&1; then
   exec /usr/bin/realpath -e -- "$1"
 fi
-python3 - "$1" <<'PY'
+/usr/bin/python3 - "$1" <<'PY'
 import os
 import sys
 
@@ -66,6 +109,12 @@ if not os.path.exists(path):
 print(path)
 PY
 EOF_REALPATH
+
+cat > "$mock_bin/python3" <<'EOF_HOSTILE_PYTHON'
+#!/bin/sh
+: > "${MOCK_HOSTILE_PYTHON_MARKER:?}"
+exit 0
+EOF_HOSTILE_PYTHON
 
 cat > "$mock_bin/sha256sum" <<'EOF_SHA'
 #!/bin/sh
@@ -349,13 +398,47 @@ node_fingerprint() {
 }
 
 create_module_input() {
-  local directory="$1"
+  local directory="$1" module signature report
   mkdir -p "$directory"
   printf 'fixture gpi module\n' > "$directory/gpi.ko"
   printf 'fixture spi module\n' > "$directory/spi-geni-qcom.ko"
   printf 'fixture touch module\n' > "$directory/mshw0485_touch.ko"
-  printf 'fixture manifest\n' > "$directory/sp11-touchscreen-modules-manifest.txt"
-  chmod 0400 "$directory"/*.ko "$directory/sp11-touchscreen-modules-manifest.txt"
+  cp "$signing_fixture/sp11-module-signing-cert.x509" \
+    "$directory/sp11-module-signing-cert.x509"
+  for module in gpi.ko spi-geni-qcom.ko mshw0485_touch.ko; do
+    signature="$test_root/$module.signature"
+    openssl cms -sign -binary -in "$directory/$module" \
+      -signer "$signing_fixture/certificate.pem" \
+      -inkey "$signing_fixture/private-key.pem" -md sha512 -noattr -nocerts \
+      -outform DER -out "$signature" >/dev/null 2>&1
+    python3 - "$directory/$module" "$signature" <<'PY_SIGN_MODULE'
+import pathlib
+import struct
+import sys
+
+module = pathlib.Path(sys.argv[1])
+payload = module.read_bytes()
+signature = pathlib.Path(sys.argv[2]).read_bytes()
+descriptor = struct.pack(">BBBBB3sI", 0, 0, 2, 0, 0, b"\0\0\0", len(signature))
+module.write_bytes(payload + signature + descriptor + b"~Module signature appended~\n")
+PY_SIGN_MODULE
+  done
+  report="$(
+    python3 -I "$signed_module_validator" \
+      --certificate "$directory/sp11-module-signing-cert.x509" \
+      --module "$directory/gpi.ko" \
+      --module "$directory/spi-geni-qcom.ko" \
+      --module "$directory/mshw0485_touch.ko"
+  )"
+  {
+    printf '%s\n' '# Surface Pro 11 Touchscreen Module Build Manifest' ''
+    printf '%s\n' "$report"
+    printf '\n## Modules\n\n- gpi.ko\n- spi-geni-qcom.ko\n- mshw0485_touch.ko\n'
+  } > "$directory/sp11-touchscreen-modules-manifest.txt"
+  chmod 0400 \
+    "$directory"/*.ko \
+    "$directory/sp11-module-signing-cert.x509" \
+    "$directory/sp11-touchscreen-modules-manifest.txt"
   chmod 0500 "$directory"
 }
 
@@ -382,7 +465,11 @@ seed_target_root() {
   printf '%s\n' \
     'CONFIG_MODULES=y' \
     'CONFIG_QCOM_GPI_DMA=m' \
-    'CONFIG_SPI_QCOM_GENI=m' > "$root/boot/config-$release"
+    'CONFIG_SPI_QCOM_GENI=m' \
+    'CONFIG_MODULE_SIG=y' \
+    'CONFIG_MODULE_SIG_SHA512=y' \
+    'CONFIG_MODULE_SIG_HASH="sha512"' \
+    'CONFIG_MODULE_SIG_KEY_TYPE_RSA=y' > "$root/boot/config-$release"
   printf 'microsoft,denali-oled\0' > "$root/proc/device-tree/compatible"
   printf 'fixture microsoft,mshw0485 dtb\n' > \
     "$root/lib/firmware/$release/device-tree/qcom/x1e80100-microsoft-denali-oled.dtb"
@@ -496,6 +583,7 @@ run_case() {
     MOCK_LSINITRAMFS_REPLACE_PATH="${MOCK_LSINITRAMFS_REPLACE_PATH:-}" \
     MOCK_LSINITRAMFS_REPLACE_CONTENT="${MOCK_LSINITRAMFS_REPLACE_CONTENT:-}" \
     MOCK_LSINITRAMFS_REPLACE_MARKER="${MOCK_LSINITRAMFS_REPLACE_MARKER:-$test_root/lsinitramfs-replace.marker}" \
+    MOCK_HOSTILE_PYTHON_MARKER="$test_root/hostile-python.marker" \
     MOCK_DEPMOD_SNAPSHOT_FINGERPRINT_FILE="$depmod_snapshot_fingerprint" \
     MOCK_INITRD_SNAPSHOT_FINGERPRINT_FILE="$initrd_snapshot_fingerprint" \
       "$installer" \
@@ -522,6 +610,80 @@ assert_output_contains() {
 
 modules="$test_root/private-builder-snapshot"
 create_module_input "$modules"
+
+# Cryptographic bundle failures must stop before the target transaction begins.
+tampered_modules="$test_root/tampered-modules"
+cp -R "$modules" "$tampered_modules"
+chmod 0700 "$tampered_modules"
+chmod 0600 "$tampered_modules/gpi.ko"
+python3 - "$tampered_modules/gpi.ko" <<'PY_TAMPER_INPUT'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+data[0] ^= 1
+path.write_bytes(data)
+PY_TAMPER_INPUT
+chmod 0400 "$tampered_modules/gpi.ko"
+chmod 0500 "$tampered_modules"
+tampered_root="$test_root/tampered-signature-root"
+seed_target_root "$tampered_root"
+seed_managed_files "$tampered_root"
+tampered_state="$(managed_state "$tampered_root")"
+run_case "$tampered_root" "$tampered_modules"
+expect_failure
+assert_output_contains 'controlled touchscreen module signature validation failed'
+[ "$(managed_state "$tampered_root")" = "$tampered_state" ] ||
+  fail "invalid module signature changed the target before rejection"
+[ ! -s "$command_log" ] || fail "invalid module signature invoked a target mutation command"
+assert_no_private_artifacts "$tampered_root"
+
+tampered_manifest_modules="$test_root/tampered-manifest-modules"
+cp -R "$modules" "$tampered_manifest_modules"
+chmod 0700 "$tampered_manifest_modules"
+chmod 0600 "$tampered_manifest_modules/sp11-touchscreen-modules-manifest.txt"
+python3 - "$tampered_manifest_modules/sp11-touchscreen-modules-manifest.txt" <<'PY_TAMPER_MANIFEST'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = path.read_bytes()
+needle = b"Module gpi.ko SHA256: "
+if data.count(needle) != 1:
+    raise SystemExit("fixture manifest did not contain one gpi.ko module identity")
+path.write_bytes(data.replace(needle, needle + b"00", 1))
+PY_TAMPER_MANIFEST
+chmod 0400 "$tampered_manifest_modules/sp11-touchscreen-modules-manifest.txt"
+chmod 0500 "$tampered_manifest_modules"
+tampered_manifest_root="$test_root/tampered-manifest-root"
+seed_target_root "$tampered_manifest_root"
+seed_managed_files "$tampered_manifest_root"
+tampered_manifest_state="$(managed_state "$tampered_manifest_root")"
+run_case "$tampered_manifest_root" "$tampered_manifest_modules"
+expect_failure
+assert_output_contains 'controlled touchscreen module signature validation failed'
+[ "$(managed_state "$tampered_manifest_root")" = "$tampered_manifest_state" ] ||
+  fail "invalid module manifest changed the target before rejection"
+[ ! -s "$command_log" ] || fail "invalid module manifest invoked a target mutation command"
+assert_no_private_artifacts "$tampered_manifest_root"
+
+extra_member_modules="$test_root/extra-member-modules"
+cp -R "$modules" "$extra_member_modules"
+chmod 0700 "$extra_member_modules"
+printf 'unexpected bundle member\n' > "$extra_member_modules/unexpected"
+chmod 0400 "$extra_member_modules/unexpected"
+chmod 0500 "$extra_member_modules"
+extra_member_root="$test_root/extra-member-root"
+seed_target_root "$extra_member_root"
+seed_managed_files "$extra_member_root"
+extra_member_state="$(managed_state "$extra_member_root")"
+run_case "$extra_member_root" "$extra_member_modules"
+expect_failure
+assert_output_contains 'unexpected bundle member'
+[ "$(managed_state "$extra_member_root")" = "$extra_member_state" ] ||
+  fail "extra module bundle member changed the target before rejection"
+assert_no_private_artifacts "$extra_member_root"
 
 # A symlinked module-input directory must be rejected without reading through
 # the alias or changing its physical source directory.
@@ -1094,8 +1256,13 @@ grep -Fxq 'unrelated module-tree file' "$success_root/usr/lib/modules/$release/u
   fail "valid install changed an unrelated module-tree file"
 assert_no_private_artifacts "$success_root"
 [ "$(file_mode "$modules")" = "500" ] || fail "installer changed private input directory mode"
-for path in "$modules"/*.ko; do
-  [ "$(file_mode "$path")" = "400" ] || fail "installer changed private input module mode"
+for path in \
+  "$modules"/*.ko \
+  "$modules/sp11-module-signing-cert.x509" \
+  "$modules/sp11-touchscreen-modules-manifest.txt"; do
+  [ "$(file_mode "$path")" = "400" ] || fail "installer changed private bundle input mode"
 done
+[ ! -e "$test_root/hostile-python.marker" ] ||
+  fail "installer executed a Python interpreter supplied through PATH"
 
 echo "Touchscreen installer path-safety and rollback tests passed."

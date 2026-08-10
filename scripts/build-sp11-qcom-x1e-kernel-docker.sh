@@ -1,16 +1,57 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
 
-if ! inherited_sigchld_disposition="$(trap -p SIGCHLD)"; then
-  printf '%s\n' 'Could not inspect the startup SIGCHLD disposition.' >&2
-  exit 2
-fi
-if [ -n "$inherited_sigchld_disposition" ]; then
+sanitize_openssl_environment() {
+  unset OPENSSL_MODULES OPENSSL_ENGINES RANDFILE
+  export OPENSSL_CONF=/dev/null
+}
+
+sanitize_openssl_environment
+unset KBUILD_SIGN_PIN
+
+if [ "${SP11_CONTROLLED_SIGNING_TEST_FIXTURE+x}" = x ] ||
+   [ "${SP11_MODULE_SIGNING_CLEANUP_TEST_DELAY+x}" = x ]; then
   printf '%s\n' \
-    'Wrapper requires the default SIGCHLD disposition at startup.' >&2
+    'Wrapper refuses controlled-signing lifecycle fixture variables.' >&2
   exit 2
 fi
-unset inherited_sigchld_disposition
+
+startup_signal_error='Wrapper requires default CHLD/HUP/INT/QUIT/TERM dispositions at startup.'
+if ! inherited_sigchld_disposition="$(trap -p SIGCHLD)" ||
+   [ -n "$inherited_sigchld_disposition" ]; then
+  printf '%s\n' "$startup_signal_error" >&2
+  exit 2
+fi
+if ! startup_signal_disposition="$(
+  /usr/bin/python3 -I -c '
+import signal
+import sys
+
+expected = (
+    (signal.SIGCHLD, signal.SIG_DFL),
+    (signal.SIGHUP, signal.SIG_DFL),
+    (signal.SIGINT, signal.default_int_handler),
+    (signal.SIGQUIT, signal.SIG_DFL),
+    (signal.SIGTERM, signal.SIG_DFL),
+)
+if sys.flags.isolated != 1 or any(
+    signal.getsignal(number) is not disposition
+    for number, disposition in expected
+):
+    raise SystemExit(1)
+print("sp11-default-startup-signals-v2")
+'
+)"; then
+  printf '%s\n' "$startup_signal_error" >&2
+  exit 2
+fi
+if [ "$startup_signal_disposition" != \
+     "sp11-default-startup-signals-v2" ]; then
+  printf '%s\n' "$startup_signal_error" >&2
+  exit 2
+fi
+unset inherited_sigchld_disposition startup_signal_disposition \
+  startup_signal_error
 
 sanitize_git_environment() {
   local variable_name
@@ -113,6 +154,8 @@ RELEASE_PYTHON_DIRECTORY_FD=55
 RELEASE_PYTHON_DIRECTORY_FD_OPEN="false"
 RELEASE_PYTHON_BIN="/usr/bin/python3"
 RELEASE_PYTHON_IDENTITY=""
+RELEASE_OPENSSL_BIN="/usr/bin/openssl"
+RELEASE_OPENSSL_IDENTITY=""
 RELEASE_OCI_VALIDATOR_IDENTITY=""
 RELEASE_OCI_VALIDATOR_SHA256=""
 RELEASE_OCI_VALIDATOR_OBJECT_ID=""
@@ -161,6 +204,33 @@ RELEASE_KBUILD_BUILD_HOST=""
 RELEASE_KBUILD_BUILD_TIMESTAMP=""
 RELEASE_BASELINE_BUILD_TARGET=""
 RELEASE_BASELINE_PATCH_DIRS=""
+RELEASE_MODULE_SIGNING_POLICY=""
+RELEASE_MODULE_SIGNING_KEY_PATH=""
+RELEASE_MODULE_SIGNING_PIN_PATH=""
+RELEASE_MODULE_SIGNING_CERT_PATH=""
+RELEASE_MODULE_SIGNING_CERT_SHA256=""
+RELEASE_MODULE_SIGNING_CERT_FINGERPRINT=""
+RELEASE_MODULE_SIGNING_CERT_SERIAL=""
+RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH=""
+RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256=""
+MODULE_SIGNING_KEY=""
+MODULE_SIGNING_CERTIFICATE=""
+MODULE_SIGNING_PIN_FILE=""
+MODULE_SIGNING_STAGE_DIR=""
+MODULE_SIGNING_STAGE_NAME=""
+MODULE_SIGNING_STAGE_IDENTITY=""
+MODULE_SIGNING_PARENT_FD=61
+MODULE_SIGNING_PARENT_FD_OPEN="false"
+MODULE_SIGNING_STAGE_FD=56
+MODULE_SIGNING_STAGE_FD_OPEN="false"
+MODULE_SIGNING_KEY_FD=57
+MODULE_SIGNING_KEY_FD_OPEN="false"
+MODULE_SIGNING_KEY_CREATION_IDENTITY=""
+MODULE_SIGNING_KEY_STATE=""
+MODULE_SIGNING_PIN_FD=60
+MODULE_SIGNING_PIN_FD_OPEN="false"
+MODULE_SIGNING_PIN_CREATION_IDENTITY=""
+MODULE_SIGNING_PIN_STATE=""
 CONTROL_SNAPSHOT_FILES=()
 CONTROL_SNAPSHOT_VALUES=()
 
@@ -193,6 +263,12 @@ Options:
   --release-build        Opt in to fail-closed schema-v2 release provenance.
                          Requires an explicit digest-pinned image and platform,
                          exact Git source commit, and clean stable support HEAD.
+  --module-signing-key FILE
+  --module-signing-certificate FILE
+  --module-signing-pin-file FILE
+                         Release-only controlled module-signing inputs. FILE
+                         paths remain private; the key must be encrypted
+                         PKCS#8 PEM and the PIN must be supplied by file.
   --work-dir DIR         Dedicated host control/artifact directory beneath this
                          repository's build/, default $WORK_DIR.
                          Release mode requires DIR and DIR/artifacts to
@@ -428,6 +504,120 @@ verify_release_python_authority() {
   [ "$current" = "$RELEASE_PYTHON_IDENTITY" ]
 }
 
+release_openssl_identity_record() {
+  [ "$RELEASE_PYTHON_DIRECTORY_FD_OPEN" = "true" ] &&
+    [ "$RELEASE_PYTHON_DIRECTORY" = "/usr/bin" ] &&
+    [ "$RELEASE_OPENSSL_BIN" = "/usr/bin/openssl" ] || return 1
+  "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+def identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
+descriptor = -1
+try:
+    if len(sys.argv) != 5 or sys.flags.isolated != 1:
+        raise RuntimeError
+    directory_descriptor = int(sys.argv[1], 10)
+    directory_path, name, expected_uid_text = sys.argv[2:5]
+    if (
+        directory_path != "/usr/bin"
+        or name != "openssl"
+        or expected_uid_text != "0"
+    ):
+        raise RuntimeError
+    expected_uid = int(expected_uid_text, 10)
+    directory_before = os.fstat(directory_descriptor)
+    mapped_directory_before = os.stat(directory_path, follow_symlinks=False)
+    target_before = os.stat(
+        name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(directory_before.st_mode)
+        or directory_before.st_uid != expected_uid
+        or stat.S_IMODE(directory_before.st_mode) & 0o022
+        or identity(mapped_directory_before) != identity(directory_before)
+        or not stat.S_ISREG(target_before.st_mode)
+        or target_before.st_uid != expected_uid
+        or stat.S_IMODE(target_before.st_mode) & 0o022
+        or not stat.S_IMODE(target_before.st_mode) & 0o111
+        or not 0 < target_before.st_size <= 256 * 1024 * 1024
+        or target_before.st_nlink < 1
+    ):
+        raise RuntimeError
+    descriptor = os.open(
+        name,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        dir_fd=directory_descriptor,
+    )
+    held_before = os.fstat(descriptor)
+    if identity(held_before) != identity(target_before) or not os.pread(descriptor, 1, 0):
+        raise RuntimeError
+    directory_after = os.fstat(directory_descriptor)
+    mapped_directory_after = os.stat(directory_path, follow_symlinks=False)
+    target_after = os.stat(
+        name,
+        dir_fd=directory_descriptor,
+        follow_symlinks=False,
+    )
+    held_after = os.fstat(descriptor)
+    if (
+        identity(directory_after) != identity(directory_before)
+        or identity(mapped_directory_after) != identity(directory_before)
+        or identity(target_after) != identity(target_before)
+        or identity(held_after) != identity(target_before)
+    ):
+        raise RuntimeError
+    print(*identity(directory_before), *identity(target_before))
+except BaseException:
+    raise SystemExit(1)
+finally:
+    if descriptor >= 0:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+' "$RELEASE_PYTHON_DIRECTORY_FD" "$RELEASE_PYTHON_DIRECTORY" openssl 0
+}
+
+capture_release_openssl_authority() {
+  local fields=()
+
+  verify_release_python_authority || return 1
+  RELEASE_OPENSSL_IDENTITY="$(release_openssl_identity_record)" || {
+    RELEASE_OPENSSL_IDENTITY=""
+    return 1
+  }
+  read -r -a fields <<< "$RELEASE_OPENSSL_IDENTITY"
+  [ "${#fields[@]}" -eq 18 ] || {
+    RELEASE_OPENSSL_IDENTITY=""
+    return 1
+  }
+}
+
+verify_release_openssl_authority() {
+  local current
+
+  [ -n "$RELEASE_OPENSSL_IDENTITY" ] || return 1
+  verify_release_python_authority || return 1
+  current="$(release_openssl_identity_record)" || return 1
+  [ "$current" = "$RELEASE_OPENSSL_IDENTITY" ]
+}
+
 require_apt_list_decoder() {
   if [ -f /usr/lib/apt/apt-helper ] &&
      [ -x /usr/lib/apt/apt-helper ] &&
@@ -491,6 +681,288 @@ cleanup_payload_stage() {
       echo "warning: refusing to clean unexpected payload staging directory: $PAYLOAD_STAGE" >&2
       ;;
   esac
+}
+
+cleanup_module_signing_stage() {
+  local cleanup_status=0 cleanup_signal_status=0
+  local scrub_pid="" scrub_status=0
+  local saved_hup saved_int saved_quit saved_term
+
+  [ -n "$MODULE_SIGNING_STAGE_NAME" ] || return 0
+  if [ "$MODULE_SIGNING_PARENT_FD_OPEN" != "true" ]; then
+    echo "warning: private signing parent authority was not held for cleanup" >&2
+    return 1
+  fi
+  saved_hup="$(trap -p HUP)"
+  saved_int="$(trap -p INT)"
+  saved_quit="$(trap -p QUIT)"
+  saved_term="$(trap -p TERM)"
+  trap 'cleanup_signal_status=129' HUP
+  trap 'cleanup_signal_status=130' INT
+  trap 'cleanup_signal_status=131' QUIT
+  trap 'cleanup_signal_status=143' TERM
+  while :; do
+    # An ignored disposition survives fork/exec.  Give the scrub child that
+    # no-gap disposition before launch, then immediately restore the parent
+    # handlers that record cancellation while its held authorities remain open.
+    trap '' HUP INT QUIT TERM
+    /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C \
+      /bin/bash -p -c '
+fixture_authority=$1
+fixture_delay=$2
+shift 2
+if [ "$fixture_authority" = sp11-controlled-signing-v1 ] &&
+   [ "$fixture_delay" = pre-ignore ]; then
+  printf "%s\n" pre-ignore >&72 || true
+  /bin/sleep 1
+fi
+trap "" HUP INT QUIT TERM
+exec "$@"
+' sp11-signing-scrub \
+      "${SP11_CONTROLLED_SIGNING_TEST_FIXTURE:-}" \
+      "${SP11_MODULE_SIGNING_CLEANUP_TEST_DELAY:-}" \
+      /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+import time
+
+name = sys.argv[1]
+directory_open = sys.argv[2] == "true"
+key_open = sys.argv[3] == "true"
+pin_open = sys.argv[4] == "true"
+expected_directory_identity = sys.argv[5]
+expected_key_identity = sys.argv[6]
+expected_pin_identity = sys.argv[7]
+fixture_boundary = sys.argv[8]
+fixture_delay = sys.argv[9]
+parent_fd = 61
+directory_fd = 56
+file_specs = ((57, "signing.pem", key_open), (60, "pin", pin_open))
+creation_identities = {
+    "signing.pem": expected_key_identity,
+    "pin": expected_pin_identity,
+}
+failed = False
+
+def directory_identity(metadata):
+    return ":".join(str(value) for value in (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_uid,
+        metadata.st_gid,
+    ))
+
+def same_object(left, right):
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+def file_creation_identity(metadata):
+    return ":".join(str(value) for value in (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+        metadata.st_size,
+    ))
+
+def fixture_pause(boundary):
+    global failed
+    if (
+        fixture_boundary == "sp11-controlled-signing-v1"
+        and fixture_delay == boundary
+    ):
+        try:
+            os.write(72, (boundary + "\n").encode("ascii"))
+            os.fsync(72)
+        except OSError:
+            failed = True
+        time.sleep(1.0)
+
+held_files = {}
+fixture_pause("pre-scrub")
+for descriptor, entry, opened in file_specs:
+    if not opened:
+        continue
+    try:
+        metadata = os.fstat(descriptor)
+    except OSError:
+        failed = True
+        continue
+    if not stat.S_ISREG(metadata.st_mode):
+        failed = True
+        continue
+    held_files[entry] = metadata
+    try:
+        os.fchmod(descriptor, 0o600)
+    except OSError:
+        failed = True
+    try:
+        os.ftruncate(descriptor, 0)
+        os.fsync(descriptor)
+        if entry == "signing.pem":
+            fixture_pause("mid-scrub")
+    except OSError:
+        failed = True
+
+parent = None
+parent_valid = False
+try:
+    parent = os.fstat(parent_fd)
+    mapped_parent = os.stat("/tmp", follow_symlinks=True)
+    parent_valid = stat.S_ISDIR(parent.st_mode) and same_object(parent, mapped_parent)
+except OSError:
+    pass
+if not parent_valid:
+    failed = True
+
+if directory_open:
+    directory = None
+    try:
+        candidate = os.fstat(directory_fd)
+        if stat.S_ISDIR(candidate.st_mode):
+            directory = candidate
+            if directory_identity(candidate) != expected_directory_identity:
+                failed = True
+        else:
+            failed = True
+    except OSError:
+        failed = True
+    if directory is not None:
+        for descriptor, entry, opened in file_specs:
+            if opened:
+                metadata = held_files.get(entry)
+                if metadata is None:
+                    failed = True
+                    continue
+                try:
+                    mapped = os.stat(entry, dir_fd=directory_fd, follow_symlinks=False)
+                    if same_object(metadata, mapped):
+                        os.unlink(entry, dir_fd=directory_fd)
+                    else:
+                        failed = True
+                except FileNotFoundError:
+                    failed = True
+                except OSError:
+                    failed = True
+            else:
+                try:
+                    mapped = os.stat(entry, dir_fd=directory_fd, follow_symlinks=False)
+                    if file_creation_identity(mapped) == creation_identities[entry]:
+                        os.unlink(entry, dir_fd=directory_fd)
+                    else:
+                        failed = True
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    failed = True
+        try:
+            os.fsync(directory_fd)
+        except OSError:
+            failed = True
+        if parent_valid:
+            try:
+                mapped_directory = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                if same_object(directory, mapped_directory):
+                    os.rmdir(name, dir_fd=parent_fd)
+                else:
+                    failed = True
+            except FileNotFoundError:
+                failed = True
+            except OSError:
+                failed = True
+else:
+    if parent_valid:
+        try:
+            mapped_directory = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            if (
+                stat.S_ISDIR(mapped_directory.st_mode)
+                and directory_identity(mapped_directory) == expected_directory_identity
+            ):
+                os.rmdir(name, dir_fd=parent_fd)
+            else:
+                failed = True
+        except FileNotFoundError:
+            failed = True
+        except OSError:
+            failed = True
+if parent is not None:
+    try:
+        os.fsync(parent_fd)
+    except OSError:
+        failed = True
+raise SystemExit(1 if failed else 0)
+' \
+      "$MODULE_SIGNING_STAGE_NAME" \
+      "$MODULE_SIGNING_STAGE_FD_OPEN" \
+      "$MODULE_SIGNING_KEY_FD_OPEN" \
+      "$MODULE_SIGNING_PIN_FD_OPEN" \
+      "$MODULE_SIGNING_STAGE_IDENTITY" \
+      "$MODULE_SIGNING_KEY_CREATION_IDENTITY" \
+      "$MODULE_SIGNING_PIN_CREATION_IDENTITY" \
+      "${SP11_CONTROLLED_SIGNING_TEST_FIXTURE:-}" \
+      "${SP11_MODULE_SIGNING_CLEANUP_TEST_DELAY:-}" &
+    scrub_pid=$!
+    trap 'cleanup_signal_status=129' HUP
+    trap 'cleanup_signal_status=130' INT
+    trap 'cleanup_signal_status=131' QUIT
+    trap 'cleanup_signal_status=143' TERM
+    if [ "${SP11_CONTROLLED_SIGNING_TEST_FIXTURE:-}" = \
+         sp11-controlled-signing-v1 ] &&
+       [ "${SP11_MODULE_SIGNING_CLEANUP_TEST_DELAY:-}" = pre-ignore ]; then
+      printf '%s\n' parent-restored >&72 || true
+    fi
+    while :; do
+      if wait "$scrub_pid"; then
+        scrub_status=0
+      else
+        scrub_status=$?
+      fi
+      if kill -0 "$scrub_pid" 2>/dev/null; then
+        continue
+      fi
+      break
+    done
+    if [ "$scrub_status" -ge 128 ] && [ "$scrub_status" -le 191 ]; then
+      continue
+    fi
+    break
+  done
+  if [ "$scrub_status" -ne 0 ]; then
+    cleanup_status=1
+    echo "warning: exact private signing scrub did not complete cleanly" >&2
+  fi
+  if [ "$MODULE_SIGNING_PIN_FD_OPEN" = "true" ]; then
+    exec 60>&-
+    MODULE_SIGNING_PIN_FD_OPEN="false"
+  fi
+  if [ "$MODULE_SIGNING_KEY_FD_OPEN" = "true" ]; then
+    exec 57>&-
+    MODULE_SIGNING_KEY_FD_OPEN="false"
+  fi
+  if [ "$MODULE_SIGNING_STAGE_FD_OPEN" = "true" ]; then
+    exec 56<&-
+    MODULE_SIGNING_STAGE_FD_OPEN="false"
+  fi
+  exec 61<&-
+  MODULE_SIGNING_PARENT_FD_OPEN="false"
+  MODULE_SIGNING_STAGE_DIR=""
+  MODULE_SIGNING_STAGE_NAME=""
+  MODULE_SIGNING_STAGE_IDENTITY=""
+  MODULE_SIGNING_KEY_CREATION_IDENTITY=""
+  MODULE_SIGNING_KEY_STATE=""
+  MODULE_SIGNING_PIN_CREATION_IDENTITY=""
+  MODULE_SIGNING_PIN_STATE=""
+  if [ -n "$saved_hup" ]; then eval "$saved_hup"; else trap - HUP; fi
+  if [ -n "$saved_int" ]; then eval "$saved_int"; else trap - INT; fi
+  if [ -n "$saved_quit" ]; then eval "$saved_quit"; else trap - QUIT; fi
+  if [ -n "$saved_term" ]; then eval "$saved_term"; else trap - TERM; fi
+  if [ "$cleanup_signal_status" -ne 0 ]; then
+    return "$cleanup_signal_status"
+  fi
+  return "$cleanup_status"
 }
 
 cleanup_held_release_roots() {
@@ -904,7 +1376,12 @@ output = -1
 source = -1
 producer = None
 created = False
-release_signals = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+release_signals = {
+    signal.SIGHUP,
+    signal.SIGINT,
+    signal.SIGQUIT,
+    signal.SIGTERM,
+}
 
 # An invoking shell may have inherited SIGCHLD=SIG_IGN, which lets children
 # auto-reap before Popen records an authoritative status.  This embedded
@@ -1302,7 +1779,12 @@ if (
     raise SystemExit(1)
 
 producer = None
-release_signals = {signal.SIGHUP, signal.SIGINT, signal.SIGTERM}
+release_signals = {
+    signal.SIGHUP,
+    signal.SIGINT,
+    signal.SIGQUIT,
+    signal.SIGTERM,
+}
 
 if (
     os.environ.get("SP11_RELEASE_SUPERVISOR_FIXTURE_SIGCHLD_IGNORE") == "true"
@@ -2237,7 +2719,11 @@ cleanup_release_support_checkout() {
   return 0
 }
 
-trap 'cleanup_baseline_control_dir; cleanup_release_support_checkout; cleanup_control_dir; cleanup_payload_stage; cleanup_held_release_roots' EXIT
+trap 'cleanup_module_signing_stage; cleanup_baseline_control_dir; cleanup_release_support_checkout; cleanup_control_dir; cleanup_payload_stage; cleanup_held_release_roots' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 131' QUIT
+trap 'exit 143' TERM
 
 normalize_absolute_path() {
   local input="$1" component normalized=""
@@ -3097,12 +3583,41 @@ load_release_baseline_values() {
 
   verify_release_support_checkout || exit 1
   verify_initial_baseline_control_state || exit 1
+  verify_release_python_authority || exit 1
   if ! emitted="$(
     exec 3<&53
-    bash "$KERNEL_BASELINE_VALIDATOR_ACCESS" \
-      --repo-dir "$COMMITTED_SUPPORT_ACCESS_DIR" \
-      --emit-release-values \
-      --baseline-fd 3
+    "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import subprocess
+import sys
+
+validator, repository = sys.argv[1:3]
+for descriptor in (3, 54):
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(1)
+completed = subprocess.run(
+    [
+        "/bin/bash",
+        "-p",
+        validator,
+        "--repo-dir",
+        repository,
+        "--emit-release-values",
+        "--baseline-fd",
+        "3",
+    ],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    check=False,
+    close_fds=True,
+    pass_fds=(3, 54),
+    env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+)
+sys.stdout.buffer.write(completed.stdout)
+raise SystemExit(completed.returncode)
+' "$KERNEL_BASELINE_VALIDATOR_ACCESS" "$COMMITTED_SUPPORT_ACCESS_DIR"
   )"; then
     echo "Committed release kernel baseline validation failed." >&2
     exit 1
@@ -3125,6 +3640,15 @@ load_release_baseline_values() {
       SP11_KERNEL_KBUILD_BUILD_USER) RELEASE_KBUILD_BUILD_USER="$value" ;;
       SP11_KERNEL_KBUILD_BUILD_HOST) RELEASE_KBUILD_BUILD_HOST="$value" ;;
       SP11_KERNEL_KBUILD_BUILD_TIMESTAMP) RELEASE_KBUILD_BUILD_TIMESTAMP="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_POLICY) RELEASE_MODULE_SIGNING_POLICY="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_KEY_PATH) RELEASE_MODULE_SIGNING_KEY_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_PIN_PATH) RELEASE_MODULE_SIGNING_PIN_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_PATH) RELEASE_MODULE_SIGNING_CERT_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_SHA256) RELEASE_MODULE_SIGNING_CERT_SHA256="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT) RELEASE_MODULE_SIGNING_CERT_FINGERPRINT="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL) RELEASE_MODULE_SIGNING_CERT_SERIAL="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH) RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256) RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256="$value" ;;
       SP11_KERNEL_BUILD_TARGET) RELEASE_BASELINE_BUILD_TARGET="$value" ;;
       SP11_KERNEL_PATCH_DIRS) RELEASE_BASELINE_PATCH_DIRS="$value" ;;
       *)
@@ -3133,7 +3657,7 @@ load_release_baseline_values() {
         ;;
     esac
   done <<< "$emitted"
-  expected_keys=$'SP11_KERNEL_BASELINE_ID\nSP11_KERNEL_DOCKER_IMAGE\nSP11_KERNEL_DOCKER_PLATFORM\nSP11_KERNEL_DOCKER_PLATFORM_MANIFEST\nSP11_KERNEL_UPSTREAM_URL\nSP11_KERNEL_UPSTREAM_REF\nSP11_KERNEL_UPSTREAM_COMMIT\nSP11_KERNEL_SOURCE_DATE_EPOCH\nSP11_KERNEL_KBUILD_BUILD_USER\nSP11_KERNEL_KBUILD_BUILD_HOST\nSP11_KERNEL_KBUILD_BUILD_TIMESTAMP\nSP11_KERNEL_BUILD_TARGET\nSP11_KERNEL_PATCH_DIRS'
+  expected_keys=$'SP11_KERNEL_BASELINE_ID\nSP11_KERNEL_DOCKER_IMAGE\nSP11_KERNEL_DOCKER_PLATFORM\nSP11_KERNEL_DOCKER_PLATFORM_MANIFEST\nSP11_KERNEL_UPSTREAM_URL\nSP11_KERNEL_UPSTREAM_REF\nSP11_KERNEL_UPSTREAM_COMMIT\nSP11_KERNEL_SOURCE_DATE_EPOCH\nSP11_KERNEL_KBUILD_BUILD_USER\nSP11_KERNEL_KBUILD_BUILD_HOST\nSP11_KERNEL_KBUILD_BUILD_TIMESTAMP\nSP11_KERNEL_MODULE_SIGNING_POLICY\nSP11_KERNEL_MODULE_SIGNING_KEY_PATH\nSP11_KERNEL_MODULE_SIGNING_PIN_PATH\nSP11_KERNEL_MODULE_SIGNING_CERT_PATH\nSP11_KERNEL_MODULE_SIGNING_CERT_SHA256\nSP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT\nSP11_KERNEL_MODULE_SIGNING_CERT_SERIAL\nSP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH\nSP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256\nSP11_KERNEL_BUILD_TARGET\nSP11_KERNEL_PATCH_DIRS'
   if [ "$emitted_keys" != "$expected_keys" ]; then
     echo "Committed kernel baseline validator field set/order is not exact." >&2
     exit 1
@@ -3191,6 +3715,770 @@ public_https_url() {
     *) return 1 ;;
   esac
   return 0
+}
+
+stage_controlled_module_signing_inputs() {
+  local created_file_states created_key_identity created_pin_identity
+  local openssl_bin reference_certificate stage_token signing_states
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  verify_release_python_authority || exit 1
+  capture_release_openssl_authority || {
+    echo "Controlled signing requires the trusted /usr/bin/openssl authority." >&2
+    exit 1
+  }
+  openssl_bin="$RELEASE_OPENSSL_BIN"
+  reference_certificate="$(
+    committed_repo_abs_path "$RELEASE_MODULE_SIGNING_CERT_PATH"
+  )" || exit 1
+  if ! exec 61< /tmp; then
+    echo "Could not hold the private signing staging parent." >&2
+    exit 1
+  fi
+  MODULE_SIGNING_PARENT_FD_OPEN="true"
+  stage_token="$("$RELEASE_PYTHON_BIN" -I -c \
+    'import secrets; print(secrets.token_hex(32))')" || exit 1
+  [[ "$stage_token" =~ ^[0-9a-f]{64}$ ]] || exit 1
+  MODULE_SIGNING_STAGE_NAME="sp11-module-signing.$stage_token"
+  MODULE_SIGNING_STAGE_DIR="/tmp/$MODULE_SIGNING_STAGE_NAME"
+  if ! MODULE_SIGNING_STAGE_IDENTITY="$("$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+name = sys.argv[1]
+parent = os.fstat(61)
+mapped_parent = os.stat("/tmp", follow_symlinks=True)
+if (
+    not stat.S_ISDIR(parent.st_mode)
+    or (parent.st_dev, parent.st_ino) != (mapped_parent.st_dev, mapped_parent.st_ino)
+):
+    raise SystemExit(1)
+old_umask = os.umask(0o077)
+try:
+    os.mkdir(name, 0o700, dir_fd=61)
+finally:
+    os.umask(old_umask)
+created = os.stat(name, dir_fd=61, follow_symlinks=False)
+if (
+    not stat.S_ISDIR(created.st_mode)
+    or stat.S_IMODE(created.st_mode) != 0o700
+    or created.st_uid != os.getuid()
+):
+    raise SystemExit(1)
+os.fsync(61)
+print(":".join(str(value) for value in (
+    created.st_dev,
+    created.st_ino,
+    stat.S_IMODE(created.st_mode),
+    created.st_uid,
+    created.st_gid,
+)))
+' "$MODULE_SIGNING_STAGE_NAME")"; then
+    echo "Could not create the private signing stage." >&2
+    exit 1
+  fi
+  [[ "$MODULE_SIGNING_STAGE_IDENTITY" =~ ^[0-9]+:[1-9][0-9]*:448:[0-9]+:[0-9]+$ ]] || {
+    echo "Private signing stage creation identity is malformed." >&2
+    exit 1
+  }
+  if ! exec 56< "$MODULE_SIGNING_STAGE_DIR"; then
+    echo "Could not hold the private signing stage." >&2
+    exit 1
+  fi
+  MODULE_SIGNING_STAGE_FD_OPEN="true"
+  if ! created_file_states="$("$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+directory = os.fstat(56)
+mapped = os.stat(".", dir_fd=56, follow_symlinks=False)
+expected = sys.argv[1]
+actual = ":".join(str(value) for value in (
+    directory.st_dev,
+    directory.st_ino,
+    stat.S_IMODE(directory.st_mode),
+    directory.st_uid,
+    directory.st_gid,
+))
+if (
+    not stat.S_ISDIR(directory.st_mode)
+    or stat.S_IMODE(directory.st_mode) != 0o700
+    or directory.st_uid != os.getuid()
+    or (directory.st_dev, directory.st_ino) != (mapped.st_dev, mapped.st_ino)
+    or actual != expected
+):
+    raise SystemExit(1)
+old_umask = os.umask(0o077)
+try:
+    identities = []
+    for name in ("signing.pem", "pin"):
+        descriptor = os.open(
+            name,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=56,
+        )
+        metadata = os.fstat(descriptor)
+        identities.append(":".join(str(value) for value in (
+            metadata.st_dev,
+            metadata.st_ino,
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_uid,
+            metadata.st_gid,
+            metadata.st_nlink,
+            metadata.st_size,
+        )))
+        os.close(descriptor)
+finally:
+    os.umask(old_umask)
+os.fsync(56)
+print("\n".join(identities))
+' "$MODULE_SIGNING_STAGE_IDENTITY")"; then
+    echo "Could not create the held private signing files." >&2
+    exit 1
+  fi
+  created_key_identity="${created_file_states%%$'\n'*}"
+  created_pin_identity="${created_file_states#*$'\n'}"
+  if [ "$created_key_identity" = "$created_file_states" ] ||
+     [[ ! "$created_key_identity" =~ ^[0-9]+:[1-9][0-9]*:384:[0-9]+:[0-9]+:1:0$ ]] ||
+     [[ ! "$created_pin_identity" =~ ^[0-9]+:[1-9][0-9]*:384:[0-9]+:[0-9]+:1:0$ ]]; then
+    echo "Private signing file creation identity is malformed." >&2
+    exit 1
+  fi
+  MODULE_SIGNING_KEY_CREATION_IDENTITY="$created_key_identity"
+  MODULE_SIGNING_PIN_CREATION_IDENTITY="$created_pin_identity"
+  if [ "${SP11_CONTROLLED_SIGNING_TEST_FIXTURE:-}" = \
+       sp11-controlled-signing-v1 ]; then
+    case "${SP11_MODULE_SIGNING_CLEANUP_TEST_DELAY:-}" in
+      swap-before-hold-key|swap-before-hold-pin)
+        printf '%s\n' "$SP11_MODULE_SIGNING_CLEANUP_TEST_DELAY" >&72 || true
+        /bin/sleep 1
+        ;;
+    esac
+  fi
+  if ! exec 57<> "$MODULE_SIGNING_STAGE_DIR/signing.pem"; then
+    echo "Could not hold the private signing key file." >&2
+    exit 1
+  fi
+  if ! "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+descriptor = os.fstat(57)
+mapped = os.stat("signing.pem", dir_fd=56, follow_symlinks=False)
+actual = ":".join(str(value) for value in (
+    descriptor.st_dev,
+    descriptor.st_ino,
+    stat.S_IMODE(descriptor.st_mode),
+    descriptor.st_uid,
+    descriptor.st_gid,
+    descriptor.st_nlink,
+    descriptor.st_size,
+))
+if (
+    not stat.S_ISREG(descriptor.st_mode)
+    or (descriptor.st_dev, descriptor.st_ino) != (mapped.st_dev, mapped.st_ino)
+    or actual != sys.argv[1]
+):
+    raise SystemExit(1)
+' "$created_key_identity"; then
+    exec 57>&-
+    echo "Private signing key creation mapping changed before hold." >&2
+    exit 1
+  fi
+  MODULE_SIGNING_KEY_FD_OPEN="true"
+  if ! exec 60<> "$MODULE_SIGNING_STAGE_DIR/pin"; then
+    echo "Could not hold the private signing PIN file." >&2
+    exit 1
+  fi
+  if ! "$RELEASE_PYTHON_BIN" -I -c '
+import os
+import stat
+import sys
+
+descriptor = os.fstat(60)
+mapped = os.stat("pin", dir_fd=56, follow_symlinks=False)
+actual = ":".join(str(value) for value in (
+    descriptor.st_dev,
+    descriptor.st_ino,
+    stat.S_IMODE(descriptor.st_mode),
+    descriptor.st_uid,
+    descriptor.st_gid,
+    descriptor.st_nlink,
+    descriptor.st_size,
+))
+if (
+    not stat.S_ISREG(descriptor.st_mode)
+    or (descriptor.st_dev, descriptor.st_ino) != (mapped.st_dev, mapped.st_ino)
+    or actual != sys.argv[1]
+):
+    raise SystemExit(1)
+' "$created_pin_identity"; then
+    exec 60>&-
+    echo "Private signing PIN creation mapping changed before hold." >&2
+    exit 1
+  fi
+  MODULE_SIGNING_PIN_FD_OPEN="true"
+  if ! signing_states="$("$RELEASE_PYTHON_BIN" -I -c '
+import hashlib
+import os
+import re
+import stat
+import subprocess
+import sys
+
+key_path, certificate_path, pin_path, reference_path, stage = sys.argv[1:6]
+expected_sha256, expected_fingerprint, expected_serial = sys.argv[6:9]
+openssl, expected_openssl_identity = sys.argv[9:11]
+
+def identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+    )
+
+def openssl_identity():
+    descriptor = -1
+    try:
+        if openssl != "/usr/bin/openssl" or not expected_openssl_identity:
+            raise OSError
+        directory = os.fstat(55)
+        mapped_directory = os.stat("/usr/bin", follow_symlinks=False)
+        target = os.stat("openssl", dir_fd=55, follow_symlinks=False)
+        tool_identity = lambda metadata: (
+            metadata.st_dev,
+            metadata.st_ino,
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+            metadata.st_nlink,
+            metadata.st_uid,
+            metadata.st_gid,
+        )
+        if (
+            not stat.S_ISDIR(directory.st_mode)
+            or directory.st_uid != 0
+            or stat.S_IMODE(directory.st_mode) & 0o022
+            or tool_identity(mapped_directory) != tool_identity(directory)
+            or not stat.S_ISREG(target.st_mode)
+            or target.st_uid != 0
+            or stat.S_IMODE(target.st_mode) & 0o022
+            or not stat.S_IMODE(target.st_mode) & 0o111
+            or not 0 < target.st_size <= 256 * 1024 * 1024
+            or target.st_nlink < 1
+        ):
+            raise OSError
+        descriptor = os.open(
+            "openssl",
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=55,
+        )
+        held = os.fstat(descriptor)
+        if tool_identity(held) != tool_identity(target) or not os.pread(descriptor, 1, 0):
+            raise OSError
+        return " ".join(
+            str(value) for value in tool_identity(directory) + tool_identity(target)
+        )
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+def read_input(path, maximum, private):
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        mapped_before = os.lstat(path)
+        mode = stat.S_IMODE(before.st_mode)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_ISLNK(mapped_before.st_mode)
+            or identity(before) != identity(mapped_before)
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or not 0 < before.st_size <= maximum
+            or (private and mode not in (0o400, 0o600))
+            or (not private and ((mode & 0o400) == 0 or (mode & 0o022)))
+        ):
+            raise OSError
+        content = bytearray()
+        offset = 0
+        while offset < before.st_size:
+            chunk = os.pread(descriptor, min(65536, before.st_size - offset), offset)
+            if not chunk:
+                raise OSError
+            content.extend(chunk)
+            offset += len(chunk)
+        after = os.fstat(descriptor)
+        mapped_after = os.lstat(path)
+        if identity(after) != identity(before) or identity(mapped_after) != identity(before):
+            raise OSError
+        return bytes(content)
+    finally:
+        os.close(descriptor)
+
+def run(arguments, input_bytes=None):
+    if openssl_identity() != expected_openssl_identity:
+        raise OSError
+    os.lseek(57, 0, os.SEEK_SET)
+    os.lseek(60, 0, os.SEEK_SET)
+    os.set_inheritable(55, True)
+    os.set_inheritable(57, True)
+    os.set_inheritable(60, True)
+    completed = subprocess.run(
+        arguments,
+        input=input_bytes,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "LC_ALL": "C",
+            "OPENSSL_CONF": "/dev/null",
+        },
+        close_fds=True,
+        pass_fds=(55, 57, 60),
+    )
+    if (
+        completed.returncode != 0
+        or openssl_identity() != expected_openssl_identity
+    ):
+        raise OSError
+    return completed.stdout
+
+try:
+    key = read_input(key_path, 1024 * 1024, True)
+    certificate = read_input(certificate_path, 1024 * 1024, False)
+    pin = read_input(pin_path, 256, True)
+    reference = read_input(reference_path, 1024 * 1024, False)
+    encrypted_key_pattern = re.compile(
+        br"-----BEGIN ENCRYPTED " br"PRIVATE KEY-----\r?\n"
+        br"[A-Za-z0-9+/=\r\n]+"
+        br"-----END ENCRYPTED PRIVATE KEY-----\r?\n?\Z"
+    )
+    certificate_pattern = re.compile(
+        br"-----BEGIN CERTIFICATE-----\r?\n"
+        br"[A-Za-z0-9+/=\r\n]+"
+        br"-----END CERTIFICATE-----\r?\n?\Z"
+    )
+    if encrypted_key_pattern.fullmatch(key) is None:
+        raise OSError
+    if certificate_pattern.fullmatch(certificate) is None:
+        raise OSError
+    if pin.endswith(b"\n"):
+        pin = pin[:-1]
+    if not 1 <= len(pin) <= 255 or any(value < 0x20 or value > 0x7e for value in pin):
+        raise OSError
+    if b"\r" in pin or b"\n" in pin or b"\0" in pin:
+        raise OSError
+
+    combined = certificate.rstrip(b"\r\n") + b"\n" + key.rstrip(b"\r\n") + b"\n"
+    for descriptor, name, content in (
+        (57, "signing.pem", combined),
+        (60, "pin", pin + b"\n"),
+    ):
+        metadata = os.fstat(descriptor)
+        mapped = os.stat(name, dir_fd=56, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+            or metadata.st_size != 0
+            or (metadata.st_dev, metadata.st_ino) != (mapped.st_dev, mapped.st_ino)
+        ):
+            raise OSError
+        view = memoryview(content)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError
+            view = view[written:]
+        os.ftruncate(descriptor, len(content))
+        os.fsync(descriptor)
+        os.fchmod(descriptor, 0o400)
+        after = os.fstat(descriptor)
+        mapped_after = os.stat(name, dir_fd=56, follow_symlinks=False)
+        if (
+            stat.S_IMODE(after.st_mode) != 0o400
+            or after.st_size != len(content)
+            or (after.st_dev, after.st_ino) != (mapped_after.st_dev, mapped_after.st_ino)
+        ):
+            raise OSError
+    os.fsync(56)
+
+    descriptor_root = "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
+    signing_file = descriptor_root + "/57"
+    staged_pin = descriptor_root + "/60"
+    certificate_der = run([openssl, "x509", "-in", signing_file, "-outform", "DER"])
+    reference_der = run(
+        [openssl, "x509", "-inform", "PEM", "-outform", "DER"],
+        reference,
+    )
+    if certificate_der != reference_der:
+        raise OSError
+    actual_sha256 = hashlib.sha256(certificate_der).hexdigest()
+    actual_fingerprint = ":".join(
+        f"{value:02X}" for value in hashlib.sha256(certificate_der).digest()
+    )
+    serial_output = run(
+        [openssl, "x509", "-in", signing_file, "-noout", "-serial"]
+    ).decode("ascii").strip()
+    if not serial_output.startswith("serial="):
+        raise OSError
+    actual_serial = serial_output[7:].upper()
+    private_public_der = run([
+        openssl,
+        "pkey",
+        "-in",
+        signing_file,
+        "-passin",
+        "file:" + staged_pin,
+        "-pubout",
+        "-outform",
+        "DER",
+    ])
+    public_text = run(
+        [openssl, "pkey", "-pubin", "-inform", "DER", "-text_pub", "-noout"],
+        private_public_der,
+    )
+    if b"Public-Key: (4096 bit)" not in public_text:
+        raise OSError
+    certificate_public_pem = run(
+        [openssl, "x509", "-in", signing_file, "-pubkey", "-noout"]
+    )
+    certificate_public_der = run(
+        [openssl, "pkey", "-pubin", "-pubout", "-outform", "DER"],
+        certificate_public_pem,
+    )
+    if private_public_der != certificate_public_der:
+        raise OSError
+    if (
+        actual_sha256 != expected_sha256
+        or actual_fingerprint != expected_fingerprint
+        or actual_serial != expected_serial
+    ):
+        raise OSError
+    entries = sorted(os.listdir(56))
+    if entries != ["pin", "signing.pem"]:
+        raise OSError
+    for descriptor in (57, 60):
+        metadata = os.fstat(descriptor)
+        print(":".join(str(value) for value in (
+            metadata.st_dev,
+            metadata.st_ino,
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+            metadata.st_nlink,
+        )))
+except BaseException:
+    raise SystemExit(1)
+' \
+      "$MODULE_SIGNING_KEY" \
+      "$MODULE_SIGNING_CERTIFICATE" \
+      "$MODULE_SIGNING_PIN_FILE" \
+      "$reference_certificate" \
+      "$MODULE_SIGNING_STAGE_DIR" \
+      "$RELEASE_MODULE_SIGNING_CERT_SHA256" \
+      "$RELEASE_MODULE_SIGNING_CERT_FINGERPRINT" \
+      "$RELEASE_MODULE_SIGNING_CERT_SERIAL" \
+      "$openssl_bin" \
+      "$RELEASE_OPENSSL_IDENTITY")"; then
+    echo "Controlled module-signing input validation failed." >&2
+    cleanup_module_signing_stage || true
+    exit 1
+  fi
+  verify_release_openssl_authority || {
+    echo "Trusted OpenSSL authority changed during controlled input validation." >&2
+    cleanup_module_signing_stage || true
+    exit 1
+  }
+  MODULE_SIGNING_KEY_STATE="${signing_states%%$'\n'*}"
+  MODULE_SIGNING_PIN_STATE="${signing_states#*$'\n'}"
+  if [ "$MODULE_SIGNING_KEY_STATE" = "$signing_states" ] ||
+     [[ "$MODULE_SIGNING_PIN_STATE" == *$'\n'* ]] ||
+     ! [[ "$MODULE_SIGNING_KEY_STATE" =~ ^[0-9]+:[1-9][0-9]*:256:[1-9][0-9]*:[0-9]+:[0-9]+:1$ ]] ||
+     ! [[ "$MODULE_SIGNING_PIN_STATE" =~ ^[0-9]+:[1-9][0-9]*:256:[1-9][0-9]*:[0-9]+:[0-9]+:1$ ]]; then
+    echo "Controlled module-signing held-file state is malformed." >&2
+    cleanup_module_signing_stage || true
+    exit 1
+  fi
+  case "$MODULE_SIGNING_STAGE_DIR" in
+    /tmp/sp11-module-signing.[A-Za-z0-9_-]*) ;;
+    *)
+      echo "Controlled module-signing staging returned an invalid private path." >&2
+      exit 1
+      ;;
+  esac
+  echo "Validated encrypted controlled module-signing inputs."
+}
+
+verify_controlled_module_signing_stage() {
+  local current_states current_key_state current_pin_state
+  local reference_certificate
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ "$MODULE_SIGNING_PARENT_FD_OPEN" = "true" ] &&
+    [ "$MODULE_SIGNING_STAGE_FD_OPEN" = "true" ] &&
+    [ "$MODULE_SIGNING_KEY_FD_OPEN" = "true" ] &&
+    [ "$MODULE_SIGNING_PIN_FD_OPEN" = "true" ] || {
+      echo "Controlled module-signing stage authority is incomplete." >&2
+      return 1
+    }
+  if ! current_states="$(/usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+expected_directory = sys.argv[1]
+name = sys.argv[2]
+directory = os.fstat(56)
+mapped_directory = os.stat(name, dir_fd=61, follow_symlinks=False)
+actual_directory = ":".join(str(value) for value in (
+    directory.st_dev,
+    directory.st_ino,
+    stat.S_IMODE(directory.st_mode),
+    directory.st_uid,
+    directory.st_gid,
+))
+if (
+    not stat.S_ISDIR(directory.st_mode)
+    or actual_directory != expected_directory
+    or (directory.st_dev, directory.st_ino)
+       != (mapped_directory.st_dev, mapped_directory.st_ino)
+    or sorted(os.listdir(56)) != ["pin", "signing.pem"]
+):
+    raise SystemExit(1)
+for descriptor, entry in ((57, "signing.pem"), (60, "pin")):
+    metadata = os.fstat(descriptor)
+    mapped = os.stat(entry, dir_fd=56, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o400
+        or metadata.st_nlink != 1
+        or (metadata.st_dev, metadata.st_ino) != (mapped.st_dev, mapped.st_ino)
+    ):
+        raise SystemExit(1)
+    print(":".join(str(value) for value in (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+    )))
+' "$MODULE_SIGNING_STAGE_IDENTITY" "$MODULE_SIGNING_STAGE_NAME")"; then
+    echo "Controlled module-signing stage mapping changed during the build." >&2
+    return 1
+  fi
+  current_key_state="${current_states%%$'\n'*}"
+  current_pin_state="${current_states#*$'\n'}"
+  if [ "$current_key_state" != "$MODULE_SIGNING_KEY_STATE" ] ||
+     [ "$current_pin_state" != "$MODULE_SIGNING_PIN_STATE" ]; then
+    echo "Controlled module-signing stage bytes or metadata changed during the build." >&2
+    return 1
+  fi
+  verify_release_openssl_authority || {
+    echo "Trusted OpenSSL authority changed during the build." >&2
+    return 1
+  }
+  reference_certificate="$(
+    committed_repo_abs_path "$RELEASE_MODULE_SIGNING_CERT_PATH"
+  )" || return 1
+  if ! "$RELEASE_PYTHON_BIN" -I -c '
+import hashlib
+import os
+import stat
+import subprocess
+import sys
+
+openssl, expected_openssl_identity, reference_path, expected_sha256 = sys.argv[1:5]
+
+def tool_identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
+
+def openssl_identity():
+    descriptor = -1
+    try:
+        if openssl != "/usr/bin/openssl" or not expected_openssl_identity:
+            raise OSError
+        directory = os.fstat(55)
+        mapped_directory = os.stat("/usr/bin", follow_symlinks=False)
+        target = os.stat("openssl", dir_fd=55, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(directory.st_mode)
+            or directory.st_uid != 0
+            or stat.S_IMODE(directory.st_mode) & 0o022
+            or tool_identity(mapped_directory) != tool_identity(directory)
+            or not stat.S_ISREG(target.st_mode)
+            or target.st_uid != 0
+            or stat.S_IMODE(target.st_mode) & 0o022
+            or not stat.S_IMODE(target.st_mode) & 0o111
+            or not 0 < target.st_size <= 256 * 1024 * 1024
+            or target.st_nlink < 1
+        ):
+            raise OSError
+        descriptor = os.open(
+            "openssl",
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=55,
+        )
+        held = os.fstat(descriptor)
+        if tool_identity(held) != tool_identity(target) or not os.pread(descriptor, 1, 0):
+            raise OSError
+        return " ".join(
+            str(value) for value in tool_identity(directory) + tool_identity(target)
+        )
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+def run(arguments, input_bytes=None):
+    if openssl_identity() != expected_openssl_identity:
+        raise OSError
+    for descriptor in (57, 60):
+        os.lseek(descriptor, 0, os.SEEK_SET)
+    for descriptor in (55, 57, 60):
+        os.set_inheritable(descriptor, True)
+    completed = subprocess.run(
+        arguments,
+        input=input_bytes,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "LC_ALL": "C",
+            "OPENSSL_CONF": "/dev/null",
+        },
+        close_fds=True,
+        pass_fds=(55, 57, 60),
+    )
+    if (
+        completed.returncode != 0
+        or openssl_identity() != expected_openssl_identity
+    ):
+        raise OSError
+    return completed.stdout
+
+def read_reference():
+    descriptor = os.open(
+        reference_path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+    )
+    try:
+        before = os.fstat(descriptor)
+        mapped_before = os.lstat(reference_path)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or tool_identity(before) != tool_identity(mapped_before)
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) & 0o022
+            or not 0 < before.st_size <= 1024 * 1024
+        ):
+            raise OSError
+        data = bytearray()
+        while len(data) < before.st_size:
+            chunk = os.pread(
+                descriptor,
+                min(65536, before.st_size - len(data)),
+                len(data),
+            )
+            if not chunk:
+                raise OSError
+            data.extend(chunk)
+        after = os.fstat(descriptor)
+        mapped_after = os.lstat(reference_path)
+        if (
+            tool_identity(after) != tool_identity(before)
+            or tool_identity(mapped_after) != tool_identity(before)
+        ):
+            raise OSError
+        return bytes(data)
+    finally:
+        os.close(descriptor)
+
+try:
+    descriptor_root = "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
+    signing_file = descriptor_root + "/57"
+    pin_file = descriptor_root + "/60"
+    certificate_der = run(
+        [openssl, "x509", "-in", signing_file, "-outform", "DER"]
+    )
+    reference_der = run(
+        [openssl, "x509", "-inform", "PEM", "-outform", "DER"],
+        read_reference(),
+    )
+    if (
+        certificate_der != reference_der
+        or hashlib.sha256(certificate_der).hexdigest() != expected_sha256
+    ):
+        raise OSError
+    private_public_der = run([
+        openssl,
+        "pkey",
+        "-in",
+        signing_file,
+        "-passin",
+        "file:" + pin_file,
+        "-pubout",
+        "-outform",
+        "DER",
+    ])
+    public_text = run(
+        [openssl, "pkey", "-pubin", "-inform", "DER", "-text_pub", "-noout"],
+        private_public_der,
+    )
+    certificate_public_pem = run(
+        [openssl, "x509", "-in", signing_file, "-pubkey", "-noout"]
+    )
+    certificate_public_der = run(
+        [openssl, "pkey", "-pubin", "-pubout", "-outform", "DER"],
+        certificate_public_pem,
+    )
+    if (
+        b"Public-Key: (4096 bit)" not in public_text
+        or private_public_der != certificate_public_der
+    ):
+        raise OSError
+except BaseException:
+    raise SystemExit(1)
+' \
+      "$RELEASE_OPENSSL_BIN" \
+      "$RELEASE_OPENSSL_IDENTITY" \
+      "$reference_certificate" \
+      "$RELEASE_MODULE_SIGNING_CERT_SHA256"; then
+    echo "Controlled module-signing cryptographic integrity changed during the build." >&2
+    return 1
+  fi
+  if ! verify_release_openssl_authority; then
+    echo "Trusted OpenSSL authority changed during the build." >&2
+    return 1
+  fi
 }
 
 capture_release_support_start() {
@@ -3422,6 +4710,21 @@ while [ "$#" -gt 0 ]; do
       RELEASE_BUILD="true"
       shift
       ;;
+    --module-signing-key)
+      require_arg "$1" "${2:-}"
+      MODULE_SIGNING_KEY="$2"
+      shift 2
+      ;;
+    --module-signing-certificate)
+      require_arg "$1" "${2:-}"
+      MODULE_SIGNING_CERTIFICATE="$2"
+      shift 2
+      ;;
+    --module-signing-pin-file)
+      require_arg "$1" "${2:-}"
+      MODULE_SIGNING_PIN_FILE="$2"
+      shift 2
+      ;;
     --work-dir)
       require_arg "$1" "${2:-}"
       WORK_DIR="$2"
@@ -3504,6 +4807,25 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+module_signing_input_count=0
+for module_signing_input in \
+  "$MODULE_SIGNING_KEY" \
+  "$MODULE_SIGNING_CERTIFICATE" \
+  "$MODULE_SIGNING_PIN_FILE"; do
+  [ -z "$module_signing_input" ] ||
+    module_signing_input_count=$((module_signing_input_count + 1))
+done
+if [ "$RELEASE_BUILD" = "true" ]; then
+  if [ "$module_signing_input_count" -ne 3 ]; then
+    echo "--release-build requires all three controlled module-signing file options." >&2
+    exit 2
+  fi
+elif [ "$module_signing_input_count" -ne 0 ]; then
+  echo "Controlled module-signing inputs are accepted only with --release-build." >&2
+  exit 2
+fi
+unset module_signing_input module_signing_input_count
 
 case "$SOURCE_MODE" in
   apt|git)
@@ -3619,7 +4941,7 @@ case "$CONTAINER_WORK_DIR" in
 esac
 
 case "$CONTAINER_WORK_DIR" in
-  /repo|/repo/*|/sp11-control|/sp11-control/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/etc|/etc/*|\
+  /repo|/repo/*|/sp11-control|/sp11-control/*|/sp11-signing|/sp11-signing/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/etc|/etc/*|\
   /usr|/usr/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|\
   /run|/run/*|/tmp|/tmp/*|/var|/var/*|/)
     echo "--container-work-dir must not overlap a container control or support-repository mount: $CONTAINER_WORK_DIR" >&2
@@ -3739,8 +5061,17 @@ fi
 if [ "$RELEASE_BUILD" = "true" ]; then
   load_release_baseline_values
   if [ -z "$RELEASE_SOURCE_DATE_EPOCH" ] || [ -z "$RELEASE_KBUILD_BUILD_USER" ] ||
-     [ -z "$RELEASE_KBUILD_BUILD_HOST" ] || [ -z "$RELEASE_KBUILD_BUILD_TIMESTAMP" ]; then
-    echo "Release kernel baseline is missing the deterministic build-identity values." >&2
+     [ -z "$RELEASE_KBUILD_BUILD_HOST" ] || [ -z "$RELEASE_KBUILD_BUILD_TIMESTAMP" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_POLICY" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_KEY_PATH" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_PIN_PATH" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_CERT_PATH" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_CERT_SHA256" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_CERT_FINGERPRINT" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_CERT_SERIAL" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH" ] ||
+     [ -z "$RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" ]; then
+    echo "Release kernel baseline is missing deterministic identity or module-signing values." >&2
     exit 1
   fi
   [ "$IMAGE" = "$RELEASE_BASELINE_DOCKER_IMAGE" ] || {
@@ -3771,6 +5102,19 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     echo "--release-build patch directories do not match the immutable kernel baseline." >&2
     exit 2
   }
+  [ "$RELEASE_MODULE_SIGNING_POLICY" = "sp11-controlled-rsa4096-sha512-v1" ] &&
+    [ "$RELEASE_MODULE_SIGNING_KEY_PATH" = "/sp11-signing/signing.pem" ] &&
+    [ "$RELEASE_MODULE_SIGNING_PIN_PATH" = "/sp11-signing/pin" ] &&
+    [ "$RELEASE_MODULE_SIGNING_CERT_PATH" = \
+      "config/kernel-signing/sp11-module-signing-cert.pem" ] &&
+    [ "$RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH" = \
+      "config/kernel-signing/sp11-module-signing-allowed-unsigned.txt" ] &&
+    [ "$RELEASE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" = \
+      "eb507e006b37ad7d291a37524f3f2f6b5281c5a3f98738dc07056a3ca7cba800" ] || {
+      echo "--release-build module-signing policy does not match the reviewed contract." >&2
+      exit 2
+    }
+  stage_controlled_module_signing_inputs
   IMMUTABLE_APT="true"
 fi
 
@@ -4004,6 +5348,7 @@ inner_args=(
 if [ "$RELEASE_BUILD" = "true" ]; then
   inner_args+=(
     --release-build
+    --module-signing-policy "$RELEASE_MODULE_SIGNING_POLICY"
     --source-date-epoch "$RELEASE_SOURCE_DATE_EPOCH"
     --kbuild-build-user "$RELEASE_KBUILD_BUILD_USER"
     --kbuild-build-host "$RELEASE_KBUILD_BUILD_HOST"
@@ -4061,8 +5406,9 @@ fi
 
 emit_docker_entrypoint() {
   cat <<'EOF'
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
+unset KBUILD_SIGN_PIN
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -4096,6 +5442,12 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
          next
        }
        index($5, "/sp11-control/") == 1 { control_nested++ }
+       $5 == "/sp11-signing" {
+         signing_count++
+         if (has_ro($6)) signing_ro++
+         next
+       }
+       index($5, "/sp11-signing/") == 1 { signing_nested++ }
        $5 == "/work" {
          work_count++
          if (!has_ro($6)) work_rw++
@@ -4105,12 +5457,26 @@ if [ "${SP11_IMMUTABLE_APT_REQUIRED:-false}" = "true" ]; then
        END {
          exit !(repo_count == 1 && repo_ro == 1 && repo_nested == 0 &&
                 control_count == 1 && control_ro == 1 && control_nested == 0 &&
+                signing_count == 1 && signing_ro == 1 && signing_nested == 0 &&
                 work_count == 1 && work_rw == 1 && work_nested == 0)
        }
      ' /proc/self/mountinfo; then
-    echo "Immutable release build requires exact unshadowed read-only /repo and /sp11-control mounts." >&2
+    echo "Immutable release build requires exact unshadowed read-only release-control mounts." >&2
     exit 1
   fi
+  if [ ! -d /sp11-signing ] || [ -L /sp11-signing ] ||
+     [ "$(find /sp11-signing -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" != $'pin\nsigning.pem' ]; then
+    echo "Immutable release build requires the exact private signing input pair." >&2
+    exit 1
+  fi
+  for signing_input in /sp11-signing/signing.pem /sp11-signing/pin; do
+    if [ ! -f "$signing_input" ] || [ -L "$signing_input" ] ||
+       [ "$(stat -c '%a:%h' -- "$signing_input")" != "400:1" ]; then
+      echo "Immutable release build found an unsafe private signing input." >&2
+      exit 1
+    fi
+  done
+  unset signing_input
   [ -d /work ] && [ ! -L /work ] &&
     [ "$(cd /work && pwd -P)" = /work ] || {
       echo "Private release-state volume is not an exact real /work mount." >&2
@@ -4262,7 +5628,7 @@ build_args=()
 while IFS= read -r build_arg; do
   build_args+=("$build_arg")
 done < "$control_dir/docker-build-args.txt"
-/repo/scripts/build-sp11-qcom-x1e-kernel.sh "${build_args[@]}"
+/bin/bash -p /repo/scripts/build-sp11-qcom-x1e-kernel.sh "${build_args[@]}"
 
 find_qcom_kernel_debs() {
   find "$1" -maxdepth 4 -type f \
@@ -4286,7 +5652,8 @@ done < <(find_qcom_kernel_debs "$container_work_dir")
 
 for manifest in \
   "$container_work_dir/sp11-kernel-build-manifest.txt" \
-  "$container_work_dir/sp11-kernel-debs.txt"; do
+  "$container_work_dir/sp11-kernel-debs.txt" \
+  "$container_work_dir/sp11-kernel-module-signatures.txt"; do
   [ -f "$manifest" ] && cp -f "$manifest" "$artifact_dir/"
 done
 
@@ -4576,6 +5943,8 @@ if [ "$RELEASE_BUILD" = "true" ]; then
     -e "SP11_EXPECTED_MANIFEST_VALIDATOR_OBJECT_ID=$RELEASE_MANIFEST_VALIDATOR_OBJECT_ID"
     -v "$COMMITTED_SUPPORT_DIR:/repo:ro"
     -v "$BASELINE_CONTROL_DIR:/sp11-control:ro"
+    --mount \
+      "type=bind,source=$MODULE_SIGNING_STAGE_DIR,destination=/sp11-signing,readonly"
   )
   if [ -n "$RELEASE_OCI_INDEX_SHA256" ]; then
     docker_args+=(-e "SP11_EXPECTED_OCI_INDEX_SHA256=$RELEASE_OCI_INDEX_SHA256")
@@ -4596,15 +5965,22 @@ if [ -n "$APT_SOURCES_FILE" ]; then
 fi
 
 if [ "$RELEASE_BUILD" = "true" ]; then
-  docker_args+=("$IMAGE" bash /sp11-control/docker-build-inside.sh)
+  docker_args+=("$IMAGE" /bin/bash -p /sp11-control/docker-build-inside.sh)
 else
   docker_args+=("$IMAGE" /work/docker-build-inside.sh)
 fi
 
 if [ "$DRY_RUN" = "true" ]; then
   if [ "$RELEASE_BUILD" = "true" ]; then
+    display_docker_args=("${docker_args[@]}")
+    for display_index in "${!display_docker_args[@]}"; do
+      if [ "${display_docker_args[$display_index]}" = \
+           "type=bind,source=$MODULE_SIGNING_STAGE_DIR,destination=/sp11-signing,readonly" ]; then
+        display_docker_args[$display_index]='type=bind,source=<private-signing-directory>,destination=/sp11-signing,readonly'
+      fi
+    done
     printf 'Docker command:\n  docker create'
-    printf ' %q' "${docker_args[@]:1}"
+    printf ' %q' "${display_docker_args[@]:1}"
   else
     printf 'Docker command:\n  docker'
     printf ' %q' "${docker_args[@]}"
@@ -4614,6 +5990,8 @@ if [ "$DRY_RUN" = "true" ]; then
   verify_release_control_state
   verify_release_support_stable
   verify_release_work_root_binding
+  verify_controlled_module_signing_stage
+  cleanup_module_signing_stage
   exit 0
 fi
 
@@ -4646,6 +6024,26 @@ else
 fi
 docker_status=$?
 set -e
+signing_stage_status=0
+signing_cleanup_status=0
+if [ "$docker_status" -eq 0 ]; then
+  set +e
+  verify_controlled_module_signing_stage
+  signing_stage_status=$?
+  set -e
+fi
+set +e
+cleanup_module_signing_stage
+signing_cleanup_status=$?
+set -e
+if [ "$signing_cleanup_status" -ne 0 ]; then
+  echo "Controlled module-signing stage could not be scrubbed completely." >&2
+  exit "$signing_cleanup_status"
+fi
+if [ "$signing_stage_status" -ne 0 ]; then
+  echo "Controlled module-signing stage failed its post-build integrity check." >&2
+  exit 1
+fi
 verify_release_control_state
 verify_release_support_checkout
 verify_release_work_root_binding

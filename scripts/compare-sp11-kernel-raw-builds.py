@@ -46,6 +46,7 @@ KNOWN_ARTIFACTS = {
     "sp11-kernel-apt-provenance.txt",
     "sp11-kernel-build-inputs.txt",
     "sp11-kernel-debs.txt",
+    "sp11-kernel-module-signatures.txt",
 }
 CONTROL_FILES = {
     "build-arguments": "docker-build-args.txt",
@@ -3652,6 +3653,12 @@ def parse_packages(
 
 
 def parse_outputs(manifest: dict[str, str]) -> dict[str, OutputRecord]:
+    require(
+        field(manifest, "Module signing policy")
+        == "sp11-controlled-rsa4096-sha512-v1"
+        and field(manifest, "Module signing private material retained") == "false",
+        "module-signing policy provenance is invalid",
+    )
     count = positive_decimal(field(manifest, "Output count"))
     require(count == len(OUTPUT_ORDER), "manifest output count is not exact")
     outputs: dict[str, OutputRecord] = {}
@@ -3922,6 +3929,8 @@ def manifest_projection(build: OpenBuild) -> tuple[tuple[str, str], ...]:
         "Signing certificate SHA256",
         "Signing certificate fingerprint",
         "Signing certificate serial",
+        "Kernel module signature report size",
+        "Kernel module signature report SHA256",
     }
     for index in range(1, len(build.outputs) + 1):
         excluded.update((f"Output {index} size", f"Output {index} SHA256"))
@@ -3941,6 +3950,7 @@ def matched_managed_projection(
     subject_paths = {
         "artifacts/sp11-kernel-build-manifest.txt",
         "artifacts/sp11-kernel-build-inputs.txt",
+        "artifacts/sp11-kernel-module-signatures.txt",
         *(f"artifacts/{package.filename}" for package in build.packages.values()),
     }
     rows: list[tuple[str, str, int, str]] = []
@@ -4289,6 +4299,25 @@ def render_report(result: Comparison) -> str:
             f"Patched diff Git version: {field(manifest, 'Patched diff Git version')}",
             f"Patched diff SHA256: {field(manifest, 'Patched diff SHA256')}",
             f"Patched tree ID: {field(manifest, 'Patched tree ID')}",
+            f"Module signing policy: {field(manifest, 'Module signing policy')}",
+            "Module signing private material retained: "
+            + field(manifest, "Module signing private material retained"),
+            f"Signing certificate SHA256: {field(manifest, 'Signing certificate SHA256')}",
+            "Signing certificate fingerprint: "
+            + field(manifest, "Signing certificate fingerprint"),
+            f"Signing certificate serial: {field(manifest, 'Signing certificate serial')}",
+            "Kernel module signature report asset: "
+            + field(manifest, "Kernel module signature report asset"),
+            "Kernel module signature report schema: "
+            + field(manifest, "Kernel module signature report schema"),
+            "Kernel module total count: "
+            + field(manifest, "Kernel module total count"),
+            "Kernel module verified signed count: "
+            + field(manifest, "Kernel module verified signed count"),
+            "Kernel module policy-allowed unsigned count: "
+            + field(manifest, "Kernel module policy-allowed unsigned count"),
+            "Kernel module unsigned-path inventory SHA256: "
+            + field(manifest, "Kernel module unsigned-path inventory SHA256"),
             f"Artifact file count A: {len(first.artifacts)}",
             f"Artifact file count B: {len(second.artifacts)}",
             "Managed retained-input aggregate schema: sp11-managed-tree-sha256-v1",
@@ -4358,6 +4387,14 @@ def render_report(result: Comparison) -> str:
             "Build-inputs envelope",
             first.artifacts["sp11-kernel-build-inputs.txt"],
             second.artifacts["sp11-kernel-build-inputs.txt"],
+            identical_label="raw identical",
+        )
+    )
+    lines.extend(
+        file_identity_lines(
+            "Kernel module signature report",
+            first.artifacts["sp11-kernel-module-signatures.txt"],
+            second.artifacts["sp11-kernel-module-signatures.txt"],
             identical_label="raw identical",
         )
     )

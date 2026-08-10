@@ -220,6 +220,13 @@ Stable or hardware-qualified promotion must cover:
 7. default Linux-integrated initialization, with the Windows sequence tested
    separately only if a correctly loaded module still fails.
 
+Future `sp11v3r2` candidates additionally follow
+[ADR-0056](adr-0056-controlled-sp11-module-signing.md). Release validation and
+installation must verify all three module signatures against the exact public
+certificate bound to the kernel manifest before the first target mutation.
+The certificate is transported; the private key and PIN never are. This does
+not change the requirement to keep Secure Boot disabled.
+
 ## Consequences
 
 - The community's reported clean-install failure becomes a detected and

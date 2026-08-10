@@ -2,6 +2,8 @@
 set -euo pipefail
 
 PROGRAM="${0##*/}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SIGNED_MODULE_VALIDATOR="$REPO_DIR/scripts/validate-sp11-signed-modules.py"
 MODULES_DIR=""
 REQUESTED_RELEASE=""
 TARGET_ROOT="/"
@@ -44,8 +46,8 @@ Install the matched Surface Pro 11 touchscreen module set for one exact kernel
 ABI and rebuild that ABI's initramfs.
 
 Required:
-  --modules-dir DIR    Directory containing gpi.ko, spi-geni-qcom.ko, and
-                       mshw0485_touch.ko.
+  --modules-dir DIR    Directory containing the exact five-member controlled
+                       signed touchscreen bundle.
 
 Options:
   --release RELEASE   Expected kernel release. By default it is inferred from
@@ -879,9 +881,12 @@ done
 
 for tool in \
   modinfo depmod install realpath sha256sum cmp mktemp grep awk find od tr \
-  stat cp mv ln rm mkdir rmdir dirname chmod; do
+  stat cp mv ln rm mkdir rmdir dirname basename chmod; do
   command -v "$tool" >/dev/null 2>&1 || die "required command not found: $tool"
 done
+[ -x /usr/bin/python3 ] || die "trusted /usr/bin/python3 is required"
+[ -f "$SIGNED_MODULE_VALIDATOR" ] && [ ! -L "$SIGNED_MODULE_VALIDATOR" ] ||
+  die "controlled module signature validator is unavailable"
 
 if [ "$(id -u)" -ne 0 ]; then
   die "installation mutates the target system and must be run as root"
@@ -922,17 +927,50 @@ module_snapshot="$WORK_DIR/module-snapshot"
 mkdir "$module_snapshot" || die "cannot create private module snapshot"
 chmod 0700 "$module_snapshot" || die "cannot secure private module snapshot"
 
-for index in "${!module_files[@]}"; do
-  source_path="$MODULES_DIR/${module_files[index]}"
-  require_regular_file "$source_path" "module input"
-  [ -r "$source_path" ] || die "module input is not readable: $source_path"
-  snapshot_path="$module_snapshot/${module_files[index]}"
+bundle_files=(
+  gpi.ko
+  spi-geni-qcom.ko
+  mshw0485_touch.ko
+  sp11-module-signing-cert.x509
+  sp11-touchscreen-modules-manifest.txt
+)
+bundle_entry_count=0
+while IFS= read -r -d '' bundle_entry; do
+  bundle_leaf="$(basename "$bundle_entry")"
+  case "$bundle_leaf" in
+    gpi.ko|spi-geni-qcom.ko|mshw0485_touch.ko|sp11-module-signing-cert.x509|sp11-touchscreen-modules-manifest.txt) ;;
+    *) die "module input directory contains an unexpected bundle member: $bundle_leaf" ;;
+  esac
+  bundle_entry_count=$((bundle_entry_count + 1))
+done < <(find "$MODULES_DIR" -mindepth 1 -maxdepth 1 -print0)
+[ "$bundle_entry_count" -eq 5 ] ||
+  die "module input directory must contain exactly five controlled bundle members"
+
+for bundle_leaf in "${bundle_files[@]}"; do
+  source_path="$MODULES_DIR/$bundle_leaf"
+  require_regular_file "$source_path" "controlled bundle input"
+  [ -r "$source_path" ] || die "controlled bundle input is not readable: $source_path"
+  snapshot_path="$module_snapshot/$bundle_leaf"
   install -m 0400 "$source_path" "$snapshot_path" ||
-    die "cannot snapshot module input: $source_path"
-  require_regular_file "$source_path" "module input"
-  require_regular_file "$snapshot_path" "private module snapshot"
+    die "cannot snapshot controlled bundle input: $source_path"
+  require_regular_file "$source_path" "controlled bundle input"
+  require_regular_file "$snapshot_path" "private controlled bundle snapshot"
   cmp -s "$source_path" "$snapshot_path" ||
-    die "module input changed while it was being snapshotted: $source_path"
+    die "controlled bundle input changed while it was being snapshotted: $source_path"
+done
+
+[ "$(node_identity "$MODULES_DIR")" = "$MODULES_DIR_ID" ] ||
+  die "module input directory identity changed while it was being snapshotted"
+/usr/bin/python3 -I "$SIGNED_MODULE_VALIDATOR" \
+  --certificate "$module_snapshot/sp11-module-signing-cert.x509" \
+  --module "$module_snapshot/gpi.ko" \
+  --module "$module_snapshot/spi-geni-qcom.ko" \
+  --module "$module_snapshot/mshw0485_touch.ko" \
+  --manifest "$module_snapshot/sp11-touchscreen-modules-manifest.txt" >/dev/null ||
+  die "controlled touchscreen module signature validation failed"
+
+for index in "${!module_files[@]}"; do
+  snapshot_path="$module_snapshot/${module_files[index]}"
 
   actual_name="$(modinfo -F name "$snapshot_path" 2>/dev/null || true)"
   [ "$actual_name" = "${module_names[index]}" ] ||
@@ -949,9 +987,6 @@ for index in "${!module_files[@]}"; do
   fi
   module_sources+=("$snapshot_path")
 done
-
-[ "$(node_identity "$MODULES_DIR")" = "$MODULES_DIR_ID" ] ||
-  die "module input directory identity changed while it was being snapshotted"
 
 case "$COMMON_RELEASE" in
   ""|*[!A-Za-z0-9._+~-]*|[!A-Za-z0-9]*)
@@ -1011,9 +1046,10 @@ done
 grep -qx 'CONFIG_MODULES=y' "$config" || die "CONFIG_MODULES is not enabled for $RELEASE"
 grep -qx 'CONFIG_QCOM_GPI_DMA=m' "$config" || die "CONFIG_QCOM_GPI_DMA must be a replaceable module"
 grep -qx 'CONFIG_SPI_QCOM_GENI=m' "$config" || die "CONFIG_SPI_QCOM_GENI must be a replaceable module"
-if grep -qx 'CONFIG_MODULE_SIG_FORCE=y' "$config"; then
-  die "CONFIG_MODULE_SIG_FORCE rejects the unsigned touchscreen modules"
-fi
+grep -qx 'CONFIG_MODULE_SIG=y' "$config" || die "CONFIG_MODULE_SIG is not enabled for $RELEASE"
+grep -qx 'CONFIG_MODULE_SIG_SHA512=y' "$config" || die "CONFIG_MODULE_SIG_SHA512 is not enabled for $RELEASE"
+grep -qx 'CONFIG_MODULE_SIG_HASH="sha512"' "$config" || die "CONFIG_MODULE_SIG_HASH is not sha512 for $RELEASE"
+grep -qx 'CONFIG_MODULE_SIG_KEY_TYPE_RSA=y' "$config" || die "CONFIG_MODULE_SIG_KEY_TYPE_RSA is not enabled for $RELEASE"
 
 case "$(uname -m)" in
   aarch64|arm64) ;;
@@ -1039,7 +1075,8 @@ else
     [ "$byte" = 1 ] && secure_boot_enabled="true"
   done
 fi
-[ "$secure_boot_enabled" != "true" ] || die "Secure Boot is enabled; these experimental modules are unsigned"
+[ "$secure_boot_enabled" != "true" ] ||
+  die "Secure Boot is enabled; this workflow is validated only with Secure Boot disabled"
 
 touch_dtb=""
 for candidate in \

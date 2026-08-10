@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
 
 ORIGINAL_ARGUMENTS=("$@")
@@ -27,6 +27,7 @@ sanitize_git_environment
 # deterministic arguments are validated and exported only after the exact
 # source commit and its timestamp have both been verified.
 unset SOURCE_DATE_EPOCH KBUILD_BUILD_USER KBUILD_BUILD_HOST KBUILD_BUILD_TIMESTAMP
+unset KBUILD_SIGN_PIN
 
 SOURCE_MODE="apt"
 SOURCE_PACKAGE="installed"
@@ -38,6 +39,7 @@ SOURCE_DATE_EPOCH=""
 KBUILD_BUILD_USER=""
 KBUILD_BUILD_HOST=""
 KBUILD_BUILD_TIMESTAMP=""
+MODULE_SIGNING_POLICY=""
 BUILD_TARGET="binary-qcom-x1e"
 WORK_DIR="${HOME}/sp11-qcom-x1e-kernel-build"
 WORK_DIR_IDENTITY=""
@@ -100,6 +102,15 @@ BASELINE_SOURCE_DATE_EPOCH=""
 BASELINE_KBUILD_BUILD_USER=""
 BASELINE_KBUILD_BUILD_HOST=""
 BASELINE_KBUILD_BUILD_TIMESTAMP=""
+BASELINE_MODULE_SIGNING_POLICY=""
+BASELINE_MODULE_SIGNING_KEY_PATH=""
+BASELINE_MODULE_SIGNING_PIN_PATH=""
+BASELINE_MODULE_SIGNING_CERT_PATH=""
+BASELINE_MODULE_SIGNING_CERT_SHA256=""
+BASELINE_MODULE_SIGNING_CERT_FINGERPRINT=""
+BASELINE_MODULE_SIGNING_CERT_SERIAL=""
+BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH=""
+BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256=""
 BASELINE_BUILD_TARGET=""
 BASELINE_PATCH_DIRS=""
 PATCHED_DIFF_FORMAT="git-diff-full-index-binary-v1"
@@ -133,6 +144,7 @@ RELEASE_OUTPUT_PATHS=()
 RELEASE_OUTPUT_SIZES=()
 RELEASE_OUTPUT_SHA256S=()
 RELEASE_DEB_ROLES=()
+RELEASE_DEB_SOURCE_PATHS=()
 RELEASE_DEB_PATHS=()
 RELEASE_DEB_PACKAGES=()
 RELEASE_DEB_VERSIONS=()
@@ -142,6 +154,17 @@ RELEASE_DEB_SHA256S=()
 SIGNING_CERT_FINGERPRINT=""
 SIGNING_CERT_SERIAL=""
 SIGNING_CERT_SHA256=""
+SIGNING_CERT_SIZE=""
+SIGNING_CONFIG_SHA256=""
+SIGNING_CONFIG_SIZE=""
+KERNEL_MODULE_SIGNATURE_REPORT_ASSET=""
+KERNEL_MODULE_SIGNATURE_REPORT_SIZE=""
+KERNEL_MODULE_SIGNATURE_REPORT_SHA256=""
+KERNEL_MODULE_SIGNATURE_REPORT_SCHEMA=""
+KERNEL_MODULE_TOTAL_COUNT=""
+KERNEL_MODULE_VERIFIED_SIGNED_COUNT=""
+KERNEL_MODULE_POLICY_ALLOWED_UNSIGNED_COUNT=""
+KERNEL_MODULE_UNSIGNED_PATH_INVENTORY_SHA256=""
 
 baseline_control_identity() {
   local path="$1"
@@ -277,6 +300,8 @@ Options:
   --kbuild-build-host HOST
   --kbuild-build-timestamp TIMESTAMP
                         Stable Kbuild identity values for a release build.
+  --module-signing-policy POLICY
+                        Wrapper-supplied controlled release signing policy.
   --patch-dir DIR        Patch directory, default repo patches/ubuntu-qcom-x1e-7.0.
   --patch-dirs "DIR1 DIR2 ..."
                         Space-separated list of patch directories. Patches from
@@ -424,7 +449,7 @@ resolve_release_publication_fixture_hook() {
     *) return 1 ;;
   esac
   case "$value" in
-    swap-work-root-terminal|mutate-fd10-after-primary|mutate-intended-double-term-scrub|inject-fifo-before-open|inject-symlink-before-open|inject-procfd-candidate-mismatch)
+    swap-work-root-terminal|swap-report-name-terminal|mutate-fd10-after-primary|mutate-intended-double-term-scrub|scanner-partial-report-failure|inject-fifo-before-open|inject-symlink-before-open|inject-report-before-open|inject-procfd-candidate-mismatch)
       printf '%s\n' "$value"
       ;;
     *) return 1 ;;
@@ -433,7 +458,8 @@ resolve_release_publication_fixture_hook() {
 
 held_release_output_state() {
   local work_path="$1" work_identity="$2" seal="$3"
-  local deb_fingerprint="$4" manifest_fingerprint="$5" fixture_hook="$6"
+  local deb_fingerprint="$4" manifest_fingerprint="$5"
+  local report_fingerprint="$6" fixture_hook="$7"
 
   "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
 import hashlib
@@ -442,11 +468,12 @@ import stat
 import sys
 
 work_path, expected_work_identity, seal = sys.argv[1:4]
-expected_fingerprints = sys.argv[4:6]
-fixture_hook = sys.argv[6]
+expected_fingerprints = sys.argv[4:7]
+fixture_hook = sys.argv[7]
 if fixture_hook not in (
     "",
     "swap-work-root-terminal",
+    "swap-report-name-terminal",
     "mutate-fd10-after-primary",
     "mutate-intended-double-term-scrub",
 ):
@@ -475,6 +502,7 @@ held_root_identity = stable_identity(held_root)
 outputs = (
     (10, "sp11-kernel-debs.txt", 1024 * 1024),
     (11, "sp11-kernel-build-manifest.txt", 4 * 1024 * 1024),
+    (13, "sp11-kernel-module-signatures.txt", 16 * 1024 * 1024),
 )
 
 def verify_root_mapping():
@@ -598,9 +626,9 @@ except OSError:
     if sys.platform != "darwin":
         raise
 
-# Cross-check both intended byte streams only after the first pass has
-# completed for both files.  This prevents a stable mutation or name rebind of
-# the first output while the second output is being hashed from escaping the
+# Cross-check all three intended byte streams only after the first pass has
+# completed for every file. This prevents a stable mutation or name rebind of
+# an earlier output while a later output is being hashed from escaping the
 # per-file checks above.
 verify_root_mapping()
 for index, output in enumerate(outputs):
@@ -615,6 +643,19 @@ for index, output in enumerate(outputs):
 # Linux.  Concurrent mutation after this bounded terminal check remains part of
 # the declared trusted controller envelope.
 verify_root_mapping()
+if seal == "true" and fixture_hook == "swap-report-name-terminal":
+    os.rename(
+        "sp11-kernel-module-signatures.txt",
+        ".sp11-kernel-module-signatures.publication-held",
+        src_dir_fd=6,
+        dst_dir_fd=6,
+    )
+    os.rename(
+        ".sp11-publication-report-victim",
+        "sp11-kernel-module-signatures.txt",
+        src_dir_fd=6,
+        dst_dir_fd=6,
+    )
 for index, (descriptor, name, _maximum) in enumerate(outputs):
     metadata = os.fstat(descriptor)
     mapped = os.stat(name, dir_fd=6, follow_symlinks=False)
@@ -637,7 +678,8 @@ if seal == "true" and fixture_hook == "swap-work-root-terminal":
 verify_root_mapping()
 print("\n".join(states))
 ' "$work_path" "$work_identity" "$seal" \
-  "$deb_fingerprint" "$manifest_fingerprint" "$fixture_hook" 2>&9
+  "$deb_fingerprint" "$manifest_fingerprint" "$report_fingerprint" \
+  "$fixture_hook" 2>&9
 }
 
 scrub_held_release_outputs() {
@@ -648,7 +690,11 @@ import stat
 import sys
 
 status = 0
-for descriptor, enabled in ((10, sys.argv[1]), (11, sys.argv[2])):
+for descriptor, enabled in (
+    (10, sys.argv[1]),
+    (11, sys.argv[2]),
+    (13, sys.argv[3]),
+):
     if enabled != "true":
         continue
     try:
@@ -658,11 +704,11 @@ for descriptor, enabled in ((10, sys.argv[1]), (11, sys.argv[2])):
         status = 1
     if (
         descriptor == 10
-        and sys.argv[3] == "mutate-intended-double-term-scrub"
+        and sys.argv[4] == "mutate-intended-double-term-scrub"
     ):
         os.kill(os.getppid(), signal.SIGTERM)
         os.kill(os.getppid(), signal.SIGTERM)
-if sys.argv[3] == "mutate-intended-double-term-scrub":
+if sys.argv[4] == "mutate-intended-double-term-scrub":
     try:
         flags = os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
         marker = os.open(
@@ -685,7 +731,7 @@ if sys.argv[3] == "mutate-intended-double-term-scrub":
     except OSError:
         status = 1
 raise SystemExit(status)
-' "$1" "$2" "$3" 1>&9 2>&9
+' "$1" "$2" "$3" "$4" 1>&9 2>&9
 }
 
 support_git() {
@@ -796,7 +842,7 @@ load_release_baseline_values() {
       ;;
   esac
   if ! emitted="$(
-    /bin/bash "$validator_fd_path" \
+    /bin/bash -p "$validator_fd_path" \
       --repo-dir "$repo_dir" \
       --emit-release-values \
       --baseline-fd 3
@@ -822,6 +868,15 @@ load_release_baseline_values() {
       SP11_KERNEL_KBUILD_BUILD_USER) BASELINE_KBUILD_BUILD_USER="$value" ;;
       SP11_KERNEL_KBUILD_BUILD_HOST) BASELINE_KBUILD_BUILD_HOST="$value" ;;
       SP11_KERNEL_KBUILD_BUILD_TIMESTAMP) BASELINE_KBUILD_BUILD_TIMESTAMP="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_POLICY) BASELINE_MODULE_SIGNING_POLICY="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_KEY_PATH) BASELINE_MODULE_SIGNING_KEY_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_PIN_PATH) BASELINE_MODULE_SIGNING_PIN_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_PATH) BASELINE_MODULE_SIGNING_CERT_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_SHA256) BASELINE_MODULE_SIGNING_CERT_SHA256="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT) BASELINE_MODULE_SIGNING_CERT_FINGERPRINT="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL) BASELINE_MODULE_SIGNING_CERT_SERIAL="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH) BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH="$value" ;;
+      SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256) BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256="$value" ;;
       SP11_KERNEL_BUILD_TARGET) BASELINE_BUILD_TARGET="$value" ;;
       SP11_KERNEL_PATCH_DIRS) BASELINE_PATCH_DIRS="$value" ;;
       *)
@@ -830,7 +885,7 @@ load_release_baseline_values() {
         ;;
     esac
   done <<< "$emitted"
-  expected_keys=$'SP11_KERNEL_BASELINE_ID\nSP11_KERNEL_DOCKER_IMAGE\nSP11_KERNEL_DOCKER_PLATFORM\nSP11_KERNEL_DOCKER_PLATFORM_MANIFEST\nSP11_KERNEL_UPSTREAM_URL\nSP11_KERNEL_UPSTREAM_REF\nSP11_KERNEL_UPSTREAM_COMMIT\nSP11_KERNEL_SOURCE_DATE_EPOCH\nSP11_KERNEL_KBUILD_BUILD_USER\nSP11_KERNEL_KBUILD_BUILD_HOST\nSP11_KERNEL_KBUILD_BUILD_TIMESTAMP\nSP11_KERNEL_BUILD_TARGET\nSP11_KERNEL_PATCH_DIRS'
+  expected_keys=$'SP11_KERNEL_BASELINE_ID\nSP11_KERNEL_DOCKER_IMAGE\nSP11_KERNEL_DOCKER_PLATFORM\nSP11_KERNEL_DOCKER_PLATFORM_MANIFEST\nSP11_KERNEL_UPSTREAM_URL\nSP11_KERNEL_UPSTREAM_REF\nSP11_KERNEL_UPSTREAM_COMMIT\nSP11_KERNEL_SOURCE_DATE_EPOCH\nSP11_KERNEL_KBUILD_BUILD_USER\nSP11_KERNEL_KBUILD_BUILD_HOST\nSP11_KERNEL_KBUILD_BUILD_TIMESTAMP\nSP11_KERNEL_MODULE_SIGNING_POLICY\nSP11_KERNEL_MODULE_SIGNING_KEY_PATH\nSP11_KERNEL_MODULE_SIGNING_PIN_PATH\nSP11_KERNEL_MODULE_SIGNING_CERT_PATH\nSP11_KERNEL_MODULE_SIGNING_CERT_SHA256\nSP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT\nSP11_KERNEL_MODULE_SIGNING_CERT_SERIAL\nSP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH\nSP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256\nSP11_KERNEL_BUILD_TARGET\nSP11_KERNEL_PATCH_DIRS'
   if [ "$emitted_keys" != "$expected_keys" ]; then
     echo "Committed kernel baseline validator field set/order is not exact." >&2
     exit 1
@@ -940,6 +995,10 @@ require_release_build_contract() {
     echo "--release-build requires the complete deterministic build-identity argument set." >&2
     exit 2
   fi
+  if [ "$MODULE_SIGNING_POLICY" != "sp11-controlled-rsa4096-sha512-v1" ]; then
+    echo "--release-build requires the reviewed controlled module-signing policy." >&2
+    exit 2
+  fi
   if ! public_https_url "$GIT_URL"; then
     echo "--release-build requires a public HTTPS kernel source URL without credentials, query, or fragment." >&2
     exit 2
@@ -1017,12 +1076,25 @@ require_release_build_identity_baseline() {
   create_release_baseline_control
   load_release_baseline_values
   require_wrapper_release_context
+  validate_controlled_module_signing_input
 
   if [ "$SOURCE_DATE_EPOCH" != "$BASELINE_SOURCE_DATE_EPOCH" ] ||
      [ "$KBUILD_BUILD_USER" != "$BASELINE_KBUILD_BUILD_USER" ] ||
      [ "$KBUILD_BUILD_HOST" != "$BASELINE_KBUILD_BUILD_HOST" ] ||
      [ "$KBUILD_BUILD_TIMESTAMP" != "$BASELINE_KBUILD_BUILD_TIMESTAMP" ]; then
     echo "Release build identity arguments do not match the trusted kernel baseline." >&2
+    exit 2
+  fi
+  if [ "$MODULE_SIGNING_POLICY" != "$BASELINE_MODULE_SIGNING_POLICY" ] ||
+     [ "$BASELINE_MODULE_SIGNING_KEY_PATH" != "/sp11-signing/signing.pem" ] ||
+     [ "$BASELINE_MODULE_SIGNING_PIN_PATH" != "/sp11-signing/pin" ] ||
+     [ "$BASELINE_MODULE_SIGNING_CERT_PATH" != \
+       "config/kernel-signing/sp11-module-signing-cert.pem" ] ||
+     [ "$BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH" != \
+       "config/kernel-signing/sp11-module-signing-allowed-unsigned.txt" ] ||
+     [ "$BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" != \
+       "eb507e006b37ad7d291a37524f3f2f6b5281c5a3f98738dc07056a3ca7cba800" ]; then
+    echo "Release module-signing arguments do not match the trusted kernel baseline." >&2
     exit 2
   fi
   if [ "$GIT_URL" != "$BASELINE_UPSTREAM_URL" ] ||
@@ -1075,6 +1147,10 @@ require_wrapper_release_context() {
   fi
   if [ ! -r /proc/self/mountinfo ] || [ -L /proc/self/mountinfo ] ||
      [ ! -d /sp11-control ] || [ -L /sp11-control ] ||
+     [ ! -d /sp11-signing ] || [ -L /sp11-signing ] ||
+     [ ! -f /sp11-signing/signing.pem ] ||
+     [ -L /sp11-signing/signing.pem ] ||
+     [ ! -f /sp11-signing/pin ] || [ -L /sp11-signing/pin ] ||
      [ ! -f /sp11-control/kernel-baseline.env ] ||
      [ -L /sp11-control/kernel-baseline.env ] ||
      [ ! -f /sp11-control/docker-build-args.txt ] ||
@@ -1106,14 +1182,32 @@ require_wrapper_release_context() {
       next
     }
     index($5, "/sp11-control/") == 1 { control_nested++ }
+    $5 == "/sp11-signing" {
+      signing_count++
+      if (has_ro($6)) signing_ro++
+      next
+    }
+    index($5, "/sp11-signing/") == 1 { signing_nested++ }
     END {
       exit !(repo_count == 1 && repo_ro == 1 && repo_nested == 0 &&
-             control_count == 1 && control_ro == 1 && control_nested == 0)
+             control_count == 1 && control_ro == 1 && control_nested == 0 &&
+             signing_count == 1 && signing_ro == 1 && signing_nested == 0)
     }
   ' /proc/self/mountinfo; then
-    echo "--release-build requires unshadowed read-only /repo and /sp11-control mounts." >&2
+    echo "--release-build requires exact unshadowed read-only release-control mounts." >&2
     exit 1
   fi
+  if [ "$(find /sp11-signing -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" != $'pin\nsigning.pem' ]; then
+    echo "--release-build private signing mount contains unexpected entries." >&2
+    exit 1
+  fi
+  for release_signing_input in /sp11-signing/signing.pem /sp11-signing/pin; do
+    if [ "$(stat -c '%a:%h' -- "$release_signing_input")" != "400:1" ]; then
+      echo "--release-build private signing input is not an exact mode-0400 file." >&2
+      exit 1
+    fi
+  done
+  unset release_signing_input
   for release_control_variable in \
     SP11_EXPECTED_BUILD_ARGS_SHA256 \
     SP11_EXPECTED_ENTRYPOINT_SHA256 \
@@ -1146,6 +1240,130 @@ require_wrapper_release_context() {
   if [ "$(sha256_file /sp11-control/kernel-baseline.env)" != \
        "$(sha256_file "$KERNEL_BASELINE")" ]; then
     echo "--release-build mounted baseline differs from its exact support baseline." >&2
+    exit 1
+  fi
+}
+
+validate_controlled_module_signing_input() {
+  local certificate_sha256 fingerprint_output serial_output
+  local private_public_sha256 certificate_public_sha256
+  local encrypted_private_key_marker
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ "$RELEASE_TEST_FIXTURE_CONTEXT" != "true" ] || return 0
+  require_tool openssl
+  /usr/bin/python3 -I -c '
+import os
+import stat
+
+for path, maximum in (("/sp11-signing/signing.pem", 2 * 1024 * 1024), ("/sp11-signing/pin", 256)):
+    mapped = os.lstat(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(mapped.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != (mapped.st_dev, mapped.st_ino)
+            or stat.S_IMODE(metadata.st_mode) != 0o400
+            or metadata.st_nlink != 1
+            or not 0 < metadata.st_size <= maximum
+        ):
+            raise OSError
+        data = bytearray()
+        while len(data) < metadata.st_size:
+            chunk = os.read(descriptor, metadata.st_size - len(data))
+            if not chunk:
+                raise OSError
+            data.extend(chunk)
+        if path.endswith("/pin"):
+            if data.endswith(b"\n"):
+                del data[-1:]
+            if (
+                not 1 <= len(data) <= 255
+                or any(value < 0x20 or value > 0x7e for value in data)
+                or b"\r" in data
+                or b"\n" in data
+                or b"\0" in data
+            ):
+                raise OSError
+    finally:
+        os.close(descriptor)
+' || {
+    echo "Controlled module-signing files failed their private mount contract." >&2
+    exit 1
+  }
+  encrypted_private_key_marker='-----BEGIN ENCRYPTED '"PRIVATE KEY-----"
+  if [ "$(sed -n '1p' /sp11-signing/signing.pem)" != \
+       "-----BEGIN CERTIFICATE-----" ] ||
+     [ "$(grep -c '^-----BEGIN CERTIFICATE-----$' /sp11-signing/signing.pem)" -ne 1 ] ||
+     [ "$(grep -F -c -e "$encrypted_private_key_marker" \
+       /sp11-signing/signing.pem)" -ne 1 ] ||
+     grep -E -q -e '^-----BEGIN ((RSA|EC) )?PRIVATE KEY-----$' \
+       /sp11-signing/signing.pem; then
+    echo "Controlled module-signing key must be a cert-first encrypted PKCS#8 PEM." >&2
+    exit 1
+  fi
+  if ! openssl pkey \
+      -in /sp11-signing/signing.pem \
+      -passin file:/sp11-signing/pin \
+      -pubout -outform DER >/dev/null 2>&1; then
+    echo "Controlled module-signing PIN did not unlock the encrypted private key." >&2
+    exit 1
+  fi
+  if ! openssl pkey \
+      -in /sp11-signing/signing.pem \
+      -passin file:/sp11-signing/pin \
+      -pubout 2>/dev/null |
+      openssl pkey -pubin -text_pub -noout 2>/dev/null |
+      grep -Fq 'Public-Key: (4096 bit)'; then
+    echo "Controlled module-signing key is not RSA-4096." >&2
+    exit 1
+  fi
+  certificate_sha256="$(
+    openssl x509 -in /sp11-signing/signing.pem -outform DER 2>/dev/null |
+      sha256sum | awk '{print $1}'
+  )" || {
+    echo "Could not derive the controlled module-signing certificate digest." >&2
+    exit 1
+  }
+  fingerprint_output="$(openssl x509 -in /sp11-signing/signing.pem \
+    -noout -sha256 -fingerprint 2>/dev/null)" || {
+      echo "Could not derive the controlled module-signing certificate fingerprint." >&2
+      exit 1
+    }
+  fingerprint_output="${fingerprint_output#*=}"
+  fingerprint_output="$(printf '%s' "$fingerprint_output" | tr '[:lower:]' '[:upper:]')"
+  serial_output="$(openssl x509 -in /sp11-signing/signing.pem \
+    -noout -serial 2>/dev/null)" || {
+      echo "Could not derive the controlled module-signing certificate serial." >&2
+      exit 1
+    }
+  serial_output="$(printf '%s' "${serial_output#*=}" | tr '[:lower:]' '[:upper:]')"
+  if [ "$certificate_sha256" != "$BASELINE_MODULE_SIGNING_CERT_SHA256" ] ||
+     [ "$fingerprint_output" != "$BASELINE_MODULE_SIGNING_CERT_FINGERPRINT" ] ||
+     [ "$serial_output" != "$BASELINE_MODULE_SIGNING_CERT_SERIAL" ]; then
+    echo "Controlled module-signing certificate identity does not match the baseline." >&2
+    exit 1
+  fi
+  if ! cmp -s \
+      <(openssl x509 -in /sp11-signing/signing.pem -outform DER 2>/dev/null) \
+      <(openssl x509 -in "/repo/$BASELINE_MODULE_SIGNING_CERT_PATH" -outform DER 2>/dev/null); then
+    echo "Controlled module-signing certificate differs from the committed public certificate." >&2
+    exit 1
+  fi
+  private_public_sha256="$(
+    openssl pkey -in /sp11-signing/signing.pem \
+      -passin file:/sp11-signing/pin -pubout -outform DER 2>/dev/null |
+      sha256sum | awk '{print $1}'
+  )" || exit 1
+  certificate_public_sha256="$(
+    openssl x509 -in /sp11-signing/signing.pem -pubkey -noout 2>/dev/null |
+      openssl pkey -pubin -pubout -outform DER 2>/dev/null |
+      sha256sum | awk '{print $1}'
+  )" || exit 1
+  if [ "$private_public_sha256" != "$certificate_public_sha256" ]; then
+    echo "Controlled module-signing certificate does not match the private key." >&2
     exit 1
   fi
 }
@@ -1287,6 +1505,15 @@ while [ "$#" -gt 0 ]; do
       KBUILD_BUILD_TIMESTAMP="$2"
       shift 2
       ;;
+    --module-signing-policy)
+      if [ -z "${2:-}" ]; then
+        echo "Missing value for $1." >&2
+        usage >&2
+        exit 2
+      fi
+      MODULE_SIGNING_POLICY="$2"
+      shift 2
+      ;;
     --patch-dir)
       PATCH_DIR="$2"
       shift 2
@@ -1375,6 +1602,16 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$RELEASE_BUILD" = "true" ]; then
+  [ -n "$MODULE_SIGNING_POLICY" ] || {
+    echo "--release-build requires --module-signing-policy." >&2
+    exit 2
+  }
+elif [ -n "$MODULE_SIGNING_POLICY" ]; then
+  echo "--module-signing-policy is accepted only with --release-build." >&2
+  exit 2
+fi
 
 if [ "$SKIP_TOUCHSCREEN_MODULES" = "true" ] && [ -n "$TOUCHSCREEN_MODULES_DIR" ]; then
   echo "--skip-touchscreen-modules cannot be combined with --touchscreen-modules-dir." >&2
@@ -1545,7 +1782,11 @@ try:
     environment["SP11_RELEASE_REPO_DIR"] = os.path.dirname(os.path.dirname(script))
     script_fd = "/proc/self/fd/5" if sys.platform.startswith("linux") \
         else "/dev/fd/5"
-    os.execve("/bin/bash", ["/bin/bash", script_fd, *arguments], environment)
+    os.execve(
+        "/bin/bash",
+        ["/bin/bash", "-p", script_fd, *arguments],
+        environment,
+    )
 except Exception:
     os.write(2, b"Could not bind exact release controller inputs.\n")
     raise SystemExit(1)
@@ -1719,7 +1960,8 @@ fi
 
 if [ "$RELEASE_BUILD" = "true" ]; then
   for release_output_name in \
-      sp11-kernel-build-manifest.txt sp11-kernel-debs.txt; do
+      sp11-kernel-build-manifest.txt sp11-kernel-debs.txt \
+      sp11-kernel-module-signatures.txt; do
     release_output_path="$work_dir/$release_output_name"
     if [ -e "$release_output_path" ] || [ -L "$release_output_path" ]; then
       echo "Release output already exists; refusing replacement: $release_output_name" >&2
@@ -3248,27 +3490,348 @@ add_release_output() {
 
 capture_signing_certificate_identity() {
   local certificate="$source_dir/debian/build/build-qcom-x1e/certs/signing_key.x509"
-  local fingerprint_output serial_output certificate_format
+  local committed="/repo/$BASELINE_MODULE_SIGNING_CERT_PATH"
+  local enforce_binding=true identity_output identity_status remainder
 
-  require_tool openssl
-  SIGNING_CERT_SHA256="$(sha256_file "$certificate")"
-  certificate_format="DER"
-  if ! fingerprint_output="$(openssl x509 -inform DER -in "$certificate" -noout -sha256 -fingerprint 2>/dev/null)"; then
-    certificate_format="PEM"
-    fingerprint_output="$(openssl x509 -inform PEM -in "$certificate" -noout -sha256 -fingerprint)"
+  [ "$RELEASE_TEST_FIXTURE_CONTEXT" != "true" ] || enforce_binding=false
+  if identity_output="$(
+    "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import hashlib
+import os
+import re
+import stat
+import subprocess
+import sys
+
+(
+    built_path,
+    committed_path,
+    expected_sha,
+    expected_fingerprint,
+    expected_serial,
+    enforce_text,
+) = sys.argv[1:]
+
+def state(value):
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+    )
+
+def read_stable(path, maximum):
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        mapped_before = os.lstat(path)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_ISLNK(mapped_before.st_mode)
+            or state(before) != state(mapped_before)
+            or before.st_nlink != 1
+            or not 0 < before.st_size <= maximum
+        ):
+            raise OSError
+        data = bytearray()
+        offset = 0
+        while offset < before.st_size:
+            chunk = os.pread(
+                descriptor,
+                min(65536, before.st_size - offset),
+                offset,
+            )
+            if not chunk:
+                raise OSError
+            data.extend(chunk)
+            offset += len(chunk)
+        after = os.fstat(descriptor)
+        mapped_after = os.lstat(path)
+        if state(after) != state(before) or state(mapped_after) != state(before):
+            raise OSError
+        return bytes(data), before.st_size
+    finally:
+        os.close(descriptor)
+
+directory_fd = -1
+tool_fd = -1
+try:
+    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK")
+    if any(not hasattr(os, name) for name in required):
+        raise OSError
+    directory_fd = os.open(
+        "/usr/bin",
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    directory = os.fstat(directory_fd)
+    mapped_directory = os.lstat("/usr/bin")
+    if (
+        not stat.S_ISDIR(directory.st_mode)
+        or stat.S_ISLNK(mapped_directory.st_mode)
+        or state(directory) != state(mapped_directory)
+        or directory.st_uid != 0
+        or stat.S_IMODE(directory.st_mode) & 0o022
+    ):
+        raise OSError
+    tool_fd = os.open(
+        "openssl",
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        dir_fd=directory_fd,
+    )
+    tool = os.fstat(tool_fd)
+    mapped_tool = os.stat("openssl", dir_fd=directory_fd, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(tool.st_mode)
+        or stat.S_ISLNK(mapped_tool.st_mode)
+        or state(tool) != state(mapped_tool)
+        or tool.st_uid != 0
+        or stat.S_IMODE(tool.st_mode) & 0o022
+        or not tool.st_mode & 0o111
+        or not 0 < tool.st_size <= 64 * 1024 * 1024
+    ):
+        raise OSError
+    directory_identity = state(directory)
+    tool_identity = state(tool)
+
+    def verify_tool():
+        current_directory = os.fstat(directory_fd)
+        current_tool = os.fstat(tool_fd)
+        mapped_current_directory = os.lstat("/usr/bin")
+        mapped_current_tool = os.stat(
+            "openssl", dir_fd=directory_fd, follow_symlinks=False
+        )
+        if (
+            state(current_directory) != directory_identity
+            or state(mapped_current_directory) != directory_identity
+            or state(current_tool) != tool_identity
+            or state(mapped_current_tool) != tool_identity
+        ):
+            raise OSError
+
+    def run(arguments, data):
+        verify_tool()
+        completed = subprocess.run(
+            ["/usr/bin/openssl", *arguments],
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            close_fds=True,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "LC_ALL": "C",
+                "LANG": "C",
+                "OPENSSL_CONF": "/dev/null",
+            },
+        )
+        verify_tool()
+        if completed.returncode != 0:
+            raise OSError
+        return completed.stdout
+
+    built_der, built_size = read_stable(built_path, 1024 * 1024)
+    if run(["x509", "-inform", "DER", "-outform", "DER"], built_der) != built_der:
+        raise OSError
+    digest = hashlib.sha256(built_der).hexdigest()
+    fingerprint_output = run(
+        ["x509", "-inform", "DER", "-sha256", "-fingerprint", "-noout"],
+        built_der,
+    ).decode("ascii", "strict").strip()
+    fingerprint_match = re.fullmatch(
+        r"SHA256 Fingerprint=((?:[0-9A-F]{2}:){31}[0-9A-F]{2})",
+        fingerprint_output,
+        re.IGNORECASE,
+    )
+    serial_output = run(
+        ["x509", "-inform", "DER", "-serial", "-noout"],
+        built_der,
+    ).decode("ascii", "strict").strip()
+    serial_match = re.fullmatch(r"serial=([0-9A-F]+)", serial_output, re.IGNORECASE)
+    if fingerprint_match is None or serial_match is None:
+        raise OSError
+    fingerprint = fingerprint_match.group(1).upper()
+    serial = serial_match.group(1).upper()
+    if enforce_text == "true":
+        if (
+            digest != expected_sha
+            or fingerprint != expected_fingerprint
+            or serial != expected_serial
+        ):
+            raise SystemExit(10)
+        committed_pem, _committed_size = read_stable(committed_path, 1024 * 1024)
+        lines = committed_pem.splitlines()
+        if (
+            len(lines) < 3
+            or lines[0] != b"-----BEGIN CERTIFICATE-----"
+            or lines[-1] != b"-----END CERTIFICATE-----"
+            or not committed_pem.endswith(b"\n")
+            or any(
+                re.fullmatch(rb"[A-Za-z0-9+/=]+", line) is None
+                for line in lines[1:-1]
+            )
+        ):
+            raise OSError
+        committed_der = run(
+            ["x509", "-inform", "PEM", "-outform", "DER"],
+            committed_pem,
+        )
+        if committed_der != built_der:
+            raise SystemExit(11)
+    verify_tool()
+    print(digest, fingerprint, serial, built_size, sep="\t")
+except SystemExit:
+    raise
+except BaseException:
+    raise SystemExit(12)
+finally:
+    if tool_fd >= 0:
+        os.close(tool_fd)
+    if directory_fd >= 0:
+        os.close(directory_fd)
+' "$certificate" "$committed" \
+      "$BASELINE_MODULE_SIGNING_CERT_SHA256" \
+      "$BASELINE_MODULE_SIGNING_CERT_FINGERPRINT" \
+      "$BASELINE_MODULE_SIGNING_CERT_SERIAL" "$enforce_binding" 2>/dev/null
+  )"; then
+    identity_status=0
+  else
+    identity_status=$?
   fi
-  serial_output="$(openssl x509 -inform "$certificate_format" -in "$certificate" -noout -serial)"
-  SIGNING_CERT_FINGERPRINT="${fingerprint_output#*=}"
-  SIGNING_CERT_FINGERPRINT="$(printf '%s' "$SIGNING_CERT_FINGERPRINT" | tr '[:lower:]' '[:upper:]')"
-  SIGNING_CERT_SERIAL="${serial_output#*=}"
-  SIGNING_CERT_SERIAL="$(printf '%s' "$SIGNING_CERT_SERIAL" | tr '[:lower:]' '[:upper:]')"
-
-  if ! [[ "$SIGNING_CERT_FINGERPRINT" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]]; then
-    echo "Could not extract a valid public X.509 SHA-256 fingerprint." >&2
+  case "$identity_status" in
+    0) ;;
+    10)
+      echo "Built module-signing certificate identity does not match the release baseline." >&2
+      return 1
+      ;;
+    11)
+      echo "Built module-signing certificate differs from the committed public certificate." >&2
+      return 1
+      ;;
+    *)
+      echo "Built module-signing certificate could not be validated safely." >&2
+      return 1
+      ;;
+  esac
+  IFS=$'\t' read -r SIGNING_CERT_SHA256 SIGNING_CERT_FINGERPRINT \
+    SIGNING_CERT_SERIAL SIGNING_CERT_SIZE remainder <<< "$identity_output"
+  if [ -n "$remainder" ] ||
+     ! [[ "$SIGNING_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+     ! [[ "$SIGNING_CERT_FINGERPRINT" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] ||
+     ! [[ "$SIGNING_CERT_SERIAL" =~ ^[0-9A-F]+$ ]] ||
+     ! [[ "$SIGNING_CERT_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Built module-signing certificate identity output is malformed." >&2
     return 1
   fi
-  if ! [[ "$SIGNING_CERT_SERIAL" =~ ^[0-9A-F]+$ ]]; then
-    echo "Could not extract a valid public X.509 serial number." >&2
+}
+
+validate_release_module_signing_config() {
+  local build_root="$source_dir/debian/build/build-qcom-x1e"
+  local config="$build_root/.config" expected validation_output marker remainder
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ "$RELEASE_TEST_FIXTURE_CONTEXT" != "true" ] || return 0
+  if ! validation_output="$(
+    "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+path, *expected_lines = sys.argv[1:]
+expected_by_name = {}
+for line in expected_lines:
+    if line.startswith("# ") and line.endswith(" is not set"):
+        name = line[2:-11]
+    else:
+        name = line.split("=", 1)[0]
+    if not name.startswith("CONFIG_") or name in expected_by_name:
+        raise SystemExit(2)
+    expected_by_name[name] = line
+
+flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+descriptor = os.open(path, flags)
+try:
+    before = os.fstat(descriptor)
+    mapped_before = os.lstat(path)
+    state = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(mapped_before.st_mode)
+        or state(before) != state(mapped_before)
+        or before.st_nlink != 1
+        or not 0 < before.st_size <= 16 * 1024 * 1024
+    ):
+        raise OSError
+    data = bytearray()
+    while len(data) < before.st_size:
+        chunk = os.read(descriptor, before.st_size - len(data))
+        if not chunk:
+            raise OSError
+        data.extend(chunk)
+    after = os.fstat(descriptor)
+    mapped_after = os.lstat(path)
+    if state(after) != state(before) or state(mapped_after) != state(before):
+        raise OSError
+finally:
+    os.close(descriptor)
+
+if not data.endswith(b"\n") or b"\0" in data or b"\r" in data:
+    raise SystemExit(1)
+try:
+    lines = bytes(data).decode("ascii").splitlines()
+except UnicodeDecodeError:
+    raise SystemExit(1)
+
+for name, expected in expected_by_name.items():
+    candidates = [
+        line
+        for line in lines
+        if line.startswith(name + "=") or line == "# " + name + " is not set"
+    ]
+    if candidates != [expected]:
+        print(expected)
+        raise SystemExit(1)
+print("OK", before.st_size, hashlib.sha256(data).hexdigest(), sep="\t")
+' "$config" \
+    'CONFIG_MODULE_SIG=y' \
+    'CONFIG_MODULE_SIG_ALL=y' \
+    '# CONFIG_MODULE_SIG_FORCE is not set' \
+    'CONFIG_MODULE_SIG_HASH="sha512"' \
+    'CONFIG_MODULE_SIG_KEY="/sp11-signing/signing.pem"' \
+    'CONFIG_VERSION_SIGNATURE="Ubuntu 7.2-rc5-jg-0sp11v3r2-qcom-x1e 7.2-rc5"' \
+    2>/dev/null
+  )"; then
+    expected="${validation_output:-controlled configuration file identity}"
+    echo "Release kernel config does not satisfy controlled module signing: $expected" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r marker SIGNING_CONFIG_SIZE SIGNING_CONFIG_SHA256 \
+    remainder <<< "$validation_output"
+  if [ "$marker" != OK ] || [ -n "$remainder" ] ||
+     ! [[ "$SIGNING_CONFIG_SIZE" =~ ^[1-9][0-9]*$ ]] ||
+     ! [[ "$SIGNING_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Release kernel config identity output is malformed." >&2
+    return 1
+  fi
+  if [ -e "$build_root/certs/signing_key.pem" ] ||
+     [ -L "$build_root/certs/signing_key.pem" ]; then
+    echo "Release build retained a generated or copied private module-signing key." >&2
     return 1
   fi
 }
@@ -3276,6 +3839,7 @@ capture_signing_certificate_identity() {
 capture_release_build_outputs() {
   local build_root="debian/build/build-qcom-x1e"
 
+  validate_release_module_signing_config
   add_release_output "kernel-config" "$build_root/.config"
   add_release_output "module-symvers" "$build_root/Module.symvers"
   add_release_output "system-map" "$build_root/System.map"
@@ -3284,6 +3848,56 @@ capture_release_build_outputs() {
   add_release_output "denali-oled-el2-dtb" "$build_root/arch/arm64/boot/dts/qcom/x1e80100-microsoft-denali-oled-el2.dtb"
   add_release_output "module-signing-certificate" "$build_root/certs/signing_key.x509"
   capture_signing_certificate_identity
+}
+
+verify_release_module_signing_state_stable() {
+  local expected_config_size="$SIGNING_CONFIG_SIZE"
+  local expected_config_sha="$SIGNING_CONFIG_SHA256"
+  local expected_cert_size="$SIGNING_CERT_SIZE"
+  local expected_cert_sha="$SIGNING_CERT_SHA256"
+  local expected_cert_fingerprint="$SIGNING_CERT_FINGERPRINT"
+  local expected_cert_serial="$SIGNING_CERT_SERIAL"
+  local index config_found=false certificate_found=false
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  [ "$RELEASE_TEST_FIXTURE_CONTEXT" != "true" ] || return 0
+  validate_release_module_signing_config || return 1
+  capture_signing_certificate_identity || return 1
+  if [ "$SIGNING_CONFIG_SIZE" != "$expected_config_size" ] ||
+     [ "$SIGNING_CONFIG_SHA256" != "$expected_config_sha" ] ||
+     [ "$SIGNING_CERT_SIZE" != "$expected_cert_size" ] ||
+     [ "$SIGNING_CERT_SHA256" != "$expected_cert_sha" ] ||
+     [ "$SIGNING_CERT_FINGERPRINT" != "$expected_cert_fingerprint" ] ||
+     [ "$SIGNING_CERT_SERIAL" != "$expected_cert_serial" ]; then
+    echo "Controlled module-signing build state changed before publication." >&2
+    return 1
+  fi
+  index=0
+  while [ "$index" -lt "${#RELEASE_OUTPUT_ROLES[@]}" ]; do
+    case "${RELEASE_OUTPUT_ROLES[$index]}" in
+      kernel-config)
+        config_found=true
+        [ "${RELEASE_OUTPUT_SIZES[$index]}" = "$SIGNING_CONFIG_SIZE" ] &&
+          [ "${RELEASE_OUTPUT_SHA256S[$index]}" = "$SIGNING_CONFIG_SHA256" ] || {
+            echo "Captured release kernel config changed before publication." >&2
+            return 1
+          }
+        ;;
+      module-signing-certificate)
+        certificate_found=true
+        [ "${RELEASE_OUTPUT_SIZES[$index]}" = "$SIGNING_CERT_SIZE" ] &&
+          [ "${RELEASE_OUTPUT_SHA256S[$index]}" = "$SIGNING_CERT_SHA256" ] || {
+            echo "Captured module-signing certificate changed before publication." >&2
+            return 1
+          }
+        ;;
+    esac
+    index=$((index + 1))
+  done
+  if [ "$config_found" != true ] || [ "$certificate_found" != true ]; then
+    echo "Controlled module-signing release outputs are incomplete." >&2
+    return 1
+  fi
 }
 
 release_deb_role() {
@@ -3389,6 +4003,7 @@ capture_release_debs() {
     esac
 
     RELEASE_DEB_ROLES+=("$role")
+    RELEASE_DEB_SOURCE_PATHS+=("$deb")
     RELEASE_DEB_PATHS+=("$(basename "$deb")")
     RELEASE_DEB_PACKAGES+=("$package")
     RELEASE_DEB_VERSIONS+=("$version")
@@ -3407,12 +4022,421 @@ capture_release_debs() {
       return 1
     fi
   done
+  if [ "$RELEASE_TEST_FIXTURE_CONTEXT" != "true" ] &&
+     { [ "$common_abi" != "7.2-rc5-jg-0sp11v3r2-qcom-x1e" ] ||
+       [ "$common_version" != "7.2-rc5-jg-0sp11v3r2" ]; }; then
+    echo "Release packages do not use the controlled-signing r2 ABI/version." >&2
+    return 1
+  fi
+}
+
+capture_kernel_module_signature_report() {
+  local scanner_rel="scripts/validate-sp11-module-signatures.py"
+  local scanner allowlist certificate scanner_oid allowlist_oid certificate_oid
+  local role found index expected_abi="" report_values remainder
+  local -a module_debs=() expected_packages=()
+
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  scanner="$repo_dir/$scanner_rel"
+  allowlist="$repo_dir/$BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH"
+  certificate="$repo_dir/$BASELINE_MODULE_SIGNING_CERT_PATH"
+  KERNEL_MODULE_SIGNATURE_REPORT_ASSET="sp11-kernel-module-signatures.txt"
+
+  scanner_oid="$(
+    verify_committed_support_file "$scanner_rel" 100755 "$scanner"
+  )" || {
+    echo "Could not bind the committed kernel module signature scanner." >&2
+    return 1
+  }
+  allowlist_oid="$(
+    verify_committed_support_file \
+      "$BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH" 100644 "$allowlist"
+  )" || {
+    echo "Could not bind the committed kernel module unsigned-path allowlist." >&2
+    return 1
+  }
+  certificate_oid="$(
+    verify_committed_support_file \
+      "$BASELINE_MODULE_SIGNING_CERT_PATH" 100644 "$certificate"
+  )" || {
+    echo "Could not bind the committed module-signing certificate." >&2
+    return 1
+  }
+  for remainder in "$scanner_oid" "$allowlist_oid" "$certificate_oid"; do
+    [[ "$remainder" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || return 1
+  done
+  if [ "$(sha256_file "$allowlist")" != \
+       "$BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" ]; then
+    echo "Committed kernel module unsigned-path allowlist differs from the baseline." >&2
+    return 1
+  fi
+
+  [ "${#RELEASE_DEB_SOURCE_PATHS[@]}" -eq "${#RELEASE_DEB_ROLES[@]}" ] &&
+    [ "${#RELEASE_DEB_PATHS[@]}" -eq "${#RELEASE_DEB_ROLES[@]}" ] &&
+    [ "${#RELEASE_DEB_PACKAGES[@]}" -eq "${#RELEASE_DEB_ROLES[@]}" ] &&
+    [ "${#RELEASE_DEB_VERSIONS[@]}" -eq "${#RELEASE_DEB_ROLES[@]}" ] &&
+    [ "${#RELEASE_DEB_ARCHITECTURES[@]}" -eq "${#RELEASE_DEB_ROLES[@]}" ] &&
+    [ "${#RELEASE_DEB_SIZES[@]}" -eq "${#RELEASE_DEB_ROLES[@]}" ] &&
+    [ "${#RELEASE_DEB_SHA256S[@]}" -eq "${#RELEASE_DEB_ROLES[@]}" ] || {
+      echo "Captured release package identity arrays are inconsistent." >&2
+      return 1
+    }
+  for role in modules modules-extra; do
+    found="false"
+    index=0
+    while [ "$index" -lt "${#RELEASE_DEB_ROLES[@]}" ]; do
+      if [ "${RELEASE_DEB_ROLES[$index]}" = "$role" ]; then
+        found="true"
+        module_debs+=("${RELEASE_DEB_SOURCE_PATHS[$index]}")
+        expected_packages+=(
+          "$role"
+          "${RELEASE_DEB_PATHS[$index]}"
+          "${RELEASE_DEB_PACKAGES[$index]}"
+          "${RELEASE_DEB_VERSIONS[$index]}"
+          "${RELEASE_DEB_ARCHITECTURES[$index]}"
+          "${RELEASE_DEB_SIZES[$index]}"
+          "${RELEASE_DEB_SHA256S[$index]}"
+        )
+        if [ "$role" = modules ]; then
+          expected_abi="$(
+            release_deb_abi "$role" "${RELEASE_DEB_PACKAGES[$index]}"
+          )" || return 1
+        fi
+      fi
+      index=$((index + 1))
+    done
+    if [ "$role" = modules ] && [ "$found" != true ]; then
+      echo "Controlled module signature verification requires the modules package." >&2
+      return 1
+    fi
+  done
+  [ "${#module_debs[@]}" -ge 1 ] && [ "${#module_debs[@]}" -le 2 ] &&
+    [ -n "$expected_abi" ] || return 1
+  verify_release_support_stable || return 1
+  if ! "$KERNEL_TREE_VALIDATOR_PYTHON" -I "$scanner" \
+      --controlled-certificate "$certificate" \
+      --allowed-unsigned-file "$allowlist" \
+      --report-fd 13 \
+      "${module_debs[@]}"; then
+    echo "Packaged kernel module signature verification failed." >&2
+    return 1
+  fi
+  verify_release_support_stable || return 1
+
+  if ! report_values="$("$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import hashlib
+import os
+import posixpath
+import re
+import stat
+import sys
+
+(
+    expected_abi,
+    expected_policy,
+    expected_certificate_sha,
+    expected_certificate_fingerprint,
+    expected_certificate_serial,
+    expected_inventory_sha,
+    expected_count_text,
+    *expected_fields,
+) = sys.argv[1:]
+if (
+    expected_count_text not in ("1", "2")
+    or len(expected_fields) != int(expected_count_text, 10) * 7
+):
+    raise SystemExit(1)
+expected_packages = [
+    tuple(expected_fields[offset : offset + 7])
+    for offset in range(0, len(expected_fields), 7)
+]
+if [package[0] for package in expected_packages] != (
+    ["modules"] if len(expected_packages) == 1 else ["modules", "modules-extra"]
+):
+    raise SystemExit(1)
+
+descriptor = 13
+try:
+    before = os.fstat(descriptor)
+    mapped_before = os.stat(
+        "sp11-kernel-module-signatures.txt",
+        dir_fd=6,
+        follow_symlinks=False,
+    )
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(mapped_before.st_mode)
+        or stable(before) != stable(mapped_before)
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or not 0 < before.st_size <= 16 * 1024 * 1024
+    ):
+        raise OSError
+    data = bytearray()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(
+            descriptor,
+            min(65536, before.st_size - offset),
+            offset,
+        )
+        if not chunk:
+            raise OSError
+        data.extend(chunk)
+        offset += len(chunk)
+    after = os.fstat(descriptor)
+    mapped_after = os.stat(
+        "sp11-kernel-module-signatures.txt",
+        dir_fd=6,
+        follow_symlinks=False,
+    )
+    if stable(after) != stable(before) or stable(mapped_after) != stable(before):
+        raise OSError
+finally:
+    pass
+if not data.endswith(b"\n") or b"\r" in data or b"\0" in data:
+    raise SystemExit(1)
+try:
+    lines = bytes(data).decode("ascii").splitlines()
+except UnicodeDecodeError:
+    raise SystemExit(1)
+if lines[:2] != ["# Surface Pro 11 Kernel Module Signature Report", ""]:
+    raise SystemExit(1)
+cursor = 2
+
+def consume(label):
+    global cursor
+    prefix = label + ": "
+    if cursor >= len(lines) or not lines[cursor].startswith(prefix):
+        raise SystemExit(1)
+    value = lines[cursor][len(prefix):]
+    cursor += 1
+    if not value:
+        raise SystemExit(1)
+    return value
+
+schema = consume("Schema")
+if (
+    schema != "sp11-kernel-module-signature-verification-v1"
+    or consume("Kernel ABI") != expected_abi
+    or consume("Package count") != expected_count_text
+):
+    raise SystemExit(1)
+package_total = 0
+package_signed = 0
+package_unsigned = 0
+uint = re.compile(r"0|[1-9][0-9]*")
+for number, expected in enumerate(expected_packages, 1):
+    observed = (
+        consume(f"Package {number} role"),
+        consume(f"Package {number} file"),
+        consume(f"Package {number} name"),
+        consume(f"Package {number} version"),
+        consume(f"Package {number} architecture"),
+        consume(f"Package {number} size"),
+        consume(f"Package {number} SHA256"),
+    )
+    module_count = consume(f"Package {number} module count")
+    signed_count = consume(
+        f"Package {number} cryptographically verified signed module count"
+    )
+    unsigned_count = consume(
+        f"Package {number} policy-allowed unsigned module count"
+    )
+    if (
+        observed != expected
+        or re.fullmatch(r"[1-9][0-9]*", module_count) is None
+        or uint.fullmatch(signed_count) is None
+        or uint.fullmatch(unsigned_count) is None
+        or int(module_count, 10)
+        != int(signed_count, 10) + int(unsigned_count, 10)
+    ):
+        raise SystemExit(1)
+    package_total += int(module_count, 10)
+    package_signed += int(signed_count, 10)
+    package_unsigned += int(unsigned_count, 10)
+if (
+    consume("Module signing policy") != expected_policy
+    or consume("Module signing hash algorithm") != "sha512"
+    or consume("Module signing certificate SHA256") != expected_certificate_sha
+    or consume("Module signing certificate fingerprint")
+    != expected_certificate_fingerprint
+    or consume("Module signing certificate serial") != expected_certificate_serial
+):
+    raise SystemExit(1)
+total = consume("Total module count")
+signed = consume("Cryptographically verified signed module count")
+unsigned = consume("Policy-allowed unsigned module count")
+inventory_sha = consume("Policy-allowed unsigned module path inventory SHA256")
+if (
+    total != str(package_total)
+    or signed != str(package_signed)
+    or unsigned != str(package_unsigned)
+    or inventory_sha != expected_inventory_sha
+    or consume("Validation completed") != "true"
+    or cursor + 1 >= len(lines)
+    or lines[cursor : cursor + 2]
+    != ["", "## Policy-allowed unsigned module paths"]
+):
+    raise SystemExit(1)
+rows = lines[cursor + 2 :]
+if len(rows) != package_unsigned:
+    raise SystemExit(1)
+paths = []
+path_pattern = re.compile(
+    r"drivers/staging/[A-Za-z0-9_+.-]+(?:/[A-Za-z0-9_+.-]+)*\.ko(?:\.(?:gz|xz|zst))?"
+)
+for row in rows:
+    if not row.startswith("- "):
+        raise SystemExit(1)
+    value = row[2:]
+    if path_pattern.fullmatch(value) is None or posixpath.normpath(value) != value:
+        raise SystemExit(1)
+    paths.append(value)
+if paths != sorted(set(paths)):
+    raise SystemExit(1)
+calculated_inventory = hashlib.sha256(
+    "".join(value + "\n" for value in paths).encode("ascii")
+).hexdigest()
+if calculated_inventory != inventory_sha:
+    raise SystemExit(1)
+print(
+    before.st_size,
+    hashlib.sha256(data).hexdigest(),
+    schema,
+    total,
+    signed,
+    unsigned,
+    inventory_sha,
+    sep="\t",
+)
+' \
+      "$expected_abi" \
+      "$MODULE_SIGNING_POLICY" \
+      "$SIGNING_CERT_SHA256" \
+      "$SIGNING_CERT_FINGERPRINT" \
+      "$SIGNING_CERT_SERIAL" \
+      "$BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" \
+      "${#module_debs[@]}" \
+      "${expected_packages[@]}")"; then
+    echo "Kernel module signature report did not cross-bind to the captured packages." >&2
+    return 1
+  fi
+  IFS=$'\t' read -r \
+    KERNEL_MODULE_SIGNATURE_REPORT_SIZE \
+    KERNEL_MODULE_SIGNATURE_REPORT_SHA256 \
+    KERNEL_MODULE_SIGNATURE_REPORT_SCHEMA \
+    KERNEL_MODULE_TOTAL_COUNT \
+    KERNEL_MODULE_VERIFIED_SIGNED_COUNT \
+    KERNEL_MODULE_POLICY_ALLOWED_UNSIGNED_COUNT \
+    KERNEL_MODULE_UNSIGNED_PATH_INVENTORY_SHA256 remainder <<< "$report_values"
+  if [ -n "$remainder" ] ||
+     ! [[ "$KERNEL_MODULE_SIGNATURE_REPORT_SIZE" =~ ^[1-9][0-9]*$ ]] ||
+     ! [[ "$KERNEL_MODULE_SIGNATURE_REPORT_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+     [ "$KERNEL_MODULE_SIGNATURE_REPORT_SCHEMA" != \
+       "sp11-kernel-module-signature-verification-v1" ] ||
+     ! [[ "$KERNEL_MODULE_TOTAL_COUNT" =~ ^[1-9][0-9]*$ ]] ||
+     ! [[ "$KERNEL_MODULE_VERIFIED_SIGNED_COUNT" =~ ^(0|[1-9][0-9]*)$ ]] ||
+     ! [[ "$KERNEL_MODULE_POLICY_ALLOWED_UNSIGNED_COUNT" =~ ^(0|[1-9][0-9]*)$ ]] ||
+     [ "$KERNEL_MODULE_UNSIGNED_PATH_INVENTORY_SHA256" != \
+       "$BASELINE_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256" ]; then
+    echo "Kernel module signature report summary is malformed." >&2
+    return 1
+  fi
+}
+
+verify_kernel_module_signature_report_stable() {
+  [ "$RELEASE_BUILD" = "true" ] || return 0
+  "$KERNEL_TREE_VALIDATOR_PYTHON" -I -c '
+import hashlib
+import os
+import stat
+import sys
+
+def is_sha256(value):
+    return len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+expected_size_text, expected_sha = sys.argv[1:]
+if (
+    not expected_size_text.isascii()
+    or not expected_size_text.isdecimal()
+    or str(int(expected_size_text, 10)) != expected_size_text
+    or not is_sha256(expected_sha)
+):
+    raise SystemExit(1)
+descriptor = 13
+try:
+    before = os.fstat(descriptor)
+    mapped_before = os.stat(
+        "sp11-kernel-module-signatures.txt",
+        dir_fd=6,
+        follow_symlinks=False,
+    )
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+    )
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(mapped_before.st_mode)
+        or stable(before) != stable(mapped_before)
+        or stat.S_IMODE(before.st_mode) not in (0o600, 0o644)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or before.st_size != int(expected_size_text, 10)
+    ):
+        raise OSError
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(descriptor, min(65536, before.st_size - offset), offset)
+        if not chunk:
+            raise OSError
+        digest.update(chunk)
+        offset += len(chunk)
+    after = os.fstat(descriptor)
+    mapped_after = os.stat(
+        "sp11-kernel-module-signatures.txt",
+        dir_fd=6,
+        follow_symlinks=False,
+    )
+    if (
+        stable(after) != stable(before)
+        or stable(mapped_after) != stable(before)
+        or digest.hexdigest() != expected_sha
+    ):
+        raise OSError
+finally:
+    pass
+' "$KERNEL_MODULE_SIGNATURE_REPORT_SIZE" \
+    "$KERNEL_MODULE_SIGNATURE_REPORT_SHA256"
 }
 
 acquire_release_output_descriptors() {
-  local opener_job_pid opener_pid opener_deb_fd opener_manifest_fd
+  local opener_job_pid opener_pid opener_deb_fd opener_manifest_fd opener_report_fd
   local opener_protocol opener_endpoint opener_token
-  local deb_dev deb_ino manifest_dev manifest_ino marker extra
+  local deb_dev deb_ino manifest_dev manifest_ino report_dev report_ino marker extra
 
   release_output_opener_control() {
     local action="$1" acknowledgement=""
@@ -3496,7 +4520,7 @@ finally:
 
   # The release path must not use Bash noclobber as an O_EXCL substitute:
   # noclobber still opens existing FIFOs/devices.  A short trusted Python
-  # owner creates both fixed names relative to held work-root FD 6 with real
+  # owner creates all fixed names relative to held work-root FD 6 with real
   # O_EXCL|O_NOFOLLOW and keeps those exact inodes open until this shell has
   # acquired its own descriptors.  A bounded authenticated socket handshake,
   # rather than PID signalling, transfers ownership without a PID-reuse victim
@@ -3513,6 +4537,7 @@ import sys
 import time
 
 created = []
+created_names = []
 foreign = []
 listener = None
 ready = False
@@ -3521,10 +4546,13 @@ fixture_hook = sys.argv[1]
 if fixture_hook not in (
     "",
     "swap-work-root-terminal",
+    "swap-report-name-terminal",
     "mutate-fd10-after-primary",
     "mutate-intended-double-term-scrub",
+    "scanner-partial-report-failure",
     "inject-fifo-before-open",
     "inject-symlink-before-open",
+    "inject-report-before-open",
     "inject-procfd-candidate-mismatch",
 ):
     raise SystemExit(1)
@@ -3552,6 +4580,23 @@ try:
                 "sp11-kernel-debs.txt",
                 dir_fd=6,
             )
+        elif fixture_hook == "inject-report-before-open":
+            victim = os.open(
+                "sp11-kernel-module-signatures.txt",
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
+                0o600,
+                dir_fd=6,
+            )
+            try:
+                if os.write(victim, b"late report victim\n") != 19:
+                    raise OSError("short report victim write")
+                os.fsync(victim)
+            finally:
+                os.close(victim)
         flags = (
             os.O_RDWR
             | os.O_CREAT
@@ -3562,9 +4607,11 @@ try:
         for name in (
             "sp11-kernel-debs.txt",
             "sp11-kernel-build-manifest.txt",
+            "sp11-kernel-module-signatures.txt",
         ):
             descriptor = os.open(name, flags, 0o600, dir_fd=6)
             created.append(descriptor)
+            created_names.append(name)
     finally:
         os.umask(old_umask)
     metadata = [os.fstat(descriptor) for descriptor in created]
@@ -3616,17 +4663,20 @@ try:
         listener.settimeout(0.1)
         liveness = select.poll()
         liveness.register(1, select.POLLERR | select.POLLHUP | select.POLLNVAL)
-    readiness = "READY {} {} {} {} {} {} {} {} {} {}\n".format(
+    readiness = "READY {} {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
         os.getpid(),
         protocol,
         endpoint,
         token,
         reported[0],
         reported[1],
+        reported[2],
         metadata[0].st_dev,
         metadata[0].st_ino,
         metadata[1].st_dev,
         metadata[1].st_ino,
+        metadata[2].st_dev,
+        metadata[2].st_ino,
     ).encode("ascii")
     os.write(1, readiness)
     ready = True
@@ -3687,16 +4737,39 @@ try:
 except SystemExit:
     raise
 except BaseException:
-    for descriptor in created:
+    for index, descriptor in enumerate(created):
         try:
             os.ftruncate(descriptor, 0)
             os.fsync(descriptor)
         except OSError:
             pass
         try:
-            os.close(descriptor)
+            metadata = os.fstat(descriptor)
+            mapped = os.stat(
+                created_names[index],
+                dir_fd=6,
+                follow_symlinks=False,
+            )
+            if (
+                stat.S_ISREG(metadata.st_mode)
+                and not stat.S_ISLNK(mapped.st_mode)
+                and (metadata.st_dev, metadata.st_ino)
+                == (mapped.st_dev, mapped.st_ino)
+                and metadata.st_nlink == 1
+            ):
+                os.unlink(created_names[index], dir_fd=6)
         except OSError:
             pass
+        finally:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    try:
+        os.fsync(6)
+    except OSError:
+        if sys.platform != "darwin":
+            raise
     if not ready:
         try:
             os.write(1, ("ERROR " + stage + "\n").encode("ascii"))
@@ -3716,8 +4789,9 @@ finally:
   opener_job_pid=$!
   release_output_opener_job_pid="$opener_job_pid"
   if ! IFS=' ' read -r marker opener_pid opener_protocol opener_endpoint \
-      opener_token opener_deb_fd opener_manifest_fd deb_dev deb_ino \
-      manifest_dev manifest_ino extra <&12 ||
+      opener_token opener_deb_fd opener_manifest_fd opener_report_fd \
+      deb_dev deb_ino manifest_dev manifest_ino report_dev report_ino \
+      extra <&12 ||
      [ "$marker" != READY ] || [ -n "$extra" ] ||
      ! [[ "$opener_job_pid" =~ ^[1-9][0-9]*$ ]] ||
      [ "$opener_pid" != "$opener_job_pid" ] ||
@@ -3726,9 +4800,12 @@ finally:
      ! [[ "$opener_token" =~ ^[0-9a-f]{64}$ ]] ||
      ! [[ "$opener_deb_fd" =~ ^[0-9]+$ ]] ||
      ! [[ "$opener_manifest_fd" =~ ^[0-9]+$ ]] ||
+     ! [[ "$opener_report_fd" =~ ^[0-9]+$ ]] ||
      ! [[ "$deb_dev" =~ ^[0-9]+$ ]] || ! [[ "$deb_ino" =~ ^[0-9]+$ ]] ||
      ! [[ "$manifest_dev" =~ ^[0-9]+$ ]] ||
-     ! [[ "$manifest_ino" =~ ^[0-9]+$ ]]; then
+     ! [[ "$manifest_ino" =~ ^[0-9]+$ ]] ||
+     ! [[ "$report_dev" =~ ^[0-9]+$ ]] ||
+     ! [[ "$report_ino" =~ ^[0-9]+$ ]]; then
     close_release_output_opener_channel false || :
     echo "Could not exclusively create the release output names." >&2
     return 1
@@ -3747,6 +4824,14 @@ finally:
         release_output_opener_control ABORT || :
         close_release_output_opener_channel false || :
         echo "Could not acquire the held release-manifest inode." >&2
+        return 1
+      fi
+      if ! exec 13<>"/proc/$opener_pid/fd/$opener_report_fd"; then
+        exec 11>&-
+        exec 10>&-
+        release_output_opener_control ABORT || :
+        close_release_output_opener_channel false || :
+        echo "Could not acquire the held module-signature-report inode." >&2
         return 1
       fi
       ;;
@@ -3773,6 +4858,14 @@ finally:
         echo "Could not acquire the fixture release-manifest inode." >&2
         return 1
       fi
+      if ! exec 13<>./sp11-kernel-module-signatures.txt; then
+        exec 11>&-
+        exec 10>&-
+        release_output_opener_control ABORT || :
+        close_release_output_opener_channel false || :
+        echo "Could not acquire the fixture module-signature-report inode." >&2
+        return 1
+      fi
       ;;
     *)
       release_output_opener_control ABORT || :
@@ -3790,6 +4883,7 @@ import sys
 for descriptor, name, expected_dev, expected_ino in (
     (10, "sp11-kernel-debs.txt", sys.argv[1], sys.argv[2]),
     (11, "sp11-kernel-build-manifest.txt", sys.argv[3], sys.argv[4]),
+    (13, "sp11-kernel-module-signatures.txt", sys.argv[5], sys.argv[6]),
 ):
     metadata = os.fstat(descriptor)
     mapped = os.stat(name, dir_fd=6, follow_symlinks=False)
@@ -3805,7 +4899,9 @@ for descriptor, name, expected_dev, expected_ino in (
         or str(metadata.st_ino) != expected_ino
     ):
         raise SystemExit(1)
-' "$deb_dev" "$deb_ino" "$manifest_dev" "$manifest_ino" 1>&9 2>&9; then
+' "$deb_dev" "$deb_ino" "$manifest_dev" "$manifest_ino" \
+    "$report_dev" "$report_ino" 1>&9 2>&9; then
+    exec 13>&-
     exec 10>&-
     exec 11>&-
     release_output_opener_control ABORT || :
@@ -3818,6 +4914,7 @@ for descriptor, name, expected_dev, expected_ino in (
   # the authenticated opener remains responsible for its intended empty files.
   deb_output_open=true
   manifest_output_open=true
+  report_output_open=true
   if ! release_output_opener_control TRANSFER ||
      ! close_release_output_opener_channel true; then
     echo "Held release output ownership transfer failed." >&2
@@ -3861,6 +4958,7 @@ write_release_manifest_v2() {
   (
     deb_output_open=false
     manifest_output_open=false
+    report_output_open=false
     work_output_root_open=false
     publication_committed=false
     release_output_opener_channel_open=false
@@ -3869,7 +4967,7 @@ write_release_manifest_v2() {
     cleanup_release_publication() {
       local cleanup_status=$?
       trap - EXIT
-      trap '' HUP INT TERM
+      trap '' HUP INT QUIT TERM
       if [ "$release_output_opener_channel_open" = true ]; then
         exec 12<&- || :
         release_output_opener_channel_open=false
@@ -3881,11 +4979,13 @@ write_release_manifest_v2() {
       fi
       if [ "$publication_committed" != "true" ] &&
          { [ "$deb_output_open" = "true" ] ||
-           [ "$manifest_output_open" = "true" ]; }; then
+           [ "$manifest_output_open" = "true" ] ||
+           [ "$report_output_open" = "true" ]; }; then
         scrub_held_release_outputs \
           "$deb_output_open" "$manifest_output_open" \
-          "$publication_fixture_hook" || cleanup_status=1
+          "$report_output_open" "$publication_fixture_hook" || cleanup_status=1
       fi
+      [ "$report_output_open" = "true" ] && exec 13>&-
       [ "$manifest_output_open" = "true" ] && exec 11>&-
       [ "$deb_output_open" = "true" ] && exec 10>&-
       [ "$work_output_root_open" = "true" ] && exec 6<&-
@@ -3894,6 +4994,7 @@ write_release_manifest_v2() {
     trap cleanup_release_publication EXIT
     trap 'exit 129' HUP
     trap 'exit 130' INT
+    trap 'exit 131' QUIT
     trap 'exit 143' TERM
 
     cd "$work_dir"
@@ -3926,6 +5027,8 @@ if (
     fi
 
     acquire_release_output_descriptors || exit 1
+    capture_kernel_module_signature_report || exit 1
+    verify_kernel_module_signature_report_stable || exit 1
 
     if ! deb_list_fingerprint="$(
       printf '%s\n' "${RELEASE_DEB_PATHS[@]}" |
@@ -3978,9 +5081,19 @@ if (
         echo "Output $((index + 1)) SHA256: ${RELEASE_OUTPUT_SHA256S[$index]}"
         index=$((index + 1))
       done
+      echo "Module signing policy: $MODULE_SIGNING_POLICY"
+      echo "Module signing private material retained: false"
       echo "Signing certificate SHA256: $SIGNING_CERT_SHA256"
       echo "Signing certificate fingerprint: $SIGNING_CERT_FINGERPRINT"
       echo "Signing certificate serial: $SIGNING_CERT_SERIAL"
+      echo "Kernel module signature report asset: $KERNEL_MODULE_SIGNATURE_REPORT_ASSET"
+      echo "Kernel module signature report size: $KERNEL_MODULE_SIGNATURE_REPORT_SIZE"
+      echo "Kernel module signature report SHA256: $KERNEL_MODULE_SIGNATURE_REPORT_SHA256"
+      echo "Kernel module signature report schema: $KERNEL_MODULE_SIGNATURE_REPORT_SCHEMA"
+      echo "Kernel module total count: $KERNEL_MODULE_TOTAL_COUNT"
+      echo "Kernel module verified signed count: $KERNEL_MODULE_VERIFIED_SIGNED_COUNT"
+      echo "Kernel module policy-allowed unsigned count: $KERNEL_MODULE_POLICY_ALLOWED_UNSIGNED_COUNT"
+      echo "Kernel module unsigned-path inventory SHA256: $KERNEL_MODULE_UNSIGNED_PATH_INVENTORY_SHA256"
       echo "Required Deb roles: common-headers headers image modules"
       echo "Optional Deb roles: modules-extra"
       echo "Deb count: ${#RELEASE_DEB_PATHS[@]}"
@@ -4011,6 +5124,7 @@ if (
     first_publication_state="$(
       held_release_output_state "$work_dir" "$WORK_DIR_IDENTITY" true \
         "$deb_list_fingerprint" "$manifest_fingerprint" \
+        "$KERNEL_MODULE_SIGNATURE_REPORT_SIZE"$'\t'"$KERNEL_MODULE_SIGNATURE_REPORT_SHA256" \
         "$publication_fixture_hook"
     )" || {
       echo "Could not seal the held release outputs." >&2
@@ -4018,10 +5132,12 @@ if (
     }
     verify_release_support_stable || exit 1
     verify_kernel_baseline_control_state || exit 1
+    verify_kernel_module_signature_report_stable || exit 1
     verify_kernel_tree_validator_sink || exit 1
     final_publication_state="$(
       held_release_output_state "$work_dir" "$WORK_DIR_IDENTITY" false \
         "$deb_list_fingerprint" "$manifest_fingerprint" \
+        "$KERNEL_MODULE_SIGNATURE_REPORT_SIZE"$'\t'"$KERNEL_MODULE_SIGNATURE_REPORT_SHA256" \
         "$publication_fixture_hook"
     )" || {
       echo "Release output mapping changed before completion." >&2
@@ -4031,12 +5147,16 @@ if (
       echo "Held release output bytes changed during final validation." >&2
       exit 1
     fi
+    verify_kernel_module_signature_report_stable || exit 1
+    verify_release_module_signing_state_stable || exit 1
 
-    # At this point both exact descriptors, their final names, the pinned work
-    # root, and support provenance have been revalidated. Treat later terminal
+    # At this point all three exact descriptors, their final names, the pinned
+    # work root, and support provenance have been revalidated. Treat later terminal
     # signals as arriving after the publication commit boundary.
-    trap '' HUP INT TERM
+    trap '' HUP INT QUIT TERM
     publication_committed=true
+    exec 13>&-
+    report_output_open=false
     exec 11>&-
     manifest_output_open=false
     exec 10>&-
@@ -4063,9 +5183,19 @@ build_kernel() {
     if [ "$SKIP_CLEAN" != "true" ]; then
       run_rules "$rules_file" clean
     fi
+    if [ "$RELEASE_BUILD" = "true" ] &&
+       [ "$RELEASE_TEST_FIXTURE_CONTEXT" != "true" ]; then
+      if ! IFS= read -r KBUILD_SIGN_PIN < "$BASELINE_MODULE_SIGNING_PIN_PATH" ||
+         [ -z "$KBUILD_SIGN_PIN" ]; then
+        echo "Could not read the controlled module-signing PIN." >&2
+        exit 1
+      fi
+      export KBUILD_SIGN_PIN
+    fi
     for target in "${build_targets[@]}"; do
       run_rules "$rules_file" "$target"
     done
+    unset KBUILD_SIGN_PIN
   )
 }
 
@@ -4176,6 +5306,10 @@ if [ "$PREPARE_ONLY" = "true" ]; then
 fi
 
 build_kernel
+[ -z "${KBUILD_SIGN_PIN+x}" ] || {
+  echo "Module-signing PIN escaped its isolated build subshell." >&2
+  exit 1
+}
 write_deb_manifest
 write_release_manifest_v2
 

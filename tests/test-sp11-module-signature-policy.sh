@@ -25,7 +25,18 @@ die() {
 	exit 1
 }
 
-for tool in chmod cmp grep mktemp python3 zstd; do
+portable_file_state() {
+	case "$(uname -s)" in
+	Darwin)
+		stat -f '%d:%i:%p:%u:%g:%z' "$1"
+		;;
+	*)
+		stat -c '%d:%i:%f:%u:%g:%s' -- "$1"
+		;;
+	esac
+}
+
+for tool in chmod cmp grep mkfifo mktemp openssl python3 shasum stat uname zstd; do
 	command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 [ -f "$scanner" ] || die "module-signature scanner is missing"
@@ -37,12 +48,47 @@ fixtures="$temporary_root/fixtures"
 results="$temporary_root/results"
 mkdir -p "$fixtures" "$results"
 
-python3 - "$fixtures" <<'PY'
+controlled_signing="$fixtures/controlled-signing"
+mkdir -p "$controlled_signing"
+chmod 0700 "$controlled_signing"
+openssl req -new -x509 -newkey rsa:4096 -nodes -sha512 -days 2 \
+	-set_serial 0x4001 -subj '/CN=SP11 controlled package fixture/' \
+	-addext 'basicConstraints=critical,CA:FALSE' \
+	-addext 'keyUsage=critical,digitalSignature' \
+	-keyout "$controlled_signing/private-key.pem" \
+	-out "$controlled_signing/certificate.pem" >/dev/null 2>&1 ||
+	die "could not create controlled package-signing fixture"
+chmod 0600 "$controlled_signing/private-key.pem"
+openssl x509 -in "$controlled_signing/certificate.pem" -outform DER \
+	-out "$controlled_signing/certificate.der" >/dev/null 2>&1 ||
+	die "could not encode controlled package-signing certificate"
+fixture_certificate_sha256="$(
+	shasum -a 256 "$controlled_signing/certificate.der" | awk '{print $1}'
+)"
+controlled_scanner="$temporary_root/validate-controlled-module-signatures.py"
+cp "$scanner" "$controlled_scanner"
+python3 - "$controlled_scanner" "$fixture_certificate_sha256" <<'PY_BIND_CERTIFICATE'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = path.read_bytes()
+reviewed = b"8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b"
+replacement = sys.argv[2].encode("ascii")
+if data.count(reviewed) != 1:
+    raise SystemExit("fixture scanner did not contain one reviewed certificate identity")
+path.write_bytes(data.replace(reviewed, replacement))
+PY_BIND_CERTIFICATE
+chmod 0755 "$controlled_scanner"
+
+python3 - "$fixtures" "$controlled_signing/private-key.pem" \
+	"$controlled_signing/certificate.pem" <<'PY'
 from __future__ import annotations
 
 import gzip
 import io
 import lzma
+import struct
 import subprocess
 import sys
 import tarfile
@@ -50,6 +96,8 @@ from pathlib import Path
 
 
 root = Path(sys.argv[1])
+private_key = Path(sys.argv[2])
+certificate = Path(sys.argv[3])
 abi = "7.2-rc5-jg-0sp11fixture1-qcom-x1e"
 version = "7.2-rc5-jg-0sp11fixture1"
 marker = b"~Module signature appended~\n"
@@ -57,9 +105,34 @@ marker = b"~Module signature appended~\n"
 
 def module_bytes(compression: str, signed: bool, after_marker: bool = False) -> bytes:
     payload = b"\x7fELFsynthetic-sp11-module-" + compression.encode("ascii")
-    if signed or after_marker:
+    if signed:
+        signature = subprocess.run(
+            [
+                "openssl",
+                "cms",
+                "-sign",
+                "-binary",
+                "-signer",
+                str(certificate),
+                "-inkey",
+                str(private_key),
+                "-md",
+                "sha512",
+                "-noattr",
+                "-nocerts",
+                "-outform",
+                "DER",
+            ],
+            input=payload,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        ).stdout
+        payload += signature
+        payload += struct.pack(">BBBBB3sI", 0, 0, 2, 0, 0, b"\0\0\0", len(signature))
         payload += marker
-    if after_marker:
+    elif after_marker:
+        payload += marker
         payload += b"not-at-eof"
     if compression == "none":
         return payload
@@ -228,7 +301,7 @@ def module_entries(signed: bool) -> list[tuple[str, str, bytes | str]]:
         entries.append(
             (
                 "file",
-                f"usr/lib/modules/{abi}/kernel/fixture/{compression}{suffix}",
+                f"usr/lib/modules/{abi}/kernel/drivers/staging/fixture/{compression}{suffix}",
                 module_bytes(compression, signed),
             )
         )
@@ -272,8 +345,32 @@ package(
     [
         (
             "file",
-            f"usr/lib/modules/{abi}/kernel/fixture/extra.ko",
+            f"usr/lib/modules/{abi}/kernel/drivers/staging/fixture/extra.ko",
             module_bytes("none", False),
+        )
+    ],
+)
+package(
+    "extra-duplicate-normalized",
+    extra_name,
+    [
+        (
+            "file",
+            f"usr/lib/modules/{abi}/kernel/drivers/staging/fixture/none.ko",
+            module_bytes("none", False),
+        )
+    ],
+)
+tampered_signed_module = bytearray(module_bytes("none", True))
+tampered_signed_module[4] ^= 1
+package(
+    "tampered-signed",
+    modules_name,
+    [
+        (
+            "file",
+            f"usr/lib/modules/{abi}/kernel/fixture/tampered.ko",
+            bytes(tampered_signed_module),
         )
     ],
 )
@@ -581,6 +678,8 @@ unsigned_deb="$fixtures/unsigned/$package_name"
 signed_deb="$fixtures/signed/$package_name"
 not_at_eof_deb="$fixtures/marker-not-eof/$package_name"
 extra_deb="$fixtures/extra/$extra_name"
+extra_duplicate_deb="$fixtures/extra-duplicate-normalized/$extra_name"
+tampered_signed_deb="$fixtures/tampered-signed/$package_name"
 
 expect_failure() {
 	label="$1"
@@ -601,7 +700,37 @@ expect_failure() {
 	fi
 }
 
-chmod 0444 "$unsigned_deb" "$signed_deb" "$not_at_eof_deb" "$extra_deb"
+expect_controlled_failure() {
+	label="$1"
+	expected="$2"
+	program="$3"
+	certificate="$4"
+	allowlist="$5"
+	report="$6"
+	shift 6
+	stdout_file="$results/$label.stdout"
+	stderr_file="$results/$label.stderr"
+	if "$program" \
+		--controlled-certificate "$certificate" \
+		--allowed-unsigned-file "$allowlist" \
+		--report-out "$report" \
+		"$@" > "$stdout_file" 2> "$stderr_file"; then
+		die "$label controlled fixture was accepted"
+	fi
+	[ ! -s "$stdout_file" ] || die "$label failure emitted a partial report"
+	[ ! -e "$report" ] || die "$label failure published a controlled report"
+	grep -Fq "$expected" "$stderr_file" || {
+		cat "$stderr_file" >&2
+		die "$label controlled rejection was not explicit"
+	}
+	if grep -Fq "$temporary_root" "$stderr_file"; then
+		die "$label controlled rejection leaked a local path"
+	fi
+}
+
+chmod 0444 \
+	"$unsigned_deb" "$signed_deb" "$not_at_eof_deb" "$extra_deb" \
+	"$extra_duplicate_deb" "$tampered_signed_deb"
 chmod 0555 "$fixtures/unsigned" "$fixtures/signed" "$fixtures/marker-not-eof" "$fixtures/extra"
 before_hash="$(python3 - "$unsigned_deb" <<'PY'
 import hashlib
@@ -633,6 +762,50 @@ if grep -Fq "$temporary_root" "$results/unsigned.report"; then
 	die "successful report leaked a local path"
 fi
 
+mapping_root="$results/package-mapping"
+mkdir "$mapping_root"
+cp "$unsigned_deb" "$mapping_root/$package_name"
+cp "$unsigned_deb" "$mapping_root/replacement.deb"
+python3 -I - "$scanner" "$mapping_root/$package_name" \
+	"$mapping_root/replacement.deb" "$mapping_root/held.deb" <<'PY_MAPPING_RECHECK'
+import importlib.util
+import os
+import pathlib
+import sys
+
+spec = importlib.util.spec_from_file_location("sp11_module_scanner", sys.argv[1])
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load package scanner fixture")
+scanner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = scanner
+spec.loader.exec_module(scanner)
+package = pathlib.Path(sys.argv[2])
+replacement = pathlib.Path(sys.argv[3])
+held = pathlib.Path(sys.argv[4])
+original_hash = scanner.hash_descriptor
+calls = 0
+
+
+def remapping_hash(descriptor, size):
+    global calls
+    calls += 1
+    result = original_hash(descriptor, size)
+    if calls == 2:
+        os.rename(package, held)
+        os.rename(replacement, package)
+    return result
+
+
+scanner.hash_descriptor = remapping_hash
+try:
+    scanner.scan_package(package)
+except scanner.ValidationError as exc:
+    if str(exc) != "package changed during validation":
+        raise
+else:
+    raise SystemExit("scanner accepted a substituted final package mapping")
+PY_MAPPING_RECHECK
+
 "$scanner" --expect any "$signed_deb" > "$results/signed.report"
 grep -Fxq 'Module count: 4' "$results/signed.report"
 grep -Fxq 'Signed module count: 4' "$results/signed.report"
@@ -655,6 +828,336 @@ grep -Fxq 'Package 2 role: modules-extra' "$results/combined-a.report"
 grep -Fxq 'Module count: 5' "$results/combined-a.report"
 grep -Fxq 'Signed module count: 0' "$results/combined-a.report"
 grep -Fxq 'Unsigned module count: 5' "$results/combined-a.report"
+
+allowed_one="$results/controlled-one.allowed"
+allowed_two="$results/controlled-two.allowed"
+: > "$allowed_one"
+printf '%s\n' 'drivers/staging/fixture/extra.ko' > "$allowed_two"
+
+expect_controlled_failure \
+	unapproved-controlled-certificate \
+	'controlled certificate does not match the approved public identity' \
+	"$scanner" "$controlled_signing/certificate.pem" "$allowed_one" \
+	"$results/unapproved-controlled.report" "$signed_deb"
+
+controlled_one_report="$results/controlled-one.report"
+"$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" \
+	--report-out "$controlled_one_report" \
+	"$signed_deb" > "$results/controlled-one.stdout" ||
+	die "one-package controlled signature verification failed"
+[ ! -s "$results/controlled-one.stdout" ] ||
+	die "controlled scanner emitted report bytes to stdout"
+grep -Fxq '# Surface Pro 11 Kernel Module Signature Report' "$controlled_one_report"
+grep -Fxq 'Schema: sp11-kernel-module-signature-verification-v1' "$controlled_one_report"
+grep -Fxq 'Package count: 1' "$controlled_one_report"
+grep -Fxq 'Package 1 role: modules' "$controlled_one_report"
+grep -Fxq 'Total module count: 4' "$controlled_one_report"
+grep -Fxq 'Cryptographically verified signed module count: 4' "$controlled_one_report"
+grep -Fxq 'Policy-allowed unsigned module count: 0' "$controlled_one_report"
+grep -Fxq \
+	'Policy-allowed unsigned module path inventory SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
+	"$controlled_one_report"
+grep -Fxq "Module signing certificate SHA256: $fixture_certificate_sha256" \
+	"$controlled_one_report"
+controlled_report_mode="$(
+	stat -c '%a' -- "$controlled_one_report" 2>/dev/null ||
+		stat -f '%Lp' "$controlled_one_report"
+)"
+[ "$controlled_report_mode" = 600 ] || die "controlled report is not mode 0600"
+
+held_report="$results/controlled-held-fd.report"
+: > "$held_report"
+chmod 0600 "$held_report"
+exec 13<> "$held_report"
+"$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" \
+	--report-fd 13 \
+	"$signed_deb" > "$results/controlled-held-fd.stdout" ||
+	die "held-FD controlled signature verification failed"
+exec 13>&-
+[ ! -s "$results/controlled-held-fd.stdout" ] ||
+	die "held-FD controlled scanner emitted report bytes to stdout"
+cmp "$controlled_one_report" "$held_report" ||
+	die "held-FD controlled report differs from exclusive-path report"
+
+held_invalid="$results/controlled-held-invalid.report"
+: > "$held_invalid"
+chmod 0644 "$held_invalid"
+exec 13<> "$held_invalid"
+if "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" \
+	--report-fd 13 \
+	"$signed_deb" > "$results/controlled-held-invalid.stdout" \
+	2> "$results/controlled-held-invalid.stderr"; then
+	exec 13>&-
+	die "controlled scanner accepted an unsafe held report descriptor"
+fi
+exec 13>&-
+[ ! -s "$held_invalid" ] || die "unsafe held report descriptor received bytes"
+grep -Fq 'could not write held controlled report' \
+	"$results/controlled-held-invalid.stderr" ||
+	die "unsafe held report descriptor rejection was not explicit"
+
+held_nonempty="$results/controlled-held-nonempty.report"
+printf 'victim bytes\n' > "$held_nonempty"
+chmod 0600 "$held_nonempty"
+held_nonempty_state="$(portable_file_state "$held_nonempty")"
+exec 13<> "$held_nonempty"
+if "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" --report-fd 13 "$signed_deb" \
+	> "$results/controlled-held-nonempty.stdout" \
+	2> "$results/controlled-held-nonempty.stderr"; then
+	exec 13>&-
+	die "controlled scanner accepted a nonempty held report"
+fi
+exec 13>&-
+[ "$(portable_file_state "$held_nonempty")" = "$held_nonempty_state" ] ||
+	die "nonempty held report changed during rejection"
+grep -Fq 'could not write held controlled report' \
+	"$results/controlled-held-nonempty.stderr" ||
+	die "nonempty held report rejection was not explicit"
+
+held_offset="$results/controlled-held-offset.report"
+: > "$held_offset"
+chmod 0600 "$held_offset"
+exec 13<> "$held_offset"
+printf x >&13
+: > "$held_offset"
+if "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" --report-fd 13 "$signed_deb" \
+	> "$results/controlled-held-offset.stdout" \
+	2> "$results/controlled-held-offset.stderr"; then
+	exec 13>&-
+	die "controlled scanner accepted a nonzero held report offset"
+fi
+exec 13>&-
+[ ! -s "$held_offset" ] || die "nonzero-offset held report received bytes"
+grep -Fq 'could not write held controlled report' \
+	"$results/controlled-held-offset.stderr" ||
+	die "nonzero held report offset rejection was not explicit"
+
+for held_access in readonly writeonly; do
+	held_access_path="$results/controlled-held-$held_access.report"
+	: > "$held_access_path"
+	chmod 0600 "$held_access_path"
+	if [ "$held_access" = readonly ]; then
+		exec 13< "$held_access_path"
+	else
+		exec 13> "$held_access_path"
+	fi
+	if "$controlled_scanner" \
+		--controlled-certificate "$controlled_signing/certificate.pem" \
+		--allowed-unsigned-file "$allowed_one" --report-fd 13 "$signed_deb" \
+		> "$results/controlled-held-$held_access.stdout" \
+		2> "$results/controlled-held-$held_access.stderr"; then
+		exec 13>&-
+		die "controlled scanner accepted a $held_access held report descriptor"
+	fi
+	exec 13>&-
+	[ ! -s "$held_access_path" ] ||
+		die "$held_access held report descriptor received bytes"
+	grep -Fq 'could not write held controlled report' \
+		"$results/controlled-held-$held_access.stderr" ||
+		die "$held_access held report rejection was not explicit"
+done
+
+held_fifo="$results/controlled-held-fifo.report"
+mkfifo "$held_fifo"
+chmod 0600 "$held_fifo"
+exec 13<> "$held_fifo"
+if "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" --report-fd 13 "$signed_deb" \
+	> "$results/controlled-held-fifo.stdout" \
+	2> "$results/controlled-held-fifo.stderr"; then
+	exec 13>&-
+	die "controlled scanner accepted a FIFO held report descriptor"
+fi
+exec 13>&-
+[ -p "$held_fifo" ] || die "FIFO held report changed during rejection"
+grep -Fq 'could not write held controlled report' \
+	"$results/controlled-held-fifo.stderr" ||
+	die "FIFO held report rejection was not explicit"
+
+held_wrong_fd="$results/controlled-held-wrong-fd.report"
+: > "$held_wrong_fd"
+chmod 0600 "$held_wrong_fd"
+exec 12<> "$held_wrong_fd"
+if "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" \
+	--report-fd 12 \
+	"$signed_deb" > "$results/controlled-held-wrong-fd.stdout" \
+	2> "$results/controlled-held-wrong-fd.stderr"; then
+	exec 12>&-
+	die "controlled scanner accepted a noncanonical report descriptor"
+fi
+exec 12>&-
+[ ! -s "$held_wrong_fd" ] || die "noncanonical report descriptor received bytes"
+grep -Fq 'controlled report descriptor must be inherited fd 13' \
+	"$results/controlled-held-wrong-fd.stderr" ||
+	die "noncanonical report descriptor rejection was not explicit"
+
+held_both="$results/controlled-held-both.report"
+: > "$held_both"
+chmod 0600 "$held_both"
+exec 13<> "$held_both"
+if "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" \
+	--report-out "$results/controlled-held-both-path.report" \
+	--report-fd 13 \
+	"$signed_deb" > "$results/controlled-held-both.stdout" \
+	2> "$results/controlled-held-both.stderr"; then
+	exec 13>&-
+	die "controlled scanner accepted two report sinks"
+fi
+exec 13>&-
+[ ! -s "$held_both" ] && [ ! -e "$results/controlled-held-both-path.report" ] ||
+	die "two-sink rejection published report bytes"
+grep -Fq 'exactly one report sink' "$results/controlled-held-both.stderr" ||
+	die "two-sink rejection was not explicit"
+
+controlled_two_report="$results/controlled-two.report"
+"$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_two" \
+	--report-out "$controlled_two_report" \
+	"$extra_deb" "$signed_deb" > "$results/controlled-two.stdout" ||
+	die "two-package controlled signature verification failed"
+[ ! -s "$results/controlled-two.stdout" ] ||
+	die "controlled two-package scanner emitted report bytes to stdout"
+grep -Fxq 'Package count: 2' "$controlled_two_report"
+grep -Fxq 'Package 1 role: modules' "$controlled_two_report"
+grep -Fxq 'Package 2 role: modules-extra' "$controlled_two_report"
+grep -Fxq 'Total module count: 5' "$controlled_two_report"
+grep -Fxq 'Cryptographically verified signed module count: 4' "$controlled_two_report"
+grep -Fxq 'Policy-allowed unsigned module count: 1' "$controlled_two_report"
+allowed_two_sha256="$(shasum -a 256 "$allowed_two" | awk '{print $1}')"
+grep -Fxq \
+	"Policy-allowed unsigned module path inventory SHA256: $allowed_two_sha256" \
+	"$controlled_two_report"
+grep -Fxq -- '- drivers/staging/fixture/extra.ko' "$controlled_two_report"
+if grep -Fq "$temporary_root" "$controlled_two_report"; then
+	die "controlled report leaked a local path"
+fi
+
+expect_controlled_failure \
+	missing-reviewed-unsigned \
+	'actual unsigned module paths do not exactly match the reviewed allowlist' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$allowed_one" \
+	"$results/missing-reviewed-unsigned.report" "$signed_deb" "$extra_deb"
+printf '%s\n' 'drivers/staging/fixture/unused.ko' > "$results/unused.allowed"
+expect_controlled_failure \
+	unused-reviewed-unsigned \
+	'actual unsigned module paths do not exactly match the reviewed allowlist' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$results/unused.allowed" \
+	"$results/unused-reviewed-unsigned.report" "$signed_deb"
+printf '%s\n' \
+	'drivers/staging/z-last.ko' \
+	'drivers/staging/a-first.ko' > "$results/reordered.allowed"
+expect_controlled_failure \
+	reordered-reviewed-unsigned \
+	'allowed-unsigned list must be bytewise sorted and unique' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$results/reordered.allowed" \
+	"$results/reordered-reviewed-unsigned.report" "$signed_deb"
+printf '%s\n' \
+	'drivers/staging/duplicate.ko' \
+	'drivers/staging/duplicate.ko' > "$results/duplicate.allowed"
+expect_controlled_failure \
+	duplicate-reviewed-unsigned \
+	'allowed-unsigned list must be bytewise sorted and unique' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$results/duplicate.allowed" \
+	"$results/duplicate-reviewed-unsigned.report" "$signed_deb"
+printf '%s\n' 'drivers/platform/non-staging.ko' > "$results/non-staging.allowed"
+expect_controlled_failure \
+	non-staging-reviewed-unsigned \
+	'allowed-unsigned list contains a non-canonical module path' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$results/non-staging.allowed" \
+	"$results/non-staging-reviewed-unsigned.report" "$signed_deb"
+printf '%s\n' 'drivers/staging/fixture/extra-drift.ko' > "$results/drift.allowed"
+expect_controlled_failure \
+	reviewed-unsigned-hash-drift \
+	'actual unsigned module paths do not exactly match the reviewed allowlist' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$results/drift.allowed" \
+	"$results/reviewed-unsigned-hash-drift.report" "$signed_deb" "$extra_deb"
+expect_controlled_failure \
+	tampered-controlled-signature \
+	'OpenSSL rejected module CMS signature' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$allowed_one" \
+	"$results/tampered-controlled-signature.report" "$tampered_signed_deb"
+expect_controlled_failure \
+	duplicate-cross-package-module-path \
+	'module packages contain a duplicate normalized module path' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$allowed_one" \
+	"$results/duplicate-cross-package-module-path.report" \
+	"$signed_deb" "$extra_duplicate_deb"
+expect_controlled_failure \
+	duplicate-controlled-package-role \
+	'module package role appears more than once' \
+	"$controlled_scanner" "$controlled_signing/certificate.pem" "$allowed_one" \
+	"$results/duplicate-controlled-package-role.report" "$signed_deb" "$signed_deb"
+expect_failure partial-controlled-cli \
+	'controlled verification requires a certificate, allowlist, and exactly one report sink' \
+	--controlled-certificate "$controlled_signing/certificate.pem" "$signed_deb"
+
+hostile_bin="$results/hostile-bin"
+hostile_marker="$results/hostile-tool-executed"
+mkdir "$hostile_bin"
+for hostile_tool in openssl zstd; do
+	{
+		printf '%s\n' '#!/bin/sh'
+		printf 'printf hostile > %s\n' "$hostile_marker"
+		printf '%s\n' 'exit 0'
+	} > "$hostile_bin/$hostile_tool"
+	chmod 0755 "$hostile_bin/$hostile_tool"
+done
+PATH="$hostile_bin:$PATH" "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_two" \
+	--report-out "$results/hostile-path.report" \
+	"$signed_deb" "$extra_deb" > "$results/hostile-path.stdout" ||
+	die "controlled scanner failed with hostile PATH tools present"
+[ ! -e "$hostile_marker" ] || die "controlled scanner executed a hostile PATH tool"
+[ ! -s "$results/hostile-path.stdout" ] ||
+	die "hostile-PATH controlled scan emitted stdout"
+
+set +e
+(
+	trap '' CHLD
+	exec "$controlled_scanner" \
+		--controlled-certificate "$controlled_signing/certificate.pem" \
+		--allowed-unsigned-file "$allowed_one" \
+		--report-out "$results/ignored-sigchld.report" \
+		"$signed_deb"
+) > "$results/ignored-sigchld.stdout" 2> "$results/ignored-sigchld.stderr"
+ignored_sigchld_status=$?
+set -e
+[ "$ignored_sigchld_status" -ne 0 ] ||
+	die "controlled scanner accepted an ignored SIGCHLD disposition"
+[ ! -s "$results/ignored-sigchld.stdout" ] ||
+	die "ignored-SIGCHLD rejection emitted stdout"
+[ ! -e "$results/ignored-sigchld.report" ] ||
+	die "ignored-SIGCHLD rejection published a report"
+grep -Fq 'module signature validation requires the default SIGCHLD disposition' \
+	"$results/ignored-sigchld.stderr" ||
+	die "ignored-SIGCHLD rejection was not explicit"
+
+if "$controlled_scanner" \
+	--controlled-certificate "$controlled_signing/certificate.pem" \
+	--allowed-unsigned-file "$allowed_one" \
+	--report-out "$controlled_one_report" \
+	"$signed_deb" > "$results/existing-report.stdout" 2> "$results/existing-report.stderr"; then
+	die "controlled scanner overwrote an existing report"
+fi
+grep -Fq 'could not write exclusive controlled report' "$results/existing-report.stderr" ||
+	die "existing controlled report rejection was not explicit"
 
 expect_failure malformed-deb 'input is not a Debian ar archive' \
 	"$fixtures/malformed/$package_name"

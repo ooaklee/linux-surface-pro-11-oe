@@ -238,7 +238,14 @@ choose a new work directory and Docker volume:
 
 ```bash
 RELEASE_CHECK_WORK=build/docker-sp11-qcom-x1e-kernel-release-check
+SIGNING_DIR="<owner-controlled-private-signing-directory>"
+SIGNING_KEY="$SIGNING_DIR/sp11-module-signing-key.pem"
+SIGNING_CERT="$SIGNING_DIR/sp11-module-signing-cert.pem"
+SIGNING_PIN_FILE="$SIGNING_DIR/sp11-module-signing-pin.txt"
 test ! -e "$RELEASE_CHECK_WORK"
+test -f "$SIGNING_KEY"
+test -f "$SIGNING_CERT"
+test -f "$SIGNING_PIN_FILE"
 install -d -m 0700 "$RELEASE_CHECK_WORK"
 install -d -m 0700 "$RELEASE_CHECK_WORK/artifacts"
 ARTIFACTS_FIRST_ENTRY="$(
@@ -254,10 +261,13 @@ test -z "$ARTIFACTS_FIRST_ENTRY"
   --expected-source-commit 8f953dd060bc6e8fb86ca2ea8a92f258141c0169 \
   --image ubuntu:26.04@sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03 \
   --platform linux/arm64/v8 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3 patches/sp11-qcom-x1e-7.2-rc5-release-signing-v1" \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir "$RELEASE_CHECK_WORK" \
   --linux-work-volume sp11-qcom-x1e-kernel-release-check \
+  --module-signing-key "$SIGNING_KEY" \
+  --module-signing-certificate "$SIGNING_CERT" \
+  --module-signing-pin-file "$SIGNING_PIN_FILE" \
   --reset-source \
   --release-build \
   --jobs 8
@@ -272,7 +282,7 @@ read-only and exports the bounded canonical host record
 `sp11-kernel-retained-evidence.tar`. The host work directory therefore contains
 that tar, three bound controller files, and the flat `artifacts/` directory; it
 does not recreate the retained APT directory trees. A successful run requires
-all three files below in `artifacts/`:
+all four files below in `artifacts/`:
 
 The pinned snapshot contains six signed, positive-size backports indexes whose
 decompressed payload is empty. APT legitimately emits no local list view for
@@ -282,6 +292,7 @@ the other 26 list views. It never fabricates placeholder list files.
 
 ```text
 artifacts/sp11-kernel-build-manifest.txt
+artifacts/sp11-kernel-module-signatures.txt
 artifacts/sp11-kernel-apt-provenance.txt
 artifacts/sp11-kernel-build-inputs.txt
 ```
@@ -307,11 +318,16 @@ result yet and still requires a fresh end-to-end run. The historical result is
 one provenance-validated build, not a byte-reproducibility result. Its last
 envelope deliberately records publication schema propagation as incomplete
 because that is its immutable build-time state. The kernel and image
-preparation paths consume and validate the exact trio and record their
+preparation paths consume and validate the exact provenance set and record its
 propagation completion in outer manifests while keeping overall publication
-blocked. Preserve all three files byte-for-byte. Byte reproducibility, the
-release-signing decision, recovery/hardware evidence, corresponding-source
-review, and explicit release authorization remain open. [`LEGAL.md`](../../LEGAL.md)
+blocked. Preserve all four files byte-for-byte. ADR-0056 resolves the signing
+decision in favor of an encrypted owner-controlled RSA-4096 key shared by the
+packaged in-tree kernel modules and exact-ABI touchscreen modules, with only its
+public certificate identity propagated. The controlled-signing implementation
+and hostile fixture gates are
+part of the current release path, but no fresh real C/D pair has yet established
+byte reproducibility. Recovery/hardware evidence, corresponding-source review,
+and explicit release authorization also remain open. [`LEGAL.md`](../../LEGAL.md)
 records the interim MIT direction for project-authored code and the upstream
 ALSA/local-hardware-configuration basis for SP11 UCM; both final reviews remain
 pending, but that pending status alone does not block ordinary development or
@@ -325,7 +341,9 @@ implemented and fixture-tested. Release mode takes the fixed
 `KBUILD_BUILD_TIMESTAMP` values from the committed baseline, checks the epoch
 against the pinned source commit, and propagates them through build-dependency
 generation and both Debian kernel-package targets. This foundation does not
-choose a module-signing model or make generated signing material reproducible.
+make generated development signing reproducible. ADR-0056 adds the controlled
+module-signing model; generated development signing remains non-release and
+cannot satisfy the raw comparison.
 
 After two new clean builds from the same committed support HEAD, compare their
 retained work directories without normalization:
@@ -345,14 +363,18 @@ The fail-closed `sp11-kernel-raw-matched-pair-v1` comparator is implemented,
 reviewed, and wired into CI through hostile synthetic fixtures. It accepts a
 pair only after matching the immutable retained inputs, then compares every
 kernel Deb and the seven manifest outputs as raw bytes or raw identities under
-`sp11-kernel-zero-normalization-v1`. A validated mismatch exits `1`; unsafe or
+`sp11-kernel-zero-normalization-v1`. Controlled-signing candidates must also
+carry matching cryptographic module-signature reports and exact reviewed
+unsigned-path inventories; those reports are evidence assets rather than an
+eighth source-tree output. A validated mismatch exits `1`; unsafe or
 inconsistent input exits `2`. Its report always records publication as
 unauthorized.
 
 No fresh C/D pair has been built or compared since the deterministic identity
 was added. P0.4b and P0.4 overall therefore remain open, while P0.4c remains
-the single earlier real immutable-input build. The signing model still awaits
-an owner decision. The deterministic patched-source generator is implemented,
+the single earlier real immutable-input build. The signing model is selected,
+but no fresh controlled-signing build pair exists. The deterministic
+patched-source generator is implemented,
 but the retained 2026-08-08 exact four-patch tree was correctly rejected for an
 escaping tracked symlink; a corrected fresh build and new manifest are required
 before archive validation can resume. Recovery/hardware evidence, legal

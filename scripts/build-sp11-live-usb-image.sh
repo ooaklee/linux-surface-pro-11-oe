@@ -270,10 +270,15 @@ elif [ -n "$payload_inode" ]; then
     fi
     if awk '$3 ~ /sp11v3.*\.deb$/ { found = 1 } END { exit found ? 0 : 1 }' "$kernel_debs_listing"; then
       touchscreen_bundle="true"
-      for module in gpi.ko spi-geni-qcom.ko mshw0485_touch.ko; do
-        if ! awk -v module="$module" '$3 == module { found = 1 } END { exit found ? 0 : 1 }' \
+      for payload_asset in \
+        gpi.ko \
+        spi-geni-qcom.ko \
+        mshw0485_touch.ko \
+        sp11-touchscreen-modules-manifest.txt \
+        sp11-module-signing-cert.x509; do
+        if ! awk -v module="$payload_asset" '$3 == module { found = 1 } END { exit found ? 0 : 1 }' \
           "$kernel_debs_listing"; then
-          echo "Incomplete sp11v3 payload: missing /payload/kernel-debs/$module." >&2
+          echo "Incomplete sp11v3 payload: missing /payload/kernel-debs/$payload_asset." >&2
           exit 1
         fi
       done

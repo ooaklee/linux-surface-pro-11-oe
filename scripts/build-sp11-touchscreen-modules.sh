@@ -23,6 +23,9 @@ sanitize_git_environment
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 repo_build_dir="$repo_dir/build"
+signed_module_validator="$repo_dir/scripts/validate-sp11-signed-modules.py"
+module_signing_trust_anchor="$repo_dir/config/kernel-signing/sp11-module-signing-cert.pem"
+APPROVED_MODULE_SIGNING_CERT_SHA256="8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b"
 
 # Build the Surface Pro 11 OLED touchscreen module set from an immutable
 # geocausa Phase 91 revision. Installation is delegated to the guarded
@@ -50,6 +53,21 @@ INSTALL="false"
 OFFLINE="false"
 ALLOW_UNSUPPORTED_RELEASE="false"
 WINDOWS_SE_INIT="false"
+MODULE_SIGNING_KEY=""
+MODULE_SIGNING_CERTIFICATE=""
+MODULE_SIGNING_PIN_FILE=""
+MODULE_SIGNING_KEY_IDENTITY=""
+MODULE_SIGNING_CERTIFICATE_IDENTITY=""
+MODULE_SIGNING_PIN_IDENTITY=""
+STAGED_MODULE_SIGNING_KEY=""
+STAGED_MODULE_SIGNING_CERTIFICATE=""
+STAGED_MODULE_SIGNING_PIN_FILE=""
+SIGNING_VALIDATION_DIR=""
+SIGNING_TEMP_BASE=""
+TRUSTED_OPENSSL=""
+TRUSTED_OPENSSL_IDENTITY=""
+TRUSTED_PYTHON="/usr/bin/python3"
+unset KBUILD_SIGN_PIN
 
 usage() {
   cat <<EOF
@@ -74,6 +92,13 @@ Options:
   --source-url URL    Source repository, default $GIT_URL.
   --source-ref REF    Immutable source commit, default $GIT_REF.
   --out-dir DIR       Module output directory, default $OUT_DIR.
+  --module-signing-key PATH
+                      Controlled RSA-4096 private key. Private key material,
+                      its path, and KBUILD_SIGN_PIN are never retained.
+  --module-signing-certificate PATH
+                      Matching public X.509 certificate in exact PEM form.
+  --module-signing-pin-file PATH
+                      One-line PIN for the encrypted PKCS#8 private key.
   --offline           Do not fetch; require source-ref in the local checkout.
   --install           Install, rebuild the exact target initramfs, and verify.
   --windows-se-init   Opt in to the experimental captured Windows cold-init
@@ -146,10 +171,21 @@ cleanup_install_snapshot() {
   esac
 }
 
+cleanup_signing_validation() {
+  [ -n "$SIGNING_VALIDATION_DIR" ] || return 0
+  case "$SIGNING_VALIDATION_DIR" in
+    "$SIGNING_TEMP_BASE"/sp11-touchscreen-signing.*)
+      rm -rf -- "$SIGNING_VALIDATION_DIR"
+      ;;
+    *) echo "warning: refusing to remove unexpected signing validation directory" >&2 ;;
+  esac
+}
+
 cleanup_all() {
   cleanup_install_snapshot
   cleanup_output_transaction
   cleanup_kernel_headers
+  cleanup_signing_validation
 }
 
 trap cleanup_all EXIT
@@ -191,6 +227,77 @@ file_mode() {
   fi
   case "$mode" in ""|*[!0-9]*) return 1 ;; esac
   printf '%s\n' "$mode"
+}
+
+regular_file_metadata_identity() {
+  local path="$1" identity
+
+  [ -s "$path" ] && [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  if identity="$(stat -c '%d:%i:%f:%u:%g:%s:%Y:%Z:%h' -- "$path" 2>/dev/null)"; then
+    :
+  elif identity="$(stat -f '%d:%i:%p:%u:%g:%z:%m:%c:%l' "$path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  printf '%s\n' "$identity"
+}
+
+file_link_count() {
+  local count
+
+  if count="$(stat -c '%h' -- "$1" 2>/dev/null)"; then
+    :
+  elif count="$(stat -f '%l' "$1" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  case "$count" in ""|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$count"
+}
+
+select_trusted_openssl() {
+  local candidate parent leaf mode owner
+
+  case "$(uname -s)" in
+    Linux) candidate="/usr/bin/openssl" ;;
+    Darwin)
+      if [ -x /opt/homebrew/opt/openssl@3/bin/openssl ]; then
+        candidate="/opt/homebrew/opt/openssl@3/bin/openssl"
+      elif [ -x /usr/local/opt/openssl@3/bin/openssl ]; then
+        candidate="/usr/local/opt/openssl@3/bin/openssl"
+      else
+        return 1
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  parent="$(cd "$(dirname "$candidate")" && pwd -P)" || return 1
+  leaf="$(basename "$candidate")"
+  candidate="$parent/$leaf"
+  [ -s "$candidate" ] && [ -f "$candidate" ] && [ ! -L "$candidate" ] &&
+    [ -x "$candidate" ] || return 1
+  mode="$(file_mode "$candidate")" || return 1
+  [ $((8#$mode & 8#22)) -eq 0 ] || return 1
+  if [ "$(uname -s)" = "Linux" ]; then
+    if owner="$(stat -c '%u' -- "$candidate" 2>/dev/null)"; then
+      :
+    elif owner="$(stat -f '%u' "$candidate" 2>/dev/null)"; then
+      :
+    else
+      return 1
+    fi
+    [ "$owner" -eq 0 ] || return 1
+  fi
+  printf '%s\n' "$candidate"
+}
+
+verify_trusted_openssl() {
+  local current_identity
+
+  current_identity="$(regular_file_metadata_identity "$TRUSTED_OPENSSL")" || return 1
+  [ "$current_identity" = "$TRUSTED_OPENSSL_IDENTITY" ]
 }
 
 source_git() {
@@ -356,7 +463,7 @@ validate_output_leaves() {
   while IFS= read -r -d '' entry; do
     entry_name="$(basename "$entry")"
     case "$entry_name" in
-      gpi.ko|spi-geni-qcom.ko|mshw0485_touch.ko|sp11-touchscreen-modules-manifest.txt) ;;
+      gpi.ko|spi-geni-qcom.ko|mshw0485_touch.ko|sp11-module-signing-cert.x509|sp11-touchscreen-modules-manifest.txt) ;;
       *) die "module output contains an unexpected entry: $entry_name" ;;
     esac
     [ -f "$entry" ] && [ ! -L "$entry" ] ||
@@ -370,8 +477,20 @@ validate_output_leaves() {
     count=$((count + 1))
   done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
   if [ "$require_all" = "true" ]; then
-    [ "$count" -eq 4 ] || die "module output does not contain exactly four release files"
+    [ "$count" -eq 5 ] || die "module output does not contain exactly five release files"
   fi
+}
+
+validate_signed_bundle() {
+  local directory="$1"
+
+  "$TRUSTED_PYTHON" -I "$signed_module_validator" \
+    --certificate "$directory/sp11-module-signing-cert.x509" \
+    --module "$directory/gpi.ko" \
+    --module "$directory/spi-geni-qcom.ko" \
+    --module "$directory/mshw0485_touch.ko" \
+    --manifest "$directory/sp11-touchscreen-modules-manifest.txt" >/dev/null ||
+    die "controlled touchscreen module signature validation failed"
 }
 
 validate_module_identities() {
@@ -399,7 +518,7 @@ validate_module_identities() {
 }
 
 atomic_publish_directory() {
-  python3 - "$1" "$2" <<'PY_ATOMIC_RENAME'
+  "$TRUSTED_PYTHON" - "$1" "$2" <<'PY_ATOMIC_RENAME'
 import ctypes
 import os
 import sys
@@ -439,6 +558,7 @@ prepare_install_snapshot() {
   chmod 0700 "$INSTALL_SNAPSHOT_DIR"
   for leaf in \
     gpi.ko spi-geni-qcom.ko mshw0485_touch.ko \
+    sp11-module-signing-cert.x509 \
     sp11-touchscreen-modules-manifest.txt; do
     install -m 0400 "$OUTPUT_STAGE_DIR/$leaf" "$INSTALL_SNAPSHOT_DIR/$leaf"
     source_sha="$(sha256sum "$OUTPUT_STAGE_DIR/$leaf" | awk '{print $1}')"
@@ -448,6 +568,7 @@ prepare_install_snapshot() {
   done
   validate_output_leaves "$INSTALL_SNAPSHOT_DIR" true 400
   validate_module_identities "$INSTALL_SNAPSHOT_DIR"
+  validate_signed_bundle "$INSTALL_SNAPSHOT_DIR"
   chmod 0500 "$INSTALL_SNAPSHOT_DIR"
 }
 
@@ -472,6 +593,7 @@ publish_output_stage() {
   atomic_publish_directory "$OUTPUT_STAGE_DIR" "$OUT_ABS"
   OUTPUT_STAGE_DIR=""
   validate_output_leaves "$OUT_ABS" true
+  validate_signed_bundle "$OUT_ABS"
   if [ "$OUTPUT_BACKUP_ACTIVE" = "true" ]; then
     OUTPUT_BACKUP_ACTIVE="false"
     rm -rf -- "$OUTPUT_BACKUP_CONTAINER"
@@ -606,6 +728,21 @@ while [ "$#" -gt 0 ]; do
       OUT_DIR="$2"
       shift 2
       ;;
+    --module-signing-key)
+      require_arg "$1" "${2:-}"
+      MODULE_SIGNING_KEY="$2"
+      shift 2
+      ;;
+    --module-signing-certificate)
+      require_arg "$1" "${2:-}"
+      MODULE_SIGNING_CERTIFICATE="$2"
+      shift 2
+      ;;
+    --module-signing-pin-file)
+      require_arg "$1" "${2:-}"
+      MODULE_SIGNING_PIN_FILE="$2"
+      shift 2
+      ;;
     --offline)
       OFFLINE="true"
       shift
@@ -636,6 +773,10 @@ done
 
 if [ "$WINDOWS_SE_INIT" = "true" ] && [ "$INSTALL" != "true" ]; then
   die "--windows-se-init only applies with --install"
+fi
+if [ -z "$MODULE_SIGNING_KEY" ] || [ -z "$MODULE_SIGNING_CERTIFICATE" ] ||
+   [ -z "$MODULE_SIGNING_PIN_FILE" ]; then
+  die "controlled module signing requires all three signing file options"
 fi
 if [[ ! "$GIT_REF" =~ ^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$ ]]; then
   die "--source-ref must be an immutable 40- or 64-character hexadecimal commit"
@@ -671,8 +812,210 @@ require_tool dirname
 require_tool find
 require_tool mktemp
 require_tool mv
-require_tool python3
+[ -x "$TRUSTED_PYTHON" ] || die "trusted /usr/bin/python3 is required"
 require_tool stat
+
+[ -f "$signed_module_validator" ] && [ ! -L "$signed_module_validator" ] ||
+  die "controlled module signature validator is unavailable"
+MODULE_SIGNING_KEY_IDENTITY="$(regular_file_metadata_identity "$MODULE_SIGNING_KEY")" ||
+  die "controlled module-signing private key must be a non-empty readable regular non-symlinked file"
+[ -r "$MODULE_SIGNING_KEY" ] ||
+  die "controlled module-signing private key is not readable"
+[ "$(file_link_count "$MODULE_SIGNING_KEY")" = "1" ] ||
+  die "controlled module-signing private key must have exactly one filesystem link"
+module_signing_key_mode="$(file_mode "$MODULE_SIGNING_KEY")" ||
+  die "could not inspect controlled module-signing private key mode"
+case "$module_signing_key_mode" in 400|600) ;; *) die "controlled module-signing private key mode must be 0400 or 0600" ;; esac
+MODULE_SIGNING_CERTIFICATE_IDENTITY="$(regular_file_metadata_identity "$MODULE_SIGNING_CERTIFICATE")" ||
+  die "controlled module-signing certificate must be a readable non-empty regular non-symlinked file"
+[ -r "$MODULE_SIGNING_CERTIFICATE" ] ||
+  die "controlled module-signing certificate is not readable"
+[ "$(file_link_count "$MODULE_SIGNING_CERTIFICATE")" = "1" ] ||
+  die "controlled module-signing certificate must have exactly one filesystem link"
+module_signing_certificate_mode="$(file_mode "$MODULE_SIGNING_CERTIFICATE")" ||
+  die "could not inspect controlled module-signing certificate mode"
+[ $((8#$module_signing_certificate_mode & 8#22)) -eq 0 ] ||
+  die "controlled module-signing certificate must not be group- or world-writable"
+MODULE_SIGNING_PIN_IDENTITY="$(regular_file_metadata_identity "$MODULE_SIGNING_PIN_FILE")" ||
+  die "controlled module-signing PIN file must be a non-empty readable regular non-symlinked file"
+[ -r "$MODULE_SIGNING_PIN_FILE" ] ||
+  die "controlled module-signing PIN file is not readable"
+[ "$(file_link_count "$MODULE_SIGNING_PIN_FILE")" = "1" ] ||
+  die "controlled module-signing PIN file must have exactly one filesystem link"
+module_signing_pin_mode="$(file_mode "$MODULE_SIGNING_PIN_FILE")" ||
+  die "could not inspect controlled module-signing PIN file mode"
+case "$module_signing_pin_mode" in 400|600) ;; *) die "controlled module-signing PIN file mode must be 0400 or 0600" ;; esac
+TRUSTED_OPENSSL="$(select_trusted_openssl)" ||
+  die "fixed OpenSSL authority is unavailable for controlled module signing"
+TRUSTED_OPENSSL_IDENTITY="$(regular_file_metadata_identity "$TRUSTED_OPENSSL")" ||
+  die "could not bind the fixed OpenSSL authority"
+[ -s "$module_signing_trust_anchor" ] && [ -f "$module_signing_trust_anchor" ] &&
+  [ ! -L "$module_signing_trust_anchor" ] ||
+  die "committed module-signing public trust anchor is unavailable"
+
+SIGNING_TEMP_BASE="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+SIGNING_VALIDATION_DIR="$(mktemp -d "$SIGNING_TEMP_BASE/sp11-touchscreen-signing.XXXXXX")"
+SIGNING_VALIDATION_DIR="$(cd "$SIGNING_VALIDATION_DIR" && pwd -P)"
+chmod 0700 "$SIGNING_VALIDATION_DIR"
+if ! "$TRUSTED_PYTHON" -I - "$MODULE_SIGNING_KEY" "$MODULE_SIGNING_CERTIFICATE" \
+    "$MODULE_SIGNING_PIN_FILE" "$SIGNING_VALIDATION_DIR" 2>/dev/null <<'PY_VALIDATE_SIGNING_INPUTS'
+import os
+import re
+import stat
+import sys
+
+key_path, certificate_path, pin_path, staging_path = sys.argv[1:]
+
+def read_bounded(path, maximum):
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        data = os.read(descriptor, maximum + 1)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    stable = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+    )
+    if not data or len(data) > maximum or len(data) != before.st_size:
+        raise RuntimeError
+    if stable(before) != stable(after) or stable(before) != stable(os.stat(path, follow_symlinks=False)):
+        raise RuntimeError
+    return data
+
+key = read_bounded(key_path, 131072)
+begin_key = b"-----BEGIN ENCRYPTED " + b"PRIVATE KEY-----"
+end_key = b"-----END ENCRYPTED " + b"PRIVATE KEY-----"
+key_lines = key.splitlines()
+if (
+    len(key_lines) < 3
+    or key_lines[0] != begin_key
+    or key_lines[-1] != end_key
+    or not key.endswith(b"\n")
+    or any(not re.fullmatch(rb"[A-Za-z0-9+/=]+", line) for line in key_lines[1:-1])
+):
+    raise RuntimeError
+
+certificate = read_bounded(certificate_path, 131072)
+certificate_lines = certificate.splitlines()
+if (
+    len(certificate_lines) < 3
+    or certificate_lines[0] != b"-----BEGIN CERTIFICATE-----"
+    or certificate_lines[-1] != b"-----END CERTIFICATE-----"
+    or not certificate.endswith(b"\n")
+    or any(
+        not re.fullmatch(rb"[A-Za-z0-9+/=]+", line)
+        for line in certificate_lines[1:-1]
+    )
+):
+    raise RuntimeError
+
+pin = read_bounded(pin_path, 4096)
+if pin.endswith(b"\n"):
+    pin = pin[:-1]
+if not pin or b"\n" in pin or b"\r" in pin or any(byte < 0x20 or byte > 0x7E for byte in pin):
+    raise RuntimeError
+
+root_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+root = os.open(staging_path, root_flags)
+try:
+    root_metadata = os.fstat(root)
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or stat.S_IMODE(root_metadata.st_mode) != 0o700
+        or root_metadata.st_uid != os.geteuid()
+        or root_metadata.st_nlink < 1
+    ):
+        raise RuntimeError
+
+    def stage(name, data):
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        descriptor = os.open(name, flags, 0o400, dir_fd=root)
+        try:
+            offset = 0
+            while offset < len(data):
+                written = os.write(descriptor, data[offset:])
+                if written <= 0:
+                    raise RuntimeError
+                offset += written
+            os.fchmod(descriptor, 0o400)
+            os.fsync(descriptor)
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != len(data):
+                raise RuntimeError
+        finally:
+            os.close(descriptor)
+
+    stage("private-key.pem", key)
+    stage("certificate.pem", certificate)
+    stage("pin", pin + b"\n")
+finally:
+    os.close(root)
+PY_VALIDATE_SIGNING_INPUTS
+then
+  die "controlled module-signing inputs do not satisfy the encrypted-key, exact-certificate, and one-line-PIN contract"
+fi
+STAGED_MODULE_SIGNING_KEY="$SIGNING_VALIDATION_DIR/private-key.pem"
+STAGED_MODULE_SIGNING_CERTIFICATE="$SIGNING_VALIDATION_DIR/certificate.pem"
+STAGED_MODULE_SIGNING_PIN_FILE="$SIGNING_VALIDATION_DIR/pin"
+
+verify_trusted_openssl ||
+  die "fixed OpenSSL authority mapping changed before certificate validation"
+if ! /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C \
+    "$TRUSTED_OPENSSL" x509 -inform PEM -in "$STAGED_MODULE_SIGNING_CERTIFICATE" \
+    -outform DER -out "$SIGNING_VALIDATION_DIR/provided-certificate.der" \
+    >/dev/null 2>&1 ||
+   ! /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C \
+    "$TRUSTED_OPENSSL" x509 -inform PEM -in "$module_signing_trust_anchor" \
+    -outform DER -out "$SIGNING_VALIDATION_DIR/trusted-certificate.der" \
+    >/dev/null 2>&1; then
+  die "controlled module-signing certificate conversion failed"
+fi
+verify_trusted_openssl ||
+  die "fixed OpenSSL authority mapping changed during certificate validation"
+cmp -s "$SIGNING_VALIDATION_DIR/provided-certificate.der" \
+  "$SIGNING_VALIDATION_DIR/trusted-certificate.der" ||
+  die "controlled module-signing certificate does not match the committed public trust anchor"
+[ "$(sha256sum "$SIGNING_VALIDATION_DIR/trusted-certificate.der" | awk '{print $1}')" = \
+  "$APPROVED_MODULE_SIGNING_CERT_SHA256" ] ||
+  die "committed module-signing public trust anchor does not match the approved certificate identity"
+
+IFS= read -r signing_pin < "$STAGED_MODULE_SIGNING_PIN_FILE" || [ -n "${signing_pin:-}" ]
+verify_trusted_openssl ||
+  die "fixed OpenSSL authority mapping changed before key validation"
+if ! /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C \
+    KBUILD_SIGN_PIN="$signing_pin" \
+    "$TRUSTED_OPENSSL" pkey -in "$STAGED_MODULE_SIGNING_KEY" \
+    -passin env:KBUILD_SIGN_PIN -pubout -outform DER \
+    -out "$SIGNING_VALIDATION_DIR/private-key-public.der" >/dev/null 2>&1 ||
+   ! /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C \
+    "$TRUSTED_OPENSSL" x509 -inform DER \
+    -in "$SIGNING_VALIDATION_DIR/trusted-certificate.der" -pubkey -noout \
+    2>/dev/null | /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C LANG=C \
+    "$TRUSTED_OPENSSL" pkey -pubin -outform DER \
+    -out "$SIGNING_VALIDATION_DIR/certificate-public.der" >/dev/null 2>&1; then
+  unset signing_pin
+  die "controlled module-signing private key or certificate public-key extraction failed"
+fi
+unset signing_pin
+verify_trusted_openssl ||
+  die "fixed OpenSSL authority mapping changed during key validation"
+cmp -s "$SIGNING_VALIDATION_DIR/private-key-public.der" \
+  "$SIGNING_VALIDATION_DIR/certificate-public.der" ||
+  die "controlled module-signing private key does not match the committed certificate"
+[ "$(regular_file_metadata_identity "$MODULE_SIGNING_KEY")" = "$MODULE_SIGNING_KEY_IDENTITY" ] &&
+  [ "$(regular_file_metadata_identity "$MODULE_SIGNING_CERTIFICATE")" = "$MODULE_SIGNING_CERTIFICATE_IDENTITY" ] &&
+  [ "$(regular_file_metadata_identity "$MODULE_SIGNING_PIN_FILE")" = "$MODULE_SIGNING_PIN_IDENTITY" ] ||
+  die "controlled module-signing input identity changed during validation"
 
 if [ -n "$KERNEL_COMMON_HEADERS_DEB" ] || [ -n "$KERNEL_HEADERS_DEB" ]; then
   [ -n "$KERNEL_COMMON_HEADERS_DEB" ] && [ -n "$KERNEL_HEADERS_DEB" ] ||
@@ -789,9 +1132,13 @@ fi
 grep -qx 'CONFIG_MODULES=y' "$config" || die "CONFIG_MODULES is not enabled for $RELEASE"
 grep -qx 'CONFIG_QCOM_GPI_DMA=m' "$config" || die "CONFIG_QCOM_GPI_DMA must be a replaceable module"
 grep -qx 'CONFIG_SPI_QCOM_GENI=m' "$config" || die "CONFIG_SPI_QCOM_GENI must be a replaceable module"
-if grep -qx 'CONFIG_MODULE_SIG_FORCE=y' "$config"; then
-  die "CONFIG_MODULE_SIG_FORCE rejects these unsigned experimental modules"
-fi
+grep -qx 'CONFIG_MODULE_SIG=y' "$config" || die "CONFIG_MODULE_SIG is not enabled for $RELEASE"
+grep -qx 'CONFIG_MODULE_SIG_SHA512=y' "$config" || die "CONFIG_MODULE_SIG_SHA512 is not enabled for $RELEASE"
+grep -qx 'CONFIG_MODULE_SIG_HASH="sha512"' "$config" || die "CONFIG_MODULE_SIG_HASH is not sha512 for $RELEASE"
+grep -qx 'CONFIG_MODULE_SIG_KEY_TYPE_RSA=y' "$config" || die "CONFIG_MODULE_SIG_KEY_TYPE_RSA is not enabled for $RELEASE"
+sign_file="$KDIR/scripts/sign-file"
+[ -s "$sign_file" ] && [ -f "$sign_file" ] && [ ! -L "$sign_file" ] && [ -x "$sign_file" ] ||
+  die "kernel header tree lacks a regular executable scripts/sign-file"
 
 resolve_source_path
 resolve_output_path
@@ -947,17 +1294,51 @@ fi
 OUTPUT_STAGE_DIR="$(mktemp -d "$OUT_PARENT_ABS/.sp11-touchscreen-stage.XXXXXX")"
 OUTPUT_STAGE_DIR="$(cd "$OUTPUT_STAGE_DIR" && pwd -P)"
 chmod 0700 "$OUTPUT_STAGE_DIR"
+module_signing_certificate_sha256="$(sha256sum "$SIGNING_VALIDATION_DIR/trusted-certificate.der" | awk '{print $1}')"
+install -m 0644 "$SIGNING_VALIDATION_DIR/trusted-certificate.der" \
+  "$OUTPUT_STAGE_DIR/sp11-module-signing-cert.x509"
+[ "$(sha256sum "$OUTPUT_STAGE_DIR/sp11-module-signing-cert.x509" | awk '{print $1}')" = \
+  "$module_signing_certificate_sha256" ] ||
+  die "public module-signing certificate changed while entering the private stage"
+IFS= read -r signing_pin < "$STAGED_MODULE_SIGNING_PIN_FILE" || [ -n "${signing_pin:-}" ]
+signing_failed="false"
 for module in gpi spi-geni-qcom mshw0485_touch; do
   built="$module_source/$module.ko"
   [ -s "$built" ] && [ -f "$built" ] && [ ! -L "$built" ] ||
     die "build did not produce a non-empty regular module: $built"
   built_sha256="$(sha256sum "$built" | awk '{print $1}')"
-  install -m 0644 "$built" "$OUTPUT_STAGE_DIR/$module.ko"
-  [ "$(sha256sum "$OUTPUT_STAGE_DIR/$module.ko" | awk '{print $1}')" = "$built_sha256" ] ||
-    die "$module.ko changed while copying it into the private stage"
+  if ! KBUILD_SIGN_PIN="$signing_pin" "$sign_file" sha512 \
+      "$STAGED_MODULE_SIGNING_KEY" \
+      "$OUTPUT_STAGE_DIR/sp11-module-signing-cert.x509" \
+      "$built" "$OUTPUT_STAGE_DIR/$module.ko" >/dev/null 2>&1; then
+    signing_failed="true"
+    break
+  fi
+  [ "$(sha256sum "$built" | awk '{print $1}')" = "$built_sha256" ] ||
+    die "$module.ko changed while it was signed"
+  chmod 0644 "$OUTPUT_STAGE_DIR/$module.ko"
 done
+unset signing_pin
+[ "$signing_failed" = "false" ] || die "controlled module signing failed"
+[ "$(regular_file_metadata_identity "$MODULE_SIGNING_KEY")" = "$MODULE_SIGNING_KEY_IDENTITY" ] ||
+  die "controlled module-signing private key identity changed during signing"
+[ "$(regular_file_metadata_identity "$MODULE_SIGNING_CERTIFICATE")" = "$MODULE_SIGNING_CERTIFICATE_IDENTITY" ] &&
+  [ "$(regular_file_metadata_identity "$MODULE_SIGNING_PIN_FILE")" = "$MODULE_SIGNING_PIN_IDENTITY" ] ||
+  die "controlled module-signing public certificate or PIN-file identity changed during signing"
+[ "$(sha256sum "$SIGNING_VALIDATION_DIR/trusted-certificate.der" | awk '{print $1}')" = \
+  "$module_signing_certificate_sha256" ] ||
+  die "validated public module-signing certificate changed during signing"
 
 validate_module_identities "$OUTPUT_STAGE_DIR"
+if ! signature_report="$(
+  "$TRUSTED_PYTHON" -I "$signed_module_validator" \
+    --certificate "$OUTPUT_STAGE_DIR/sp11-module-signing-cert.x509" \
+    --module "$OUTPUT_STAGE_DIR/gpi.ko" \
+    --module "$OUTPUT_STAGE_DIR/spi-geni-qcom.ko" \
+    --module "$OUTPUT_STAGE_DIR/mshw0485_touch.ko"
+)"; then
+  die "controlled touchscreen module signature validation failed"
+fi
 
 manifest="$OUTPUT_STAGE_DIR/sp11-touchscreen-modules-manifest.txt"
 {
@@ -984,11 +1365,7 @@ manifest="$OUTPUT_STAGE_DIR/sp11-touchscreen-modules-manifest.txt"
   echo "Module compiler identity: $module_compiler_identity"
   echo "Module linker identity: $module_linker_identity"
   echo "Module make identity: $module_make_identity"
-  echo "Windows SE init default: disabled"
-  for module in gpi spi-geni-qcom mshw0485_touch; do
-    file="$OUTPUT_STAGE_DIR/$module.ko"
-    echo "Module $module.ko SHA256: $(sha256sum "$file" | awk '{print $1}')"
-  done
+  printf '%s\n' "$signature_report"
   echo
   echo "## Modules"
   for module in gpi spi-geni-qcom mshw0485_touch; do
@@ -1004,6 +1381,7 @@ manifest="$OUTPUT_STAGE_DIR/sp11-touchscreen-modules-manifest.txt"
 chmod 0644 "$manifest"
 
 validate_output_leaves "$OUTPUT_STAGE_DIR" true
+validate_signed_bundle "$OUTPUT_STAGE_DIR"
 if [ "$INSTALL" = "true" ]; then
   prepare_install_snapshot
 fi

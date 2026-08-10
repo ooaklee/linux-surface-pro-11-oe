@@ -10,16 +10,19 @@ description: How-to guide for installing or reinstalling a Surface Pro 11 qcom-x
 Use this procedure after Ubuntu `apt` or an official kernel package has
 displaced a Surface Pro 11-specific qcom-x1e kernel, or when installing a
 downloaded kernel bundle for the first time. Release families differ: the
-historical 7.0 build applied two local ath12k rfkill patches, while the current
-`sp11v3` build starts from an immutable Johan G. kernel tag and adds the SP11
-build-policy, 2.4 MHz DMIC, touchscreen device-tree, and exact-ABI module work.
+historical 7.0 build applied two local ath12k rfkill patches, while the future
+`sp11v3r2` release path starts from an immutable Johan G. kernel tag and adds
+the SP11 build-policy, 2.4 MHz DMIC, touchscreen device-tree, and exact-ABI
+module work.
 
 ## Purpose
 
 Replacing an SP11-specific kernel can regress the Denali Wi-Fi, DMIC-clock, or
-touchscreen path, depending on the stock kernel version. For `sp11v3`, the four
-kernel packages and three touchscreen modules form one exact-ABI transaction;
-installing only the `.deb` files does not provide a working touchscreen.
+touchscreen path, depending on the stock kernel version. For a current
+controlled-signing `sp11v3r2` candidate, the four kernel packages, three
+touchscreen modules, and public module-signing certificate form one exact-ABI
+transaction; installing only the `.deb` files does not provide a working
+touchscreen.
 
 This procedure gets the pre-built patched kernel `.deb` files onto the Surface
 and reinstalls them — no Docker build required. The packages can come from the
@@ -30,9 +33,12 @@ same way.
 
 - Root access on the Surface Pro 11.
 - The patched kernel `.deb` packages, from one of the sources below.
-- For an `sp11v3` touchscreen kernel, the complete release asset set, including
+- For an `sp11v3r2` touchscreen kernel, the complete release asset set, including
   its matching `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files,
-  provenance manifest, and `SHA256SUMS`.
+  `sp11-module-signing-cert.x509`, provenance manifest, and `SHA256SUMS`.
+- Secure Boot disabled. ADR-0056 module signing provides deterministic module
+  identity and kernel/touchscreen certificate consistency; it does not sign or
+  authorize the firmware boot chain.
 - A checkout of this repository on the Surface — either the live USB
   `SP11DATA/support` directory, or a `git clone` — so the guarded installer and
   its post-install support helper are available.
@@ -74,17 +80,14 @@ Browse the releases page and select the intended patched-kernel tag:
 https://github.com/ooaklee/linux-surface-pro-11-oe/releases
 ```
 
-The corrective v3 prerelease is
-[`sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
-(experimental). The removed unsuffixed v3 tag is retired and must not be
-reused.
-
-For `sp11v3`, download the complete published asset set into a new directory,
-fetch the release tag into the local repository, and run the semantic release
-validator before installation:
+The controlled-signing candidate tag used by this guide is
+`sp11-qcom-x1e-7.2-rc5-jg-0sp11v3r2-experimental-r1`. Use it only after that
+exact tag and its complete asset set have been published. Download the assets
+into a new directory, fetch the release tag into the local repository, and run
+the semantic release validator before installation:
 
 ```bash
-TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1
+TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3r2-experimental-r1
 DEBS="$HOME/sp11-kernel-debs-$TAG"
 mkdir -p "$DEBS"
 
@@ -111,7 +114,15 @@ directory carries the local preparer's transaction or publication marker.
 Without `gh`, download every asset listed on the release page into one empty
 directory, fetch the tag as above, and run the same validator.
 
-For an older non-touchscreen release, downloading only its `.deb` files and
+The immutable historical
+[`sp11v3-r1` release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
+predates ADR-0056 controlled signing. Its unsigned module bundle cannot pass the
+current `sp11v3r2` validator or installer, so do not mix its assets with this
+checkout or use the command above for that tag. Its tagged checkout and release
+notes remain the authority for those historical bytes. The removed unsuffixed
+v3 tag is retired and must not be reused.
+
+For an older kernel-only release, downloading only its `.deb` files and
 `SHA256SUMS` is sufficient for installation. In that narrower case,
 `sha256sum -c SHA256SUMS --ignore-missing` verifies the downloaded packages but
 does not validate the release's complete asset set.
@@ -145,8 +156,9 @@ cd "$SP11DATA/support"
   succeeds,
 - runs the full `install-sp11-support.sh --installed-system` flow and requires
   its final live-root GRUB regeneration to succeed, and
-- for `sp11v3`, refuses a missing or mismatched three-module touchscreen bundle
-  and then installs and verifies it in the exact target initramfs.
+- for `sp11v3r2`, refuses a missing or mismatched three-module touchscreen
+  bundle or signing certificate and then installs and verifies them in the
+  exact target initramfs.
 
 It elevates with `sudo` as needed. If `--work-dir` points to a directory under
 your home (e.g. `~/Downloads`), you may see a harmless `_apt` sandbox warning:
@@ -175,7 +187,7 @@ live-FDT provenance.
 
 ### Minimal fallback (no repository checkout)
 
-Do not use this fallback for an `sp11v3` touchscreen release: direct `dpkg`
+Do not use this fallback for an `sp11v3r2` touchscreen release: direct `dpkg`
 does not install or verify the required out-of-tree module bundle. Obtain the
 repository checkout and use the guarded flow above.
 
@@ -238,10 +250,10 @@ Verify the running kernel:
 
 ```bash
 uname -r
-# 7.2-rc5-jg-0sp11v3-qcom-x1e
+# 7.2-rc5-jg-0sp11v3r2-qcom-x1e
 ```
 
-For an `sp11v3` kernel, also verify the complete touchscreen boot path:
+For an `sp11v3r2` kernel, also verify the complete touchscreen boot path:
 
 ```bash
 sudo ./scripts/troubleshoot-sp11-touchscreen.sh
@@ -251,12 +263,15 @@ sudo ./scripts/troubleshoot-sp11-touchscreen.sh
 
 The release manifest records the source family, immutable source commit,
 applied project patches, and module provenance for that specific bundle. The
-v3 release is built from the Johan G. 7.2-rc5 tag with the SP11 DMIC and
-touchscreen changes; it is not the historical Ubuntu 7.0 two-patch build. No
-device-specific data is included. Every kernel release is **experimental and
-unsigned** — validate the published asset set before installing, and keep a
-known-good qcom-x1e fallback kernel installed so the GRUB fallback guard can
-protect the boot path.
+v3r2 candidate release path starts from the Johan G. 7.2-rc5 tag with the SP11
+DMIC and touchscreen changes; it is not the historical Ubuntu 7.0 two-patch
+build. No device-specific data is included. Every kernel release is
+**experimental**.
+ADR-0056 signs packaged in-tree kernel modules and the exact-ABI touchscreen
+modules for deterministic identity, but the firmware boot chain remains
+unsigned and Secure Boot remains unsupported. Validate the published asset set
+before installing, keep Secure Boot disabled, and retain a known-good
+qcom-x1e fallback kernel so the GRUB fallback guard can protect the boot path.
 
 ## Related
 

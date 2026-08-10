@@ -106,7 +106,7 @@ full_regular_state() {
   printf '%s:%s\n' "$metadata" "$digest"
 }
 
-for tool in cmp git grep mktemp readlink shasum stat; do
+for tool in cmp git grep mktemp openssl readlink shasum stat; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 
@@ -143,6 +143,7 @@ capture_attack_bin="$temporary_root/capture-attack-bin"
 mkdir -p \
   "$support_dir/scripts" \
   "$support_dir/config/kernel-baselines" \
+  "$support_dir/config/kernel-signing" \
   "$support_dir/patches/release" \
   "$support_dir/payload/kernel-debs" \
   "$mock_bin" \
@@ -175,6 +176,50 @@ chmod +x "$support_dir/scripts/build-sp11-qcom-x1e-kernel-docker-no-apt-helper.s
 printf 'build/\n' > "$support_dir/.gitignore"
 printf 'fixture patch input\n' > "$support_dir/patches/release/0001-fixture.patch"
 
+signing_fixture_dir="$temporary_root/module-signing"
+mkdir "$signing_fixture_dir"
+openssl rand -out "$signing_fixture_dir/pin" -hex 24
+chmod 0600 "$signing_fixture_dir/pin"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+  -out "$signing_fixture_dir/raw.pem" >/dev/null 2>&1
+openssl req -new -x509 -sha512 -key "$signing_fixture_dir/raw.pem" \
+  -subj /CN=sp11-wrapper-fixture -days 1 \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature' \
+  -out "$signing_fixture_dir/cert.pem" >/dev/null 2>&1
+openssl pkcs8 -topk8 -in "$signing_fixture_dir/raw.pem" \
+  -out "$signing_fixture_dir/key.pem" \
+  -passout "file:$signing_fixture_dir/pin" >/dev/null 2>&1
+chmod 0600 "$signing_fixture_dir/key.pem"
+chmod 0644 "$signing_fixture_dir/cert.pem"
+signing_fixture_certificate_text="$(openssl x509 \
+  -in "$signing_fixture_dir/cert.pem" -noout -text)"
+printf '%s\n' "$signing_fixture_certificate_text" |
+  grep -Fq 'Signature Algorithm: sha512WithRSAEncryption' ||
+  die "controlled-signing fixture certificate is not RSA/SHA-512"
+printf '%s\n' "$signing_fixture_certificate_text" |
+  grep -A1 -F 'X509v3 Basic Constraints: critical' |
+  grep -Fq 'CA:FALSE' ||
+  die "controlled-signing fixture certificate is not critical CA:false"
+[ "$(printf '%s\n' "$signing_fixture_certificate_text" |
+    grep -A1 -F 'X509v3 Key Usage: critical' | tail -n 1 |
+    tr -d '[:space:]')" = "DigitalSignature" ] ||
+  die "controlled-signing fixture certificate key usage is not exact"
+unset signing_fixture_certificate_text
+cp "$signing_fixture_dir/cert.pem" \
+  "$support_dir/config/kernel-signing/sp11-module-signing-cert.pem"
+signing_fixture_sha="$(openssl x509 -in "$signing_fixture_dir/cert.pem" \
+  -outform DER | shasum -a 256 | awk '{print $1}')"
+signing_fixture_fingerprint="$(openssl x509 \
+  -in "$signing_fixture_dir/cert.pem" -noout -sha256 -fingerprint)"
+signing_fixture_fingerprint="${signing_fixture_fingerprint#*=}"
+signing_fixture_fingerprint="$(printf '%s' "$signing_fixture_fingerprint" |
+  tr '[:lower:]' '[:upper:]')"
+signing_fixture_serial="$(openssl x509 -in "$signing_fixture_dir/cert.pem" \
+  -noout -serial)"
+signing_fixture_serial="$(printf '%s' "${signing_fixture_serial#*=}" |
+  tr '[:lower:]' '[:upper:]')"
+
 release_oci_index="$temporary_root/release-oci-index.json"
 release_child_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
 printf '%s' \
@@ -195,6 +240,15 @@ SP11_KERNEL_SOURCE_DATE_EPOCH="1785567085"
 SP11_KERNEL_KBUILD_BUILD_USER="sp11-builder"
 SP11_KERNEL_KBUILD_BUILD_HOST="sp11-build"
 SP11_KERNEL_KBUILD_BUILD_TIMESTAMP="Sat Aug  1 06:51:25 UTC 2026"
+SP11_KERNEL_MODULE_SIGNING_POLICY="sp11-controlled-rsa4096-sha512-v1"
+SP11_KERNEL_MODULE_SIGNING_KEY_PATH="/sp11-signing/signing.pem"
+SP11_KERNEL_MODULE_SIGNING_PIN_PATH="/sp11-signing/pin"
+SP11_KERNEL_MODULE_SIGNING_CERT_PATH="config/kernel-signing/sp11-module-signing-cert.pem"
+SP11_KERNEL_MODULE_SIGNING_CERT_SHA256="$signing_fixture_sha"
+SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT="$signing_fixture_fingerprint"
+SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL="$signing_fixture_serial"
+SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH="config/kernel-signing/sp11-module-signing-allowed-unsigned.txt"
+SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256="eb507e006b37ad7d291a37524f3f2f6b5281c5a3f98738dc07056a3ca7cba800"
 SP11_KERNEL_BUILD_TARGET="binary-indep binary-qcom-x1e"
 SP11_KERNEL_PATCH_DIRS="patches/release"
 EOF_BASELINE
@@ -293,6 +347,15 @@ for variable in \
   SP11_KERNEL_KBUILD_BUILD_USER \
   SP11_KERNEL_KBUILD_BUILD_HOST \
   SP11_KERNEL_KBUILD_BUILD_TIMESTAMP \
+  SP11_KERNEL_MODULE_SIGNING_POLICY \
+  SP11_KERNEL_MODULE_SIGNING_KEY_PATH \
+  SP11_KERNEL_MODULE_SIGNING_PIN_PATH \
+  SP11_KERNEL_MODULE_SIGNING_CERT_PATH \
+  SP11_KERNEL_MODULE_SIGNING_CERT_SHA256 \
+  SP11_KERNEL_MODULE_SIGNING_CERT_FINGERPRINT \
+  SP11_KERNEL_MODULE_SIGNING_CERT_SERIAL \
+  SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_PATH \
+  SP11_KERNEL_MODULE_SIGNING_ALLOWED_UNSIGNED_SHA256 \
   SP11_KERNEL_BUILD_TARGET \
   SP11_KERNEL_PATCH_DIRS; do
   printf '%s\t%s\n' "$variable" "${!variable}"
@@ -967,7 +1030,9 @@ host_repo=""
 previous=""
 last_argument=""
 penultimate_argument=""
+antepenultimate_argument=""
 for argument in "$@"; do
+  antepenultimate_argument="$penultimate_argument"
   penultimate_argument="$last_argument"
   last_argument="$argument"
   if [ "$previous" = "-v" ]; then
@@ -1049,7 +1114,8 @@ fi
 grep -Fxq -- '--source' "$mock_work/docker-build-args.txt"
 if [ -n "$host_control" ]; then
   [ "$last_argument" = "/sp11-control/docker-build-inside.sh" ]
-  [ "$penultimate_argument" = "bash" ]
+  [ "$penultimate_argument" = "-p" ]
+  [ "$antepenultimate_argument" = "/bin/bash" ]
   [ -f "$host_control/kernel-baseline.env" ] &&
     [ ! -L "$host_control/kernel-baseline.env" ]
   [ -f "$host_control/docker-build-args.txt" ] &&
@@ -1397,6 +1463,9 @@ decoder_args=(
   --patch-dirs patches/release
   --build-target "binary-indep binary-qcom-x1e"
   --release-build
+  --module-signing-key "$signing_fixture_dir/key.pem"
+  --module-signing-certificate "$signing_fixture_dir/cert.pem"
+  --module-signing-pin-file "$signing_fixture_dir/pin"
 )
 
 secure_release_work_root() {
@@ -1414,10 +1483,71 @@ secure_release_work_root() {
   fi
 }
 
+run_wrapper_with_hostile_openssl_bounded() {
+  local configuration="$1" modules="$2" random_file="$3" log="$4"
+  shift 4
+  /usr/bin/python3 -I -c '
+import os
+import signal
+import subprocess
+import sys
+
+configuration, modules, random_file, log, *command = sys.argv[1:]
+descriptor = os.open(
+    log,
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+    0o600,
+)
+environment = os.environ.copy()
+environment.update(
+    {
+        "OPENSSL_CONF": configuration,
+        "OPENSSL_MODULES": modules,
+        "OPENSSL_ENGINES": modules,
+        "RANDFILE": random_file,
+    }
+)
+with os.fdopen(descriptor, "wb") as output:
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=output,
+        stderr=subprocess.STDOUT,
+        env=environment,
+        start_new_session=True,
+    )
+    try:
+        status = process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        raise SystemExit(124)
+if status < 0:
+    raise SystemExit(125)
+raise SystemExit(status)
+' "$configuration" "$modules" "$random_file" "$log" "$@"
+}
+
 "$wrapper" --help > "$temporary_root/wrapper-help.txt"
 grep -Fq 'preexist as real, empty, mode-0700 directories owned' \
   "$temporary_root/wrapper-help.txt" ||
   die "wrapper help omitted the preexisting release-root authority contract"
+openssl_sanitizer_line="$(grep -n '^sanitize_openssl_environment$' "$wrapper")"
+openssl_sanitizer_line="${openssl_sanitizer_line%%:*}"
+first_host_python_line="$(grep -n -m 1 '/usr/bin/python3 -I -c' "$wrapper")"
+first_host_python_line="${first_host_python_line%%:*}"
+[[ "$openssl_sanitizer_line" =~ ^[1-9][0-9]*$ ]] &&
+  [[ "$first_host_python_line" =~ ^[1-9][0-9]*$ ]] &&
+  [ "$openssl_sanitizer_line" -lt "$first_host_python_line" ] &&
+  [ "$(grep -Fxc \
+    '  unset OPENSSL_MODULES OPENSSL_ENGINES RANDFILE' "$wrapper")" -eq 1 ] &&
+  [ "$(grep -Fxc '  export OPENSSL_CONF=/dev/null' "$wrapper")" -eq 1 ] ||
+  die "wrapper does not sanitize OpenSSL authority before its first host Python"
+unset openssl_sanitizer_line first_host_python_line
 
 # Release mode never reaches the host-filesystem `/work` probe or legacy
 # payload staging: both combinations are rejected before any private root or
@@ -1513,10 +1643,31 @@ cat > "$hostile_template/hooks/post-checkout" <<EOF_HOSTILE_TEMPLATE
 EOF_HOSTILE_TEMPLATE
 chmod +x "$hostile_template/hooks/post-checkout"
 release_private_count_before="$(wc -l < "$retained_private_root_log" | tr -d '[:space:]')"
-GIT_TEMPLATE_DIR="$hostile_template" PATH="$mock_bin:/usr/bin:/bin" "$wrapper" \
-  --work-dir "$release_dry_work" \
-  "${decoder_args[@]}" \
-  --dry-run > "$temporary_root/release-identity-dry.log"
+signing_fixture_pin_value="$(tr -d '\n' < "$signing_fixture_dir/pin")"
+hostile_release_openssl_conf="$temporary_root/hostile-release-openssl.cnf"
+hostile_release_openssl_modules="$temporary_root/hostile-release-openssl-modules"
+hostile_release_openssl_random="$temporary_root/hostile-release-random"
+mkfifo "$hostile_release_openssl_conf"
+mkdir "$hostile_release_openssl_modules"
+mkfifo "$hostile_release_openssl_modules/default.so"
+release_identity_status=0
+set +e
+GIT_TEMPLATE_DIR="$hostile_template" \
+  KBUILD_SIGN_PIN="$signing_fixture_pin_value" \
+  PATH="$mock_bin:/usr/bin:/bin" \
+  run_wrapper_with_hostile_openssl_bounded \
+    "$hostile_release_openssl_conf" \
+    "$hostile_release_openssl_modules" \
+    "$hostile_release_openssl_random" \
+    "$temporary_root/release-identity-dry.log" \
+    "$wrapper" --work-dir "$release_dry_work" \
+    "${decoder_args[@]}" --dry-run
+release_identity_status=$?
+set -e
+[ "$release_identity_status" -eq 0 ] || {
+  cat "$temporary_root/release-identity-dry.log" >&2
+  die "release dry-run honored a hostile OpenSSL environment"
+}
 release_support_root="$(sed -n "$((release_private_count_before + 1))p" \
   "$retained_private_root_log")"
 release_control_root="$(sed -n "$((release_private_count_before + 2))p" \
@@ -1537,12 +1688,14 @@ esac
 [ ! -e "$hostile_template_marker" ] ||
   die "release support snapshot honored an ambient hostile Git template"
 identity_block="$(
-  awk '$0 == "--release-build" { remaining = 9 }
+  awk '$0 == "--release-build" { remaining = 11 }
        remaining > 0 { print; remaining-- }' \
     "$release_dry_work/docker-build-args.txt"
 )"
 expected_identity_block="$(cat <<'EOF_IDENTITY_BLOCK'
 --release-build
+--module-signing-policy
+sp11-controlled-rsa4096-sha512-v1
 --source-date-epoch
 1785567085
 --kbuild-build-user
@@ -1555,6 +1708,44 @@ EOF_IDENTITY_BLOCK
 )"
 [ "$identity_block" = "$expected_identity_block" ] ||
   die "release dry-run did not retain the exact ordered deterministic identity block"
+redacted_signing_mount="$(printf '%q' \
+  'type=bind,source=<private-signing-directory>,destination=/sp11-signing,readonly')"
+redacted_signing_mount_count="$(
+  grep -Fo -- "$redacted_signing_mount" \
+    "$temporary_root/release-identity-dry.log" | wc -l | tr -d '[:space:]'
+)"
+[ "$redacted_signing_mount_count" = 1 ] ||
+  die "release dry-run did not redact its private signing stage exactly once"
+encrypted_key_boundary='-----BEGIN ENCRYPTED '"PRIVATE KEY-----"
+plain_key_boundary='-----BEGIN '"PRIVATE KEY-----"
+rsa_key_boundary='-----BEGIN RSA '"PRIVATE KEY-----"
+for signing_public_output in \
+  "$temporary_root/release-identity-dry.log" \
+  "$release_dry_work/docker-build-args.txt" \
+  "$release_dry_work/docker-build-inside.sh" \
+  "$release_control_root/docker-build-args.txt" \
+  "$release_control_root/docker-build-inside.sh"; do
+  if grep -Fq -- '/tmp/sp11-module-signing.' "$signing_public_output"; then
+    die "release dry-run leaked its private signing stage path"
+  fi
+  for forbidden_signing_value in \
+    "$signing_fixture_dir/key.pem" \
+    "$signing_fixture_dir/cert.pem" \
+    "$signing_fixture_dir/pin" \
+    "$signing_fixture_pin_value" \
+    "$encrypted_key_boundary" \
+    "$plain_key_boundary" \
+    "$rsa_key_boundary"; do
+    if grep -Fq -- "$forbidden_signing_value" "$signing_public_output"; then
+      die "release dry-run leaked a private signing input into retained output"
+    fi
+  done
+done
+unset signing_fixture_pin_value signing_public_output forbidden_signing_value \
+  encrypted_key_boundary plain_key_boundary rsa_key_boundary \
+  redacted_signing_mount redacted_signing_mount_count \
+  hostile_release_openssl_conf hostile_release_openssl_modules \
+  hostile_release_openssl_random release_identity_status
 grep -Fq 'SP11_IMMUTABLE_APT_REQUIRED=true' "$temporary_root/release-identity-dry.log" ||
   die "release dry-run did not print the immutable APT container environment"
 grep -Fq ':/sp11-control:ro' \
@@ -1563,6 +1754,15 @@ grep -Fq ':/sp11-control:ro' \
 grep -Fq '/sp11-control/docker-build-inside.sh' \
   "$temporary_root/release-identity-dry.log" ||
   die "release dry-run did not execute its private read-only entrypoint"
+grep -Fq '/bin/bash -p /sp11-control/docker-build-inside.sh' \
+  "$temporary_root/release-identity-dry.log" ||
+  die "release dry-run did not use privileged Bash for its mounted entrypoint"
+grep -Fxq '#!/bin/bash -p' "$release_dry_work/docker-build-inside.sh" ||
+  die "release entrypoint did not suppress inherited Bash startup authority"
+grep -Fq \
+  '/bin/bash -p /repo/scripts/build-sp11-qcom-x1e-kernel.sh "${build_args[@]}"' \
+  "$release_dry_work/docker-build-inside.sh" ||
+  die "release entrypoint did not invoke the inner builder with privileged Bash"
 grep -Fq 'source=sp11-release-state-dry-run' \
   "$temporary_root/release-identity-dry.log" ||
   die "release dry-run did not isolate mutable state in a daemon volume"
@@ -1597,7 +1797,7 @@ fi
 [ "$(grep -Fc 'signal.signal(signal.SIGCHLD, signal.SIG_IGN)' \
     "$wrapper")" -eq 2 ] ||
   die "release embedded child supervisors lack exact ignored dispositions"
-grep -Fq 'Wrapper requires the default SIGCHLD disposition at startup.' \
+grep -Fq 'Wrapper requires default CHLD/HUP/INT/QUIT/TERM dispositions at startup.' \
   "$wrapper" ||
   die "release wrapper lacks an early inherited-SIGCHLD refusal"
 grep -Fq 'code = compile(payload_bytes, synthetic_name, "exec"' "$wrapper" ||
@@ -2008,7 +2208,7 @@ if [ "$(uname -s)" = Linux ]; then
   [ "$(wc -l < "$sigchld_entry_log" | tr -d '[:space:]')" -eq 1 ] ||
     die "inherited-SIGCHLD entry refusal emitted an ambiguous diagnostic"
   grep -Fxq \
-    'Wrapper requires the default SIGCHLD disposition at startup.' \
+    'Wrapper requires default CHLD/HUP/INT/QUIT/TERM dispositions at startup.' \
     "$sigchld_entry_log" ||
     die "inherited-SIGCHLD entry refusal was not exact and explicit"
   [ "$(wc -l < "$retained_private_root_log" | tr -d '[:space:]')" \
@@ -2295,15 +2495,74 @@ grep -Fq -- '--work-dir must not contain symlink components' \
   "$ancestor_fixture/wrapper.log" ||
   die "work-ancestor replacement rejection was not explicit"
 
+support_baseline_aba="$temporary_root/support-baseline-aba"
 baseline_aba_backup="$temporary_root/baseline-root-aba-backup"
-baseline_aba_work="$support_dir/build/baseline-root-aba/work"
-mkdir -p "$baseline_aba_work"
-secure_release_work_root "$baseline_aba_work"
 baseline_aba_capture="$baseline_aba_backup/capture"
 baseline_aba_docker_marker="$baseline_aba_backup/docker-invoked"
 baseline_aba_log="$temporary_root/baseline-root-aba.log"
 baseline_aba_victim="$baseline_aba_backup/unrelated-victim"
 mkdir -p "$baseline_aba_backup" "$baseline_aba_capture"
+git clone --quiet "$support_dir" "$support_baseline_aba"
+baseline_aba_validator="$support_baseline_aba/scripts/validate-sp11-kernel-baseline.sh"
+"$real_python3" -I - "$baseline_aba_validator" \
+  "$baseline_aba_backup" "$real_stat" "$real_shasum" <<'PY_BASELINE_ABA_VALIDATOR'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+backup = shlex.quote(sys.argv[2])
+real_stat = shlex.quote(sys.argv[3])
+real_shasum = shlex.quote(sys.argv[4])
+data = path.read_bytes()
+activation = b'if [ "${MOCK_BASELINE_ROOT_ABA:-false}" = "true" ]; then'
+if data.count(activation) != 1:
+    raise SystemExit("baseline A->B->A activation patch was not exact")
+replacement = (
+    f"aba_backup={backup}\n"
+    f"aba_real_stat={real_stat}\n"
+    f"aba_real_shasum={real_shasum}\n"
+    "if true; then"
+).encode("utf-8")
+data = data.replace(activation, replacement)
+replacements = (
+    (b"${MOCK_BASELINE_ABA_BACKUP:-}", b"$aba_backup", 1),
+    (b"$MOCK_BASELINE_ABA_BACKUP", b"$aba_backup", 9),
+    (b"$FIXTURE_REAL_STAT", b"$aba_real_stat", 4),
+    (b"$FIXTURE_REAL_SHASUM", b"$aba_real_shasum", 2),
+)
+for old, new, expected_count in replacements:
+    if data.count(old) != expected_count:
+        raise SystemExit("baseline A->B->A authority patch count drifted")
+    data = data.replace(old, new)
+for forbidden in (
+    activation,
+    b"MOCK_BASELINE_ROOT_ABA",
+    b"MOCK_BASELINE_ABA_BACKUP",
+    b"FIXTURE_REAL_STAT",
+    b"FIXTURE_REAL_SHASUM",
+):
+    if forbidden in data:
+        raise SystemExit("baseline A->B->A authority patch was incomplete")
+path.write_bytes(data)
+PY_BASELINE_ABA_VALIDATOR
+git -C "$support_baseline_aba" diff --check
+[ "$(git -C "$support_baseline_aba" diff --name-only)" = \
+  scripts/validate-sp11-kernel-baseline.sh ] ||
+  die "baseline A->B->A fixture changed more than its validator"
+git -C "$support_baseline_aba" add scripts/validate-sp11-kernel-baseline.sh
+git -C "$support_baseline_aba" -c user.name='SP11 path-safety fixture' \
+  -c user.email='sp11-path-safety@example.invalid' \
+  commit --quiet -m 'Exercise committed baseline control-root replacement'
+[ -z "$(git -C "$support_baseline_aba" status --porcelain)" ] ||
+  die "baseline A->B->A fixture clone is not clean"
+baseline_aba_wrapper="$support_baseline_aba/scripts/build-sp11-qcom-x1e-kernel-docker.sh"
+cmp "$repo_dir/scripts/build-sp11-qcom-x1e-kernel-docker.sh" \
+  "$baseline_aba_wrapper" ||
+  die "baseline A->B->A fixture changed the wrapper authority"
+baseline_aba_work="$support_baseline_aba/build/baseline-root-aba/work"
+mkdir -p "$baseline_aba_work"
+secure_release_work_root "$baseline_aba_work"
 # Concurrent same-credential A->B->A mutation is outside the release-controller
 # custody boundary.  After exact restoration, refresh may accept the held A or
 # conservatively fail a contemporaneous authority check; neither history
@@ -2316,13 +2575,11 @@ baseline_aba_volume_count="$(find "$mock_release_volume_root" \
 baseline_aba_container_count="$(wc -l < \
   "$MOCK_CONTAINER_AUDIT_ROOT/created-order" | tr -d '[:space:]')"
 baseline_aba_status=0
-MOCK_BASELINE_ROOT_ABA=true \
-    MOCK_BASELINE_ABA_BACKUP="$baseline_aba_backup" \
-    MOCK_DOCKER_ACTIVITY_MARKER="$baseline_aba_docker_marker" \
+MOCK_DOCKER_ACTIVITY_MARKER="$baseline_aba_docker_marker" \
     CAPTURE_ATTACK_MODE=none \
     CAPTURE_ATTACK_MARKER="$baseline_aba_capture/unused-marker" \
     CAPTURE_ATTACK_STATE="$baseline_aba_capture" \
-    PATH="$capture_attack_bin:$mock_bin:/usr/bin:/bin" "$wrapper" \
+    PATH="$capture_attack_bin:$mock_bin:/usr/bin:/bin" "$baseline_aba_wrapper" \
       --work-dir "$baseline_aba_work" \
       "${decoder_args[@]}" \
       --dry-run > "$baseline_aba_log" 2>&1 ||
@@ -2980,6 +3237,9 @@ if MOCK_OCI_INDEX="$release_oci_index" \
       --build-target "binary-indep binary-qcom-x1e" \
       --work-dir "$immutable_oci_work" \
       --release-build \
+      --module-signing-key "$signing_fixture_dir/key.pem" \
+      --module-signing-certificate "$signing_fixture_dir/cert.pem" \
+      --module-signing-pin-file "$signing_fixture_dir/pin" \
       > "$temporary_root/mutated-immutable-oci.log" 2>&1; then
   die "wrapper accepted a fake-Docker mutation of the immutable OCI index"
 fi
@@ -3291,6 +3551,9 @@ if ! PATH="$mock_bin:/usr/bin:/bin" \
       --build-target 'binary-indep binary-qcom-x1e' \
       --work-dir "$git_work" \
       --release-build \
+      --module-signing-key "$signing_fixture_dir/key.pem" \
+      --module-signing-certificate "$signing_fixture_dir/cert.pem" \
+      --module-signing-pin-file "$signing_fixture_dir/pin" \
       --dry-run > "$temporary_root/git-environment.log" 2>&1; then
   cat "$temporary_root/git-environment.log" >&2
   die "wrapper did not sanitize replacement-ref and Git redirection variables"

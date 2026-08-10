@@ -2,7 +2,8 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-builder="$repo_dir/scripts/build-sp11-touchscreen-modules.sh"
+builder=""
+builder_repo_dir=""
 temporary_root=""
 temporary_parent=""
 managed_root=""
@@ -13,13 +14,13 @@ output_contract_created="false"
 cleanup() {
   if [ -n "$managed_root" ]; then
     case "$managed_root" in
-      "$repo_dir/build"/sp11-touch-source-test.*) rm -rf -- "$managed_root" ;;
+      "$builder_repo_dir/build"/sp11-touch-source-test.*) rm -rf -- "$managed_root" ;;
       *) echo "warning: refusing to remove unexpected managed fixture path: $managed_root" >&2 ;;
     esac
   fi
   if [ -n "$output_fixture_root" ]; then
     case "$output_fixture_root" in
-      "$repo_dir/build/sp11-touchscreen-module-output"/sp11-touch-source-test.*)
+      "$builder_repo_dir/build/sp11-touchscreen-module-output"/sp11-touch-source-test.*)
         rm -rf -- "$output_fixture_root"
         ;;
       *) echo "warning: refusing to remove unexpected output fixture path: $output_fixture_root" >&2 ;;
@@ -42,7 +43,7 @@ die() {
   exit 1
 }
 
-for tool in git mkfifo mktemp python3 shasum stat; do
+for tool in git mkfifo mktemp openssl python3 shasum stat; do
   command -v "$tool" >/dev/null 2>&1 || die "missing required tool: $tool"
 done
 
@@ -61,20 +62,9 @@ fixture_mode() {
 temporary_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 temporary_root="$(mktemp -d "$temporary_parent/sp11-touch-source-test.XXXXXX")"
 temporary_root="$(cd "$temporary_root" && pwd -P)"
-mkdir -p "$repo_dir/build"
-[ -d "$repo_dir/build" ] && [ ! -L "$repo_dir/build" ] ||
-  die "repository build fixture root is unsafe"
-managed_root="$repo_dir/build/sp11-touch-source-test.$$"
-output_contract_root="$repo_dir/build/sp11-touchscreen-module-output"
-if [ -e "$output_contract_root" ] || [ -L "$output_contract_root" ]; then
-  [ -d "$output_contract_root" ] && [ ! -L "$output_contract_root" ] ||
-    die "module output contract fixture root is unsafe"
-else
-  mkdir "$output_contract_root"
-  output_contract_created="true"
-fi
-output_fixture_root="$output_contract_root/sp11-touch-source-test.$$"
-mkdir "$managed_root" "$output_fixture_root"
+runtime_tmp="$temporary_root/runtime-tmp"
+mkdir "$runtime_tmp"
+chmod 0700 "$runtime_tmp"
 source_seed="$temporary_root/source-seed"
 kernel_build="$temporary_root/kernel-build"
 header_seed="$temporary_root/header-seed"
@@ -83,9 +73,70 @@ mkdir -p \
   "$source_seed/phase55/modules" \
   "$kernel_build/include/config" \
   "$kernel_build/include/linux" \
+  "$kernel_build/scripts" \
   "$header_seed/include/config" \
   "$header_seed/include/linux" \
+  "$header_seed/scripts" \
   "$mock_bin"
+
+signing_fixture="$temporary_root/module-signing"
+signing_private_key="$signing_fixture/private-key.pem"
+signing_certificate_pem="$signing_fixture/certificate.pem"
+signing_certificate_der="$signing_fixture/sp11-module-signing-cert.x509"
+signing_pin_file="$signing_fixture/pin"
+fixture_signing_pin='fixture controlled signing PIN 2026'
+mkdir "$signing_fixture"
+chmod 0700 "$signing_fixture"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+  -aes-256-cbc -pass "pass:$fixture_signing_pin" \
+  -out "$signing_private_key" >/dev/null 2>&1
+chmod 0600 "$signing_private_key"
+openssl req -new -x509 -sha512 -days 2 -set_serial 0x2001 \
+  -subj '/CN=SP11 touchscreen builder fixture/' \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature' \
+  -key "$signing_private_key" -passin "pass:$fixture_signing_pin" \
+  -out "$signing_certificate_pem" >/dev/null 2>&1
+openssl x509 -in "$signing_certificate_pem" -outform DER \
+  -out "$signing_certificate_der" >/dev/null 2>&1
+printf '%s\n' "$fixture_signing_pin" > "$signing_pin_file"
+chmod 0600 "$signing_pin_file"
+
+builder_repo_dir="$temporary_root/support-repo"
+mkdir -p \
+  "$builder_repo_dir/scripts" \
+  "$builder_repo_dir/config/kernel-signing" \
+  "$builder_repo_dir/build/sp11-touchscreen-module-output"
+cp "$repo_dir/scripts/build-sp11-touchscreen-modules.sh" \
+  "$repo_dir/scripts/install-sp11-touchscreen.sh" \
+  "$repo_dir/scripts/validate-sp11-signed-modules.py" \
+  "$builder_repo_dir/scripts/"
+cp "$signing_certificate_pem" \
+  "$builder_repo_dir/config/kernel-signing/sp11-module-signing-cert.pem"
+fixture_certificate_sha256="$(shasum -a 256 "$signing_certificate_der" | awk '{print $1}')"
+python3 - \
+  "$builder_repo_dir/scripts/build-sp11-touchscreen-modules.sh" \
+  "$builder_repo_dir/scripts/validate-sp11-signed-modules.py" \
+  "$fixture_certificate_sha256" <<'PY_BIND_FIXTURE_CERTIFICATE'
+import pathlib
+import sys
+
+reviewed = b"8ad9b402339b5ceff8e7fc9dfcc7dd368b2466fce0e90d97553059bcdc66e99b"
+replacement = sys.argv[3].encode("ascii")
+for name in sys.argv[1:3]:
+    path = pathlib.Path(name)
+    data = path.read_bytes()
+    if data.count(reviewed) != 1:
+        raise SystemExit(f"fixture product did not contain one reviewed certificate identity: {path.name}")
+    path.write_bytes(data.replace(reviewed, replacement))
+PY_BIND_FIXTURE_CERTIFICATE
+chmod 0755 "$builder_repo_dir/scripts/"*.sh \
+  "$builder_repo_dir/scripts/validate-sp11-signed-modules.py"
+builder="$builder_repo_dir/scripts/build-sp11-touchscreen-modules.sh"
+managed_root="$builder_repo_dir/build/sp11-touch-source-test.$$"
+output_contract_root="$builder_repo_dir/build/sp11-touchscreen-module-output"
+output_fixture_root="$output_contract_root/sp11-touch-source-test.$$"
+mkdir "$managed_root" "$output_fixture_root"
 
 printf '*.o\n*.ko\n*.cmd\nModule.symvers\n' > "$source_seed/.gitignore"
 printf 'fixture licence\n' > "$source_seed/LICENSE"
@@ -105,6 +156,10 @@ printf '%s\n' \
   'CONFIG_MODULES=y' \
   'CONFIG_QCOM_GPI_DMA=m' \
   'CONFIG_SPI_QCOM_GENI=m' \
+  'CONFIG_MODULE_SIG=y' \
+  'CONFIG_MODULE_SIG_SHA512=y' \
+  'CONFIG_MODULE_SIG_HASH="sha512"' \
+  'CONFIG_MODULE_SIG_KEY_TYPE_RSA=y' \
   > "$kernel_build/.config"
 printf 'mutated arbitrary local header\n' > "$kernel_build/include/linux/fixture.h"
 cp "$kernel_build/include/config/kernel.release" "$header_seed/include/config/kernel.release"
@@ -119,7 +174,49 @@ printf 'architecture headers fixture\n' > "$architecture_headers_deb"
 real_uname="$(command -v uname)"
 real_id="$(command -v id)"
 real_install="$(command -v install)"
+real_chmod="$(command -v chmod)"
 real_python3="$(command -v python3)"
+real_openssl="$(command -v openssl)"
+cat > "$kernel_build/scripts/sign-file" <<'EOF_SIGN_FILE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "$#" -eq 5 ] && [ "$1" = "sha512" ] || exit 95
+key="$2"
+certificate="$3"
+module="$4"
+destination="$5"
+temporary="$(mktemp -d "${TMPDIR:-/tmp}/sp11-sign-file-fixture.XXXXXX")"
+cleanup() {
+  case "$temporary" in
+    "${TMPDIR:-/tmp}"/sp11-sign-file-fixture.*) rm -rf -- "$temporary" ;;
+    *) exit 96 ;;
+  esac
+}
+trap cleanup EXIT
+"$FIXTURE_OPENSSL" x509 -inform DER -in "$certificate" -outform PEM \
+  -out "$temporary/certificate.pem" >/dev/null 2>&1
+"$FIXTURE_OPENSSL" cms -sign -binary -in "$module" -signer "$temporary/certificate.pem" \
+  -inkey "$key" -passin env:KBUILD_SIGN_PIN -md sha512 -noattr -nocerts \
+  -outform DER -out "$temporary/signature.der" >/dev/null 2>&1
+"$FIXTURE_REAL_PYTHON3" - "$module" "$temporary/signature.der" "$destination" <<'PY_SIGN_FILE'
+import pathlib
+import struct
+import sys
+
+payload = pathlib.Path(sys.argv[1]).read_bytes()
+signature = pathlib.Path(sys.argv[2]).read_bytes()
+descriptor = struct.pack(">BBBBB3sI", 0, 0, 2, 0, 0, b"\0\0\0", len(signature))
+pathlib.Path(sys.argv[3]).write_bytes(
+    payload + signature + descriptor + b"~Module signature appended~\n"
+)
+PY_SIGN_FILE
+if [ "${FIXTURE_TAMPER_STAGED_COPY:-}" = "$(basename "$destination")" ]; then
+  printf 'tampered staged copy\n' >> "$destination"
+fi
+EOF_SIGN_FILE
+chmod 0755 "$kernel_build/scripts/sign-file"
+cp "$kernel_build/scripts/sign-file" "$header_seed/scripts/sign-file"
 cat > "$mock_bin/uname" <<'EOF_UNAME'
 #!/usr/bin/env bash
 if [ "${1:-}" = "-m" ]; then
@@ -267,19 +364,24 @@ case "$destination" in
     ;;
 esac
 EOF_INSTALL
-cat > "$mock_bin/python3" <<'EOF_PYTHON3'
+cat > "$mock_bin/chmod" <<'EOF_CHMOD'
 #!/usr/bin/env bash
-destination=""
-for destination in "$@"; do :; done
-if [ "${FIXTURE_PUBLISH_RACE:-false}" = "true" ] && [ "${1:-}" = "-" ] &&
+"$FIXTURE_REAL_CHMOD" "$@" || exit $?
+if [ "${FIXTURE_PUBLISH_RACE:-false}" = "true" ] &&
+   [ "${1:-}" = "0755" ] &&
+   [[ "${2:-}" == */.sp11-touchscreen-stage.* ]] &&
    [ ! -e "$FIXTURE_PUBLISH_RACE_MARKER" ]; then
-  mkdir "$destination" || exit 92
+  mkdir "$FIXTURE_PUBLIC_OUTPUT" || exit 92
   if [ "${FIXTURE_PUBLISH_RACE_EMPTY:-false}" != "true" ]; then
-    printf 'publication race victim\n' > "$destination/race-victim"
+    printf 'publication race victim\n' > "$FIXTURE_PUBLIC_OUTPUT/race-victim"
   fi
   : > "$FIXTURE_PUBLISH_RACE_MARKER"
 fi
-exec "$FIXTURE_REAL_PYTHON3" "$@"
+EOF_CHMOD
+cat > "$mock_bin/python3" <<'EOF_PYTHON3'
+#!/usr/bin/env bash
+: > "${FIXTURE_HOSTILE_PYTHON_MARKER:?}"
+exit 0
 EOF_PYTHON3
 cat > "$mock_bin/id" <<'EOF_ID'
 #!/usr/bin/env bash
@@ -289,6 +391,11 @@ if [ "${FIXTURE_INSTALL_CAPTURE:-false}" = "true" ] && [ "${1:-}" = "-u" ]; then
 fi
 exec "$FIXTURE_REAL_ID" "$@"
 EOF_ID
+cat > "$mock_bin/openssl" <<'EOF_HOSTILE_OPENSSL'
+#!/usr/bin/env bash
+: > "${FIXTURE_HOSTILE_OPENSSL_MARKER:?}"
+exit 0
+EOF_HOSTILE_OPENSSL
 cat > "$mock_bin/sudo" <<'EOF_SUDO'
 #!/usr/bin/env bash
 [ "${FIXTURE_INSTALL_CAPTURE:-false}" = "true" ] || exit 95
@@ -310,15 +417,17 @@ esac
 [ "$modules_dir" != "$FIXTURE_PUBLIC_OUTPUT" ] &&
   [ -d "$modules_dir" ] && [ ! -L "$modules_dir" ] || exit 91
 printf 'mutable public output changed during sudo\n' > "$FIXTURE_PUBLIC_OUTPUT/gpi.ko"
-grep -Fxq 'fixture module gpi' "$modules_dir/gpi.ko" || exit 84
+grep -a -Fxq 'fixture module gpi' "$modules_dir/gpi.ko" || exit 84
 if mode="$(stat -c '%a' -- "$modules_dir" 2>/dev/null)"; then
   :
 else
   mode="$(stat -f '%Lp' "$modules_dir" 2>/dev/null)" || exit 90
 fi
 [ "$mode" = "500" ] || exit 89
-[ "$(find "$modules_dir" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" -eq 4 ] || exit 88
-for leaf in gpi.ko spi-geni-qcom.ko mshw0485_touch.ko sp11-touchscreen-modules-manifest.txt; do
+[ "$(find "$modules_dir" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" -eq 5 ] || exit 88
+for leaf in \
+  gpi.ko spi-geni-qcom.ko mshw0485_touch.ko \
+  sp11-module-signing-cert.x509 sp11-touchscreen-modules-manifest.txt; do
   [ -s "$modules_dir/$leaf" ] && [ ! -L "$modules_dir/$leaf" ] || exit 87
   if mode="$(stat -c '%a' -- "$modules_dir/$leaf" 2>/dev/null)"; then
     :
@@ -363,15 +472,41 @@ run_builder() {
     --source-ref "$source_commit"
     --out-dir "${FIXTURE_OUT_DIR:-$output_fixture_root/default}"
   )
+  case "${FIXTURE_SIGNING_OPTIONS:-full}" in
+    full)
+      builder_arguments+=(
+        --module-signing-key "${FIXTURE_SIGNING_KEY:-$signing_private_key}"
+        --module-signing-certificate "${FIXTURE_SIGNING_CERTIFICATE:-$signing_certificate_pem}"
+        --module-signing-pin-file "${FIXTURE_SIGNING_PIN_FILE:-$signing_pin_file}"
+      )
+      ;;
+    key-only)
+      builder_arguments+=(--module-signing-key "$signing_private_key")
+      ;;
+    certificate-only)
+      builder_arguments+=(--module-signing-certificate "$signing_certificate_pem")
+      ;;
+    pin-only)
+      builder_arguments+=(--module-signing-pin-file "$signing_pin_file")
+      ;;
+    none) ;;
+    *) die "invalid signing-option fixture mode" ;;
+  esac
   if [ "${FIXTURE_OFFLINE:-true}" = "true" ]; then
     builder_arguments+=(--offline)
   fi
   builder_arguments+=("$@")
   PATH="$mock_bin:/usr/bin:/bin" \
+    TMPDIR="$runtime_tmp" \
+    KBUILD_SIGN_PIN="$fixture_signing_pin" \
     FIXTURE_REAL_UNAME="$real_uname" \
     FIXTURE_REAL_ID="$real_id" \
     FIXTURE_REAL_INSTALL="$real_install" \
+    FIXTURE_REAL_CHMOD="$real_chmod" \
     FIXTURE_REAL_PYTHON3="$real_python3" \
+    FIXTURE_OPENSSL="$real_openssl" \
+    FIXTURE_HOSTILE_OPENSSL_MARKER="$temporary_root/hostile-openssl-ran" \
+    FIXTURE_HOSTILE_PYTHON_MARKER="$temporary_root/hostile-python-ran" \
     FIXTURE_BAD_STAGED_MODULE="${FIXTURE_BAD_STAGED_MODULE:-}" \
     FIXTURE_TAMPER_STAGED_COPY="${FIXTURE_TAMPER_STAGED_COPY:-}" \
     FIXTURE_PUBLISH_RACE="${FIXTURE_PUBLISH_RACE:-false}" \
@@ -395,6 +530,119 @@ run_builder() {
     "$builder" "${builder_arguments[@]}" || return $?
   return 0
 }
+
+for signing_mode in none key-only certificate-only pin-only; do
+  if FIXTURE_SIGNING_OPTIONS="$signing_mode" run_builder "$source_seed" \
+      > "$temporary_root/signing-$signing_mode.log" 2>&1; then
+    die "module builder accepted incomplete controlled signing inputs: $signing_mode"
+  fi
+  grep -Fq 'controlled module signing requires all three signing file options' \
+    "$temporary_root/signing-$signing_mode.log" ||
+    die "incomplete controlled signing rejection was not explicit: $signing_mode"
+  [ ! -e "$temporary_root/make-invoked" ] ||
+    die "module build began with incomplete controlled signing inputs: $signing_mode"
+done
+
+invalid_signing="$temporary_root/invalid-signing"
+mkdir "$invalid_signing"
+chmod 0700 "$invalid_signing"
+printf '%s\n' 'wrong fixture PIN' > "$invalid_signing/wrong-pin"
+printf '%s\n%s\n' "$fixture_signing_pin" 'second line' > "$invalid_signing/multiline-pin"
+printf 'fixture\001pin\n' > "$invalid_signing/nonprintable-pin"
+chmod 0600 "$invalid_signing/wrong-pin" \
+  "$invalid_signing/multiline-pin" "$invalid_signing/nonprintable-pin"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+  -aes-256-cbc -pass "pass:$fixture_signing_pin" \
+  -out "$invalid_signing/mismatched-key.pem" >/dev/null 2>&1
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+  -out "$invalid_signing/unencrypted-key.pem" >/dev/null 2>&1
+cp "$signing_private_key" "$invalid_signing/insecure-mode-key.pem"
+cp "$signing_private_key" "$invalid_signing/hardlink-key-target.pem"
+ln "$invalid_signing/hardlink-key-target.pem" "$invalid_signing/hardlink-key.pem"
+ln -s "$signing_private_key" "$invalid_signing/symlink-key.pem"
+{
+  awk '1' "$signing_private_key"
+  awk '1' "$signing_private_key"
+} > "$invalid_signing/extra-key.pem"
+{
+  awk '1' "$signing_private_key"
+  printf '%s\n' trailing
+} > "$invalid_signing/trailing-key.pem"
+{
+  awk '1' "$signing_certificate_pem"
+  awk '1' "$signing_certificate_pem"
+} > "$invalid_signing/extra-certificate.pem"
+{
+  awk '1' "$signing_certificate_pem"
+  printf '%s\n' trailing
+} > "$invalid_signing/trailing-certificate.pem"
+chmod 0600 "$invalid_signing/"*.pem
+chmod 0644 "$invalid_signing/insecure-mode-key.pem"
+
+expect_invalid_signing_input() {
+  local label="$1" key="$2" certificate="$3" pin_file="$4" private_value="${5:-}"
+  local log="$temporary_root/invalid-signing-$label.log"
+
+  if FIXTURE_SIGNING_KEY="$key" \
+      FIXTURE_SIGNING_CERTIFICATE="$certificate" \
+      FIXTURE_SIGNING_PIN_FILE="$pin_file" \
+      run_builder "$source_seed" > "$log" 2>&1; then
+    die "module builder accepted invalid controlled signing input: $label"
+  fi
+  grep -Fq 'controlled module-signing' "$log" ||
+    die "invalid controlled signing rejection was not explicit: $label"
+  [ ! -e "$temporary_root/make-invoked" ] ||
+    die "module build began with invalid controlled signing input: $label"
+  if [ -n "$private_value" ] && grep -Fq "$private_value" "$log"; then
+    die "invalid controlled signing rejection leaked private input: $label"
+  fi
+  if find "$runtime_tmp" -mindepth 1 -maxdepth 1 \
+      -name 'sp11-touchscreen-signing.*' -print -quit | grep -q .; then
+    die "invalid controlled signing rejection retained private staging: $label"
+  fi
+}
+
+expect_invalid_signing_input wrong-pin \
+  "$signing_private_key" "$signing_certificate_pem" "$invalid_signing/wrong-pin" \
+  'wrong fixture PIN'
+expect_invalid_signing_input mismatched-key \
+  "$invalid_signing/mismatched-key.pem" "$signing_certificate_pem" "$signing_pin_file"
+expect_invalid_signing_input unencrypted-key \
+  "$invalid_signing/unencrypted-key.pem" "$signing_certificate_pem" "$signing_pin_file"
+expect_invalid_signing_input symlink-key \
+  "$invalid_signing/symlink-key.pem" "$signing_certificate_pem" "$signing_pin_file"
+expect_invalid_signing_input hardlink-key \
+  "$invalid_signing/hardlink-key.pem" "$signing_certificate_pem" "$signing_pin_file"
+expect_invalid_signing_input insecure-key-mode \
+  "$invalid_signing/insecure-mode-key.pem" "$signing_certificate_pem" "$signing_pin_file"
+expect_invalid_signing_input multiline-pin \
+  "$signing_private_key" "$signing_certificate_pem" "$invalid_signing/multiline-pin"
+expect_invalid_signing_input nonprintable-pin \
+  "$signing_private_key" "$signing_certificate_pem" "$invalid_signing/nonprintable-pin"
+expect_invalid_signing_input extra-key-object \
+  "$invalid_signing/extra-key.pem" "$signing_certificate_pem" "$signing_pin_file"
+expect_invalid_signing_input trailing-key-bytes \
+  "$invalid_signing/trailing-key.pem" "$signing_certificate_pem" "$signing_pin_file"
+expect_invalid_signing_input extra-certificate-object \
+  "$signing_private_key" "$invalid_signing/extra-certificate.pem" "$signing_pin_file"
+expect_invalid_signing_input trailing-certificate-bytes \
+  "$signing_private_key" "$invalid_signing/trailing-certificate.pem" "$signing_pin_file"
+
+cp "$repo_dir/config/kernel-signing/sp11-module-signing-cert.pem" \
+  "$builder_repo_dir/config/kernel-signing/sp11-module-signing-cert.pem"
+fixture_certificate_argument="$signing_certificate_pem"
+signing_certificate_pem="$builder_repo_dir/config/kernel-signing/sp11-module-signing-cert.pem"
+if run_builder "$source_seed" > "$temporary_root/wrong-trust-anchor.log" 2>&1; then
+  die "module builder accepted a substituted public trust anchor"
+fi
+signing_certificate_pem="$fixture_certificate_argument"
+grep -Fq 'committed module-signing public trust anchor does not match the approved certificate identity' \
+  "$temporary_root/wrong-trust-anchor.log" ||
+  die "substituted public trust-anchor rejection was not explicit"
+[ ! -e "$temporary_root/make-invoked" ] ||
+  die "module build began with a substituted public trust anchor"
+cp "$signing_certificate_pem" \
+  "$builder_repo_dir/config/kernel-signing/sp11-module-signing-cert.pem"
 
 set +e
 missing_header_output="$(run_builder "$source_seed" \
@@ -521,7 +769,7 @@ expect_path_rejection source-traversal "$managed_root/../source-escape" "$safe_o
   'source directory has an unsafe path'
 expect_path_rejection source-control "$managed_root/"$'control\nsource' "$safe_output" \
   'source directory has an unsafe path'
-expect_path_rejection source-build-root "$repo_dir/build" "$safe_output" \
+expect_path_rejection source-build-root "$builder_repo_dir/build" "$safe_output" \
   'source directory must be a physical descendant of repository build/'
 
 source_parent_victim="$temporary_root/source-parent-victim"
@@ -619,10 +867,10 @@ expect_path_rejection output-traversal "$path_checkout" \
   "$output_fixture_root/../output-escape" 'output directory has an unsafe path'
 expect_path_rejection output-control "$path_checkout" \
   "$output_fixture_root/"$'control\noutput' 'output directory has an unsafe path'
-expect_path_rejection output-build-root "$path_checkout" "$repo_dir/build" \
+expect_path_rejection output-build-root "$path_checkout" "$builder_repo_dir/build" \
   'output directory must match repository .sp11-kmod-vN'
 
-documented_output="$repo_dir/build/release-r2-fixture-$$-touchscreen-modules"
+documented_output="$builder_repo_dir/build/release-r2-fixture-$$-touchscreen-modules"
 rm -f "$temporary_root/make-invoked"
 if FIXTURE_OUT_DIR="$documented_output" run_builder "$path_checkout" \
     > "$temporary_root/documented-output.log" 2>&1; then
@@ -691,8 +939,9 @@ if FIXTURE_BUILD_SUCCESS=true FIXTURE_TAMPER_STAGED_COPY=gpi.ko \
     run_builder "$staged_hash_checkout" > "$temporary_root/staged-hash.log" 2>&1; then
   die "module builder accepted a changed staged module copy"
 fi
-grep -Fq 'changed while copying it into the private stage' "$temporary_root/staged-hash.log" ||
-  die "staged module hash rejection was not explicit"
+grep -Fq 'controlled touchscreen module signature validation failed' \
+  "$temporary_root/staged-hash.log" ||
+  die "staged module signature rejection was not explicit"
 [ ! -e "$staged_hash_output" ] && [ ! -L "$staged_hash_output" ] ||
   die "staged module hash failure published an output directory"
 if find "$output_fixture_root" -mindepth 1 -maxdepth 1 \
@@ -703,6 +952,7 @@ fi
 leaf_case_index=0
 for protected_leaf in \
   gpi.ko spi-geni-qcom.ko mshw0485_touch.ko \
+  sp11-module-signing-cert.x509 \
   sp11-touchscreen-modules-manifest.txt; do
   for protected_kind in symlink fifo directory; do
     leaf_case_index=$((leaf_case_index + 1))
@@ -757,6 +1007,7 @@ git clone --quiet "$source_seed" "$rollback_checkout"
 mkdir "$rollback_output"
 for rollback_leaf in \
   gpi.ko spi-geni-qcom.ko mshw0485_touch.ko \
+  sp11-module-signing-cert.x509 \
   sp11-touchscreen-modules-manifest.txt; do
   printf 'rollback victim %s\n' "$rollback_leaf" > "$rollback_output/$rollback_leaf"
 done
@@ -776,6 +1027,7 @@ rollback_backup="$(find "$output_fixture_root" -mindepth 1 -maxdepth 1 \
   die "exclusive publication did not preserve exactly one prior-output backup"
 for rollback_leaf in \
   gpi.ko spi-geni-qcom.ko mshw0485_touch.ko \
+  sp11-module-signing-cert.x509 \
   sp11-touchscreen-modules-manifest.txt; do
   grep -Fxq "rollback victim $rollback_leaf" "$rollback_backup/previous/$rollback_leaf" ||
     die "exclusive publication did not preserve prior $rollback_leaf"
@@ -818,6 +1070,7 @@ success_output="$output_fixture_root/success-output"
 mkdir "$success_source_parent" "$success_output"
 for success_leaf in \
   gpi.ko spi-geni-qcom.ko mshw0485_touch.ko \
+  sp11-module-signing-cert.x509 \
   sp11-touchscreen-modules-manifest.txt; do
   printf 'old output %s\n' "$success_leaf" > "$success_output/$success_leaf"
 done
@@ -830,13 +1083,14 @@ if ! (
 fi
 [ -d "$success_source/.git" ] && [ ! -L "$success_source/.git" ] ||
   die "successful new checkout did not retain a physical .git directory"
-[ "$(find "$success_output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" -eq 4 ] ||
-  die "successful atomic output does not contain exactly four files"
+[ "$(find "$success_output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" -eq 5 ] ||
+  die "successful atomic output does not contain exactly five files"
 if find "$success_output" -mindepth 1 -maxdepth 1 ! -type f -print -quit | grep -q .; then
   die "successful atomic output contains a symlink or special entry"
 fi
 for success_leaf in \
   gpi.ko spi-geni-qcom.ko mshw0485_touch.ko \
+  sp11-module-signing-cert.x509 \
   sp11-touchscreen-modules-manifest.txt; do
   [ -s "$success_output/$success_leaf" ] && [ ! -L "$success_output/$success_leaf" ] ||
     die "successful atomic output is missing $success_leaf"
@@ -851,6 +1105,68 @@ done
 grep -Fq "Source commit: $source_commit" \
   "$success_output/sp11-touchscreen-modules-manifest.txt" ||
   die "successful atomic output manifest does not bind the source commit"
+cmp -s "$signing_certificate_der" \
+  "$success_output/sp11-module-signing-cert.x509" ||
+  die "successful atomic output changed the public signing certificate"
+python3 - "$success_output/sp11-touchscreen-modules-manifest.txt" <<'PY_CHECK_SIGNING_ORDER'
+import pathlib
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+labels = [
+    "Module signing policy: sp11-controlled-rsa4096-sha512-v1",
+    "Module signing private material retained: false",
+    "Module signing hash algorithm: sha512",
+    "Module signing certificate asset: sp11-module-signing-cert.x509",
+    "Module signing certificate SHA256: ",
+    "Module signing certificate fingerprint: ",
+    "Module signing certificate serial: ",
+    "Windows SE init default: disabled",
+]
+for module in ("gpi.ko", "spi-geni-qcom.ko", "mshw0485_touch.ko"):
+    labels.extend(
+        [
+            f"Module {module} size: ",
+            f"Module {module} SHA256: ",
+            f"Module {module} payload size: ",
+            f"Module {module} payload SHA256: ",
+            f"Module {module} signature size: ",
+            f"Module {module} signature SHA256: ",
+        ]
+    )
+indexes = []
+for label in labels:
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if line == label or line.startswith(label)
+    ]
+    if len(matches) != 1:
+        raise SystemExit(f"missing or duplicate controlled signing field: {label}")
+    indexes.append(matches[0])
+if indexes != sorted(indexes) or indexes[-1] >= lines.index("## Modules"):
+    raise SystemExit("controlled signing manifest fields are not in canonical order")
+PY_CHECK_SIGNING_ORDER
+encrypted_private_marker='BEGIN ENCRYPTED'
+encrypted_private_marker="$encrypted_private_marker PRIVATE KEY"
+for private_value in \
+  "$signing_private_key" \
+  "$signing_certificate_der" \
+  "$fixture_signing_pin" \
+  "$encrypted_private_marker"; do
+  if grep -Fq "$private_value" "$temporary_root/success.log" \
+      "$success_output/sp11-touchscreen-modules-manifest.txt"; then
+    die "module build output exposed a private signing input"
+  fi
+done
+[ ! -e "$temporary_root/hostile-openssl-ran" ] ||
+  die "module builder executed an OpenSSL binary supplied through PATH"
+[ ! -e "$temporary_root/hostile-python-ran" ] ||
+  die "module builder executed a Python interpreter supplied through PATH"
+if find "$runtime_tmp" -mindepth 1 -maxdepth 1 \
+    -name 'sp11-touchscreen-signing.*' -print -quit | grep -q .; then
+  die "module builder retained a private signing stage"
+fi
 if find "$output_fixture_root" -mindepth 1 -maxdepth 1 \
     \( -name '.sp11-touchscreen-stage.*' -o -name '.sp11-touchscreen-backup.*' \) \
     -print -quit | grep -q .; then
@@ -883,8 +1199,8 @@ if find "$output_fixture_root" -mindepth 1 -maxdepth 1 \
     -name '.sp11-touchscreen-install.*' -print -quit | grep -q .; then
   die "builder left a private install snapshot"
 fi
-[ "$(find "$install_output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" -eq 4 ] ||
-  die "install build did not publish exactly four public release files"
+[ "$(find "$install_output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" -eq 5 ] ||
+  die "install build did not publish exactly five public release files"
 grep -Fxq 'mutable public output changed during sudo' "$install_output/gpi.ko" ||
   die "private install fixture did not mutate the public output independently"
 
