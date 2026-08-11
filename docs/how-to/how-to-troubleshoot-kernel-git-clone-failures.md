@@ -155,6 +155,7 @@ Retry the build with `--reset-source`:
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload \
   --reset-source \
@@ -181,6 +182,7 @@ Then on the Docker build host, run with `--metadata` instead of `--source git`:
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --metadata /path/to/sp11-kernel-source.env \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload \
   --reset-source
@@ -278,12 +280,13 @@ cd /path/to/linux-surface-pro-11-oe
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --source git \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 
-The helper locates its own patch directory from the repository root, so it
-works from any checkout. If a previous clone failed on the Surface, add
-`--reset-source` to clear the partial checkout before retrying.
+The patch directory is explicit and relative to the repository root. If a
+previous clone failed on the Surface, add `--reset-source` to clear the partial
+checkout before retrying.
 
 Once built, install the generated packages with the fallback-kernel guard:
 
@@ -311,6 +314,7 @@ cd "$SP11DATA/support"
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --source git \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 

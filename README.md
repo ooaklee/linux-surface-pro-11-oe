@@ -72,6 +72,7 @@ mkdir -p build
 # Default: Ubuntu concept kernel
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --copy-to-payload --reset-source --jobs 4
 
 # OR: SP11 v2 — Johan G.'s 7.1.3 tree with the 2.4 MHz DMIC default

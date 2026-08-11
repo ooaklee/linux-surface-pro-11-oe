@@ -84,6 +84,7 @@ USB payload.
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --metadata /path/to/sp11-kernel-source.env \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
@@ -103,6 +104,9 @@ Treat `build/docker-sp11-qcom-x1e-kernel/artifacts/` as managed scratch space.
 Real Docker runs clean it inside the container before copying new packages so
 stale `.deb` files cannot leak into `payload/kernel-debs/`.
 
+Patch application is opt-in. If neither `--patch-dir` nor `--patch-dirs` is
+supplied, the helper builds the selected source without local patches.
+
 If the container cannot fetch the exact qcom-x1e source version, provide
 matching apt source configuration from the same repositories that provided the
 installed kernel:
@@ -111,6 +115,7 @@ installed kernel:
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --metadata /path/to/sp11-kernel-source.env \
   --apt-sources /path/to/qcom-x1e.sources \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
@@ -121,6 +126,7 @@ apt source metadata:
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
@@ -304,6 +310,7 @@ Use this path when Docker is not available.
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 

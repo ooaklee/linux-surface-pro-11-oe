@@ -92,6 +92,7 @@ cd linux-surface-pro-11-oe
 
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --metadata sp11-kernel-source.env \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
@@ -107,6 +108,7 @@ If the container cannot reach the apt source repository, provide the matching
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --metadata sp11-kernel-source.env \
   --apt-sources /path/to/qcom-x1e.sources \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
@@ -117,6 +119,7 @@ fallback (builds from the public `qcom-x1e-7.0` branch, note ABI may not match):
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
@@ -162,6 +165,7 @@ with a space-separated list:
 
 `--patch-dirs` applies patches from each directory in the listed order. If both
 `--patch-dir` and `--patch-dirs` are passed, `--patch-dirs` takes precedence.
+If neither option is passed, no local patches are applied.
 
 The `binary-indep` target is required for this tree because the ABI-specific
 headers package depends on `linux-qcom-x1e-headers-<abi>` (e.g.
@@ -174,6 +178,7 @@ On the Surface directly:
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 

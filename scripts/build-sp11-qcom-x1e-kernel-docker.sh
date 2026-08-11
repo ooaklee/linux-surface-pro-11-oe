@@ -29,14 +29,16 @@ usage() {
   cat <<EOF
 Usage: $0 [options]
 
-Builds the patched qcom-x1e kernel packages inside a Docker ARM64 Linux
-container. This is intended for off-device builds on a faster machine.
+Builds qcom-x1e kernel packages inside a Docker ARM64 Linux container. This is
+intended for off-device builds on a faster machine. If neither --patch-dir nor
+--patch-dirs is supplied, the source is built without local patches.
 
 Recommended apt-source mode:
   1. On the Surface, run:
        ./scripts/collect-sp11-kernel-source-metadata.sh --out sp11-kernel-source.env
   2. On the Docker host, run:
-       $0 --metadata sp11-kernel-source.env --copy-to-payload
+       $0 --metadata sp11-kernel-source.env \\
+         --patch-dir patches/ubuntu-qcom-x1e-7.0 --copy-to-payload
 
 Options:
   --metadata FILE        Metadata file from collect-sp11-kernel-source-metadata.sh.
@@ -61,6 +63,8 @@ Options:
   --build-target TARGET  Kernel package target or quoted target list,
                          default from metadata or script.
   --patch-dir DIR        Patch directory to pass to the inner build helper.
+                         Omit both this option and --patch-dirs to apply no
+                         local patches.
   --patch-dirs "DIR1 DIR2 ..."
                         Space-separated list of patch directories,
                         passed through to the inner build helper.

@@ -101,6 +101,7 @@ the git fallback path from the README:
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload \
   --reset-source \
@@ -173,7 +174,10 @@ If the ARM64 smoke test works but the kernel build still fails with
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git --work-dir build/docker-sp11-qcom-x1e-kernel --dry-run
+  --source git \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
+  --work-dir build/docker-sp11-qcom-x1e-kernel \
+  --dry-run
 ```
 
 The `--platform` line should be `linux/arm64` (the default). Do not set
@@ -197,11 +201,11 @@ repository directly onto installed Ubuntu on the Surface, you do not need
 cd /path/to/linux-surface-pro-11-oe
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 
-The helper locates its own patch directory via `repo_dir`
-(`scripts/build-sp11-qcom-x1e-kernel.sh:98`), so it works from any checkout.
+The patch directory is passed explicitly relative to the repository root.
 
 The default source mode is `apt`, which derives the source package and version
 from the running kernel and needs `deb-src` entries enabled for the qcom-x1e
@@ -212,6 +216,7 @@ public git branch instead (slower, larger clone, but no `deb-src` needed):
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --source git \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 
@@ -232,6 +237,7 @@ fi
 cd "$SP11DATA/support"
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 

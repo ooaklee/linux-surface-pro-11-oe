@@ -30,7 +30,7 @@ usage() {
   cat <<EOF
 Usage: $0 [options]
 
-Builds an Ubuntu qcom-x1e kernel with Surface Pro 11 Wi-Fi rfkill patches.
+Builds an Ubuntu qcom-x1e kernel, optionally with local Surface Pro 11 patches.
 
 Default source mode is apt, which derives the source package and version from
 the running qcom-x1e kernel packages on the device.
@@ -43,7 +43,8 @@ Options:
                          Default $SOURCE_VERSION.
   --git-url URL          Kernel git URL for git mode, default $GIT_URL.
   --git-branch BRANCH    Kernel git branch or tag for git mode, default $GIT_BRANCH.
-  --patch-dir DIR        Patch directory, default repo patches/ubuntu-qcom-x1e-7.0.
+  --patch-dir DIR        Patch directory to apply. Omit both this option and
+                         --patch-dirs to build without local patches.
   --patch-dirs "DIR1 DIR2 ..."
                         Space-separated list of patch directories. Patches from
                         each directory are applied in order.
@@ -55,7 +56,7 @@ Options:
   --install-deps        Install common build dependencies and apt build-deps.
   --install             Install generated qcom-x1e kernel debs after build.
   --install-only        Install existing generated qcom-x1e debs and exit.
-  --prepare-only        Clone/download and apply patches, then stop.
+  --prepare-only        Clone/download, apply any requested patches, then stop.
   --reset-source        Remove existing source directory before preparing.
   --skip-clean          Skip debian/rules clean before building.
   --no-fakeroot         Run debian/rules directly when running as root.
@@ -242,7 +243,6 @@ if ! [[ "$MIN_FREE_GB" =~ ^[0-9]+$ ]] || [ "$MIN_FREE_GB" -lt 1 ]; then
   exit 2
 fi
 
-PATCH_DIR="${PATCH_DIR:-$repo_dir/patches/ubuntu-qcom-x1e-7.0}"
 if [ -n "$PATCH_DIRS" ]; then
   for pd in $PATCH_DIRS; do
     if [ ! -d "$pd" ]; then
@@ -250,7 +250,7 @@ if [ -n "$PATCH_DIRS" ]; then
       exit 1
     fi
   done
-elif [ "$INSTALL_ONLY" != "true" ] && [ ! -d "$PATCH_DIR" ]; then
+elif [ -n "$PATCH_DIR" ] && [ "$INSTALL_ONLY" != "true" ] && [ ! -d "$PATCH_DIR" ]; then
   echo "Patch directory not found: $PATCH_DIR" >&2
   exit 1
 fi
@@ -565,6 +565,11 @@ prepare_apt_source() {
 apply_patches() {
   local patch_dir_list
 
+  if [ -z "$PATCH_DIRS" ] && [ -z "$PATCH_DIR" ]; then
+    echo "No local patches requested."
+    return 0
+  fi
+
   if [ -n "$PATCH_DIRS" ]; then
     patch_dir_list="$PATCH_DIRS"
   else
@@ -648,12 +653,14 @@ write_manifest() {
           [ -f "$patch" ] && echo "  - $(basename "$patch")"
         done
       done
-    else
+    elif [ -n "$PATCH_DIR" ]; then
       echo "Patch directory: $PATCH_DIR"
       echo "Patches:"
       for patch in "$PATCH_DIR"/*.patch; do
         [ -f "$patch" ] && echo "  - $(basename "$patch")"
       done
+    else
+      echo "Local patches: none"
     fi
     echo "Build target: $BUILD_TARGET"
     echo "Jobs: $JOBS"
@@ -1054,5 +1061,5 @@ if [ "$INSTALL_DEBS" = "true" ]; then
 else
   echo
   echo "Review the generated debs, then install the qcom-x1e image/modules/header packages."
-  echo "Reboot into the patched kernel and rerun scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock."
+  echo "Reboot into the new kernel and rerun scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock."
 fi

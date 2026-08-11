@@ -62,6 +62,7 @@ exist:
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --metadata /path/to/sp11-kernel-source.env \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload \
   --dry-run
@@ -84,6 +85,7 @@ Then rerun the kernel build command unchanged:
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --metadata /path/to/sp11-kernel-source.env \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --copy-to-payload
 ```
@@ -150,6 +152,7 @@ Run it on the Surface itself:
 cd "$SP11DATA/support"
 ./scripts/build-sp11-qcom-x1e-kernel.sh \
   --install-deps \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
 ```
 
