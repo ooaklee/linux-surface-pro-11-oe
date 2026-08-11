@@ -155,6 +155,7 @@ and preserve the generated provenance manifest:
 
 ```bash
 ./scripts/prepare-sp11-kernel-release-assets.sh \
+  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
   --release-name sp11-qcom-x1e-7.0.0-22.22-rfkill1 \
   --source-asset build/release-source/sp11-qcom-x1e-7.0.0-22.22-rfkill1-patched-source.tar.xz
 ```

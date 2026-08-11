@@ -3,8 +3,8 @@ set -euo pipefail
 
 KERNEL_DEBS_DIR="payload/kernel-debs"
 ARTIFACTS_DIR="build/docker-sp11-qcom-x1e-kernel/artifacts"
-PATCH_DIRS=("patches/ubuntu-qcom-x1e-7.0")
-PATCH_DIR_EXPLICIT="false"
+PATCH_DIRS=()
+PATCH_DIR_COUNT=0
 OUT_DIR=""
 RELEASE_NAME=""
 SOURCE_URL="https://git.launchpad.net/~ubuntu-concept/ubuntu/+source/linux/+git/resolute"
@@ -39,8 +39,8 @@ Options:
                           default $KERNEL_DEBS_DIR.
   --artifacts-dir DIR     Directory containing local build manifests,
                           default $ARTIFACTS_DIR.
-  --patch-dir DIR         Patch directory. Repeat to record ordered patch sets;
-                          default ${PATCH_DIRS[0]}.
+  --patch-dir DIR         Patch directory. Repeat to record ordered patch sets.
+                          If omitted, records that no local patches were used.
   --release-name NAME     Release/tag name. If omitted, derived from package
                           version when possible.
   --out-dir DIR           Output directory. If omitted, defaults to
@@ -113,11 +113,8 @@ while [ "$#" -gt 0 ]; do
       ;;
     --patch-dir)
       require_arg "$1" "${2:-}"
-      if [ "$PATCH_DIR_EXPLICIT" != "true" ]; then
-        PATCH_DIRS=()
-        PATCH_DIR_EXPLICIT="true"
-      fi
       PATCH_DIRS+=("$2")
+      PATCH_DIR_COUNT=$((PATCH_DIR_COUNT + 1))
       shift 2
       ;;
     --release-name)
@@ -221,12 +218,14 @@ if [ ! -d "$KERNEL_DEBS_DIR" ]; then
   exit 1
 fi
 
-for patch_dir in "${PATCH_DIRS[@]}"; do
-  if [ ! -d "$patch_dir" ]; then
-    echo "Patch directory not found: $patch_dir" >&2
-    exit 1
-  fi
-done
+if [ "$PATCH_DIR_COUNT" -gt 0 ]; then
+  for patch_dir in "${PATCH_DIRS[@]}"; do
+    if [ ! -d "$patch_dir" ]; then
+      echo "Patch directory not found: $patch_dir" >&2
+      exit 1
+    fi
+  done
+fi
 
 debs=()
 while IFS= read -r deb; do
@@ -479,7 +478,11 @@ if [ -z "$version" ]; then
 fi
 
 if [ -z "$RELEASE_NAME" ]; then
-  RELEASE_NAME="sp11-qcom-x1e-${version}-rfkill1"
+  if [ "$PATCH_DIR_COUNT" -eq 0 ]; then
+    RELEASE_NAME="sp11-qcom-x1e-${version}-baseline1"
+  else
+    RELEASE_NAME="sp11-qcom-x1e-${version}-rfkill1"
+  fi
 fi
 
 if [ -z "$OUT_DIR" ]; then
@@ -526,6 +529,9 @@ manifest_source_url=""
 manifest_source_ref=""
 apt_source_spec=""
 manifest_patch_dirs=""
+manifest_patch_dir_records="0"
+manifest_local_patches=""
+manifest_local_patch_records="0"
 build_target=""
 jobs=""
 rules_runner=""
@@ -537,6 +543,9 @@ if [ -f "$build_manifest" ]; then
   manifest_source_ref="$(awk -F': ' '$1 == "Source ref" { print $2; exit }' "$build_manifest")"
   apt_source_spec="$(awk -F': ' '$1 == "Apt source spec" { print $2; exit }' "$build_manifest")"
   manifest_patch_dirs="$(awk -F': ' '$1 == "Patch directories" || $1 == "Patch directory" { print $2; exit }' "$build_manifest")"
+  manifest_patch_dir_records="$(awk -F': ' '$1 == "Patch directories" || $1 == "Patch directory" { count++ } END { print count + 0 }' "$build_manifest")"
+  manifest_local_patches="$(awk -F': ' '$1 == "Local patches" { print $2; exit }' "$build_manifest")"
+  manifest_local_patch_records="$(awk -F': ' '$1 == "Local patches" { count++ } END { print count + 0 }' "$build_manifest")"
   build_target="$(awk -F': ' '$1 == "Build target" { print $2; exit }' "$build_manifest")"
   jobs="$(awk -F': ' '$1 == "Jobs" { print $2; exit }' "$build_manifest")"
   rules_runner="$(awk -F': ' '$1 == "Rules runner" { print $2; exit }' "$build_manifest")"
@@ -584,7 +593,7 @@ fi
 
 if [ "$SOURCE_ASSET_COUNT" -eq 0 ] && [ "$ALLOW_MISSING_SOURCE" != "true" ]; then
   echo "Refusing to prepare publishable kernel assets without corresponding source." >&2
-  echo "Pass --source-asset PATH for source package artifacts or a patched source archive." >&2
+  echo "Pass --source-asset PATH for source package artifacts or a corresponding source archive." >&2
   echo "For a local draft only, pass --allow-missing-source." >&2
   exit 1
 fi
@@ -639,23 +648,51 @@ if [ "$SOURCE_ASSET_COUNT" -gt 0 ]; then
     fi
   done
 
-  if [ -z "$manifest_patch_dirs" ]; then
-    echo "Build manifest does not record its patch directory or directories." >&2
+  if [ "$manifest_patch_dir_records" -gt 1 ] || [ "$manifest_local_patch_records" -gt 1 ]; then
+    echo "Build manifest contains duplicate local-patch provenance records." >&2
     exit 1
   fi
 
-  manifest_patch_basenames=()
-  for manifest_patch_dir in $manifest_patch_dirs; do
-    manifest_patch_basenames+=("$(basename "$manifest_patch_dir")")
-  done
-  release_patch_basenames=()
-  for patch_dir in "${PATCH_DIRS[@]}"; do
-    release_patch_basenames+=("$(basename "$patch_dir")")
-  done
-  if [ "${manifest_patch_basenames[*]}" != "${release_patch_basenames[*]}" ]; then
-    echo "Release patch directories do not match the ordered build manifest patch directories." >&2
-    echo "Build: ${manifest_patch_basenames[*]}" >&2
-    echo "Release: ${release_patch_basenames[*]}" >&2
+  if [ "$manifest_patch_dir_records" -gt 0 ] && [ "$manifest_local_patch_records" -gt 0 ]; then
+    echo "Build manifest contradicts itself by recording both patch directories and Local patches." >&2
+    exit 1
+  fi
+
+  if [ "$manifest_patch_dir_records" -gt 0 ]; then
+    if [ -z "$manifest_patch_dirs" ]; then
+      echo "Build manifest records an empty patch directory list." >&2
+      exit 1
+    fi
+    if [ "$PATCH_DIR_COUNT" -eq 0 ]; then
+      echo "Build manifest records patch directories, but no --patch-dir was supplied for the release." >&2
+      exit 1
+    fi
+
+    manifest_patch_basenames=()
+    for manifest_patch_dir in $manifest_patch_dirs; do
+      manifest_patch_basenames+=("$(basename "$manifest_patch_dir")")
+    done
+    release_patch_basenames=()
+    for patch_dir in "${PATCH_DIRS[@]}"; do
+      release_patch_basenames+=("$(basename "$patch_dir")")
+    done
+    if [ "${manifest_patch_basenames[*]}" != "${release_patch_basenames[*]}" ]; then
+      echo "Release patch directories do not match the ordered build manifest patch directories." >&2
+      echo "Build: ${manifest_patch_basenames[*]}" >&2
+      echo "Release: ${release_patch_basenames[*]}" >&2
+      exit 1
+    fi
+  elif [ "$manifest_local_patch_records" -gt 0 ]; then
+    if [ "$manifest_local_patches" != "none" ]; then
+      echo "Build manifest has an unsupported Local patches value: ${manifest_local_patches:-empty}." >&2
+      exit 1
+    fi
+    if [ "$PATCH_DIR_COUNT" -ne 0 ]; then
+      echo "Build manifest records no local patches, but --patch-dir was supplied for the release." >&2
+      exit 1
+    fi
+  else
+    echo "Build manifest does not record patch directories or exact 'Local patches: none' provenance." >&2
     exit 1
   fi
 fi
@@ -852,14 +889,18 @@ fi
   echo
   echo "## Patches"
   echo
-  for patch_dir in "${PATCH_DIRS[@]}"; do
-    find "$patch_dir" -maxdepth 1 -type f -name '*.patch' | sort | while IFS= read -r patch; do
-      base="$(basename "$patch")"
-      sha="$(shasum -a 256 "$patch" | awk '{print $1}')"
-      echo "- $patch_dir/$base"
-      echo "  - SHA256: $sha"
+  if [ "$PATCH_DIR_COUNT" -eq 0 ]; then
+    echo "Local patches: none"
+  else
+    for patch_dir in "${PATCH_DIRS[@]}"; do
+      find "$patch_dir" -maxdepth 1 -type f -name '*.patch' | sort | while IFS= read -r patch; do
+        base="$(basename "$patch")"
+        sha="$(shasum -a 256 "$patch" | awk '{print $1}')"
+        echo "- $patch_dir/$base"
+        echo "  - SHA256: $sha"
+      done
     done
-  done
+  fi
 } > "$OUT_DIR/sp11-kernel-release-manifest.txt"
 
 for deb in "${debs[@]}"; do
@@ -929,7 +970,7 @@ cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
 ## Provenance
 
 See \`sp11-kernel-release-manifest.txt\` for package hashes, source metadata,
-support repository commit, and patch checksums.
+support repository commit, and local-patch provenance.
 
 Recorded source:
 
@@ -944,9 +985,13 @@ fi
 
 echo "- Docker image: \`$DOCKER_IMAGE\`" >> "$OUT_DIR/RELEASE-NOTES.md"
 
-for patch_dir in "${PATCH_DIRS[@]}"; do
-  echo "- Patch directory: \`$patch_dir\`" >> "$OUT_DIR/RELEASE-NOTES.md"
-done
+if [ "$PATCH_DIR_COUNT" -eq 0 ]; then
+  echo "- Local patches: none" >> "$OUT_DIR/RELEASE-NOTES.md"
+else
+  for patch_dir in "${PATCH_DIRS[@]}"; do
+    echo "- Patch directory: \`$patch_dir\`" >> "$OUT_DIR/RELEASE-NOTES.md"
+  done
+fi
 
 if [ "$TOUCHSCREEN_ENABLED" = "true" ]; then
   cat >> "$OUT_DIR/RELEASE-NOTES.md" <<EOF
