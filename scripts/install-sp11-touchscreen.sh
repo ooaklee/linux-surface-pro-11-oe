@@ -198,6 +198,12 @@ if grep -qx 'CONFIG_MODULE_SIG_FORCE=y' "$config"; then
   die "CONFIG_MODULE_SIG_FORCE rejects the unsigned touchscreen modules"
 fi
 
+builtin_modules="$(root_path "/lib/modules/$RELEASE/modules.builtin")"
+if [ -r "$builtin_modules" ] &&
+  grep -Eq '/(gpi|spi-geni-qcom)\.ko[[:space:]]*$' "$builtin_modules"; then
+  die "a required touchscreen module is built into $RELEASE; the updates/ override needs a loadable module"
+fi
+
 case "$(uname -m)" in
   aarch64|arm64) ;;
   *) die "touchscreen installation must run on an ARM64 system" ;;
@@ -362,6 +368,15 @@ for relative in \
   }
 done
 
+# Drop any stock in-tree gpi/spi copies that auto_add_modules (MODULES=most)
+# pulled into the image, so the updates/ overrides are the only copies present.
+# The override lives under updates/, the stock copy under kernel/. See ADR-0053.
+if [ -n "${DESTDIR:-}" ]; then
+  for mod in gpi spi-geni-qcom; do
+    find "$DESTDIR" -type f -name "${mod}.ko*" -path "*/kernel/*" -delete 2>/dev/null || true
+  done
+fi
+
 manual_add_modules gpi spi_geni_qcom mshw0485_touch
 EOF
 
@@ -369,6 +384,27 @@ cat > "$work_dir/sp11-touchscreen.dracut" <<'EOF'
 # Surface Pro 11 QSPI touchscreen transport and client. depmod selects the
 # exact updates/ overrides installed for the initramfs kernel release.
 force_drivers+=" gpi spi_geni_qcom mshw0485_touch "
+EOF
+
+cat > "$work_dir/sp11-touchscreen.dracut-module" <<'EOF'
+#!/bin/bash
+# Surface Pro 11 QSPI touchscreen: remove any stock in-tree gpi/spi copies
+# that dracut's non-hostonly driver sweep embedded, leaving only the updates/
+# overrides. See ADR-0053.
+check() {
+  return 0
+}
+
+depends() {
+  return 0
+}
+
+install() {
+  local mod
+  for mod in gpi spi-geni-qcom; do
+    find "${initdir:?}" -type f -name "${mod}.ko*" -path "*/kernel/*" -delete 2>/dev/null || true
+  done
+}
 EOF
 
 {
@@ -379,6 +415,37 @@ EOF
     printf '%s_sha256=%s\n' "${module_names[index]}" "$checksum"
   done
 } > "$work_dir/release-marker"
+
+# Ubuntu initramfs-tools MODULES=most and dracut non-hostonly sweeps embed the
+# whole in-tree driver tree, so the stock gpi/spi modules end up in the
+# initramfs beside the updates/ overrides. The stock gpi driver (no QSPI TRE
+# support) can then bind the DMA controller at early boot and break the touch
+# path. Neutralize the in-tree copies so depmod and the initramfs see only the
+# exact updates/ overrides. See ADR-0053.
+neutralize_stock_modules() {
+  local base stock variant real_stock
+
+  for base in \
+    "kernel/drivers/dma/qcom/gpi" \
+    "kernel/drivers/spi/spi-geni-qcom"; do
+    for variant in "" ".zst" ".xz" ".gz"; do
+      stock="$MODULE_TREE/$base.ko$variant"
+      [ -e "$stock" ] || [ -L "$stock" ] || continue
+
+      # dpkg records usr-merged paths (/usr/lib/modules/...), so resolve the
+      # /lib symlink before querying ownership or diverting.
+      real_stock="$(realpath -m "$stock" 2>/dev/null || printf '%s' "$stock")"
+      if command -v dpkg-divert >/dev/null 2>&1 &&
+        dpkg -S "$real_stock" >/dev/null 2>&1; then
+        # Rename-divert so a later `apt --reinstall linux-modules-$RELEASE`
+        # cannot silently restore the stock copy. Re-running is a no-op.
+        dpkg-divert --rename --add "$real_stock" || true
+      fi
+      rm -f "$real_stock"
+      echo "Neutralized stock in-tree module: ${stock#$MODULE_TREE/}"
+    done
+  done
+}
 
 echo "Installing Surface Pro 11 touchscreen support for exact ABI: $RELEASE"
 for index in "${!module_files[@]}"; do
@@ -392,6 +459,7 @@ install -d -m 0755 \
   "$(root_path /etc/modules-load.d)" \
   "$(root_path /etc/initramfs-tools/hooks)" \
   "$(root_path /etc/dracut.conf.d)" \
+  "$(root_path /usr/lib/dracut/modules.d/90sp11-touchscreen)" \
   "$(root_path /etc/sp11-touchscreen/releases)"
 install -m 0644 "$work_dir/sp11-touchscreen.modprobe" \
   "$(root_path /etc/modprobe.d/sp11-touchscreen.conf)"
@@ -401,8 +469,12 @@ install -m 0755 "$work_dir/sp11-touchscreen.initramfs-hook" \
   "$(root_path /etc/initramfs-tools/hooks/sp11-touchscreen)"
 install -m 0644 "$work_dir/sp11-touchscreen.dracut" \
   "$(root_path /etc/dracut.conf.d/91-sp11-touchscreen.conf)"
+install -m 0755 "$work_dir/sp11-touchscreen.dracut-module" \
+  "$(root_path /usr/lib/dracut/modules.d/90sp11-touchscreen/module-setup.sh)"
 install -m 0644 "$work_dir/release-marker" \
   "$(root_path "/etc/sp11-touchscreen/releases/$RELEASE")"
+
+neutralize_stock_modules
 
 depmod -b "$TARGET_ROOT" -a "$RELEASE"
 
@@ -485,7 +557,7 @@ for index in "${!module_files[@]}"; do
       ! -path "*/${module_relpaths[index]}" \
       ! -path "*/${module_relpaths[index]}.*" -print -quit
   )"
-  [ -z "$unexpected" ] || die "initramfs also contains a stock/duplicate ${module_files[index]}: $unexpected"
+  [ -z "$unexpected" ] || die "initramfs still contains a stock/duplicate ${module_files[index]} at $unexpected; the neutralize guard did not remove it (see ADR-0053)"
   echo "Verified initramfs srcversion: ${module_names[index]} -> $embedded_srcversion"
 done
 
