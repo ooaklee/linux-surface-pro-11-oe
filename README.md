@@ -292,6 +292,23 @@ input device. `Invalid proto 9` indicates a stale stock SPI controller in the
 boot path; `CH START completion timeout` points to a stale or mismatched GPI
 DMA module. The diagnostic reports the corresponding repair command.
 
+The guarded installer now **repairs** the stale-initramfs case instead of only
+detecting it: it diverts (or removes) the stock in-tree
+`kernel/drivers/{dma/qcom/gpi,spi/spi-geni-qcom}.ko*` before `depmod`, adds a
+persistent initramfs-tools/dracut guard, and verifies neither module is
+built-in. See
+[ADR-0053](docs/adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md). An
+r1 install that already stopped with `initramfs also contains a
+stock/duplicate` can be recovered manually:
+
+```bash
+REL=7.2-rc5-jg-0sp11v3-qcom-x1e
+sudo rm -f /lib/modules/$REL/kernel/drivers/dma/qcom/gpi.ko*
+sudo rm -f /lib/modules/$REL/kernel/drivers/spi/spi-geni-qcom.ko*
+sudo depmod -a $REL
+sudo update-initramfs -u -k $REL
+```
+
 The captured Windows controller initialization is intentionally not the
 default. If the diagnostic proves that the correct modules are loaded and the
 Linux-integrated path still fails on a cold boot, reinstall explicitly with
@@ -470,6 +487,8 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Build](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
 - [ADR0050: Touchscreen Clean-Install and Release Flow](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [ADR0051: Remove Broken or Incorrect Releases and Tags](docs/adr/adr-0051-release-and-tag-cleanup.md)
+- [ADR0052: Build from the SP11 Integration Kernel Fork](docs/adr/adr-0052-sp11-integration-fork-build.md)
+- [ADR0053: Repair Stale Stock-Module Initramfs During Touchscreen Install](docs/adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md)
 
 ## Windows Firmware
 

@@ -131,15 +131,37 @@ cd "$SP11DATA/support"
 
 `--install-only`:
 
-- refuses to install unless another qcom-x1e kernel ABI is present as a GRUB
+- refuses to install unless another `qcom-x1e` kernel ABI is present as a GRUB
   fallback (pass `--allow-no-fallback` only if you accept live-USB recovery as
-  your fallback),
+  your fallback). A genuinely fresh install that has only generic Ubuntu
+  kernels (for example `7.0.0-32`/`7.0.0-22`, not a `-qcom-x1e` flavour) has
+  no qualifying fallback and must pass `--allow-no-fallback`,
 - installs the kernel `.deb` packages with `apt`, then
 - runs `install-sp11-support.sh --installed-system`, which re-selects the
   rfkill-capable Denali OLED DTB and re-injects it into GRUB and initramfs, and
 - for `sp11v3`, refuses a missing or mismatched three-module touchscreen bundle
   before package installation, then installs and verifies it in the exact
   target initramfs.
+
+For `sp11v3`, the touchscreen installer also **repairs** a stale initramfs that
+still embeds the stock in-tree `gpi`/`spi-geni-qcom` modules: it diverts (or
+removes) the stock copies, runs `depmod`, rebuilds the initramfs, and verifies
+that only the `updates/` overrides remain. See
+[ADR-0053](../adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md).
+
+> **The r1 release tags bundle the pre-repair installer**, which detects the
+> stale stock modules and then refuses with
+> `initramfs also contains a stock/duplicate`. If you hit that, either use a
+> checkout of `main` (which includes the repair) or repair manually before
+> re-running the touchscreen step:
+>
+> ```bash
+> REL=7.2-rc5-jg-0sp11v3-qcom-x1e
+> sudo rm -f /lib/modules/$REL/kernel/drivers/dma/qcom/gpi.ko*
+> sudo rm -f /lib/modules/$REL/kernel/drivers/spi/spi-geni-qcom.ko*
+> sudo depmod -a $REL
+> sudo update-initramfs -u -k $REL
+> ```
 
 It elevates with `sudo` as needed. If `--work-dir` points to a directory under
 your home (e.g. `~/Downloads`), you may see a harmless `_apt` sandbox warning:

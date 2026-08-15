@@ -183,7 +183,9 @@ transitions described below.
 Stable or hardware-qualified promotion must cover:
 
 1. a clean v3 install while an older kernel is running;
-2. a deliberately stale stock-module initramfs, followed by guarded repair;
+2. a deliberately stale stock-module initramfs, followed by guarded repair
+   (implemented 2026-08-15 after two independent reproductions; see
+   [ADR-0053](adr-0053-sp11-touchscreen-stale-initramfs-repair.md));
 3. an already-working v3 reinstall (idempotency);
 4. missing and mismatched module bundles (refusal before package mutation);
 5. both initramfs-tools and dracut paths;
