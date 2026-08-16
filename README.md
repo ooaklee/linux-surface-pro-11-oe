@@ -52,7 +52,7 @@ list for the upstream Arch status.
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
 | Audio — speakers | ⚠️ Partially | Sound card instantiates with generated topology from the CRD template. Both stereo speaker endpoints produce audio through a PipeWire manual sink with reordered `audio.position` labels. The 4-channel PCM is a transport layout, not four independently routable speakers. Music playback showed no audible regression with the 2.4 MHz DMIC kernel, but the manual sink is still required and speakers can sound distorted. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
 | Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
-| Touchscreen | ✅ Working on installed v3 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, on the 7.2-rc5 v3 build (`7.2-rc5-jg-0sp11v3`) with an exact-ABI set of the geocausa `gpi`, `spi-geni-qcom`, and `mshw0485_touch` modules. The guarded installer forces those overrides into the target initramfs and verifies them before reboot. Multi-touch, pinch/zoom, and three-finger gestures work. The live USB still boots the concept ISO's casper kernel and does not gain touch from a payload-only v3 bundle. See [ADR-0050](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
+| Touchscreen | ✅ Working on installed v4 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, now carried **in-tree** on the 7.2-rc5 v4 build (`7.2-rc5-jg-0sp11v4`) as the phase55 `mshw0485_touch`, `spi-geni-qcom`, and `gpi` drivers — no out-of-tree module install. Multi-touch, pinch/zoom, and three-finger gestures work, and sound is verified on the same build. Supersedes the v3 geocausa OOT-module approach. See [ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
 | Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
@@ -116,6 +116,20 @@ mkdir -p build
   --copy-to-payload \
   --reset-source \
   --jobs 8
+
+# OR: SP11 7.2-rc5 v4 — in-tree phase55 touchscreen (no OOT modules)
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
+  --git-branch sp11/qcom-x1e-7.2-rc5-touchscreen-intree \
+  --image ubuntu:26.04 \
+  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v4" \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v4 \
+  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v4 \
+  --copy-to-payload \
+  --reset-source \
+  --jobs 8
 ```
 
 The release examples use the immutable
@@ -141,6 +155,14 @@ The validated controller profile leaves the experimental
 See [ADR-0050](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 for the clean-install retrospective and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
 for the kernel decision.
+
+The v4 build moves the touchscreen support fully in-tree: the fork branch
+`sp11/qcom-x1e-7.2-rc5-touchscreen-intree` carries the phase55 `mshw0485_touch`
+driver, the QSPI-capable `spi-geni-qcom`/`gpi` controllers, and the Denali
+touchscreen/QSPI device-tree nodes. Only the SP11 v4 naming patch
+(`patches/sp11-qcom-x1e-7.2-rc5-v4`) is applied on top, so no
+`build-sp11-touchscreen-modules.sh` step is required. See
+[ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md).
 
 `--patch-dirs` accepts a space-separated list; patches from each directory are
 applied in order. The `binary-indep` target is required because the ABI-specific
@@ -365,12 +387,14 @@ sudo reboot
 
 Alternatively, download the
 [audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
-The corrected v2 UCM should be paired with the experimental
+The corrected v2 UCM should be paired with the newest kernel bundle
+[7.2-rc5-jg-0sp11v4 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v4)
+which carries the 2.4 MHz DMIC clock and the in-tree phase55 touchscreen. The
+experimental
 [7.2-rc5-jg-0sp11v3 r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
-which carries the 2.4 MHz DMIC clock required to eliminate the static observed
-with the earlier 4.8 MHz kernel. The existing
+and the existing
 [7.1.3-jg-1 v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2)
-remains available as a rollback option.
+remain available as rollback options.
 
 See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and
 [ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md) for details.
@@ -489,6 +513,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0051: Remove Broken or Incorrect Releases and Tags](docs/adr/adr-0051-release-and-tag-cleanup.md)
 - [ADR0052: Build from the SP11 Integration Kernel Fork](docs/adr/adr-0052-sp11-integration-fork-build.md)
 - [ADR0053: Repair Stale Stock-Module Initramfs During Touchscreen Install](docs/adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md)
+- [ADR0054: JG 7.2-rc5-jg-0sp11v4 In-Tree Touchscreen Build](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md)
 
 ## Windows Firmware
 
