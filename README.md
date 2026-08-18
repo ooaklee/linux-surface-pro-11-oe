@@ -50,9 +50,9 @@ list for the upstream Arch status.
 | USB-C boot | ✅ Working with `--grub-mode direct` | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified live-USB path. |
 | Wi-Fi | ✅ Working | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Uses a [kernel hack to disable rfkill](https://github.com/dwhinham/kernel-surface-pro-11/commit/fcc769be9eaa9823d55e98a28402104621fa6784). Continue validating normal reboots, suspend/resume, and package upgrades. |
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
-| Audio — speakers | ⚠️ Partially | Sound card instantiates with generated topology from the CRD template. Both stereo speaker endpoints produce audio through a PipeWire manual sink with reordered `audio.position` labels. The 4-channel PCM is a transport layout, not four independently routable speakers. Music playback showed no audible regression with the 2.4 MHz DMIC kernel, but the manual sink is still required and speakers can sound distorted. See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and [ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md). |
+| Audio — speakers | ✅ Working on installed v6 kernel | Both physical speakers receive the stereo mix through a PipeWire manual sink with reordered `audio.position` labels — the 4-channel PCM is a transport layout mapping physical slots 0 and 2, not a DAPM bypass ([ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md)). The v6 integration kernel carries the wsa884x 2S/4-ohm PA-recovery profile, which fixes the left-speaker audio wedge at sustained full volume ([ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)). `sp11-wsa-routing.service` applies the WSA path with PCM1 closed and exercises a fresh graph at boot, replacing the superseded alsactl boot-race fix ([ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md)). PA Volume is capped at raw 6 (0 dB) and the digital volumes at 81 (−3 dB) by the machine driver; the volume-slider taper is stock cubic, with a log-dB taper accepted but not yet implemented ([ADR-0055](docs/adr/adr-0055-audio-volume-taper-log-db.md)). See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md). |
 | Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
-| Touchscreen | ✅ Working on installed v4 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, now carried **in-tree** on the 7.2-rc5 v4 build (`7.2-rc5-jg-0sp11v4`) as the phase55 `mshw0485_touch`, `spi-geni-qcom`, and `gpi` drivers — no out-of-tree module install. Multi-touch, pinch/zoom, and three-finger gestures work, and sound is verified on the same build. Supersedes the v3 geocausa OOT-module approach. See [ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
+| Touchscreen | ✅ Working on installed v6 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, now carried **in-tree** on the 7.2-rc5 v6 build (`7.2-rc5-jg-0sp11v6`) as the phase55 `mshw0485_touch`, `spi-geni-qcom`, and `gpi` drivers — no out-of-tree module install. Multi-touch, pinch/zoom, and three-finger gestures work, and sound is verified on the same build. Supersedes the v3 geocausa OOT-module approach. See [ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
 | Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
@@ -283,10 +283,13 @@ cd /path/to/linux-surface-pro-11-oe
 sudo reboot
 ```
 
-The current v3 bundle contains matching image, modules, flavour-header, and
-common-header packages for `7.2-rc5-jg-0sp11v3`, plus the three touchscreen
-modules. The older `7.1.3-jg-1sp11v2` package set remains a kernel-only rollback
-option. After reboot, verify the running kernel and authoritative DMIC clock:
+The current v6 bundle contains matching image, modules, flavour-header, and
+common-header packages for `7.2-rc5-jg-0sp11v6` with the in-tree phase55
+touchscreen and the wsa884x PA recovery — no separate module files are needed
+([ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)).
+The v3 bundle added the three out-of-tree touchscreen modules, and the older
+`7.1.3-jg-1sp11v2` package set remains a kernel-only rollback option. After
+reboot, verify the running kernel and authoritative DMIC clock:
 
 ```bash
 uname -r
@@ -294,7 +297,7 @@ od -An -tu4 -N4 --endian=big \
   /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
 ```
 
-Expected values are `7.2-rc5-jg-0sp11v3-qcom-x1e` (or
+Expected values are `7.2-rc5-jg-0sp11v6-qcom-x1e` (or `7.2-rc5-jg-0sp11v3-qcom-x1e`, or
 `7.1.3-jg-1sp11v2-qcom-x1e` after selecting the rollback kernel) and `2400000`.
 
 ## Post-Install Bring-Up
@@ -375,29 +378,51 @@ cd "$SP11DATA/support"
 sudo ./scripts/troubleshoot-sp11-audio.sh
 ```
 
-If the topology file is missing, build and install it:
+Install the audio support (UCM profiles, probe-backed routing service, and
+GRUB DTB injection), then add the user-level PipeWire speaker sink:
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/install-sp11-support.sh
+./scripts/sp11-pipewire-speaker-sink.sh --install
+sudo reboot
+```
+
+`sp11-wsa-routing.service` applies the WSA speaker route while PCM1 is closed
+and exercises a fresh AudioReach graph before the display manager starts. It
+runs after any ALSA-state restore; the distribution ALSA services must not be
+masked (the earlier alsactl boot-race diagnosis was superseded — see
+[ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md)).
+
+If the topology file is missing, build and install it before running the
+support installer:
 
 ```bash
 cd "$SP11DATA/support"
 ./scripts/sp11-audio-topology.sh
 sudo ./scripts/sp11-audio-topology.sh --install
-sudo ./scripts/sp11-fix-audio-boot-race.sh install
-sudo reboot
 ```
 
 Alternatively, download the
 [audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
-The corrected v2 UCM should be paired with the newest kernel bundle
-[7.2-rc5-jg-0sp11v4 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v4)
-which carries the 2.4 MHz DMIC clock and the in-tree phase55 touchscreen. The
-experimental
+Pair the corrected UCM with the newest kernel bundle
+[v6 (7.2-rc5-jg-0sp11v6)](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v6),
+built from the
+[`sp11/integration-7.2-rc5`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2-rc5)
+fork: it carries the wsa884x 2S/4-ohm PA-recovery profile (no left-speaker
+audio wedge at sustained full volume), the 2.4 MHz DMIC clock, and the
+in-tree phase55 touchscreen
+([ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)).
+The experimental
 [7.2-rc5-jg-0sp11v3 r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
 and the existing
 [7.1.3-jg-1 v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2)
 remain available as rollback options.
 
-See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md) and
-[ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md) for details.
+See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md),
+[ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md),
+[ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md), and
+[ADR-0055](docs/adr/adr-0055-audio-volume-taper-log-db.md) for details.
 
 ## KDE Plasma (Kubuntu-like Experience)
 
