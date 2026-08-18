@@ -69,11 +69,11 @@ Surface Pro 11 device tree at boot. This avoids remastering the Ubuntu ISO.
 cd /path/to/linux-surface-pro-11-oe
 mkdir -p build
 
-# Default: current SP11 integration (7.2-rc6-jg-0sp11v6, in-tree delta, ubuntu:26.04)
+# Default: current SP11 integration (7.2.0-jg-0sp11v7, in-tree delta, ubuntu:26.04)
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
-  --git-branch sp11/integration-7.2-rc \
+  --git-branch sp11/integration-7.2.x \
   --image ubuntu:26.04 \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
