@@ -13,12 +13,12 @@ on:
       git-branch:
         description: "Kernel git branch or tag"
         required: true
-        default: "sp11/integration-7.2-rc5"
+        default: "sp11/integration-7.2-rc"
         type: string
       patch-dirs:
-        description: "Space-separated patch directories (relative to repo root)"
-        required: true
-        default: "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3"
+        description: "Space-separated patch directories (relative to repo root); empty for in-tree integration builds"
+        required: false
+        default: ""
         type: string
       docker-image:
         description: "Docker image for the build container"
@@ -100,11 +100,14 @@ jobs:
         id: release-assets
         if: ${{ inputs.release }}
         run: |
+          patch_args=()
+          for d in ${{ inputs.patch-dirs }}; do
+            patch_args+=(--patch-dir "$d")
+          done
           ./scripts/prepare-sp11-kernel-release-assets.sh \
             --kernel-debs-dir payload/kernel-debs \
             --artifacts-dir build/docker-sp11-kernel/artifacts \
-            --patch-dir patches/jglathe-qcom-x1e-7.2-rc5 \
-            --patch-dir patches/sp11-qcom-x1e-7.2-rc5-v3 \
+            "${patch_args[@]}" \
             --source-url "${{ inputs.git-url }}" \
             --source-branch "${{ inputs.git-branch }}" \
             --docker-image "${{ inputs.docker-image }}" \
