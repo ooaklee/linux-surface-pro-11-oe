@@ -47,8 +47,9 @@ Options:
   --source-version VER   apt source version. Usually comes from --metadata.
   --git-url URL          Kernel git URL for git mode.
   --git-branch BRANCH    Kernel git branch or tag for git mode.
-  --image IMAGE          Docker image. Defaults to ubuntu:26.04 for apt mode
-                         and ubuntu:25.10 for git mode.
+  --image IMAGE          Docker image. Defaults to ubuntu:26.04 for apt mode and for
+                         the sp11/ and jg/ubuntu-qcom-x1e- git branches;
+                         ubuntu:25.10 is the fallback for other git branches.
   --platform PLATFORM    Docker platform, default $PLATFORM.
   --work-dir DIR         Host control/artifact directory, default $WORK_DIR.
   --container-work-dir DIR
@@ -297,6 +298,7 @@ if [ -z "$IMAGE" ]; then
   case "$SOURCE_MODE" in
     git)
       case "$GIT_BRANCH" in
+        sp11/*) IMAGE="ubuntu:26.04" ;;
         jg/ubuntu-qcom-x1e-*) IMAGE="ubuntu:26.04" ;;
         *) IMAGE="ubuntu:25.10" ;;
       esac
