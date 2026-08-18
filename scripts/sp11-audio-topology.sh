@@ -115,7 +115,13 @@ SectionUseCase."HiFi" {
 Include.card-init.File "/lib/card-init.conf"
 Include.ctl-remap.File "/lib/ctl-remap.conf"
 Include.wsa-init.File "/codecs/wsa884x/two-speakers/init.conf"
-Include.wsam-init.File "/codecs/qcom-lpass/wsa-macro/init.conf"
+
+# The shared WSA macro init uses unprefixed control names and value 84.
+# This card exposes prefixed names and x1e80100.c caps them at 81 (-3 dB).
+BootSequence [
+	cset "name='WSA WSA_RX0 Digital Volume' 81"
+	cset "name='WSA WSA_RX1 Digital Volume' 81"
+]
 UCMEOF
 
 	cat > "${ucm_dir}/Surface11-HiFi.conf" <<'HIFIEOF'
@@ -123,10 +129,35 @@ SectionVerb {
 	EnableSequence [
 		cset "name='WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' 1"
 		cset "name='MultiMedia4 Mixer VA_CODEC_DMA_TX_0' 1"
-	]
 
-	Include.wsae.File "/codecs/wsa884x/two-speakers/DefaultEnableSeq.conf"
-	Include.wsm1e.File "/codecs/qcom-lpass/wsa-macro/Wsa1SpeakerEnableSeq.conf"
+		# Complete the speaker transport before any client capability-probes
+		# PCM1.  SectionDevice repeats this when Speaker is selected.
+		cset "name='WSA WSA RX0 MUX' AIF1_PB"
+		cset "name='WSA WSA RX1 MUX' AIF1_PB"
+		cset "name='WSA WSA_RX0 INP0' RX0"
+		cset "name='WSA WSA_RX1 INP0' RX1"
+		cset "name='WSA WSA_COMP1 Switch' 1"
+		cset "name='WSA WSA_COMP2 Switch' 1"
+		cset "name='WSA WSA_RX0 Digital Mute' 0"
+		cset "name='WSA WSA_RX1 Digital Mute' 0"
+		cset "name='WSA WSA_RX0 Digital Volume' 81"
+		cset "name='WSA WSA_RX1 Digital Volume' 81"
+
+		cset "name='SpkrLeft COMP Switch' 1"
+		cset "name='SpkrLeft BOOST Switch' 1"
+		cset "name='SpkrLeft DAC Switch' 1"
+		cset "name='SpkrLeft PBR Switch' 1"
+		cset "name='SpkrLeft VISENSE Switch' 0"
+		cset "name='SpkrLeft WSA MODE' 0"
+		cset "name='SpkrLeft PA Volume' 6"
+		cset "name='SpkrRight COMP Switch' 1"
+		cset "name='SpkrRight BOOST Switch' 1"
+		cset "name='SpkrRight DAC Switch' 1"
+		cset "name='SpkrRight PBR Switch' 1"
+		cset "name='SpkrRight VISENSE Switch' 0"
+		cset "name='SpkrRight WSA MODE' 0"
+		cset "name='SpkrRight PA Volume' 6"
+	]
 
 	Value {
 		TQ "HiFi"
@@ -136,9 +167,54 @@ SectionVerb {
 SectionDevice."Speaker" {
 	Comment "Speaker playback"
 
-	Include.wsmspk1e.File "/codecs/qcom-lpass/wsa-macro/Wsa1SpeakerEnableSeq.conf"
-	Include.wsmspk1d.File "/codecs/qcom-lpass/wsa-macro/Wsa1SpeakerDisableSeq.conf"
-	Include.wsaspk.File "/codecs/wsa884x/two-speakers/SpeakerSeq.conf"
+	# The shared two-speaker sequence writes PA value 12, but the machine
+	# driver caps both Surface controls at 6. Keep a complete local sequence.
+	EnableSequence [
+		cset "name='WSA WSA RX0 MUX' AIF1_PB"
+		cset "name='WSA WSA RX1 MUX' AIF1_PB"
+		cset "name='WSA WSA_RX0 INP0' RX0"
+		cset "name='WSA WSA_RX1 INP0' RX1"
+		cset "name='WSA WSA_COMP1 Switch' 1"
+		cset "name='WSA WSA_COMP2 Switch' 1"
+		cset "name='WSA WSA_RX0 Digital Mute' 0"
+		cset "name='WSA WSA_RX1 Digital Mute' 0"
+
+		cset "name='SpkrLeft COMP Switch' 1"
+		cset "name='SpkrLeft BOOST Switch' 1"
+		cset "name='SpkrLeft DAC Switch' 1"
+		cset "name='SpkrLeft PBR Switch' 1"
+		cset "name='SpkrLeft VISENSE Switch' 0"
+		cset "name='SpkrLeft WSA MODE' 0"
+		cset "name='SpkrLeft PA Volume' 6"
+
+		cset "name='SpkrRight COMP Switch' 1"
+		cset "name='SpkrRight BOOST Switch' 1"
+		cset "name='SpkrRight DAC Switch' 1"
+		cset "name='SpkrRight PBR Switch' 1"
+		cset "name='SpkrRight VISENSE Switch' 0"
+		cset "name='SpkrRight WSA MODE' 0"
+		cset "name='SpkrRight PA Volume' 6"
+	]
+
+	DisableSequence [
+		cset "name='WSA WSA_COMP1 Switch' 0"
+		cset "name='WSA WSA_COMP2 Switch' 0"
+		cset "name='WSA WSA_RX0 INP0' ZERO"
+		cset "name='WSA WSA_RX1 INP0' ZERO"
+		cset "name='WSA WSA RX0 MUX' ZERO"
+		cset "name='WSA WSA RX1 MUX' ZERO"
+
+		cset "name='SpkrLeft COMP Switch' 0"
+		cset "name='SpkrLeft BOOST Switch' 0"
+		cset "name='SpkrLeft DAC Switch' 0"
+		cset "name='SpkrLeft PBR Switch' 0"
+		cset "name='SpkrLeft VISENSE Switch' 0"
+		cset "name='SpkrRight COMP Switch' 0"
+		cset "name='SpkrRight BOOST Switch' 0"
+		cset "name='SpkrRight DAC Switch' 0"
+		cset "name='SpkrRight PBR Switch' 0"
+		cset "name='SpkrRight VISENSE Switch' 0"
+	]
 
 	Value {
 		PlaybackChannels 4

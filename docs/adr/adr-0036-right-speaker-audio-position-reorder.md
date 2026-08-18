@@ -2,16 +2,20 @@
 id: adr-0036-right-speaker-audio-position-reorder
 title: "ADR0036: Right Speaker Audio via PipeWire audio.position Reorder"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for enabling the right speaker on the Surface Pro 11 by reordering PipeWire's audio.position labels to bypass the kernel DAPM gate.
+description: Architecture Decision Record (ADR) for mapping PipeWire channels onto the Surface Pro 11 four-slot speaker PCM.
 ---
 
 # ADR0036: Right Speaker Audio via PipeWire audio.position Reorder
 
 ## Status
 
-Accepted — Both speakers working (2026-06-19). The right speaker produces
-audio via a PipeWire `audio.position` reorder that bypasses the kernel DAPM
-gate documented in [ADR-0034](adr-0034-wsa2-regcache-right-speaker.md).
+Accepted with corrected rationale (2026-08-16). The right speaker is physical
+PCM slot 2, so PipeWire's `audio.position` reorder sends the right mix there.
+It does not bypass DAPM. AudioReach's virtual-mixer getter/setter consumes only
+control value zero; the displayed second `off` value is not an independent
+right-channel gate. The historical interpretation below is retained as test
+context. The current machine driver also caps both PA controls at raw 6
+(0 dB), so the former raw-31 recommendation is invalid.
 
 ## Problem
 

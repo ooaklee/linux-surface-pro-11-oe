@@ -1,18 +1,24 @@
 ---
 id: adr-0035-audio-boot-race-alsactl
-title: "ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load"
+title: "ADR0035: Audio Boot Race — superseded diagnosis"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for the Surface Pro 11 audio boot race where alsactl restores WSA mixer state before the DSP finishes loading the audio graph, causing an APM CMD timeout, SoundWire bus clash, and no audio (only pops).
+description: Superseded Surface Pro 11 audio boot-race diagnosis, retained for historical test context.
 ---
 
 # ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load
 
 ## Status
 
-Accepted — Fix verified working (2026-06-19). Left speaker audio restored
-after masking `alsa-restore.service` and clearing WSA controls from
-`asound.state`. A systemd service now enables WSA routing after the DSP
-graph loads at boot.
+Superseded (2026-08-16). `0x01001021` is `APM_CMD_GET_SPF_STATE`, not
+`APM_CMD_GRAPH_OPEN` (`0x01001000`), and the observed timeout occurred during
+APM probe before the card was registered. It does not prove a failed playback
+graph or an `alsactl` race. Do not mask the distribution ALSA-state services
+or rewrite `asound.state`. The corrected routing service runs after those
+services, applies the route while PCM1 is closed, and exercises a fresh PCM
+graph before the display manager starts.
+
+The investigation below is retained as historical evidence, not current
+installation guidance.
 
 ## Problem
 

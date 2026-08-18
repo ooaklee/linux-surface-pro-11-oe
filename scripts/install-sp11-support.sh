@@ -71,59 +71,39 @@ install -m 0755 "$repo_dir/scripts/install-sp11-touchscreen.sh" "$(target /usr/l
 install -m 0755 "$repo_dir/scripts/troubleshoot-sp11-touchscreen.sh" "$(target /usr/local/sbin/troubleshoot-sp11-touchscreen)"
 install -m 0755 "$repo_dir/scripts/sp11-pipewire-speaker-sink.sh" "$(target /usr/local/sbin/sp11-pipewire-speaker-sink)"
 install -m 0755 "$repo_dir/scripts/sp11-audio-topology.sh" "$(target /usr/local/sbin/sp11-audio-topology)"
-install -m 0755 "$repo_dir/scripts/sp11-enable-wsa-routing.sh" "$(target /usr/local/sbin/sp11-enable-wsa-routing)"
+install -m 0755 "$repo_dir/scripts/sp11-enable-wsa-routing.sh" "$(target /usr/local/sbin/sp11-enable-wsa-routing.sh)"
+# Remove the mismatched name emitted by the previous main installer.
+rm -f "$(target /usr/local/sbin/sp11-enable-wsa-routing)"
 install -m 0755 "$repo_dir/scripts/sp11-fix-audio-boot-race.sh" "$(target /usr/local/sbin/sp11-fix-audio-boot-race)"
 
-# --- Audio boot race fix: mask alsa-restore, install WSA routing service ---
-# alsactl restores WSA mixer state at boot before the AudioReach DSP finishes
-# loading the audio graph, causing an APM CMD timeout, SoundWire bus clash,
-# and no audio. Mask alsa-restore and use a dedicated service instead.
-# See docs/adr/adr-0035-audio-boot-race-alsactl.md.
+# --- Audio routing and graph/path exercise service ---
+# The service runs after any ALSA-state restore, waits for the late-probing
+# card, applies the complete WSA path while PCM1 is closed, and exercises it
+# with a real PCM open.  Do not rewrite asound.state or mask distro services:
+# 0x1001021 is an SPF readiness query, not evidence of an alsactl graph race.
 if [ -f "$repo_dir/scripts/systemd/sp11-wsa-routing.service" ]; then
   install -d "$(target /etc/systemd/system)"
   install -m 0644 "$repo_dir/scripts/systemd/sp11-wsa-routing.service" \
     "$(target /etc/systemd/system/sp11-wsa-routing.service)"
 
-  # Mask alsa-restore so it doesn't race the DSP at boot
   if [ "$ROOT" = "/" ]; then
-    systemctl mask alsa-restore.service 2>/dev/null || true
-    systemctl mask alsa-state.service 2>/dev/null || true
+    # Releases before the corrected GET_SPF_STATE diagnosis masked these.
+    # Restore the distribution units before adding After= ordering on them.
+    systemctl unmask alsa-restore.service alsa-state.service 2>/dev/null || true
     systemctl daemon-reload
     systemctl enable sp11-wsa-routing.service 2>/dev/null || true
   else
-    # For chroot/target installs, create the mask symlinks manually
-    ln -sf /dev/null "$(target /etc/systemd/system/alsa-restore.service)"
-    ln -sf /dev/null "$(target /etc/systemd/system/alsa-state.service)"
+    # For an offline root, remove only the exact masks created by old builds.
+    for alsa_unit in alsa-restore.service alsa-state.service; do
+      alsa_unit_path="$(target "/etc/systemd/system/$alsa_unit")"
+      if [ -L "$alsa_unit_path" ] && [ "$(readlink "$alsa_unit_path")" = /dev/null ]; then
+        rm -f "$alsa_unit_path"
+      fi
+    done
     # Enable via symlink (will be picked up after chroot boot)
+    install -d "$(target /etc/systemd/system/multi-user.target.wants)"
     ln -sf /etc/systemd/system/sp11-wsa-routing.service \
       "$(target /etc/systemd/system/multi-user.target.wants/sp11-wsa-routing.service)" 2>/dev/null || true
-  fi
-
-  # Clear WSA controls from asound.state if it exists
-  local_state="$(target /var/lib/alsa/asound.state)"
-  if [ -f "$local_state" ]; then
-    cp "$local_state" "${local_state}.bak.$(date +%Y%m%d%H%M%S)"
-    tmp="$(mktemp)"
-    awk '
-      BEGIN { skip=0 }
-      /^[[:space:]]*control\.[0-9]+[[:space:]]*\{/ {
-        block=""; skip=0; collecting=1
-      }
-      collecting==1 {
-        block = block $0 "\n"
-        if ($0 ~ /^[[:space:]]*name[[:space:]]/) {
-          if ($0 ~ /WSA|Spkr/) { skip=1 }
-        }
-        if ($0 ~ /^[[:space:]]*\}[[:space:]]*$/) {
-          collecting=0
-          if (skip==0) { printf "%s", block }
-        }
-        next
-      }
-      { print }
-    ' "$local_state" > "$tmp"
-    [ -s "$tmp" ] && cp "$tmp" "$local_state" || true
-    rm -f "$tmp"
   fi
 fi
 

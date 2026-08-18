@@ -3,11 +3,14 @@ set -euo pipefail
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d"
 CONFIG_FILE="$CONFIG_DIR/50-sp11-speakers.conf"
+WP_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/wireplumber.conf.d"
+WP_CONFIG_FILE="$WP_CONFIG_DIR/51-sp11-no-duplicate-output.conf"
 PCM="${SP11_PIPEWIRE_PCM:-hw:X1E80100Microso,1}"
 CARD="${SP11_ALSA_CARD:-X1E80100Microso}"
 RESTART="true"
 ACTION="install"
 ENABLE_ROUTE="false"
+PIPEWIRE_STOPPED="false"
 
 usage() {
 	cat <<EOF
@@ -45,11 +48,56 @@ restart_pipewire() {
 	fi
 
 	if have systemctl; then
-		systemctl --user restart pipewire wireplumber 2>/dev/null || \
-			systemctl --user restart pipewire pipewire-pulse 2>/dev/null || true
+		if ! systemctl --user restart pipewire.service pipewire-pulse.service \
+			wireplumber.service 2>/dev/null && \
+			! systemctl --user restart pipewire.service wireplumber.service \
+			2>/dev/null; then
+			log "ERROR: could not restart PipeWire/WirePlumber."
+			return 1
+		fi
+		PIPEWIRE_STOPPED="false"
 	else
 		log "systemctl not found; restart PipeWire manually."
 	fi
+}
+
+stop_pipewire() {
+	if [ "$RESTART" != "true" ]; then
+		log "--no-restart selected; PCM1 must already be closed before route setup."
+		return
+	fi
+	if have systemctl; then
+		# Stop the activation sockets too: leaving them listening can reopen
+		# PCM1 between the service stop and the route update.
+		systemctl --user stop wireplumber.service pipewire-pulse.service \
+			pipewire-pulse.socket pipewire.service pipewire.socket \
+			2>/dev/null || true
+		PIPEWIRE_STOPPED="true"
+	fi
+}
+
+restore_pipewire_on_exit() {
+	if [ "$PIPEWIRE_STOPPED" = "true" ]; then
+		restart_pipewire
+	fi
+}
+
+require_pcm_closed() {
+	local status="/proc/asound/${CARD}/pcm1p/sub0/status" state="closed"
+
+	if [ -r "$status" ]; then
+		state="$(sed -n 's/^state:[[:space:]]*//p' "$status")"
+		[ -n "$state" ] || state="closed"
+	fi
+	if [ "$state" != "closed" ]; then
+		log "ERROR: PCM1 is ${state}; stop every ALSA/PipeWire holder first."
+		return 1
+	fi
+}
+
+cset() {
+	local name="$1" value="$2"
+	amixer -c "$CARD" cset "name='${name}'" "$value" >/dev/null
 }
 
 enable_route() {
@@ -61,18 +109,35 @@ enable_route() {
 		return
 	fi
 
-	log "Enabling WSA speaker DMA route (MultiMedia2) on card ${CARD}."
-	amixer -c "$CARD" cset name='WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' on 2>/dev/null || true
+	# The FE-to-BE connection is serialized when AudioReach opens the graph.
+	# Stop existing holders and apply the route before a fresh PCM open.
+	stop_pipewire
+	trap restore_pipewire_on_exit EXIT
+	require_pcm_closed
+	log "Applying the complete WSA route on card ${CARD}."
+	cset 'WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' 0
+	cset 'WSA WSA RX0 MUX' AIF1_PB
+	cset 'WSA WSA RX1 MUX' AIF1_PB
+	cset 'WSA WSA_RX0 INP0' RX0
+	cset 'WSA WSA_RX1 INP0' RX1
+	cset 'WSA WSA_COMP1 Switch' 1
+	cset 'WSA WSA_COMP2 Switch' 1
+	cset 'WSA WSA_RX0 Digital Volume' 81
+	cset 'WSA WSA_RX1 Digital Volume' 81
+	cset 'WSA WSA_RX0 Digital Mute' 0
+	cset 'WSA WSA_RX1 Digital Mute' 0
 
-	log "Setting WSA macro RX routing on card ${CARD}."
-	amixer -c "$CARD" cset name='WSA WSA RX0 MUX' AIF1_PB 2>/dev/null || true
-	amixer -c "$CARD" cset name='WSA WSA RX1 MUX' AIF1_PB 2>/dev/null || true
-	amixer -c "$CARD" cset name='WSA WSA_RX0 INP0' RX0 2>/dev/null || true
-	amixer -c "$CARD" cset name='WSA WSA_RX1 INP0' RX1 2>/dev/null || true
+	for amp in SpkrLeft SpkrRight; do
+		cset "${amp} COMP Switch" 1
+		cset "${amp} BOOST Switch" 1
+		cset "${amp} DAC Switch" 1
+		cset "${amp} PBR Switch" 1
+		cset "${amp} VISENSE Switch" 0
+		cset "${amp} WSA MODE" Speaker
+		cset "${amp} PA Volume" 6
+	done
 
-	log "Enabling right speaker amplifier controls on card ${CARD}."
-	amixer -c "$CARD" cset name='SpkrRight PBR Switch' on 2>/dev/null || true
-	amixer -c "$CARD" cset name='SpkrRight PA Volume' 12 2>/dev/null || true
+	cset 'WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' 1
 }
 
 install_config() {
@@ -83,24 +148,23 @@ install_config() {
 # Uses the 4-channel speaker PCM (hw:X1E80100Microso,1).
 # Channel mapping (verified 2026-06-19):
 #   ch0 = Left physical speaker
-#   ch1 = unused (DAPM-gated when labeled FR)
+#   ch1 = unused
 #   ch2 = Right physical speaker
 #   ch3 = unused
 #
 # The audio.position labels [ FL RL FR RR ] are intentionally reordered so
 # that PipeWire's channelmix routes the summed mono signal to both ch0
 # (left speaker) and ch2 (right speaker). With the default [ FL FR RL RR ]
-# ordering, ch2 (right speaker) is DAPM-gated and stays silent. The reorder
-# works around the kernel DAPM gate in lpass-wsa-macro.c (ADR-0036).
+# ordering, PipeWire sends front-right content to physical slot ch1 rather
+# than the right speaker on ch2.  This is channel-slot mapping, not a DAPM
+# bypass.
 #
 # Mix-matrix sums stereo L+R to both speakers for mono output on each.
 #
-# IMPORTANT: The WSA DMA route must be enabled after the AudioReach DSP graph
-# loads at boot. If sp11-wsa-routing.service is installed (via
-# sp11-fix-audio-boot-race.sh --install), this happens automatically.
-# Otherwise, use --enable-route or run sp11-enable-wsa-routing.sh manually.
-# Do NOT restore WSA mixer state via alsactl at boot — it races the DSP.
-# See docs/adr/adr-0035-audio-boot-race-alsactl.md.
+# IMPORTANT: The WSA route must be set while PCM1 is closed, before the next
+# lazy AudioReach graph open.  sp11-wsa-routing.service configures and probes
+# it before the display manager starts.  Otherwise use --enable-route with no
+# audio clients running.
 context.objects = [
     { factory = adapter
         args = {
@@ -122,15 +186,43 @@ context.objects = [
 ]
 EOF
 	log "Installed $CONFIG_FILE"
+
+	mkdir -p "$WP_CONFIG_DIR"
+	cat > "$WP_CONFIG_FILE" <<'EOF'
+# The manual Surface sink owns hw:0,1.  Disable WirePlumber's duplicate
+# Pro Audio node for the same PCM to avoid exclusive-open EBUSY failures.
+monitor.alsa.rules = [
+    {
+        matches = [
+            { node.name = "~alsa_output.platform-sound.pro-output-1.*" }
+        ]
+        actions = {
+            update-props = {
+                node.disabled = true
+            }
+        }
+    }
+]
+EOF
+	log "Installed $WP_CONFIG_FILE"
 	enable_route
 	restart_pipewire
+	trap - EXIT
 }
 
 remove_config() {
+	local removed="false"
 	if [ -f "$CONFIG_FILE" ]; then
 		rm -f "$CONFIG_FILE"
 		log "Removed $CONFIG_FILE"
-	else
+		removed="true"
+	fi
+	if [ -f "$WP_CONFIG_FILE" ]; then
+		rm -f "$WP_CONFIG_FILE"
+		log "Removed $WP_CONFIG_FILE"
+		removed="true"
+	fi
+	if [ "$removed" = "false" ]; then
 		log "No config to remove: $CONFIG_FILE"
 	fi
 	restart_pipewire

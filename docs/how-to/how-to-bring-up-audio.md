@@ -1,21 +1,21 @@
 # How to Bring Up Audio on Surface Pro 11
 
-Last updated: 2026-07-18
+Last updated: 2026-08-16
 
 ## Prerequisites
 
 - [x] SP11 kernel patched with DTB audio DAI links (`wsa-dai-link`, `va-dai-link`)
 - [x] ADSP/CDSP firmware in place (`qcadsp8380.mbn`, `qccdsp8380.mbn`)
 - [x] Audio firmware copied from Windows / linux-firmware
-- [x] Audio boot race fix applied (see [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md))
+- [x] WSA routing/graph probe installed (see [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md))
 
-## Status (2026-07-18)
+## Status (2026-08-16)
 
 | Audio path | Status | Notes |
 |---|---|---|
 | Sound card (ALSA) | Working | `x1e80100` card instantiates with topology |
-| Speaker (WSA884x) | Working (both speakers, mono) | 4-channel PCM via WSA_CODEC_DMA_RX_0. Both speakers produce audio via PipeWire sink with reordered `audio.position` labels `[ FL RL FR RR ]` to bypass the kernel DAPM gate. See [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md). |
-| Audio boot race | Fixed | `alsa-restore.service` was restoring WSA mixer state before the DSP graph loaded, causing APM CMD timeout and SoundWire bus clash. Fixed by masking alsa-restore and using `sp11-wsa-routing.service`. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
+| Speaker (WSA884x) | Experimental (both slots mapped) | 4-channel PCM via WSA_CODEC_DMA_RX_0. PipeWire uses `[ FL RL FR RR ]` so physical slots 0 and 2 receive the stereo mix; this is slot mapping, not a DAPM bypass. See [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md). |
+| Audio graph setup | Probe-backed | `sp11-wsa-routing.service` applies the route with PCM1 closed, then exercises a fresh graph. Boot opcode `0x1001021` is only the SPF readiness query; ALSA restore services must not be masked. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
 | PipeWire integration | Partial | Card detected but manual sink config needed |
 | Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
 | Internal microphones (VA DMIC) | Working, slightly tinny | Corrected UCM opens the `Mic` device and records two-channel 48 kHz `S16_LE` audio from `hw:0,3`. Surface-specific 0 dB decoder gain avoids the clipping seen with the shared +16 dB default. The validated 2.4 MHz DMIC clock eliminates the continuous static heard at 4.8 MHz; capture remains slightly tinny or thin. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
@@ -41,27 +41,27 @@ sudo ./scripts/sp11-audio-topology.sh --install
 The topology is loaded by the AudioReach DSP at card probe time (boot). Reboot
 is required after first install.
 
-### 4. Apply the audio boot race fix
+### 4. Install the WSA routing/graph probe
 
-`alsa-restore.service` restores WSA mixer state at boot before the AudioReach
-DSP finishes loading the audio graph, causing an APM CMD timeout, SoundWire
-bus clash, and no audio (only pops). The fix masks `alsa-restore.service` and
-installs `sp11-wsa-routing.service` to enable WSA routing after the DSP graph
-loads. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md).
+The helper installs `sp11-wsa-routing.service`, unmasks any ALSA-state-service
+masks left by old releases, applies WSA routing while PCM1 is closed, and
+opens a short silent stream to exercise AudioReach and DAPM. See the corrected
+status in [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md).
 
 ```bash
 sudo ./scripts/sp11-fix-audio-boot-race.sh install
 sudo reboot
 ```
 
-After reboot, verify the DSP graph loaded cleanly:
+After reboot, verify the service's own probe and graph lifecycle:
 
 ```bash
-# Should show no APM CMD timeout
-sudo journalctl -b -k | grep 'CMD timeout'
+# 1001021 is GET_SPF_STATE and is not a playback-graph failure.
+# The service should produce no new 1001000..1001006 errors.
+journalctl -k -b | grep -E '100100[0-6]|qcom-apm'
 
 # Should show no Bus clash
-sudo dmesg | grep 'Bus clash'
+journalctl -k -b | grep 'Bus clash'
 
 # The WSA routing service should be active
 systemctl status sp11-wsa-routing.service
@@ -74,15 +74,22 @@ systemctl status sp11-wsa-routing.service
 cat /proc/asound/cards
 aplay -l
 
-# Enable WSA DSP route
-amixer -c0 cset numid=68 'on'
+# Close every PCM holder, apply the complete route, and exercise a fresh graph.
+systemctl --user stop wireplumber.service pipewire-pulse.service \
+  pipewire-pulse.socket pipewire.service pipewire.socket
+SP11_MAX_RETRIES=2 ./scripts/sp11-enable-wsa-routing.sh
 
-# Low-volume sine test (4 channels = 2x stereo WSA)
-speaker-test -D hw:0,1 -c 4 -t sine -f 440 -l 3
+# Low-level tests of physical slots 0 and 2.
+speaker-test -D hw:X1E80100Microso,1 -c 4 -r 48000 -F S16_LE \
+  -t sine -f 440 -S 10 -s 1 -l 1
+speaker-test -D hw:X1E80100Microso,1 -c 4 -r 48000 -F S16_LE \
+  -t sine -f 440 -S 10 -s 3 -l 1
+
+systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service
 ```
 
 **SAFETY**: Keep volume low (`SpkrLeft PA Volume`, `SpkrRight PA Volume`). The
-machine driver limits these to 6/31 (1.4 dB gain at index 6), but verify with:
+machine driver limits these to raw 6/31 (0 dB at index 6), but verify with:
 
 ```bash
 amixer -c0 cget numid=1   # SpkrLeft PA Volume
@@ -103,10 +110,10 @@ wpctl status
 This writes
 `~/.config/pipewire/pipewire.conf.d/50-sp11-speakers.conf`, wraps the verified
 ALSA speaker PCM (`hw:X1E80100Microso,1`), applies a channelmix matrix that
-sums stereo to mono on the audible left channels (ch0+ch1), and restarts the
-user PipeWire services. The right speaker (ch2+ch3) is silent at the kernel
-level. The matrix ensures no stereo content is lost. It is a stop-gap, not the
-final UCM fix. Remove it with:
+sums stereo onto physical slots 0 and 2, and restarts the user PipeWire
+services. This fixes userspace slot assignment; it does not bypass DAPM or
+prove that either amplifier is acoustically healthy. It is a stop-gap, not
+the final UCM fix. Remove it with:
 
 ```bash
 ./scripts/sp11-pipewire-speaker-sink.sh --remove
@@ -190,18 +197,22 @@ wsa_macro 6b00000.codec: using zero-initialized flat cache
 ```
 
 This warning is on the active WSA macro (6b00000, prefix `WSA`) that drives
-the SoundWire bus. It indicates the regmap cache started with all-zero values
-on one or more reads. Both speakers work despite this warning. The right
-speaker was previously silent due to a DAPM gate, now worked around via
-`audio.position` reorder. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md)
+the SoundWire bus. It indicates that the regmap cache began zero-initialized,
+but does not by itself prove an open-graph or amplifier failure. The
+`audio.position` reorder maps PipeWire onto physical PCM slots 0 and 2; it is
+not a DAPM workaround. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md)
 and [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md).
 
 ### No sound from speakers
 
-1. Verify `Speakers` app volume is not muted in GNOME Settings
-2. Check mixer levels: `amixer -c0 contents | grep -A2 'PA Volume'`
-3. The 4-channel PCM requires a 4-channel test signal; 2-channel playback
-   will fail on `hw:0,1`
+1. Stop PipeWire services and activation sockets, then run
+   `SP11_MAX_RETRIES=2 ./scripts/sp11-enable-wsa-routing.sh`.
+2. Check mixer levels: `amixer -c0 contents | grep -A2 'PA Volume'`.
+3. Test `hw:X1E80100Microso,1` as four-channel S16_LE/48 kHz; slots 1 and 3
+   in `speaker-test -s` correspond to physical PCM slots 0 and 2.
+4. If the probe reports RUNNING plus both WSA DAPM endpoints but the tone is
+   still silent, investigate WSA884x PA state/profile; do not infer another
+   graph-open failure from boot opcode `0x1001021`.
 
 ### UCM exposes no microphone source
 
