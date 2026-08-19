@@ -417,9 +417,9 @@ sudo ./scripts/sp11-audio-topology.sh --install
 Alternatively, download the
 [audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
 Pair the corrected UCM with the newest kernel bundle
-[v6 rc6 (7.2-rc6-jg-0sp11v6)](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc6-jg-0sp11v6),
+[v7 (7.2.0-jg-0sp11v7)](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v7),
 built from the
-[`sp11/integration-7.2-rc`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2-rc)
+[`sp11/integration-7.2.x`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2.x)
 fork: it carries the wsa884x 2S/4-ohm PA-recovery profile (no left-speaker
 audio wedge at sustained full volume), the 2.4 MHz DMIC clock, and the
 in-tree phase55 touchscreen

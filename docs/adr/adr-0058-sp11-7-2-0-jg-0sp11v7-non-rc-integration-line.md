@@ -9,10 +9,12 @@ description: Architecture Decision Record (ADR) for the Surface Pro 11 non-rc in
 
 ## Status
 
-Accepted (2026-08-18). The `sp11/integration-7.2.x` branch is the new
-default integration line for non-rc Surface Pro 11 kernels, named
-`7.2.0-jg-0sp11v7`. The `sp11/integration-7.2-rc` branch continues to
-carry rc releases.
+Accepted and hardware-verified (2026-08-19). The
+`7.2.0-jg-0sp11v7-qcom-x1e` kernel is installed on the X1E80100 OLED
+device: the kernel boots, the in-tree phase55 touchscreen works, and
+Wi-Fi reconnects to the saved network. The `sp11/integration-7.2-rc`
+branch was retired after the 7.2.x line became the sole integration
+branch.
 
 ## Context
 
@@ -41,6 +43,6 @@ SP11 integration needed a non-rc line to track it.
 
 - The kernel build workflow defaults to `sp11/integration-7.2.x` for new
   non-rc builds.
-- The rc line remains for rc kernels; upstream syncs flow rc-first, then
-  into the 7.2.x line.
+- The `sp11/integration-7.2-rc` branch was retired; upstream syncs merge
+  directly into the 7.2.x line.
 - The v7 kernel package version is `7.2.0-jg-0sp11v7-qcom-x1e`.
