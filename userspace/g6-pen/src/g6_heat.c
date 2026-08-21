@@ -133,16 +133,22 @@ size_t g6_record_encode(uint8_t *wire, size_t wire_len,
 void g6_mapping_defaults(struct g6_mapping *mapping)
 {
 	memset(mapping, 0, sizeof(*mapping));
+	mapping->tap_enabled = true;
+	mapping->log_energy = false;
 	mapping->report_id = 0x0b;
 	mapping->report_instance = 1;
 	mapping->decoder = G6_DECODER_RECT_CENTROID;
 	mapping->sample_format = G6_SAMPLE_S16_LE;
 	mapping->polarity = G6_POLARITY_ABSOLUTE;
+	mapping->min_trailer_valid = 0;
 	mapping->x_max = 27388;
 	mapping->y_max = 18258;
 	mapping->acquire_frames = 2;
 	mapping->release_frames = 2;
-	mapping->stale_ns = UINT64_C(50000000);
+	mapping->stale_ns = UINT64_C(1000000000);
+	mapping->tap_min_ms = 60;
+	mapping->tap_max_ms = 800;
+	mapping->tap_still_delta_permille = 20;
 }
 
 static char *g6_trim(char *text)
@@ -213,6 +219,10 @@ static int g6_set_mapping_value(struct g6_mapping *m, const char *key,
 
 	if (!strcmp(key, "hover.enabled"))
 		return g6_parse_bool(value, &m->hover_enabled);
+	if (!strcmp(key, "tap.enabled"))
+		return g6_parse_bool(value, &m->tap_enabled);
+	if (!strcmp(key, "debug.log_energy"))
+		return g6_parse_bool(value, &m->log_energy);
 	if (!strcmp(key, "map.decoder")) {
 		if (!strcmp(value, "rect-centroid"))
 			m->decoder = G6_DECODER_RECT_CENTROID;
@@ -285,6 +295,10 @@ static int g6_set_mapping_value(struct g6_mapping *m, const char *key,
 		if (number > UINT_MAX)
 			return -ERANGE;
 		m->min_active_cells = (unsigned int)number;
+	} else if (!strcmp(key, "map.min_trailer_valid")) {
+		if (number > 8)
+			return -ERANGE;
+		m->min_trailer_valid = (unsigned int)number;
 	} else if (!strcmp(key, "quality.full_scale")) {
 		m->quality_full_scale = number;
 	} else if (!strcmp(key, "tracking.acquire_frames")) {
@@ -299,6 +313,18 @@ static int g6_set_mapping_value(struct g6_mapping *m, const char *key,
 		if (number > UINT64_MAX / UINT64_C(1000000))
 			return -ERANGE;
 		m->stale_ns = number * UINT64_C(1000000);
+	} else if (!strcmp(key, "tap.min_ms")) {
+		if (number > UINT_MAX)
+			return -ERANGE;
+		m->tap_min_ms = (unsigned int)number;
+	} else if (!strcmp(key, "tap.max_ms")) {
+		if (number > UINT_MAX)
+			return -ERANGE;
+		m->tap_max_ms = (unsigned int)number;
+	} else if (!strcmp(key, "tap.still_delta_permille")) {
+		if (number > UINT_MAX)
+			return -ERANGE;
+		m->tap_still_delta_permille = (unsigned int)number;
 	} else {
 		return -ENOENT;
 	}
@@ -408,6 +434,7 @@ int g6_mapping_load(struct g6_mapping *mapping, const char *path,
 	size_t capacity = 0;
 	ssize_t length;
 	unsigned long line_number = 0;
+	bool trailer_limit_error = false;
 	int result = 0;
 
 	file = fopen(path, "r");
@@ -437,15 +464,26 @@ int g6_mapping_load(struct g6_mapping *mapping, const char *path,
 		key = g6_trim(key);
 		set_result = g6_set_mapping_value(mapping, key, value);
 		if (set_result) {
+			trailer_limit_error =
+				!strcmp(key, "map.min_trailer_valid") &&
+				set_result == -ERANGE;
 			result = set_result;
 			break;
 		}
 	}
 	if (ferror(file) && !result)
 		result = -EIO;
-	if (result)
-		snprintf(error, error_len, "%s:%lu: invalid or unknown setting",
-			 path, line_number);
+	if (result) {
+		if (trailer_limit_error)
+			snprintf(error, error_len,
+				 "%s:%lu: map.min_trailer_valid must be between 0 and 8"
+				 " (each bank has 8 vectors)",
+				 path, line_number);
+		else
+			snprintf(error, error_len,
+				 "%s:%lu: invalid or unknown setting",
+				 path, line_number);
+	}
 	free(line);
 	fclose(file);
 	if (result)

@@ -80,6 +80,11 @@ static void g6_emit_state(void *userdata, const struct g6_pen_state *state)
 {
 	struct g6_sink *sink = userdata;
 
+	if (state->valid & G6_VALID_TAP) {
+		/* Bypass pacing so the following lift's cancel cannot swallow taps. */
+		g6_dispatch_state(sink, state);
+		return;
+	}
 	if (!sink->paced) {
 		g6_dispatch_state(sink, state);
 		return;

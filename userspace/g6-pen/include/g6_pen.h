@@ -36,6 +36,7 @@ enum g6_valid_field {
 	G6_VALID_BUTTONS = 1U << 4,
 	G6_VALID_TOOL = 1U << 5,
 	G6_VALID_QUALITY = 1U << 6,
+	G6_VALID_TAP = 1U << 7,
 };
 
 enum g6_tracking_state {
@@ -57,6 +58,8 @@ struct g6_record {
 
 struct g6_mapping {
 	bool hover_enabled;
+	bool tap_enabled;
+	bool log_energy;
 	enum g6_decoder decoder;
 	uint8_t report_id;
 	unsigned int report_instance;
@@ -72,6 +75,7 @@ struct g6_mapping {
 	uint32_t min_peak;
 	uint64_t min_energy;
 	unsigned int min_active_cells;
+	unsigned int min_trailer_valid;
 	bool invert_x;
 	bool invert_y;
 	int32_t x_max;
@@ -80,6 +84,9 @@ struct g6_mapping {
 	unsigned int acquire_frames;
 	unsigned int release_frames;
 	uint64_t stale_ns;
+	unsigned int tap_min_ms;
+	unsigned int tap_max_ms;
+	unsigned int tap_still_delta_permille;
 };
 
 struct g6_pen_state {
@@ -144,10 +151,18 @@ struct g6_pacer {
 
 typedef void (*g6_emit_fn)(void *userdata, const struct g6_pen_state *state);
 
+struct g6_index_hysteresis {
+	bool valid;
+	uint8_t selected;
+	uint8_t pending;
+	unsigned int pending_cycles;
+};
+
 struct g6_processor {
 	struct g6_mapping mapping;
 	struct g6_cycle cycle;
 	struct g6_stats stats;
+	struct g6_index_hysteresis index_hyst[2];
 	enum g6_tracking_state tracking;
 	uint32_t generation;
 	bool generation_valid;
@@ -162,6 +177,10 @@ struct g6_processor {
 	uint16_t last_quality;
 	uint64_t last_point_ns;
 	uint64_t last_complete_ns;
+	uint64_t still_since_ns;
+	int32_t still_ref_x;
+	int32_t still_ref_y;
+	bool still_valid;
 	g6_emit_fn emit;
 	void *emit_userdata;
 };

@@ -53,25 +53,23 @@ A cycle is anchored by `0c` and then collects the multiset
 while preserving the first/second `0b` distinction.  Startup traffic before an
 anchor is ignored; a new `0c`, duplicate, sequence gap, or a window longer than
 30 ms closes an incomplete bundle.  Sequence continuity uses uint32 wrap
-semantics.  Any same- or new-generation gap immediately lifts, discards partial
-assembly, and requires a clear frame.  The kernel also exports reports `07` and
-`6e`; they remain ordered, opaque sideband and can neither complete a cycle nor
-open tracking.  In particular, an all-zero `0x6e` identity is normal and is not
-a pen-input blocker.
+semantics.  A sequence gap or generation boundary discards partial assembly but
+preserves tracking so the next decoded cycle resumes the stroke.  The kernel
+also exports reports `07` and `6e`; they remain ordered, opaque sideband and can
+neither complete a cycle nor open tracking.  In particular, an all-zero `0x6e`
+identity is normal and is not a pen-input blocker.
 
 Normal decoded state moves `closed -> acquiring -> hover`.  Valid negative
-frames close tracking before a later firmware reset.  A generation change,
-reset, suspend, or 50 ms stale watchdog forces pen-up and enters `wait-clear`.
-Positive-looking reset traffic cannot reopen the pen: one validated negative
-cycle must arrive before acquisition can begin again.
+frames close tracking after the configured release debounce.  Transport gaps,
+generation changes, resets, and suspend boundaries do not imply pen-up.  If
+complete cycles stop entirely, the 1 s stale watchdog releases the pointer.
 
 After the first point, each 66.4 Hz core position interval is emitted as four
 timestamped linear samples.  In live mode, a monotonic-clock pacer submits them
 as distinct uinput `SYN_REPORT`s at 3.75 ms intervals (approximately 266 Hz),
 without relying on the ignored userspace `input_event.time`.  A lift or stream
-boundary cancels pending samples and is submitted immediately.  Replay is
-unpaced and uses only record timestamps, so its JSON output is byte-for-byte
-deterministic.
+timeout cancels pending samples and is submitted immediately.  Replay is unpaced
+and uses only record timestamps, so its JSON output is byte-for-byte deterministic.
 
 ## Current field-map status
 
@@ -154,8 +152,8 @@ make check
 
 `make check` runs ABI, six-order bundle, bounded FF00 coarse decoding,
 anchor/re-anchor, sequence-gap/wrap, interpolation, tracking-close,
-generation-inhibit, stale-lift, text-replay, and binary-replay tests.  Replays
-never create uinput devices.
+generation-boundary re-hover, stale-lift, text-replay, and binary-replay tests.
+Replays never create uinput devices.
 
 Convert a sanitized Windows `hidspi-rx-bodies.csv`, then optionally pack it as
 the exact binary device stream:

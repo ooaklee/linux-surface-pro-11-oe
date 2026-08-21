@@ -1,11 +1,15 @@
 #include "g6_pen.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define G6_CYCLE_WINDOW_NS UINT64_C(30000000)
+#define G6_INDEX_MARGIN_PERMILLE 1250
+#define G6_INDEX_FRAMES 2
 
 enum g6_part_index {
 	G6_PART_0C,
@@ -219,7 +223,81 @@ static int32_t g6_scale_center(unsigned int center, int64_t multiplier,
 	return (int32_t)scaled;
 }
 
-static int g6_decode_ff00_cycle(const struct g6_processor *processor,
+static void g6_index_hysteresis_reset(struct g6_processor *processor)
+{
+	memset(processor->index_hyst, 0, sizeof(processor->index_hyst));
+}
+
+static uint8_t g6_index_stable(struct g6_index_hysteresis *h, uint8_t raw,
+			       uint32_t raw_energy,
+			       const uint32_t energy_by_center[256],
+			       unsigned int frames,
+			       uint32_t margin_permille)
+{
+	uint32_t challenger_energy = energy_by_center[raw];
+	uint32_t incumbent_energy;
+
+	(void)raw_energy;
+	if (!h->valid) {
+		h->selected = raw;
+		h->valid = true;
+		h->pending = 0;
+		h->pending_cycles = 0;
+		return h->selected;
+	}
+	if (raw == h->selected) {
+		h->pending = 0;
+		h->pending_cycles = 0;
+		return h->selected;
+	}
+
+	incumbent_energy = energy_by_center[h->selected];
+	if (!incumbent_energy ||
+	    (uint64_t)challenger_energy * 1000 >=
+		(uint64_t)incumbent_energy * margin_permille) {
+		h->selected = raw;
+		h->pending = 0;
+		h->pending_cycles = 0;
+		return h->selected;
+	}
+
+	if (h->pending == raw) {
+		h->pending_cycles++;
+	} else {
+		h->pending = raw;
+		h->pending_cycles = 1;
+	}
+	if (h->pending_cycles >= frames) {
+		h->selected = raw;
+		h->pending = 0;
+		h->pending_cycles = 0;
+	}
+	return h->selected;
+}
+
+static void g6_log_energy(const struct g6_mapping *m,
+			  const uint32_t best_energy[2],
+			  const uint8_t best_center[2],
+			  const uint8_t trailer_valid[2],
+			  const bool selected_trailer_invalid[2], bool found,
+			  const struct g6_candidate *candidate)
+{
+	if (!m->log_energy)
+		return;
+	fprintf(stderr,
+		"g6-pen: energy b0=%" PRIu32 " c0=%u b1=%" PRIu32
+		" c1=%u fb0=%u fb1=%u tv0=%u tv1=%u found=%u present=%u"
+		" quality=%u\n",
+		best_energy[0], (unsigned int)best_center[0], best_energy[1],
+		(unsigned int)best_center[1],
+		selected_trailer_invalid[0] ? 1U : 0U,
+		selected_trailer_invalid[1] ? 1U : 0U,
+		(unsigned int)trailer_valid[0],
+		(unsigned int)trailer_valid[1], found ? 1U : 0U,
+		candidate->present ? 1U : 0U, (unsigned int)candidate->quality);
+}
+
+static int g6_decode_ff00_cycle(struct g6_processor *processor,
 				struct g6_candidate *candidate)
 {
 	const struct g6_mapping *m = &processor->mapping;
@@ -227,17 +305,31 @@ static int g6_decode_ff00_cycle(const struct g6_processor *processor,
 	const uint8_t *data = part->content;
 	size_t section = 9, section_end, position;
 	uint32_t section_length;
+	uint32_t best_energy[2] = { 0, 0 };
+	uint32_t center_energy[2][256] = { { 0 } };
+	uint8_t best_center[2] = { 0, 0 };
+	uint8_t trailer_valid[2] = { 0, 0 };
+	bool selected_trailer_invalid[2] = { false, false };
 
 	memset(candidate, 0, sizeof(*candidate));
-	if (part->content_len < section + 8)
+	if (part->content_len < section + 8) {
+		g6_log_energy(m, best_energy, best_center, trailer_valid,
+			      selected_trailer_invalid, false, candidate);
 		return -EMSGSIZE;
+	}
 	section_length = g6_read_le32(data + section);
-	if (section_length > part->content_len - section - 4)
+	if (section_length > part->content_len - section - 4) {
+		g6_log_energy(m, best_energy, best_center, trailer_valid,
+			      selected_trailer_invalid, false, candidate);
 		return -EPROTO;
+	}
 	section_end = section + 4 + section_length;
 	if (g6_read_le16(data + section + 4) != 0xff00 ||
-	    data[section + 6] != 0)
+	    data[section + 6] != 0) {
+		g6_log_energy(m, best_energy, best_center, trailer_valid,
+			      selected_trailer_invalid, false, candidate);
 		return -ENODATA;
+	}
 
 	/* header_value at section+7 is intentionally the first nested kind. */
 	position = section + 7;
@@ -247,8 +339,11 @@ static int g6_decode_ff00_cycle(const struct g6_processor *processor,
 		const uint8_t *payload;
 		size_t next = position + 4 + payload_length;
 
-		if (next > section_end)
+		if (next > section_end) {
+			g6_log_energy(m, best_energy, best_center, trailer_valid,
+				      selected_trailer_invalid, false, candidate);
 			return -EPROTO;
+		}
 		if (kind != 0x5c) {
 			position = next;
 			continue;
@@ -256,8 +351,6 @@ static int g6_decode_ff00_cycle(const struct g6_processor *processor,
 		payload = data + position + 4;
 		if (payload_length >= 12) {
 			unsigned int n = payload[4], bank, vector;
-			uint32_t best_energy[2] = { 0, 0 };
-			uint8_t best_center[2] = { 0, 0 };
 			bool found[2] = { false, false };
 
 			if (data[position + 1] != 0 || n != 8 || payload[5] != 1 ||
@@ -281,22 +374,49 @@ static int g6_decode_ff00_cycle(const struct g6_processor *processor,
 						entry[45] == center + 4 &&
 						entry[47] == 0;
 
-					if (trailer && (!found[bank] ||
-							energy > best_energy[bank])) {
-						found[bank] = true;
+					if (trailer)
+						trailer_valid[bank]++;
+					if (energy > center_energy[bank][center])
+						center_energy[bank][center] = energy;
+					if (energy > best_energy[bank]) {
 						best_energy[bank] = energy;
 						best_center[bank] = center;
+						selected_trailer_invalid[bank] =
+							!trailer;
 					}
 				}
+				found[bank] = best_energy[bank] > 0;
 			}
-			if (!found[0] || !found[1])
+			if (!found[0] || !found[1]) {
+				g6_log_energy(m, best_energy, best_center,
+					      trailer_valid,
+					      selected_trailer_invalid, false,
+					      candidate);
 				return -ENODATA;
+			}
 			candidate->present = best_energy[0] >= m->min_peak &&
 				best_energy[1] >= m->min_peak &&
 				(uint64_t)best_energy[0] + best_energy[1] >= m->min_energy &&
+				(!m->min_trailer_valid ||
+				 (trailer_valid[0] >= m->min_trailer_valid &&
+				  trailer_valid[1] >= m->min_trailer_valid)) &&
 				m->min_active_cells <= 2;
-			if (!candidate->present)
+			if (!candidate->present) {
+				g6_log_energy(m, best_energy, best_center,
+					      trailer_valid,
+					      selected_trailer_invalid, true,
+						      candidate);
 				return 0;
+			}
+			if (processor->tracking != G6_TRACK_HOVER &&
+			    !processor->positive_frames)
+				g6_index_hysteresis_reset(processor);
+			for (bank = 0; bank < 2; bank++)
+				best_center[bank] = g6_index_stable(
+					&processor->index_hyst[bank],
+					best_center[bank], best_energy[bank],
+					center_energy[bank], G6_INDEX_FRAMES,
+					G6_INDEX_MARGIN_PERMILLE);
 			candidate->x = g6_scale_center(best_center[0], 40580996,
 						      -13820, m->x_max);
 			candidate->y = g6_scale_center(best_center[1], 40118737,
@@ -312,14 +432,18 @@ static int g6_decode_ff00_cycle(const struct g6_processor *processor,
 			} else {
 				candidate->quality = 1000;
 			}
+			g6_log_energy(m, best_energy, best_center, trailer_valid,
+				      selected_trailer_invalid, true, candidate);
 			return 0;
 		}
 		position = next;
 	}
+	g6_log_energy(m, best_energy, best_center, trailer_valid,
+		      selected_trailer_invalid, false, candidate);
 	return -ENODATA;
 }
 
-static int g6_decode_cycle(const struct g6_processor *processor,
+static int g6_decode_cycle(struct g6_processor *processor,
 			   struct g6_candidate *candidate)
 {
 	if (!processor->mapping.hover_enabled) {
@@ -339,12 +463,66 @@ static void g6_emit(struct g6_processor *processor,
 		processor->emit(processor->emit_userdata, state);
 }
 
+static void g6_reset_tap(struct g6_processor *processor)
+{
+	processor->still_since_ns = 0;
+	processor->still_ref_x = 0;
+	processor->still_ref_y = 0;
+	processor->still_valid = false;
+}
+
+static void g6_emit_tap(struct g6_processor *processor, uint64_t timestamp_ns)
+{
+	const struct g6_mapping *m = &processor->mapping;
+	struct g6_pen_state state;
+	uint64_t reference_ns;
+	uint64_t duration_ns;
+
+	if (!m->tap_enabled || !processor->still_valid ||
+	    !processor->have_last_point)
+		return;
+	reference_ns = processor->last_complete_ns;
+	if (!reference_ns)
+		reference_ns = timestamp_ns;
+	if (reference_ns > timestamp_ns)
+		reference_ns = timestamp_ns;
+	if (reference_ns < processor->still_since_ns)
+		return;
+	duration_ns = reference_ns - processor->still_since_ns;
+	if (duration_ns < (uint64_t)m->tap_min_ms * UINT64_C(1000000) ||
+	    duration_ns > (uint64_t)m->tap_max_ms * UINT64_C(1000000))
+		return;
+
+	if (m->log_energy)
+		fprintf(stderr, "g6-pen: tap x=%" PRId32 " y=%" PRId32
+			" still=%" PRIu64 "ms\n",
+			processor->last_x, processor->last_y,
+			duration_ns / UINT64_C(1000000));
+	memset(&state, 0, sizeof(state));
+	state.timestamp_ns = timestamp_ns;
+	state.generation = processor->generation;
+	state.valid = G6_VALID_PROXIMITY | G6_VALID_TOOL |
+		      G6_VALID_POSITION | G6_VALID_PRESSURE;
+	state.valid |= G6_VALID_TAP;
+	state.proximity = true;
+	state.tip = true;
+	state.x = processor->last_x;
+	state.y = processor->last_y;
+	state.pressure = 1;
+	g6_emit(processor, &state);
+	state.tip = false;
+	state.pressure = 0;
+	state.valid |= G6_VALID_TAP;
+	g6_emit(processor, &state);
+}
+
 static void g6_emit_lift(struct g6_processor *processor, uint64_t timestamp_ns)
 {
 	struct g6_pen_state state;
 
 	if (processor->tracking != G6_TRACK_HOVER)
 		return;
+	g6_emit_tap(processor, timestamp_ns);
 	memset(&state, 0, sizeof(state));
 	state.timestamp_ns = timestamp_ns;
 	state.generation = processor->generation;
@@ -354,6 +532,8 @@ static void g6_emit_lift(struct g6_processor *processor, uint64_t timestamp_ns)
 	processor->positive_frames = 0;
 	processor->negative_frames = 0;
 	processor->have_last_point = false;
+	g6_reset_tap(processor);
+	g6_index_hysteresis_reset(processor);
 }
 
 static struct g6_pen_state g6_hover_state(struct g6_processor *processor,
@@ -409,6 +589,42 @@ static void g6_emit_position(struct g6_processor *processor,
 	processor->last_point_ns = timestamp_ns;
 }
 
+static void g6_track_still(struct g6_processor *processor,
+			   const struct g6_candidate *candidate,
+			   uint64_t timestamp_ns)
+{
+	uint64_t x_delta, y_delta;
+	uint64_t x_limit, y_limit;
+
+	if (!processor->still_valid) {
+		processor->still_since_ns = timestamp_ns;
+		processor->still_ref_x = candidate->x;
+		processor->still_ref_y = candidate->y;
+		processor->still_valid = true;
+		return;
+	}
+
+	x_delta = candidate->x >= processor->still_ref_x ?
+		(uint64_t)((int64_t)candidate->x - processor->still_ref_x) :
+		(uint64_t)((int64_t)processor->still_ref_x - candidate->x);
+	y_delta = candidate->y >= processor->still_ref_y ?
+		(uint64_t)((int64_t)candidate->y - processor->still_ref_y) :
+		(uint64_t)((int64_t)processor->still_ref_y - candidate->y);
+	x_limit = (uint64_t)processor->mapping.x_max *
+		processor->mapping.tap_still_delta_permille / 1000;
+	y_limit = (uint64_t)processor->mapping.y_max *
+		processor->mapping.tap_still_delta_permille / 1000;
+	if (!x_limit)
+		x_limit = 1;
+	if (!y_limit)
+		y_limit = 1;
+	if (x_delta > x_limit || y_delta > y_limit) {
+		processor->still_since_ns = timestamp_ns;
+		processor->still_ref_x = candidate->x;
+		processor->still_ref_y = candidate->y;
+	}
+}
+
 static void g6_process_candidate(struct g6_processor *processor,
 				 const struct g6_candidate *candidate,
 				 uint64_t timestamp_ns)
@@ -444,6 +660,7 @@ static void g6_process_candidate(struct g6_processor *processor,
 		processor->tracking = G6_TRACK_HOVER;
 		processor->have_last_point = false;
 	}
+	g6_track_still(processor, candidate, timestamp_ns);
 	g6_emit_position(processor, candidate, timestamp_ns);
 }
 
@@ -465,32 +682,18 @@ static void g6_process_cycle(struct g6_processor *processor)
 }
 
 static void g6_generation_boundary(struct g6_processor *processor,
-				   uint32_t generation,
-				   uint64_t timestamp_ns)
+				   uint32_t generation)
 {
-	if (processor->generation_valid)
-		g6_emit_lift(processor, timestamp_ns);
 	g6_cycle_clear(processor, true);
 	processor->stats.generation_boundaries++;
 	processor->generation = generation;
 	processor->generation_valid = true;
-	processor->await_clear = true;
-	processor->tracking = G6_TRACK_WAIT_CLEAR;
-	processor->positive_frames = 0;
-	processor->negative_frames = 0;
-	processor->have_last_point = false;
 }
 
-static void g6_sequence_boundary(struct g6_processor *processor,
-				 uint64_t timestamp_ns)
+static void g6_sequence_boundary(struct g6_processor *processor)
 {
-	g6_emit_lift(processor, timestamp_ns);
+	processor->stats.sequence_gaps++;
 	g6_cycle_clear(processor, true);
-	processor->await_clear = true;
-	processor->tracking = G6_TRACK_WAIT_CLEAR;
-	processor->positive_frames = 0;
-	processor->negative_frames = 0;
-	processor->have_last_point = false;
 }
 
 void g6_processor_init(struct g6_processor *processor,
@@ -532,10 +735,8 @@ int g6_processor_feed(struct g6_processor *processor,
 	processor->stats.records++;
 	g6_processor_tick(processor, record->timestamp_ns);
 	if (processor->sequence_valid &&
-	    record->sequence != processor->last_sequence + UINT32_C(1)) {
-		processor->stats.sequence_gaps++;
-		g6_sequence_boundary(processor, record->timestamp_ns);
-	}
+	    record->sequence != processor->last_sequence + UINT32_C(1))
+		g6_sequence_boundary(processor);
 	processor->last_sequence = record->sequence;
 	processor->sequence_valid = true;
 
@@ -543,14 +744,12 @@ int g6_processor_feed(struct g6_processor *processor,
 		processor->generation = record->generation;
 		processor->generation_valid = true;
 	} else if (record->generation != processor->generation) {
-		g6_generation_boundary(processor, record->generation,
-				       record->timestamp_ns);
+		g6_generation_boundary(processor, record->generation);
 		generation_changed = true;
 	}
 	if (record->flags & G6_HEAT_F_BOUNDARY) {
 		if (!generation_changed)
-			g6_generation_boundary(processor, record->generation,
-					       record->timestamp_ns);
+			g6_generation_boundary(processor, record->generation);
 		return 0;
 	}
 	if (record->report_id == 0x07 || record->report_id == 0x6e) {
