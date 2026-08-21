@@ -1,0 +1,6 @@
+{"timestamp_ns":1004000000,"generation":1,"valid":99,"proximity":true,"tool":"pen","tip":false,"barrel":false,"secondary":false,"x":0,"y":0,"pressure":0,"tilt_x":0,"tilt_y":0,"quality":1000}
+{"timestamp_ns":1007750000,"generation":1,"valid":99,"proximity":true,"tool":"pen","tip":false,"barrel":false,"secondary":false,"x":6847,"y":4564,"pressure":0,"tilt_x":0,"tilt_y":0,"quality":1000}
+{"timestamp_ns":1011500000,"generation":1,"valid":99,"proximity":true,"tool":"pen","tip":false,"barrel":false,"secondary":false,"x":13694,"y":9129,"pressure":0,"tilt_x":0,"tilt_y":0,"quality":1000}
+{"timestamp_ns":1015250000,"generation":1,"valid":99,"proximity":true,"tool":"pen","tip":false,"barrel":false,"secondary":false,"x":20541,"y":13693,"pressure":0,"tilt_x":0,"tilt_y":0,"quality":1000}
+{"timestamp_ns":1019000000,"generation":1,"valid":99,"proximity":true,"tool":"pen","tip":false,"barrel":false,"secondary":false,"x":27388,"y":18258,"pressure":0,"tilt_x":0,"tilt_y":0,"quality":1000}
+{"timestamp_ns":1020000000,"generation":1,"valid":33,"proximity":false,"tool":"pen","tip":false,"barrel":false,"secondary":false,"x":0,"y":0,"pressure":0,"tilt_x":0,"tilt_y":0,"quality":0}

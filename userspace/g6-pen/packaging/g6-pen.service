@@ -1,0 +1,31 @@
+[Unit]
+Description=Surface G6 HEAT userspace pen processor
+Documentation=file:/usr/share/doc/g6-pen/README.md
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/g6-pen --device /dev/g6ts-heat --config /etc/g6-pen.conf
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+DevicePolicy=closed
+DeviceAllow=/dev/g6ts-heat r
+DeviceAllow=/dev/uinput rw
+
+[Install]
+WantedBy=multi-user.target
