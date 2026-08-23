@@ -9,16 +9,24 @@ description: Architecture Decision Record (ADR) documenting why power-profiles-d
 
 ## Status
 
-Accepted (2026-08-23). Root cause verified on hardware; kernel fix committed
-as `05d634c6687e` on branch `sp11/integration-7.2.x-power-profiles` of
-`ooaklee/linux_ms_dev_kit-sp11`. Awaiting rebuild on the Mac build host and
-hardware re-verification.
+Accepted and hardware-verified (2026-08-23). Kernel
+`7.2.0-jg-0sp11v8-qcom-x1e` is installed on the X1E80100 OLED device. The
+framework loads, the legacy sysfs interface is present, the SSAM device is
+bound, power-profiles-daemon (ppd) uses the `platform_profile` driver, and
+profile switching works without kernel errors.
+
+The kernel changes are `05d634c6687e` (ACPI: platform_profile: support systems
+without ACPI) and `a13bd4f34a1f` (changelog 7.2.0-jg-0sp11v8) on branch
+`sp11/integration-7.2.x-power-profiles` of
+`ooaklee/linux_ms_dev_kit-sp11`. They are included in open
+[pull request 16](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/16).
 
 ## Context
 
 - The Surface Pro 11 (X1E80100) boots with device tree only. ACPI is compiled
   in (`CONFIG_ACPI=y`) but disabled at runtime (`acpi_disabled=1`; boot log
-  `ACPI: Interpreter disabled.`); `/sys/firmware/acpi` does not exist.
+  `ACPI: Interpreter disabled.`); before this fix, `/sys/firmware/acpi` did
+  not exist.
 - power-profiles-daemon 0.30 hardcodes the legacy sysfs path
   `/sys/firmware/acpi/platform_profile` (verified via `strings` on the ppd
   binary; it does not use the newer `/sys/class/platform_profile` class
@@ -57,14 +65,41 @@ hardware re-verification.
   and needs nothing ACPI-specific (freq QoS over SCMI cpufreq policies, SSAM
   EC requests, and the registry-created device all work without ACPI).
 
+## Verification
+
+Hardware verification on 2026-08-23 with the X1E80100 OLED device running
+`7.2.0-jg-0sp11v8-qcom-x1e` established that:
+
+- `surface_platform_profile` and `platform_profile` are loaded, with the latter
+  referenced by `surface_platform_profile`.
+- `/sys/firmware/acpi/platform_profile` reads `balanced`, and
+  `platform_profile_choices` lists `low-power balanced balanced-performance
+  performance`.
+- SSAM device `01:03:01:00:01` is bound to `surface_platform_profile`.
+- `powerprofilesctl list` reports `PlatformDriver: platform_profile` for all
+  profiles, and `powerprofilesctl get` reports `balanced`.
+- Switching through power-saver, performance, and balanced maps to sysfs
+  values `low-power`, `performance`, and `balanced`, respectively, with no
+  kernel errors in the journal.
+- cpufreq frequency QoS is active; policy 0 has `scaling_max_freq` set to
+  `3417600`.
+
 ## Consequences
 
 - On ACPI systems behavior is unchanged (`acpi_kobj` reused, no new kobject
   created).
 - On DT-only systems the `platform_profile` framework now loads,
   `surface_platform_profile` can autoload via the existing SSAM modalias, and
-  ppd should show balanced/performance etc.
-- The fix is a kernel change, so it ships with the next SP11 kernel build from
+  ppd shows the available profiles through the kernel driver.
+- The kernel fix ships in SP11 kernel v8 from
   `sp11/integration-7.2.x-power-profiles`.
+- The initial v8 build used only `--build-target binary-qcom-x1e`, which did
+  not produce the architecture-independent
+  `linux-qcom-x1e-headers-7.2.0-jg-0sp11v8_all.deb`. Consequently,
+  `linux-headers-7.2.0-jg-0sp11v8-qcom-x1e` remains in dpkg state `iU` because
+  its common-headers dependency is unsatisfied. Canonical builds use
+  `--build-target "binary-indep binary-qcom-x1e"`. This has no functional
+  impact on the device because it has no DKMS or other out-of-tree module
+  consumers.
 - The ADR is superseded only if ppd or the kernel later adopt a class-based
   interface and the legacy path is dropped.
