@@ -433,8 +433,10 @@ else
 
     [[ "$manifest_jobs" =~ ^[1-9][0-9]*$ ]] || \
       error "release manifest Jobs must be a positive integer."
-    grep -Eq '^- patches/.+\.patch$' "$release_manifest" || \
-      error "publishable release manifest does not record repository-relative patch assets."
+    if ! grep -Eq '^- patches/.+\.patch$' "$release_manifest" && \
+       ! grep -Eq '^Local patches: none$' "$release_manifest"; then
+      error "publishable release manifest does not record repository-relative patch assets or an explicit no-patch state."
+    fi
     checked
   fi
 
