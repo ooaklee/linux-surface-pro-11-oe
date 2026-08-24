@@ -141,10 +141,6 @@ running_compatible="$(tr '\0' ' ' </proc/device-tree/compatible 2>/dev/null || t
 if printf '%s\n' "$running_compatible" | grep -Eq 'x1p64100|denali-lcd'; then
   DTB_NAMES=(
     "x1p64100-microsoft-denali.dtb"
-    "sp11-denali.dtb"
-    "x1e80100-microsoft-denali-oled.dtb"
-    "x1e80100-microsoft-denali.dtb"
-    "x1e80100-microsoft-denali-oled-el2.dtb"
   )
 else
   DTB_NAMES=(
