@@ -152,7 +152,6 @@ else
     "x1e80100-microsoft-denali.dtb"
     "x1e80100-microsoft-denali-oled-el2.dtb"
     "sp11-denali.dtb"
-    "x1p64100-microsoft-denali.dtb"
   )
 fi
 
