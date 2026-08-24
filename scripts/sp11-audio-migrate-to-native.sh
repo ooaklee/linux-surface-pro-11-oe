@@ -6,6 +6,9 @@ TPLG_NAME="X1E80100-Microsoft-Surface-Pro-11-tplg.bin"
 FW_PATH="/lib/firmware/qcom/x1e80100"
 UCM_DIR="/usr/share/alsa/ucm2/Qualcomm/x1e80100"
 CONF_D_DIR="/usr/share/alsa/ucm2/conf.d"
+PARAM="soundwire_qcom.sp11_feedback_active_offset2_zero=1"
+GRUB_D_FILE="/etc/default/grub.d/99-surface-pro-11.cfg"
+GRUB_AUDIO_DROPIN="/etc/default/grub.d/98-sp11-native-audio-offset2.cfg"
 TPLG_SRC="${TPLG_SRC:-/home/leon/Workspace/repos/SP11X1e-audio/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin}"
 UCM_SRC_DIR="${UCM_SRC_DIR:-/home/leon/Workspace/repos/SP11X1e-audio/deploy/ucm2/Qualcomm/x1e80100}"
 KERNEL_ALLOWLIST=(
@@ -18,6 +21,26 @@ FORCE="false"
 RESTART="true"
 BACKUP_DIR=""
 BACKUP_DIR_SET="false"
+BOOT_PARAM_ADDED="false"
+GRUB_CONFIG_RESTORED="false"
+ucm_card_src=""
+
+log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+if [ -n "${SUDO_USER:-}" ]; then
+	REAL_USER="$SUDO_USER"
+	if ! REAL_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"; then
+		REAL_HOME="$HOME"
+		log "WARNING: could not resolve home for ${SUDO_USER}; using ${HOME}."
+	fi
+else
+	REAL_USER="${USER:-$(id -un)}"
+	REAL_HOME="$HOME"
+fi
+if [ -z "${REAL_HOME:-}" ]; then
+	REAL_HOME="$HOME"
+	log "WARNING: resolved home for ${REAL_USER} was empty; using ${HOME}."
+fi
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
@@ -50,8 +73,6 @@ Known limitation:
   linux-surface-pro-11-oe issue #48.
 EOF
 }
-
-log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
 have() {
 	command -v "$1" >/dev/null 2>&1
@@ -112,16 +133,29 @@ EOF
 }
 
 verify_sources() {
-	local file actual_sha
+	local file actual_sha matches=()
 	for file in \
 		"$TPLG_SRC" \
-		"${UCM_SRC_DIR}/SP11-HiFi.conf" \
-		"${UCM_SRC_DIR}/MICROSOFT-Surface-Pro-11.conf"; do
+		"${UCM_SRC_DIR}/SP11-HiFi.conf"; do
 		if [ ! -f "$file" ]; then
 			log "ERROR: required source artifact not found: $file"
 			exit 1
 		fi
 	done
+	shopt -s nullglob
+	matches=("${UCM_SRC_DIR}"/MICROSOFT-Surface-Pro-11*.conf)
+	shopt -u nullglob
+	if [ "${#matches[@]}" -eq 0 ]; then
+		log "ERROR: required source artifact not found: ${UCM_SRC_DIR}/MICROSOFT-Surface-Pro-11*.conf"
+		exit 1
+	fi
+	if [ "${#matches[@]}" -gt 1 ]; then
+		log "ERROR: multiple SP11 card UCM source artifacts found:"
+		printf '  %s\n' "${matches[@]}" >&2
+		log "ERROR: use a disambiguated single-file UCM source directory."
+		exit 1
+	fi
+	ucm_card_src="${matches[0]}"
 	if ! have sha256sum; then
 		log "ERROR: sha256sum is required to verify the canonical topology."
 		exit 1
@@ -184,13 +218,15 @@ backup_file() {
 }
 
 collect_user_workarounds() {
-	local pipewire_dir wireplumber_dir
-	pipewire_dir="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d"
-	wireplumber_dir="${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/wireplumber.conf.d"
+	local pipewire_dir wireplumber_dir filter_chain_dir
+	pipewire_dir="${XDG_CONFIG_HOME:-$REAL_HOME/.config}/pipewire/pipewire.conf.d"
+	wireplumber_dir="${XDG_CONFIG_HOME:-$REAL_HOME/.config}/wireplumber/wireplumber.conf.d"
+	filter_chain_dir="${XDG_CONFIG_HOME:-$REAL_HOME/.config}/pipewire/filter-chain.conf.d"
 	USER_WORKAROUNDS=()
 	shopt -s nullglob
 	USER_WORKAROUNDS+=("${pipewire_dir}"/50-sp11-*.conf)
 	USER_WORKAROUNDS+=("${wireplumber_dir}"/51-sp11-*.conf)
+	USER_WORKAROUNDS+=("${filter_chain_dir}"/50-sp11-*.conf)
 	shopt -u nullglob
 }
 
@@ -250,12 +286,62 @@ prepare_backup() {
 	done
 }
 
+ensure_boot_param() {
+	if root_cmd grep -Fq -- "$PARAM" "$GRUB_D_FILE" 2>/dev/null; then
+		log "Boot param ${PARAM} already present in ${GRUB_D_FILE}; nothing to do."
+		return
+	fi
+
+	if root_cmd test -e "$GRUB_D_FILE"; then
+		if ! root_cmd grep -Eq \
+			'^[[:space:]]*GRUB_CMDLINE_LINUX_DEFAULT=.*"$' "$GRUB_D_FILE"; then
+			log "ERROR: no supported GRUB_CMDLINE_LINUX_DEFAULT line found in ${GRUB_D_FILE}."
+			exit 1
+		fi
+		if [ "$DRY_RUN" != "true" ]; then
+			record_original_state "$GRUB_D_FILE"
+		fi
+		backup_file "$GRUB_D_FILE"
+		if [ "$DRY_RUN" = "true" ]; then
+			log "Would add ${PARAM} to GRUB_CMDLINE_LINUX_DEFAULT in ${GRUB_D_FILE}"
+		else
+			root_cmd sed -i -E \
+				'/^[[:space:]]*GRUB_CMDLINE_LINUX_DEFAULT=.*"$/ s/"$/ '"${PARAM}"'"/' \
+				"$GRUB_D_FILE"
+			log "Added ${PARAM} to GRUB_CMDLINE_LINUX_DEFAULT in ${GRUB_D_FILE}"
+		fi
+	else
+		if [ "$DRY_RUN" != "true" ]; then
+			record_original_state "$GRUB_AUDIO_DROPIN"
+		fi
+		backup_file "$GRUB_AUDIO_DROPIN"
+		if [ "$DRY_RUN" = "true" ]; then
+			log "Would create ${GRUB_AUDIO_DROPIN} with ${PARAM}"
+		else
+			root_cmd install -D -m 0644 /dev/null "$GRUB_AUDIO_DROPIN"
+			printf '%s\n' \
+				'# Enable SP11 SoundWire feedback-port Offset2 parity to prevent volume-change pops.' \
+				'GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} soundwire_qcom.sp11_feedback_active_offset2_zero=1"' | \
+				root_cmd tee "$GRUB_AUDIO_DROPIN" >/dev/null
+			root_cmd chmod 0644 "$GRUB_AUDIO_DROPIN"
+			log "Created ${GRUB_AUDIO_DROPIN} with ${PARAM}"
+		fi
+	fi
+
+	BOOT_PARAM_ADDED="true"
+	if [ "$DRY_RUN" = "true" ]; then
+		log "Would run update-grub"
+	elif ! root_cmd update-grub; then
+		log "WARNING: update-grub failed; the boot param will not apply until update-grub is run manually."
+	fi
+}
+
 install_native_pairing() {
 	local legacy_ucm="${UCM_DIR}/Surface11-HiFi.conf" path
 	if [ "$DRY_RUN" = "true" ]; then
 		log "Would install ${TPLG_SRC} as ${FW_PATH}/${TPLG_NAME}"
 		log "Would install ${UCM_SRC_DIR}/SP11-HiFi.conf in ${UCM_DIR}"
-		log "Would install ${UCM_SRC_DIR}/MICROSOFT-Surface-Pro-11.conf in ${UCM_DIR}"
+		log "Would install ${ucm_card_src} as ${UCM_DIR}/MICROSOFT-Surface-Pro-11.conf"
 		if [ -e "$legacy_ucm" ] || [ -L "$legacy_ucm" ]; then
 			log "Would overwrite legacy ${legacy_ucm} with the native SP11-HiFi.conf content"
 		fi
@@ -268,7 +354,7 @@ install_native_pairing() {
 	root_cmd install -D -m 0644 "$TPLG_SRC" "${FW_PATH}/${TPLG_NAME}"
 	root_cmd install -D -m 0644 "${UCM_SRC_DIR}/SP11-HiFi.conf" \
 		"${UCM_DIR}/SP11-HiFi.conf"
-	root_cmd install -D -m 0644 "${UCM_SRC_DIR}/MICROSOFT-Surface-Pro-11.conf" \
+	root_cmd install -D -m 0644 "$ucm_card_src" \
 		"${UCM_DIR}/MICROSOFT-Surface-Pro-11.conf"
 	if [ -e "$legacy_ucm" ] || [ -L "$legacy_ucm" ]; then
 		root_cmd install -m 0644 "${UCM_SRC_DIR}/SP11-HiFi.conf" "$legacy_ucm"
@@ -280,13 +366,28 @@ install_native_pairing() {
 }
 
 restart_user_audio() {
-	local service
+	local real_uid service
 	if [ "$RESTART" != "true" ]; then
 		log "Skipping PipeWire/WirePlumber restart (--no-restart)."
 		return
 	fi
 	if [ "$DRY_RUN" = "true" ]; then
-		log "Would reset failures and restart user pipewire, pipewire-pulse, and wireplumber services"
+		log "Would reset failures and restart ${REAL_USER}'s pipewire, pipewire-pulse, and wireplumber services"
+		return
+	fi
+	if [ "${EUID}" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+		real_uid="$(id -u "$REAL_USER")"
+		if [ ! -S "/run/user/${real_uid}/systemd/private" ]; then
+			log "No systemd user session detected. Log out and back in to restart audio services."
+			return
+		fi
+
+		sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/${real_uid}" \
+			systemctl --user reset-failed pipewire pipewire-pulse wireplumber || true
+		if ! sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/${real_uid}" \
+			systemctl --user restart pipewire pipewire-pulse wireplumber; then
+			log "WARNING: failed to restart one or more user audio services for ${REAL_USER}; log out and back in."
+		fi
 		return
 	fi
 	if ! have systemctl || ! systemctl --user show-environment >/dev/null 2>&1; then
@@ -308,6 +409,12 @@ print_verification() {
 Post-reboot verification:
   uname -r
     Shows 7.2.0-jg-0sp11v9-qcom-x1e or 7.2.0-jg-0sp11v10-qcom-x1e.
+
+  grep -o 'soundwire_qcom[^ ]*' /proc/cmdline
+    Shows soundwire_qcom.sp11_feedback_active_offset2_zero=1.
+
+  cat /sys/module/soundwire_qcom/parameters/sp11_feedback_active_offset2_zero
+    Shows Y. This parameter prevents volume-change pops on the feedback ports.
 
   wpctl status | grep -A6 Sinks
     Shows "Built-in Audio Pro" and no "Surface Pro 11 Speakers" workaround sink.
@@ -331,6 +438,7 @@ run_install() {
 	fi
 	prepare_backup
 	install_native_pairing
+	ensure_boot_param
 	restart_user_audio
 
 	if [ "$DRY_RUN" = "true" ]; then
@@ -343,8 +451,12 @@ Native SP11 audio migration complete.
   Installed topology: ${FW_PATH}/${TPLG_NAME}
   Installed UCM:      ${UCM_DIR}/SP11-HiFi.conf
   Installed card UCM: ${UCM_DIR}/MICROSOFT-Surface-Pro-11.conf
-  Removed workaround configs: ${#USER_WORKAROUNDS[@]}
+  Processed user configs: ${REAL_USER} (${REAL_HOME})
+  Removed workaround configs for ${REAL_USER}: ${#USER_WORKAROUNDS[@]}
   Backup: ${BACKUP_DIR}
+$(if [ "$BOOT_PARAM_ADDED" = "true" ]; then
+	printf '  Boot param: %s (applies on next boot)\n' "$PARAM"
+fi)
 
 *** REBOOT REQUIRED ***
 The topology is loaded at card probe: audioreach_tplg_init reads
@@ -367,6 +479,9 @@ restore_backup_files() {
 	while IFS=$'\t' read -r status path; do
 		[ "$status" = "BACKUP" ] || continue
 		source="${BACKUP_DIR}${path}"
+		case "$path" in
+			"$GRUB_D_FILE"|"$GRUB_AUDIO_DROPIN") GRUB_CONFIG_RESTORED="true" ;;
+		esac
 		if [ "$DRY_RUN" = "true" ]; then
 			log "Would restore ${source} to ${path}"
 			continue
@@ -388,12 +503,16 @@ remove_migration_created_files() {
 		case "$path" in
 			"${FW_PATH}/${TPLG_NAME}"|\
 			"${UCM_DIR}/SP11-HiFi.conf"|\
-			"${UCM_DIR}/MICROSOFT-Surface-Pro-11.conf")
+			"${UCM_DIR}/MICROSOFT-Surface-Pro-11.conf"|\
+			"${GRUB_AUDIO_DROPIN}")
 				if [ "$DRY_RUN" = "true" ]; then
 					log "Would remove migration-created file ${path}"
 				elif [ -e "$path" ] || [ -L "$path" ]; then
 					root_cmd rm -f -- "$path"
 					log "Removed migration-created file ${path}"
+				fi
+				if [ "$path" = "$GRUB_AUDIO_DROPIN" ]; then
+					GRUB_CONFIG_RESTORED="true"
 				fi
 				;;
 		esac
@@ -410,6 +529,13 @@ run_rollback() {
 	validate_rollback_backup
 	restore_backup_files
 	remove_migration_created_files
+	if [ "$GRUB_CONFIG_RESTORED" = "true" ]; then
+		if [ "$DRY_RUN" = "true" ]; then
+			log "Would run update-grub after restoring the GRUB configuration"
+		elif ! root_cmd update-grub; then
+			log "WARNING: update-grub failed; the restored boot configuration will not apply until update-grub is run manually."
+		fi
+	fi
 	restart_user_audio
 
 	if [ "$DRY_RUN" = "true" ]; then
@@ -420,6 +546,7 @@ run_rollback() {
 
 SP11 audio rollback complete from:
   ${BACKUP_DIR}
+  Processed user configs for: ${REAL_USER} (${REAL_HOME})
 
 *** REBOOT REQUIRED ***
 Reboot so audioreach_tplg_init reloads the restored topology at card probe.

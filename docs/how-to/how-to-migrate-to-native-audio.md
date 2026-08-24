@@ -101,6 +101,9 @@ sudo reboot
   `1b0c7217fc67bb11da002b06563dd8c411b0f0e35ac40778bff3d65093061c9d`.
 - Geocausa's `SP11-HiFi.conf` and `MICROSOFT-Surface-Pro-11.conf` are installed
   under `/usr/share/alsa/ucm2/Qualcomm/x1e80100/`.
+- The boot command-line parameter
+  `soundwire_qcom.sp11_feedback_active_offset2_zero=1` is set for Windows
+  feedback-port Offset2 parity, preventing volume-change pops after reboot.
 - User PipeWire `50-sp11-*.conf` and WirePlumber `51-sp11-*.conf` workaround
   files are removed.
 - Pre-migration files are preserved under
@@ -117,6 +120,18 @@ uname -r
 
 This must show the v9 or v10 release. It proves the userspace pairing is being
 tested with an allowlisted kernel.
+
+Confirm that the SoundWire feedback-port Offset2 parameter reached the kernel
+and is active:
+
+```bash
+grep -o 'soundwire_qcom[^ ]*' /proc/cmdline
+cat /sys/module/soundwire_qcom/parameters/sp11_feedback_active_offset2_zero
+```
+
+The first command must show
+`soundwire_qcom.sp11_feedback_active_offset2_zero=1`; the second must show `Y`.
+This Windows feedback-port Offset2 parity prevents volume-change pops.
 
 Confirm that WirePlumber created the native sink and did not recreate the
 legacy workaround sink:
