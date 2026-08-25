@@ -211,9 +211,11 @@ for the full on-device build path and fallback-kernel safety model.
   --validate
 ```
 
-If auto DTB extraction fails, provide one explicitly via `--dtb`. An explicit
-DTB can come from a kernel package with SP11 support or from a local build of
-`dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus DTB.
+If auto DTB extraction fails, provide the X1E/OLED DTB explicitly via `--dtb`
+or the best-effort X1P/LCD DTB via `--dtb-x1p`. An explicit DTB can come from a
+kernel package with SP11 support or from a local build of
+`dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus
+DTB. X1P/LCD live boot uses `--grub-mode menu` to select its dedicated entry.
 
 To build a live USB with KDE Plasma available by default, add `--desktop kde`.
 See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
