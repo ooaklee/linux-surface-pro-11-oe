@@ -661,6 +661,7 @@ for required in casper/vmlinuz casper/initrd; do
 done
 
 dtb_candidates=(
+  "x1p64100-microsoft-denali.dtb"
   "x1e80100-microsoft-denali-oled.dtb"
   "x1e80100-microsoft-denali.dtb"
   "x1e80100-microsoft-denali-oled-el2.dtb"

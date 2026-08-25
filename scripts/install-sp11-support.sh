@@ -133,6 +133,7 @@ set -euo pipefail
 BOOT_DTB_NAME="sp11-denali.dtb"
 BOOT_DTB="/boot/$BOOT_DTB_NAME"
 GRUB_CFG="/boot/grub/grub.cfg"
+
 # X1P/LCD uses a different device tree from X1E/OLED.  Prefer the LCD DTB
 # only when the currently running device tree identifies the X1P variant;
 # otherwise preserve the existing X1E/OLED preference.
