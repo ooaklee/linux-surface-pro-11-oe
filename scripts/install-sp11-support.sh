@@ -133,12 +133,22 @@ set -euo pipefail
 BOOT_DTB_NAME="sp11-denali.dtb"
 BOOT_DTB="/boot/$BOOT_DTB_NAME"
 GRUB_CFG="/boot/grub/grub.cfg"
-DTB_NAMES=(
-  "x1e80100-microsoft-denali-oled.dtb"
-  "x1e80100-microsoft-denali.dtb"
-  "x1e80100-microsoft-denali-oled-el2.dtb"
-  "sp11-denali.dtb"
-)
+# X1P/LCD uses a different device tree from X1E/OLED.  Prefer the LCD DTB
+# only when the currently running device tree identifies the X1P variant;
+# otherwise preserve the existing X1E/OLED preference.
+running_compatible="$(tr '\0' ' ' </proc/device-tree/compatible 2>/dev/null || true)"
+if printf '%s\n' "$running_compatible" | grep -Eq 'x1p64100|denali-lcd'; then
+  DTB_NAMES=(
+    "x1p64100-microsoft-denali.dtb"
+  )
+else
+  DTB_NAMES=(
+    "x1e80100-microsoft-denali-oled.dtb"
+    "x1e80100-microsoft-denali.dtb"
+    "x1e80100-microsoft-denali-oled-el2.dtb"
+    "sp11-denali.dtb"
+  )
+fi
 
 # Pick the newest candidate DTB, preferring Surface Pro 11 specific builds.
 # The plain jglathe qcom-x1e builds use the upstream 4.8 MHz DMIC clock; the
@@ -203,7 +213,7 @@ fi
 
 tmp="$(mktemp)"
 awk -v dtb="$BOOT_DTB_NAME" '
-  /^[ \t]*devicetree[ \t]+\/(boot\/)?(x1e80100-microsoft-denali(-oled|-oled-el2)?|sp11-denali)\.dtb([ \t]|$)/ {
+  /^[ \t]*devicetree[ \t]+\/(boot\/)?(x1p64100-microsoft-denali|x1e80100-microsoft-denali(-oled|-oled-el2)?|sp11-denali)\.dtb([ \t]|$)/ {
     next
   }
   /^[ \t]*linux[ \t]/ {

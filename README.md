@@ -43,7 +43,7 @@ list for the upstream Arch status.
 | --- | --- | --- |
 | NVMe | ✅ Working | Installed Ubuntu boots from `/dev/nvme0n1p5` with separate `/boot` and `/boot/efi` partitions after support setup. |
 | Graphics | ✅ Working | Direct boot reaches the Ubuntu desktop. 3D acceleration for X1E SoCs only; X1P support is on its way from upstream. |
-| Backlight | ✅ Working | Night Light and screen brightness controls work. Adjustable via `/sys/class/backlight/dp_aux_backlight/brightness`. |
+| Backlight | ✅ Working | Night Light and screen brightness controls work. X1E/OLED uses `/sys/class/backlight/dp_aux_backlight`; X1P/LCD uses the upstream `x1p64100-microsoft-denali.dtb` PWM-backlight path. |
 | USB3 | ⚠️ Partially | USB-C ports are working, but the Surface Dock connector is presumably not. |
 | USB4/Thunderbolt | ❌ Not working | No external display output when using the [official USB4 dock](https://learn.microsoft.com/en-us/surface/surface-usb4-dock). |
 | USB-C display output | ✅ Working | Working as of 6.15-rc6 (for DP alt mode). |
@@ -211,9 +211,11 @@ for the full on-device build path and fallback-kernel safety model.
   --validate
 ```
 
-If auto DTB extraction fails, provide one explicitly via `--dtb`. An explicit
-DTB can come from a kernel package with SP11 support or from a local build of
-`dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus DTB.
+If auto DTB extraction fails, provide the X1E/OLED DTB explicitly via `--dtb`
+or the best-effort X1P/LCD DTB via `--dtb-x1p`. An explicit DTB can come from a
+kernel package with SP11 support or from a local build of
+`dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus
+DTB. X1P/LCD live boot uses `--grub-mode menu` to select its dedicated entry.
 
 To build a live USB with KDE Plasma available by default, add `--desktop kde`.
 See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).

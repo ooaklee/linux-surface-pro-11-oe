@@ -3,6 +3,7 @@ set -euo pipefail
 
 ISO=""
 DTB="auto"
+DTB_X1P="auto"
 OUT="build/sp11-ubuntu-live.img"
 PAYLOAD_DIR="payload"
 WORK_DIR="build/work"
@@ -20,6 +21,7 @@ Usage: $0 --iso ISO [options]
 Options:
   --iso PATH_OR_URL      Ubuntu ARM64+X1E concept ISO.
   --dtb PATH_OR_AUTO     Surface Pro 11 Denali DTB, default auto.
+  --dtb-x1p PATH_OR_AUTO   Surface Pro 11 X1P/LCD Denali DTB, default auto (best-effort).
   --out PATH             Output raw disk image, default $OUT.
   --payload DIR          Optional payload directory, default payload.
   --work-dir DIR         Temporary build directory, default $WORK_DIR.
@@ -36,8 +38,9 @@ Options:
 
 The builder uses Docker with an ARM64 Ubuntu container so macOS can create a
 bootable ARM64 GRUB image without loop-mounting Linux filesystems locally.
-When --dtb auto is used, the builder tries to extract an X1E Surface Pro 11
-Denali DTB from the ISO's files or casper squashfs layers.
+When --dtb auto is used, the builder extracts the X1E Surface Pro 11 Denali
+DTB and, best-effort, the X1P/LCD Denali DTB from the ISO's files or casper
+squashfs layers. X1P/LCD live boot uses menu mode.
 EOF
 }
 
@@ -244,6 +247,15 @@ while [ "$#" -gt 0 ]; do
       DTB="$2"
       shift 2
       ;;
+    --dtb-x1p)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
+      DTB_X1P="$2"
+      shift 2
+      ;;
     --out)
       if [ "$#" -lt 2 ]; then
         echo "Missing value for $1" >&2
@@ -362,6 +374,7 @@ work_abs="$(cd "$repo_dir/$WORK_DIR" && pwd)"
 
 iso_name="ubuntu-x1e.iso"
 dtb_name="sp11-denali.dtb"
+dtb_x1p_name="sp11-denali-x1p.dtb"
 
 if [[ "$ISO" =~ ^https?:// ]]; then
   echo "Downloading ISO..."
@@ -370,9 +383,12 @@ else
   cp "$ISO" "$work_abs/$iso_name"
 fi
 
-rm -f "$work_abs/$dtb_name"
+rm -f "$work_abs/$dtb_name" "$work_abs/$dtb_x1p_name"
 if [ "$DTB" != "auto" ]; then
   cp "$DTB" "$work_abs/$dtb_name"
+fi
+if [ "$DTB_X1P" != "auto" ]; then
+  cp "$DTB_X1P" "$work_abs/$dtb_x1p_name"
 fi
 
 rm -rf "$work_abs/payload"
@@ -448,6 +464,13 @@ write_grub_usb_safe_casper_boot
 cat <<'EOF'
 }
 
+menuentry "Ubuntu for Surface Pro 11 X1P/LCD (USB-safe, casper iso-scan)" {
+    set dtb_path=/dtb/sp11-denali-x1p.dtb
+EOF
+write_grub_usb_safe_casper_boot
+cat <<'EOF'
+}
+
 menuentry "Ubuntu for Surface Pro 11 (USB-safe text/debug, casper iso-scan)" {
     search --label SP11DATA --set=data
     set root=($data)
@@ -499,6 +522,7 @@ apt-get install -y --no-install-recommends \
 
 cd /work
 dtb_name="sp11-denali.dtb"
+dtb_x1p_name="sp11-denali-x1p.dtb"
 
 rm -rf esp data out
 mkdir -p esp/EFI/BOOT data/iso data/dtb data/payload data/support out
@@ -641,15 +665,21 @@ dtb_candidates=(
   "x1e80100-microsoft-denali.dtb"
   "x1e80100-microsoft-denali-oled-el2.dtb"
 )
+dtb_x1p_candidates=(
+  "x1p64100-microsoft-denali.dtb"
+  "x1p64100-microsoft-denali-el2.dtb"
+)
 
 extract_dtb_from_iso_member() {
-  local name member
-  for name in "${dtb_candidates[@]}"; do
+  local out_name name member
+  out_name="$1"
+  shift
+  for name in "$@"; do
     member="$(
       awk -F/ -v name="$name" '$NF == name { print; exit }' "$iso_members"
     )"
     if [ -n "$member" ]; then
-      bsdtar -xOf ubuntu-x1e.iso "$member" > "data/dtb/$dtb_name"
+      bsdtar -xOf ubuntu-x1e.iso "$member" > "data/dtb/$out_name"
       echo "Extracted Denali DTB from ISO member: $member"
       return 0
     fi
@@ -658,7 +688,9 @@ extract_dtb_from_iso_member() {
 }
 
 extract_dtb_from_squashfs_layers() {
-  local layer name found inner_path tmp_layer tmp_root
+  local out_name layer name found inner_path tmp_layer tmp_root
+  out_name="$1"
+  shift
   tmp_layer="$(mktemp)"
   tmp_root="$(mktemp -d)"
 
@@ -666,7 +698,7 @@ extract_dtb_from_squashfs_layers() {
     echo "Searching DTB in $layer..."
     bsdtar -xOf ubuntu-x1e.iso "$layer" > "$tmp_layer"
 
-    for name in "${dtb_candidates[@]}"; do
+    for name in "$@"; do
       found="$(
         unsquashfs -ll "$tmp_layer" 2>/dev/null |
           awk -F/ -v name="$name" '$NF == name { print $0; exit }' |
@@ -677,7 +709,7 @@ extract_dtb_from_squashfs_layers() {
         rm -rf "$tmp_root"
         mkdir -p "$tmp_root"
         unsquashfs -q -d "$tmp_root" "$tmp_layer" "$inner_path" >/dev/null
-        cp "$tmp_root/$inner_path" "data/dtb/$dtb_name"
+        cp "$tmp_root/$inner_path" "data/dtb/$out_name"
         echo "Extracted Denali DTB from $layer: $inner_path"
         rm -f "$tmp_layer"
         rm -rf "$tmp_root"
@@ -693,11 +725,23 @@ extract_dtb_from_squashfs_layers() {
 
 if [ -f "$dtb_name" ]; then
   cp "$dtb_name" "data/dtb/$dtb_name"
-elif ! extract_dtb_from_iso_member && ! extract_dtb_from_squashfs_layers; then
+elif ! extract_dtb_from_iso_member "$dtb_name" "${dtb_candidates[@]}" && ! extract_dtb_from_squashfs_layers "$dtb_name" "${dtb_candidates[@]}"; then
   echo "STATUS: DTB not found in ISO files or casper squashfs layers." >&2
   echo "Searched for: ${dtb_candidates[*]}" >&2
   echo "Re-run with --dtb /path/to/surface-pro-11-denali.dtb." >&2
   exit 1
+fi
+
+dtb_x1p_present=false
+if [ -f "$dtb_x1p_name" ]; then
+  cp "$dtb_x1p_name" "data/dtb/$dtb_x1p_name"
+  dtb_x1p_present=true
+elif extract_dtb_from_iso_member "$dtb_x1p_name" "${dtb_x1p_candidates[@]}" || extract_dtb_from_squashfs_layers "$dtb_x1p_name" "${dtb_x1p_candidates[@]}"; then
+  dtb_x1p_present=true
+fi
+if [ "$dtb_x1p_present" = "false" ]; then
+  echo "WARNING: X1P/LCD DTB not found in ISO or --dtb-x1p; removing X1P grub entry." >&2
+  sed -i '\|menuentry "Ubuntu for Surface Pro 11 X1P/LCD|,/^}/d' grub.cfg
 fi
 
 if [ -d payload ]; then
