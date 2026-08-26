@@ -143,6 +143,23 @@ install_fw_file() {
   echo "Installed $dst"
 }
 
+# Discussion: https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1639
+link_gpu_denali_path() {
+  local generic="$DEST_PREFIX/qcom/x1e80100/microsoft/qcdxkmsuc8380.mbn"
+  local denali_dir="$DEST_PREFIX/qcom/x1e80100/microsoft/Denali"
+  local denali="$denali_dir/qcdxkmsuc8380.mbn"
+
+  if [ ! -f "$generic" ]; then
+    echo "Warning: GPU firmware not installed; expected $generic" >&2
+    return 0
+  fi
+
+  install -d -m 0755 "$denali_dir"
+  rm -f "$denali"
+  ln -s ../qcdxkmsuc8380.mbn "$denali"
+  echo "Linked $denali -> ../qcdxkmsuc8380.mbn"
+}
+
 latest_version() {
   curl -fsSL "$DRIVER_REPO_API_URL" |
     jq -r '.[] | select(.type == "dir") | .name' |
@@ -253,6 +270,11 @@ case "$MODE" in
   download) grab_download ;;
   windows) grab_windows ;;
 esac
+
+# The Denali kernel looks below microsoft/Denali, while the generic firmware
+# mapping uses microsoft/. Keep the canonical file and bridge the lookup with
+# a relative symlink.
+link_gpu_denali_path
 
 apply_adsp_policy
 
