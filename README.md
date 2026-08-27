@@ -262,6 +262,8 @@ sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
 
 If networking is unavailable, mount the Windows partition and use Windows
 firmware instead: `--windows-root "$WINROOT"` (see the script `--help`).
+See [Install Surface Pro 11 Firmware](docs/how-to/how-to-install-sp11-firmware.md)
+for the source options, aDSP safety policy, and validation checks.
 
 Then install the patched kernel payload from the USB. For an `sp11v3` payload,
 keep `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` beside the `.deb`
@@ -555,7 +557,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 
 ## Windows Firmware
 
-The verified Windows install contains the expected firmware inputs:
+The verified Windows install contains these key firmware inputs:
 
 - `qcdxkmsuc8380.mbn`
 - `adsp_dtbs.elf`
@@ -563,9 +565,19 @@ The verified Windows install contains the expected firmware inputs:
 - `cdsp_dtbs.elf`
 - `qccdsp8380.mbn`
 
-These are extracted by `scripts/finish-sp11-installed-system.sh` either from
-the Windows partition (`--windows-root`) or downloaded from the Canonical
-firmware mirror (`--download`).
+The `scripts/sp11-grab-fw.sh` helper installs these files either by downloading
+the latest WOA-Project Qualcomm reference driver set (`--download`) or by
+copying the newest matching files from a mounted Windows root
+(`--windows-root`). The installed-system finish script invokes this helper.
+See [Install Surface Pro 11 Firmware](docs/how-to/how-to-install-sp11-firmware.md)
+for the complete eleven-file mapping, including `qcdxkmsucpurwa.mbn` and the
+aDSP/cDSP JSON payloads, plus the full procedure and validation steps.
+
+Firmware installation is a one-time step: the files persist under
+`/lib/firmware`. Kernel package installation normally rebuilds the new
+kernel's initramfs automatically, while firmware needed after the root
+filesystem is mounted remains available from `/lib/firmware`. Do not rerun the
+firmware helper for each kernel installation or upgrade.
 
 ## Useful Commands on Windows
 

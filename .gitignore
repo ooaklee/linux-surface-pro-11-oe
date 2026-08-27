@@ -62,3 +62,5 @@ sp11-bt-set-addr
 
 !payload/audio/
 !payload/audio/*.bin
+
+.vscode/
