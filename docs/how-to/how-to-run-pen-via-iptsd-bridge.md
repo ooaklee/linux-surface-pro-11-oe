@@ -25,7 +25,7 @@ This how-to documents a second path: a transport bridge into
 [alex-lentz/iptsd](https://github.com/alex-lentz/iptsd) that maps the same
 HEAT antenna data onto the IPTS DFT stylus model. The bridge reaches
 0.21 to 0.48 mm median position error and contact F1 0.953 when scored
-offline against the internal Windows processor capture evidence, with
+offline against the Windows processor captures, with
 no per-device calibration. It is experimental: the reported pressure
 is a fixed click level and barrel, eraser, and tilt are not decoded.
 
