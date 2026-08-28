@@ -13,8 +13,12 @@ Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28.
 Kernel package, reboot, raw-capture, and userspace validation remain required
 before the front camera is described as working on this device.
 
-This decision supersedes the unverified 1.2 GHz / 2.4 Gsymbol/s model recorded
-in the earlier local draft. That draft was never committed.
+This decision supersedes the earlier local draft that treated a statically
+decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
+to 2.4 Gsymbol/s at the receiver. The 1.2 Gsymbol/s sensor configuration is
+real package evidence, but it is a distinct 3840x2640 mode and is not the
+current 3844x2640 Linux recipe. The doubled receiver interpretation was never
+hardware-proven or committed.
 
 ## Context
 
@@ -37,7 +41,7 @@ and with the only complete hardware-proven Snapdragon implementation.
 
 ### Evidence and provenance
 
-The decision deliberately separates three evidence classes.
+The decision deliberately separates four evidence classes.
 
 1. **Direct evidence from this device's Windows capture**
 
@@ -59,7 +63,31 @@ The decision deliberately separates three evidence classes.
    - `windbg/31-camera-cci-register-writes-pending.md`
    - `windbg/32-camera-camss-mmio-dump.txt`
 
-2. **Hardware-proven Snapdragon Linux reference**
+2. **Static Windows driver-package oracle from this device**
+
+   `geocausa/SP11X1ECamera` at
+   `41003427f47edd27cd98f846b4282327824ee16f` mechanically decodes files whose
+   front sensor-module, power-resource, and platform-configuration hashes
+   match this device's installed Windows files. Its mode 0 is a real static
+   configuration for 3840x2640 RAW10 with analogue crop origin `(104, 256)`,
+   line length 6752, frame length 3554, declared 30 fps, and PLL2 divider/
+   multiplier bytes `03 01 77`. Under the same PLL interpretation used below,
+   that is a 1.2 Gsymbol/s sensor-side mode, not a 2.4 Gsymbol/s receiver rate.
+
+   This is configuration-package evidence, not a runtime CCI or CAMSS trace.
+   It does not prove that Windows selected mode 0 on a given stream, nor does
+   it establish receiver AFE/CDR values. Its declared 548.57 MHz output pixel
+   clock also does not equal `6752 * 3554 * 30`, so it must not be copied into
+   `V4L2_CID_PIXEL_RATE` without register-level timing correlation.
+
+   The decoded front descriptor corroborates CCI1/master1/CSIPHY2, and the
+   power map corroborates GPIO237, MCLK4 at 19.2 MHz, LDO3M at 1.8 V, and LDO7B
+   at 2.8 V. The platform parser was developed against a different
+   `qccamplatform8380.sys` revision, so these routing fields remain strong
+   same-schema corroboration rather than a runtime trace from this exact
+   platform-driver binary.
+
+3. **Hardware-proven Snapdragon Linux reference**
 
    `karsies-wq/sp11-imx681-linux` at
    `b08f76f40b8d7b715bd4da6aef484f86142cc147` reports a complete front-camera
@@ -74,7 +102,7 @@ The decision deliberately separates three evidence classes.
    969.6 MHz. The generic x1e80100 PHY consumes the C-PHY symbol rate directly,
    so CAMSS must pass 969.6 MHz without another factor of two.
 
-3. **Intel IMX681 work**
+4. **Intel IMX681 work**
 
    `linux-surface/linux-surface#2156` targets Intel IPU6 and a D-PHY receiver.
    It is useful for sensor-table provenance and corroborating the 969.6 MHz
@@ -124,6 +152,11 @@ We will integrate the front camera as follows.
 - Expose only the hardware-proven 3844x2640 sensor mode. Remove the runtime
   `imx681_windows` switch and its incompatible 1.2 GHz table until genuine
   per-state mode selection also updates link frequency and control ranges.
+- Keep the statically decoded Windows 3840x2640/1.2 Gsymbol/s mode as future
+  work, not a replacement for the v14 acceptance candidate. If implemented,
+  make it a distinct V4L2 mode with direct 1.2 Gsymbol/s PHY input, 3840-pixel
+  sensor geometry (and therefore no 3844-to-3840 CSID crop), correlated pixel
+  rate and control bounds, plus its own FIFO and repeated-stream validation.
 - Keep the mode's line length at 8704 and frame length at 3177.
 - Expose one standard `V4L2_CID_ANALOGUE_GAIN` control with range `0..960`,
   step 1, and default 192. For this IMX681 only, map it to global U8.8 gain at
@@ -195,6 +228,9 @@ source HEAD `e0ce71102628902fa5281a2adcadc19b2d88d4f0` in its manifest.
 - The sensor, CAMSS, and generic PHY now use one consistent rate contract.
   The old 1.2 GHz doubled path, which selected the 2.35 Gsymbol/s table while
   the sensor emitted about 969.6 Msymbol/s, is removed.
+- A genuine static Windows 1.2 Gsymbol/s mode is recorded separately. It does
+  not rehabilitate the removed doubled-rate implementation or change the v14
+  raw-capture gate.
 - Userspace sees only a mode the driver will actually program. Adding further
   modes later requires proper V4L2 state, control-range, and link-frequency
   selection rather than another global module parameter.
@@ -250,6 +286,7 @@ can hang the bus when camera registers are read with the power/clock domain off.
 
 - [jglathe/linux_ms_dev_kit issue #74 resolution](https://github.com/jglathe/linux_ms_dev_kit/issues/74#issuecomment-5302651457)
 - [Hardware-proven Snapdragon reference](https://github.com/karsies-wq/sp11-imx681-linux/tree/b08f76f40b8d7b715bd4da6aef484f86142cc147)
+- [Static Windows package oracle](https://github.com/geocausa/SP11X1ECamera/tree/41003427f47edd27cd98f846b4282327824ee16f)
 - [linux-surface PR #2156](https://github.com/linux-surface/linux-surface/pull/2156)
 - [SP11 front-camera tracking issue #43](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/43)
 - [ADR0066: SP11 IMX681 libcamera Simple IPA Integration](adr-0066-sp11-imx681-libcamera-simple-ipa.md)
