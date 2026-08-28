@@ -838,6 +838,11 @@ capture_frames() {
 }
 
 print_follow_up() {
+  local renderer=""
+  local preview_path="${OUTPUT_PATH}.preview.png"
+
+  renderer="$(dirname -- "$(realpath -e -- "${BASH_SOURCE[0]}")")/render-sp11-imx681-raw.py"
+
   cat <<EOF
 
 PASS (transport-size and sampled-content gate): captured $FRAME_COUNT complete packed-RAW10 frames.
@@ -854,9 +859,20 @@ entropy, and adjacent-frame differences reject empty, flat, and exact duplicate
 output. These checks do not prove Bayer order, good exposure, or unmasked CSID/
 VFE hardware status. Inspect the decoded image and complete the repeated-stream
 and control-comparison gates below before declaring the camera functional.
-
-Manual exposure/gain follow-up:
 EOF
+
+  if [ -x "$renderer" ]; then
+    echo
+    echo "Raw inspection preview (auto-discovers the saved Bayer code):"
+    printf '    %q %q %q\n' "$renderer" "$OUTPUT_PATH" "$preview_path"
+    echo "  Use --linear on low/high control captures when comparing brightness."
+  else
+    echo
+    echo "Raw renderer not found beside this script: $renderer"
+  fi
+
+  echo
+  echo "Manual exposure/gain follow-up:"
 
   if [ -n "$SENSOR_CONTROL_DEVICE" ]; then
     cat <<EOF

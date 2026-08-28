@@ -215,6 +215,11 @@ source HEAD `e0ce71102628902fa5281a2adcadc19b2d88d4f0` in its manifest.
   hidden FIFO or image-violation status never occurred. Exact frame sizes,
   repeated streaming, and raw-image inspection remain separate evidence gates;
   add targeted IRQ instrumentation only if runtime symptoms justify it.
+- `scripts/render-sp11-imx681-raw.py` renders the validator output according to
+  the negotiated Bayer code instead of assuming RGGB. Its half-resolution,
+  auto-stretched PNG is an inspection aid, not colour calibration or proof that
+  the reported CFA order is physically correct; use its linear mode for
+  low/high exposure and gain comparisons.
 - The kernel milestone is not the whole webcam integration. Raw capture must
   pass before the libcamera soft-IPA patch and sensor tuning are installed or
   PipeWire/browser changes are considered.
