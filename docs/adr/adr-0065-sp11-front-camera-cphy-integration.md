@@ -41,6 +41,15 @@ diagnostic boundary for the next package. It samples IMX681 stream/frame state
 and powered CSID680/VFE680 status without changing stream configuration or
 teardown semantics.
 
+Amended on 2026-08-29 after installing and booting that package. The canonical
+40-second capture armed VFE0 RDI0 and CSID0, but CSID reported zero packets,
+zero receive/error IRQs, and zero ECC/CRC errors. The sensor accepted and
+immediately read back `MODE_SELECT=1`; the later standby-path NACK occurred
+after receiver teardown and does not establish when the sensor became
+unreachable. Commit `347eb9702bf1` therefore restores the working reference's
+sparse PLL overrides and adds a nonfatal sensor-state sample after 100 ms while
+the downstream pipeline is still active.
+
 This decision supersedes the earlier local draft that treated a statically
 decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
 to 2.4 Gsymbol/s at the receiver. The 1.2 Gsymbol/s sensor configuration is
@@ -153,11 +162,11 @@ The decision deliberately separates four evidence classes.
 
    The reference's reported approximately 17.5 microsecond line at LLP 7552,
    followed by about 13 percent headroom at LLP 8704, implies a 432 MHz VT
-   clock. Its static-data notes also identify an OP pixel divider of zero as a
-   broken fallback state and use divider 4 for the C-PHY calculation. Together
-   these establish the derived complete Linux tuple below; the reference mode
-   table itself only overwrites selected multiplier and pre-divider bytes, so
-   the complete tuple must not be described as a byte-for-byte runtime trace.
+   clock. Its mode table does not program a complete clock tree: it preserves
+   the CCS-calculated branch dividers and overrides only `0x0307=e1` and
+   `0x030d..0x030f=03 01 2f`. The complete tuple later derived from those
+   observations was not direct runtime evidence and produced zero decoded
+   packets on this device, so it is rejected for the next bounded experiment.
 
 4. **Intel IMX681 work**
 
@@ -217,11 +226,11 @@ We will integrate the front camera as follows.
   sensor geometry (and therefore no 3844-to-3840 CSID crop), correlated pixel
   rate and control bounds, plus its own FIFO and repeated-stream validation.
 - Keep the mode's line length at 8704 and frame length at 3177.
-- Program all effective VT and OP branch dividers deterministically. Use VT
-  pixel/system/pre/multiplier `5/1/2/225`, yielding 432 MHz, and OP
-  pixel/system/pre/multiplier `4/1/3/303`, corresponding to the advertised
-  969.6 Msymbol/s link. Leave `PLL_MODE` at the sensor default. Record
-  432 MHz in the mode timing metadata used for exposure conversion.
+- Preserve the branch dividers selected by the CCS PLL calculator and apply
+  only the working reference's sparse multiplier/pre-divider overrides:
+  `0x0307=e1` and `0x030d..0x030f=03 01 2f`. Leave `PLL_MODE` at the sensor
+  default. Keep 432 MHz as the measured VT timing metadata used for exposure
+  conversion; the CCS-reported 387.84 MHz CSI pixel rate is not the VT clock.
 - Expose one standard `V4L2_CID_ANALOGUE_GAIN` control with range `0..960`,
   step 1, and default 192. For this IMX681 only, map it to global U8.8 gain at
   `0x020e/0x020f` using `0x0100 + value * 4`; do not expose a duplicate digital
@@ -266,9 +275,10 @@ We will integrate the front camera as follows.
   address/increment/image/packer configuration plus IRQ, violation, overflow,
   and image-violation state before disabling the writer.
 - Sample IMX681 `MODE_SELECT` and `FRAME_COUNT` before and after stream-on and
-  before stream-off. Diagnostic read failures remain nonfatal and must never
-  replace the authoritative `MODE_SELECT` write result or alter best-effort
-  teardown.
+  before stream-off. For the sparse-PLL package, take one additional sample
+  after 100 ms while CSIPHY, CSID, and VFE remain active. Diagnostic read
+  failures remain nonfatal and must never replace the authoritative
+  `MODE_SELECT` write result or alter best-effort teardown.
 
 ### Privacy indicator
 
@@ -324,11 +334,15 @@ The reviewed source milestone consists of these signed commits on
   onto powered STREAMOFF, add matching CSID680/VFE680 packet, error, IRQ, and
   write-master evidence, and sample nonfatal IMX681 `MODE_SELECT` and
   `FRAME_COUNT` state around stream transitions.
+- `347eb9702bf18f2d81e4e29767a416172acbfe66` — reject the unproven complete
+  divider tuple after its zero-packet result, restore the reference's sparse
+  PLL ownership, and sample sensor state after 100 ms of active streaming.
 
 The earlier `e0ce71102628` source passed local module/DTB builds, binding
 validation, and strict checkpatch before packaging. Strict checkpatch also
-passes the `0097c12b0fec` and `4d190bc96139` amendments; the latter additionally
-passes the targeted `W=1` CAMSS, CCS, and CCS PLL module builds.
+passes the `0097c12b0fec`, `4d190bc96139`, and `347eb9702bf1` amendments.
+The latter passes a targeted `W=1` CCS module build; `4d190bc96139`
+additionally passed the targeted CAMSS and CCS PLL module builds.
 
 The canonical remote package build completed successfully on 2026-08-28 in
 33 minutes using `binary-indep binary-qcom-x1e` with ten jobs. Its manifest
@@ -494,6 +508,46 @@ No package from this diagnostic build was installed, no live module or camera
 device was touched, and no reboot was performed as part of this build and
 provenance gate.
 
+### `4d190bc96139` boot and runtime result
+
+The provenance-verified package was subsequently installed and booted as
+`7.2.0-jg-0sp11v14-qcom-x1e`. Loaded source versions matched its artifacts for
+CAMSS (`0486AE0FB983546F7875668`), CCS (`51A4C4B08DF03EDE294DD26`), CCS PLL
+(`F5D68994B5EB8E947AC4F6B`), and Qualcomm MIPI CSI-2 PHY
+(`F578CE5728BAC71AB6C9374`). The live endpoint remained 969.6 MHz and the CCS
+sensor bound normally.
+
+The canonical validator negotiated the expected 3844x2640 RAW10 sensor stream,
+CSIPHY2/trio0, CSID0's 3840x2640 crop, and VFE0 RDI0 packed RAW output with a
+4800-byte stride and 12,672,000-byte buffers. Buffer allocation, queueing, and
+`VIDIOC_STREAMON` succeeded, but no buffer completed in 40 seconds and the raw
+file remained empty. The powered stop snapshot reported:
+
+```text
+VFE0 RDI0 WM24: CFG=0x00010001 ADDR=0xfe000000 INCR=0x00c15c00
+CSID0: RX_CFG0=0x11300000 RX_CFG1=0x00000001 TOTAL_PKTS=0 ECC=0 CRC=0
+CSID0 IRQ: TOP=0 BUF_DONE=0 RX=0
+CSID0 RDI0: CFG0=0x802b2000 CTRL=1 CFG1=0x00008095 HCROP=0x0eff0000
+```
+
+VFE IRQ, violation, overflow, and image-violation state were also all zero.
+This proves that userspace, VFE, and CSID were armed, while no packet reached
+CSID decode and no protocol error was observed. The failure boundary is
+therefore upstream of CSID packet decode.
+
+Immediately around STREAMON, the sensor remained readable and changed
+`MODE_SELECT` from `0x00` to `0x01`; `FRAME_COUNT` read `0xff` both times. At
+STREAMOFF both reads returned `-ENXIO`, but the sensor callback runs after VFE,
+CSID, and CSIPHY teardown, so that NACK may be induced by the earlier receiver
+shutdown. A separate approximately 350 ms attempt reproduced the same order:
+successful stream-on readback, receiver stop, then sensor NACK. It does not
+prove that the sensor lost power or stopped responding during active capture.
+
+The next source milestone, `347eb9702bf1`, is a bounded sensor-side A/B. It
+leaves geometry, endpoint rate, C-PHY table/CDR, CSID, and VFE unchanged;
+restores only the sparse PLL register ownership used by the working Snapdragon
+reference; and samples sensor state at 100 ms before downstream teardown.
+
 ## Consequences
 
 - The sensor, CAMSS, and generic PHY now use one consistent rate contract.
@@ -533,9 +587,11 @@ provenance gate.
 
 ## Acceptance gates
 
-For `ead11c748e4e`, gates 1–4 pass and gate 5 fails with zero completed
-buffers. Gates 6–7 remain blocked. The `4d190bc96139` package is diagnostic
-evidence for localizing gate 5, not a claim that capture is fixed.
+For `4d190bc96139`, gates 1–4 pass and gate 5 fails with zero completed
+buffers. Gates 6–7 remain blocked. The `347eb9702bf1` source is the next
+diagnostic/corrective candidate and still requires a provenance-verified
+package build, installation, and runtime validation; it is not yet a claim
+that capture is fixed.
 
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.
