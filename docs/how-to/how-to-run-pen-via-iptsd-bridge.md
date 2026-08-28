@@ -9,7 +9,8 @@ description: How-to guide for running the Surface Pro 11 G6 pen through a transp
 
 Use this procedure when the Surface Pro 11 pen produces no input on the
 patched qcom-x1e kernel and you want pen hover and click support through
-the IPTS DFT pipeline instead of the evidence-gated `g6-pen` daemon.
+the IPTS DFT pipeline instead of the retired `g6-pen` userspace approach
+(ADR0059/ADR0060, superseded by this procedure).
 
 ## Purpose
 
@@ -24,9 +25,8 @@ This how-to documents a second path: a transport bridge into
 [alex-lentz/iptsd](https://github.com/alex-lentz/iptsd) that maps the same
 HEAT antenna data onto the IPTS DFT stylus model. The bridge reaches
 0.21 to 0.48 mm median position error and contact F1 0.953 when scored
-offline against the Windows processor captures in
-[sp11-windows-capture](https://github.com/ooaklee/sp11-windows-capture),
-with no per-device calibration. It is experimental: the reported pressure
+offline against the internal Windows processor capture evidence, with
+no per-device calibration. It is experimental: the reported pressure
 is a fixed click level and barrel, eraser, and tilt are not decoded.
 
 The bridge works because the G6 HEAT antenna vectors share the 48-byte
@@ -43,9 +43,9 @@ taxonomy exactly.
 - `g6-pen.service` stopped: the raw device permits a single reader.
 - alex-lentz/iptsd at commit `3663e96` or later, with `meson`, `ninja`,
   and a native aarch64 toolchain.
-- The P4, P5, and P8 corpora plus `processor-pen-reports-P4-P8.csv` from
-  `sp11-windows-capture` for offline validation (optional but
-  recommended).
+- The P4, P5, and P8 HEAT corpora plus the Windows processor report
+  export from the internal capture evidence kit, for offline validation
+  (optional but recommended).
 
 ## Procedure
 
@@ -116,7 +116,8 @@ sudo systemctl enable --now g6tsd.service
 ## References
 
 - Issue [#35](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/35):
-  validate alex-lentz/iptsd for the G6 digitizer.
+  validate alex-lentz/iptsd for the G6 digitizer, including the offline
+  validation methodology and measured results.
 - ADR0059 and ADR0060: the evidence-gated `g6-pen` design and the HEAT
   transport contract this bridge consumes.
 - ADR0041: the touchscreen patch set that carries the HEAT stream.
