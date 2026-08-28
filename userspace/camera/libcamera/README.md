@@ -31,16 +31,262 @@ audit copy and must stay byte-identical to the copy carried by the patch.
 - It does not add a privacy-LED daemon. V4L2 core owns the DT privacy LED.
 - It does not relax PipeWire service hardening.
 
-## Build an Ubuntu package
+## Preferred native ARM64 Docker build
+
+Commit the four build inputs together before invoking the repository builder:
+
+```text
+scripts/build-sp11-imx681-libcamera-docker.sh
+userspace/camera/libcamera/0001-libipa-add-imx681-simple-ipa-support.patch
+userspace/camera/libcamera/BASE.txt
+userspace/camera/libcamera/imx681.yaml
+```
+
+The builder intentionally refuses an untracked or modified copy of any input.
+Once that commit exists, run it on an ARM64 Linux host with an ARM64 Docker
+server:
+
+```bash
+cd /home/leon/Workspace/repos/linux-surface-pro-11-oe
+./scripts/build-sp11-imx681-libcamera-docker.sh --jobs 10
+```
+
+The builder pulls Ubuntu 26.04, resolves the immutable image ID, and runs that
+ID rather than the mutable tag. It downloads the exact Ubuntu
+`0.7.0-1ubuntu2` source and verifies the DSC, orig tarball, and Debian tarball
+against `BASE.txt` before source dependency resolution. It privately stages
+only the four byte-identical `HEAD` inputs above and mounts that mode-`0700`
+directory read-only. The repository itself is never mounted into the
+container, and unrelated untracked files do not enter the build.
+
+Every invocation gets a unique
+`0.7.0-1ubuntu2+sp11.1.<23-digit-UTC-nanoseconds>.<32-hex-random-nonce>`
+revision and a new private `build/libcamera-docker/build.*` output directory.
+That path is ignored by Git, mode `0700`, and contains exactly these eight
+regular files:
+
+```text
+gstreamer1.0-libcamera_<version>_arm64.deb
+libcamera0.7_<version>_arm64.deb
+libcamera-ipa_<version>_arm64.deb
+libcamera-tools_<version>_arm64.deb
+libcamera-v4l2_<version>_arm64.deb
+libcamera_<version>_arm64.buildinfo
+libcamera_<version>_arm64.changes
+sp11-imx681-libcamera-build-manifest.txt
+```
+
+Before copying, the container verifies every SHA-256 entry in the build's
+`.changes`, package names/versions/architectures, the IPA module, detached
+signature, byte-identical tuning file, and same-build `ipa_verify`. The host
+then verifies the exact eight-file set, manifest fields, package metadata and
+hashes, selected `.changes` entries, `.buildinfo` hash, and an independently
+extracted same-build IPA. The manifest records the support commit, source and
+asset hashes, immutable image identity, build times, package metadata, and
+final package hashes. Output is returned with the invoking user's UID/GID. The
+builder never installs a package.
+
+The retained `.changes` is the unmodified record of the complete binary-any
+build. It references additional development, debug, Python, and other
+non-selected artifacts that are intentionally not exported, so the eight-file
+directory is a selected runtime/install bundle, not a self-contained Debian
+upload. The container verifies every referenced SHA-256 entry while all build
+outputs exist; the host re-verifies the six delivered entries (five DEBs plus
+`.buildinfo`) and records that completed phase in the manifest. The manifest
+also enumerates every intentionally omitted entry.
+
+Before installation, select the one printed directory, parse its exact version
+from the manifest, and repeat the package/record bindings. Run this complete
+block in one Bash shell; it deliberately contains no artifact wildcard:
+
+```bash
+set -euo pipefail
+export SP11_LIBCAMERA_ARTIFACTS=/absolute/path/printed/by/the/builder
+case "$SP11_LIBCAMERA_ARTIFACTS" in
+  /*) ;;
+  *) echo 'Artifact directory must be absolute' >&2; exit 1 ;;
+esac
+SP11_CANONICAL_ARTIFACTS="$(readlink -e -- "$SP11_LIBCAMERA_ARTIFACTS")"
+test "$SP11_CANONICAL_ARTIFACTS" = "$SP11_LIBCAMERA_ARTIFACTS"
+export SP11_EXPECTED_OUTPUT_ROOT=/home/leon/Workspace/repos/linux-surface-pro-11-oe/build/libcamera-docker
+test "$(dirname "$SP11_LIBCAMERA_ARTIFACTS")" = "$SP11_EXPECTED_OUTPUT_ROOT"
+case "$(basename "$SP11_LIBCAMERA_ARTIFACTS")" in
+  build.*) ;;
+  *) echo 'Artifact directory does not have a builder-created name' >&2; exit 1 ;;
+esac
+test -d "$SP11_LIBCAMERA_ARTIFACTS"
+test ! -L "$SP11_LIBCAMERA_ARTIFACTS"
+test "$(stat -c '%u' "$SP11_LIBCAMERA_ARTIFACTS")" -eq "$(id -u)"
+test "$(stat -c '%a' "$SP11_LIBCAMERA_ARTIFACTS")" = 700
+
+export SP11_MANIFEST="$SP11_LIBCAMERA_ARTIFACTS/sp11-imx681-libcamera-build-manifest.txt"
+test -f "$SP11_MANIFEST"
+test ! -L "$SP11_MANIFEST"
+
+manifest_scalar() {
+  awk -v label="$1" '
+    index($0, label ": ") == 1 {
+      count++
+      value = substr($0, length(label) + 3)
+    }
+    END { if (count != 1) exit 1; print value }
+  ' "$SP11_MANIFEST"
+}
+
+manifest_package_field() {
+  awk -v package_file="$1" -v field="$2" '
+    $0 == "Package file: " package_file {
+      package_count++
+      active = 1
+      next
+    }
+    active && /^Package file: / { active = 0 }
+    active && $0 ~ "^  " field ": " {
+      field_count++
+      value = substr($0, length(field) + 5)
+    }
+    END {
+      if (package_count != 1 || field_count != 1) exit 1
+      print value
+    }
+  ' "$SP11_MANIFEST"
+}
+
+changes_sha_size() {
+  awk -v selected_name="$1" '
+    /^Checksums-Sha256:$/ { active = 1; next }
+    active && /^[[:space:]]+[0-9a-f]{64}[[:space:]]+[0-9]+[[:space:]]+/ {
+      if ($3 == selected_name) {
+        count++
+        value = $1 " " $2
+      }
+      next
+    }
+    active && /^[^[:space:]]/ { active = 0 }
+    END { if (count != 1) exit 1; print value }
+  ' "$SP11_CHANGES"
+}
+
+SP11_VERSION="$(manifest_scalar 'Package version')"
+export SP11_VERSION
+[[ "$SP11_VERSION" =~ ^0[.]7[.]0-1ubuntu2[+]sp11[.]1[.][0-9]{23}[.][0-9a-f]{32}$ ]]
+test "$(manifest_scalar 'Build status')" = verified
+test "$(manifest_scalar 'Manifest format')" = 2
+test "$(manifest_scalar 'Selected runtime package count')" = 5
+test "$(manifest_scalar 'Four build inputs matched support HEAD')" = yes
+test "$(manifest_scalar 'Source version')" = 0.7.0-1ubuntu2
+test "$(manifest_scalar 'Source DSC SHA-256')" = \
+  27a10011fd5efe43564e94bb0328342ec11441963bed37db10a2d524553a02d8
+test "$(manifest_scalar 'Same-build IPA verification')" = \
+  'IPA module signature is valid'
+test "$(manifest_scalar 'Original Changes file retained unmodified')" = yes
+test "$(manifest_scalar 'Container pre-export every Changes-Sha256 entry hash verified')" = yes
+test "$(manifest_scalar 'Delivered Changes-Sha256 entry count')" = 6
+test "$(manifest_scalar 'Host post-copy delivered Changes-Sha256 entries verified')" = yes
+test "$(manifest_scalar 'Host post-copy same-build IPA verification')" = \
+  'IPA module signature is valid'
+export SP11_ARCH=arm64
+export SP11_CHANGES="$SP11_LIBCAMERA_ARTIFACTS/libcamera_${SP11_VERSION}_${SP11_ARCH}.changes"
+export SP11_BUILDINFO="$SP11_LIBCAMERA_ARTIFACTS/libcamera_${SP11_VERSION}_${SP11_ARCH}.buildinfo"
+export SP11_CORE_DEB="$SP11_LIBCAMERA_ARTIFACTS/libcamera0.7_${SP11_VERSION}_${SP11_ARCH}.deb"
+export SP11_IPA_DEB="$SP11_LIBCAMERA_ARTIFACTS/libcamera-ipa_${SP11_VERSION}_${SP11_ARCH}.deb"
+export SP11_TOOLS_DEB="$SP11_LIBCAMERA_ARTIFACTS/libcamera-tools_${SP11_VERSION}_${SP11_ARCH}.deb"
+export SP11_V4L2_DEB="$SP11_LIBCAMERA_ARTIFACTS/libcamera-v4l2_${SP11_VERSION}_${SP11_ARCH}.deb"
+export SP11_GST_DEB="$SP11_LIBCAMERA_ARTIFACTS/gstreamer1.0-libcamera_${SP11_VERSION}_${SP11_ARCH}.deb"
+
+SP11_PACKAGE_NAMES=(
+  libcamera0.7 libcamera-ipa libcamera-tools libcamera-v4l2
+  gstreamer1.0-libcamera
+)
+SP11_PACKAGE_FILES=(
+  "$SP11_CORE_DEB" "$SP11_IPA_DEB" "$SP11_TOOLS_DEB" "$SP11_V4L2_DEB"
+  "$SP11_GST_DEB"
+)
+SP11_ALL_ARTIFACTS=(
+  "${SP11_PACKAGE_FILES[@]}" "$SP11_CHANGES" "$SP11_BUILDINFO"
+  "$SP11_MANIFEST"
+)
+
+test "$(find "$SP11_LIBCAMERA_ARTIFACTS" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" -eq 8
+test -z "$(find "$SP11_LIBCAMERA_ARTIFACTS" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+for artifact in "${SP11_ALL_ARTIFACTS[@]}"; do
+  test -f "$artifact"
+  test ! -L "$artifact"
+  test "$(stat -c '%u' "$artifact")" -eq "$(id -u)"
+  test "$(stat -c '%a' "$artifact")" = 644
+done
+
+test "$(manifest_scalar 'Changes file')" = "$(basename "$SP11_CHANGES")"
+test "$(manifest_scalar 'Buildinfo file')" = "$(basename "$SP11_BUILDINFO")"
+test "$(sha256sum "$SP11_CHANGES" | awk '{ print $1 }')" = \
+  "$(manifest_scalar 'Changes file SHA-256')"
+test "$(sha256sum "$SP11_BUILDINFO" | awk '{ print $1 }')" = \
+  "$(manifest_scalar 'Buildinfo file SHA-256')"
+test "$(awk -F': ' '$1 == "Version" { count++; value=$2 }
+  END { if (count != 1) exit 1; print value }' "$SP11_CHANGES")" = "$SP11_VERSION"
+test "$(awk -F': ' '$1 == "Source" { count++; value=$2 }
+  END { if (count != 1) exit 1; print value }' "$SP11_CHANGES")" = libcamera
+test "$(awk -F': ' '$1 == "Architecture" { count++; value=$2 }
+  END { if (count != 1) exit 1; print value }' "$SP11_CHANGES")" = "$SP11_ARCH"
+test "$(awk -F': ' '$1 == "Version" { count++; value=$2 }
+  END { if (count != 1) exit 1; print value }' "$SP11_BUILDINFO")" = "$SP11_VERSION"
+test "$(awk -F': ' '$1 == "Source" { count++; value=$2 }
+  END { if (count != 1) exit 1; print value }' "$SP11_BUILDINFO")" = libcamera
+test "$(awk -F': ' '$1 == "Architecture" { count++; value=$2 }
+  END { if (count != 1) exit 1; print value }' "$SP11_BUILDINFO")" = "$SP11_ARCH"
+
+for index in "${!SP11_PACKAGE_FILES[@]}"; do
+  package_file="${SP11_PACKAGE_FILES[$index]}"
+  package_name="${SP11_PACKAGE_NAMES[$index]}"
+  package_basename="$(basename "$package_file")"
+  package_sha="$(sha256sum "$package_file" | awk '{ print $1 }')"
+  package_size="$(stat -c '%s' "$package_file")"
+
+  test "$(dpkg-deb -f "$package_file" Package)" = "$package_name"
+  test "$(dpkg-deb -f "$package_file" Source)" = libcamera
+  test "$(dpkg-deb -f "$package_file" Version)" = "$SP11_VERSION"
+  test "$(dpkg-deb -f "$package_file" Architecture)" = "$SP11_ARCH"
+  test "$(manifest_package_field "$package_basename" Package)" = "$package_name"
+  test "$(manifest_package_field "$package_basename" Source)" = libcamera
+  test "$(manifest_package_field "$package_basename" Version)" = "$SP11_VERSION"
+  test "$(manifest_package_field "$package_basename" Architecture)" = "$SP11_ARCH"
+  test "$(manifest_package_field "$package_basename" 'Size bytes')" -eq "$package_size"
+  test "$(manifest_package_field "$package_basename" SHA-256)" = "$package_sha"
+
+  read -r changes_sha changes_size <<<"$(changes_sha_size "$package_basename")"
+  test "$changes_sha" = "$package_sha"
+  test "$changes_size" -eq "$package_size"
+done
+
+read -r buildinfo_sha buildinfo_size <<<"$(changes_sha_size "$(basename "$SP11_BUILDINFO")")"
+test "$buildinfo_sha" = "$(sha256sum "$SP11_BUILDINFO" | awk '{ print $1 }')"
+test "$buildinfo_size" -eq "$(stat -c '%s' "$SP11_BUILDINFO")"
+
+less "$SP11_MANIFEST"
+
+sudo apt install -- \
+  "$SP11_CORE_DEB" \
+  "$SP11_IPA_DEB" \
+  "$SP11_TOOLS_DEB" \
+  "$SP11_V4L2_DEB" \
+  "$SP11_GST_DEB"
+```
+
+Installation remains gated on ADR-0065's raw camera acceptance; do not install
+merely because the package build passes.
+
+## Manual Ubuntu package build audit trail
 
 Build from Ubuntu's matching source package instead of copying a locally built
 IPA shared object over a packaged file. Use a new private directory and a
 unique Debian revision for every build: Meson generates a new IPA signing key,
 so reusing a version or a directory can make unrelated artifacts look
-coherent. Ensure Ubuntu source repositories are enabled (`deb-src`, or
-`deb deb-src` in the deb822 `Types` field). Run all of the following build,
-verification, and installation blocks in the same shell; each block enables
-strict error handling so a failed provenance check stops the workflow:
+coherent. This section is an audit trail, not a substitute for the canonical
+HEAD-authenticated Docker builder. Ensure Ubuntu source repositories are
+enabled (`deb-src`, or `deb deb-src` in the deb822 `Types` field). Run all of
+the following build, verification, and installation blocks in the same shell;
+each block enables strict error handling so a failed provenance check stops the
+workflow:
 
 ```bash
 set -euo pipefail
@@ -51,7 +297,11 @@ sudo apt build-dep libcamera
 
 export SP11_BASE_VERSION=0.7.0-1ubuntu2
 export SP11_UPSTREAM_VERSION="${SP11_BASE_VERSION%%-*}"
-export SP11_BUILD_ID="$(date -u +%Y%m%d%H%M%S%N)"
+export SP11_BUILD_TIMESTAMP="$(date -u +%Y%m%d%H%M%S%N)"
+export SP11_BUILD_NONCE="$(openssl rand -hex 16)"
+[[ "$SP11_BUILD_TIMESTAMP" =~ ^[0-9]{23}$ ]]
+[[ "$SP11_BUILD_NONCE" =~ ^[0-9a-f]{32}$ ]]
+export SP11_BUILD_ID="${SP11_BUILD_TIMESTAMP}.${SP11_BUILD_NONCE}"
 export SP11_VERSION="${SP11_BASE_VERSION}+sp11.1.${SP11_BUILD_ID}"
 export SP11_ARCH="$(dpkg --print-architecture)"
 test "$SP11_ARCH" = arm64
@@ -70,12 +320,17 @@ apt source "libcamera=$SP11_BASE_VERSION"
 SP11_ORIG_SHA="$(awk -F': ' \
   '$1 == "Ubuntu orig tarball SHA-256" { print $2 }' \
   "$SP11_OE_REPO/userspace/camera/libcamera/BASE.txt")"
+SP11_DSC_SHA="$(awk -F': ' \
+  '$1 == "Ubuntu DSC SHA-256" { print $2 }' \
+  "$SP11_OE_REPO/userspace/camera/libcamera/BASE.txt")"
 SP11_DEBIAN_SHA="$(awk -F': ' \
   '$1 == "Ubuntu Debian tarball SHA-256" { print $2 }' \
   "$SP11_OE_REPO/userspace/camera/libcamera/BASE.txt")"
+grep -Eq '^[0-9a-f]{64}$' <<<"$SP11_DSC_SHA"
 grep -Eq '^[0-9a-f]{64}$' <<<"$SP11_ORIG_SHA"
 grep -Eq '^[0-9a-f]{64}$' <<<"$SP11_DEBIAN_SHA"
-printf '%s  %s\n%s  %s\n' \
+printf '%s  %s\n%s  %s\n%s  %s\n' \
+  "$SP11_DSC_SHA" "libcamera_${SP11_BASE_VERSION}.dsc" \
   "$SP11_ORIG_SHA" "libcamera_${SP11_UPSTREAM_VERSION}.orig.tar.gz" \
   "$SP11_DEBIAN_SHA" "libcamera_${SP11_BASE_VERSION}.debian.tar.xz" | \
   sha256sum -c -
@@ -198,11 +453,18 @@ sudo apt install --allow-downgrades \
 ## Acceptance
 
 1. Verify the installed runtime packages all report the one exact
-   `$SP11_VERSION` (with its unique UTC build ID) and
+   `$SP11_VERSION` (with its unique UTC timestamp and random nonce) and
    `/usr/share/libcamera/ipa/simple/imx681.yaml` exists:
 
    ```bash
    set -euo pipefail
+   : "${SP11_LIBCAMERA_ARTIFACTS:?Set this to the verified build directory}"
+   SP11_MANIFEST="$SP11_LIBCAMERA_ARTIFACTS/sp11-imx681-libcamera-build-manifest.txt"
+   SP11_VERSION="$(awk -F': ' '
+     $1 == "Package version" { count++; value=$2 }
+     END { if (count != 1) exit 1; print value }
+   ' "$SP11_MANIFEST")"
+   [[ "$SP11_VERSION" =~ ^0[.]7[.]0-1ubuntu2[+]sp11[.]1[.][0-9]{23}[.][0-9a-f]{32}$ ]]
    dpkg-query -W -f='${binary:Package}\t${Version}\n' \
      libcamera0.7 libcamera-ipa libcamera-tools libcamera-v4l2 \
      gstreamer1.0-libcamera
