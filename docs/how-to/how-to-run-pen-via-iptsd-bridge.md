@@ -44,8 +44,7 @@ taxonomy exactly.
 - alex-lentz/iptsd at commit `3663e96` or later, with `meson`, `ninja`,
   and a native aarch64 toolchain.
 - The P4, P5, and P8 HEAT corpora plus the Windows processor report
-  export from the internal capture evidence kit, for offline validation
-  (optional but recommended).
+  export, for offline validation (optional but recommended).
 
 ## Procedure
 
