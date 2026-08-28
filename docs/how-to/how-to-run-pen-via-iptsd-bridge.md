@@ -94,9 +94,10 @@ libinput list-devices | grep -A2 IPTSD
 
 ```bash
 sudo cp build/src/iptsd-g6tsd /usr/local/bin/
-sudo cp packaging/g6tsd.service.in /etc/systemd/system/g6tsd.service
+sed 's|@bindir@|/usr/local/bin|' packaging/g6-pen.service.in \
+  | sudo tee /etc/systemd/system/g6-pen.service >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable --now g6tsd.service
+sudo systemctl enable --now g6-pen.service
 ```
 
 ## Limitations
@@ -110,8 +111,9 @@ sudo systemctl enable --now g6tsd.service
 - The contact thresholds (on 3.2M, off 1.2M, two-cycle hysteresis) were
   calibrated on the P4/P5/P8 corpora. They are evidence-gated starting
   points in `src/core/generic/g6ts.hpp`, not tuned constants.
-- The device permits one reader; `g6-pen.service` and `g6tsd.service`
-  are mutually exclusive (`Conflicts=` is declared in the unit).
+- The device permits one reader. The packaged
+  `g6-pen.service` unit replaces the legacy `g6-pen` daemon unit of the
+  same name and runs the bridge instead.
 
 ## References
 
