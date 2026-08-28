@@ -13,6 +13,12 @@ Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28.
 Kernel package, reboot, raw-capture, and userspace validation remain required
 before the front camera is described as working on this device.
 
+Amended later on 2026-08-28 after the first v14-ABI runtime investigation
+reached the sensor's final `MODE_SELECT` write but produced no CSI packets.
+The amendment records the compound-subdevice link-frequency fix, the fully
+specified Linux clock tuple, and failure-path cleanup needed for the next
+packaged experiment.
+
 This decision supersedes the earlier local draft that treated a statically
 decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
 to 2.4 Gsymbol/s at the receiver. The 1.2 Gsymbol/s sensor configuration is
@@ -102,6 +108,14 @@ The decision deliberately separates four evidence classes.
    969.6 MHz. The generic x1e80100 PHY consumes the C-PHY symbol rate directly,
    so CAMSS must pass 969.6 MHz without another factor of two.
 
+   The reference's reported approximately 17.5 microsecond line at LLP 7552,
+   followed by about 13 percent headroom at LLP 8704, implies a 432 MHz VT
+   clock. Its static-data notes also identify an OP pixel divider of zero as a
+   broken fallback state and use divider 4 for the C-PHY calculation. Together
+   these establish the derived complete Linux tuple below; the reference mode
+   table itself only overwrites selected multiplier and pre-divider bytes, so
+   the complete tuple must not be described as a byte-for-byte runtime trace.
+
 4. **Intel IMX681 work**
 
    `linux-surface/linux-surface#2156` targets Intel IPU6 and a D-PHY receiver.
@@ -158,6 +172,11 @@ We will integrate the front camera as follows.
   sensor geometry (and therefore no 3844-to-3840 CSID crop), correlated pixel
   rate and control bounds, plus its own FIFO and repeated-stream validation.
 - Keep the mode's line length at 8704 and frame length at 3177.
+- Program all effective VT and OP branch dividers deterministically. Use VT
+  pixel/system/pre/multiplier `5/1/2/225`, yielding 432 MHz, and OP
+  pixel/system/pre/multiplier `4/1/3/303`, corresponding to the advertised
+  969.6 Msymbol/s link. Leave `PLL_MODE` at the sensor default. Record
+  432 MHz in the mode timing metadata used for exposure conversion.
 - Expose one standard `V4L2_CID_ANALOGUE_GAIN` control with range `0..960`,
   step 1, and default 192. For this IMX681 only, map it to global U8.8 gain at
   `0x020e/0x020f` using `0x0100 + value * 4`; do not expose a duplicate digital
@@ -168,6 +187,22 @@ We will integrate the front camera as follows.
 - Keep the in-code, model-scoped limits and vendor/mode tables. A missing
   `ccs-sensor-3b60-0681-0010.fw` warning is not a reason to rename or install
   the reference unit's `0x4260` static firmware blob.
+
+### Compound graph and failed-stream lifecycle
+
+- Resolve link frequency by walking upstream from the CAMSS video path and
+  accepting the first transmitter source pad that exposes
+  `V4L2_CID_LINK_FREQ`. The IMX681 CCS graph owns that control on its scaler,
+  not on the entity classified as the pixel-array camera sensor.
+- Apply IMX681 runtime-PM stream hooks only to the CCS source subdevice. The
+  binner, scaler, and pixel-array callbacks describe one physical sensor and
+  must not independently acquire or release its PM reference.
+- If the sensor NACKs the standby write, record the error but still schedule
+  runtime power-down and report the logical stop complete. This keeps the V4L2
+  enabled-stream bitmap, driver stream mask, and PM state consistent.
+- If an upstream subdevice fails to start, stop only the downstream CAMSS
+  subdevices that started successfully before ending and flushing the media
+  pipeline. Repeated failed opens must not leave receiver blocks active.
 
 ### Privacy indicator
 
@@ -213,15 +248,16 @@ The reviewed source milestone consists of these signed commits on
 - `e0ce71102628902fa5281a2adcadc19b2d88d4f0` — preserve the reported Bayer
   layout across fixed-table programming and propagate the final sensor
   `MODE_SELECT` failure instead of reporting a false streaming success.
+- `0097c12b0fec69b2d1aef031d4cd63fd78fd7a48` — resolve the compound CCS
+  transmitter rate, program the complete derived Linux clock tuple, group the
+  first-frame controls, and make failed stream attempts unwind cleanly.
 
-The final local `make LOCALVERSION= -j8 modules dtbs` completed successfully.
-The CCS, qcom-camss, and generic MIPI CSI-2 PHY modules all report the exact
-local validation vermagic `7.2.0-jg-0sp11v13-qcom-x1e`; both OLED DTBs report
-model `Microsoft Surface Pro 11th Edition (OLED)` and link frequency
-`0x0000000039caec00`. `dt-doc-validate`, the targeted `dt-validate`, and
-strict checkpatch passed. A targeted `W=1` CCS module build also passed after
-the final stream-state correction. The canonical v14 package build must report
-source HEAD `e0ce71102628902fa5281a2adcadc19b2d88d4f0` in its manifest.
+The earlier `e0ce71102628` source passed local module/DTB builds, binding
+validation, and strict checkpatch before packaging. Strict checkpatch also
+passes the `0097c12b0fec` amendment; its canonical remote package build is a
+separate pending gate. The resulting manifest must report source HEAD
+`0097c12b0fec69b2d1aef031d4cd63fd78fd7a48`; the reused build volume and
+unchanged Debian v14 version make filenames alone insufficient provenance.
 
 ## Consequences
 
@@ -236,7 +272,7 @@ source HEAD `e0ce71102628902fa5281a2adcadc19b2d88d4f0` in its manifest.
   selection rather than another global module parameter.
 - Auto-exposure can drive the standard gain and exposure controls used by the
   simple IPA, but convergence and image quality remain runtime gates. The
-  fixed 3177-line frame limits the initial control range to about 71 ms even
+  fixed 3177-line frame limits the initial control range to about 64 ms even
   though Windows advertises up to 200 ms; longer exposure requires deliberate
   frame-length control rather than writing past the current frame.
 - The privacy LED is managed by the media stack instead of a polling service.
