@@ -10,11 +10,14 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 ## Status
 
 Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28.
-Kernel package, reboot, raw-capture, and userspace validation remain required
-before the front camera is described as working on this device.
+Package build, installation, boot, binding, and graph negotiation are verified
+through `ead11c748e4e`. Raw capture still fails, so image-quality,
+repeated-stream, and userspace validation remain required before the front
+camera is described as working on this device.
 
 Amended later on 2026-08-28 after the first v14-ABI runtime investigation
-reached the sensor's final `MODE_SELECT` write but produced no CSI packets.
+reached the sensor's final `MODE_SELECT` write but produced no completed
+buffers.
 The amendment records the compound-subdevice link-frequency fix, the fully
 specified Linux clock tuple, and failure-path cleanup needed for the next
 packaged experiment.
@@ -26,10 +29,17 @@ route completed a buffer. The next bounded package therefore matches the one
 remaining CSID680 receiver-field delta from the same-machine Windows oracle
 and exposes a packet-count diagnostic before userspace installation proceeds.
 
-Amended once more after a native ARM64 local Docker build of
-`ead11c748e4e` completed and its package and module provenance passed two
-independent checks. The package remains uninstalled; boot and raw-capture
-validation are separate gates that require an explicit maintenance step.
+Amended once more after the native ARM64 local Docker package from
+`ead11c748e4e` was installed and booted as
+`7.2.0-jg-0sp11v14-qcom-x1e`. The loaded CAMSS, CCS, CCS PLL, and Qualcomm
+MIPI CSI-2 PHY source versions match the verified package. Binding and graph
+negotiation pass, but the canonical raw gate still completes zero buffers;
+userspace installation therefore remains gated.
+
+Commit `4d190bc96139bdf7ddb3cabd0551a86826600aae` adds a read-only
+diagnostic boundary for the next package. It samples IMX681 stream/frame state
+and powered CSID680/VFE680 status without changing stream configuration or
+teardown semantics.
 
 This decision supersedes the earlier local draft that treated a statically
 decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
@@ -49,6 +59,15 @@ value 327680000 overflows!
 no valid link frequencies for 10 bpp
 no supported mbus code found
 ```
+
+The `value 327680000 overflows!` warning still appears on the verified
+`ead11c748e4e` boot, but no longer accompanies the fatal link-frequency or
+media-bus errors. Raw `0x13880000` encodes IREAL 5000 MHz; converting that
+value to Hz exceeds `u32` and saturates only the temporary dynamic-debug
+formatting result in `ccs_read_all_limits()`. The raw limit stored in the
+sensor state is unchanged. This warning is therefore not evidence that the
+selected 969.6 MHz link overflows and is not the cause of the zero-frame
+failure.
 
 The integration branch already contains model-scoped IMX681 support, the
 x1e80100 C-PHY receive path, CSID680/VFE680 fixes, the Denali device-tree
@@ -105,6 +124,18 @@ The decision deliberately separates four evidence classes.
    same-schema corroboration rather than a runtime trace from this exact
    platform-driver binary.
 
+   The repository's `experiment/e003-front-imx681-cphy` branch advanced to
+   `4cf90db69f5c8f4ed58b657fea6acebd18c95935` with same-machine Windows
+   CSID/VFE and RT-CDM1 lifecycle oracles. They establish the native front path
+   as CSIPHY2 -> CSID1 -> VFE1 IPP/FULL and the ISP-internal start order as
+   CDM -> IFE -> initial configuration packets -> CSID. The RT-CDM work is
+   deliberately still an inert resource plus disabled IRQ/DMA scaffold: the
+   branch does not authorize Linux RT-CDM MMIO, IRQ arming, or FIFO submission
+   because two live register origins and stop-time power semantics remain
+   unresolved. This is valuable for the later IPP/image-processing parity
+   stage, but importing it cannot explain or repair the zero-buffer RDI capture
+   result and would be premature before the bounded `4d190bc96139` diagnostic.
+
 3. **Hardware-proven Snapdragon Linux reference**
 
    `karsies-wq/sp11-imx681-linux` at
@@ -145,14 +176,16 @@ live tree does not match that loose file:
 
 | Source | Link frequency |
 | --- | ---: |
-| Live `/proc/device-tree` | 1,000,000,000 |
-| Loose `/boot/sp11-denali.dtb` | 1,200,000,000 |
+| Historical v13 live `/proc/device-tree` | 1,000,000,000 |
+| Historical loose `/boot/sp11-denali.dtb` | 1,200,000,000 |
+| Verified `ead11c748e4e` live `/proc/device-tree` | 969,600,000 |
 | Corrected source/build DTB | 969,600,000 |
 
 The installed kernel must therefore contain the corrected OLED DTB in its
 embedded auto-DTB section. Copying only a loose DTB is not an acceptance test.
 No deployment may copy another machine's full DTB or hard-code its Bluetooth
-address.
+address. The current live link-frequency bytes are verified as
+`00 00 00 00 39 ca ec 00`.
 
 ## Decision
 
@@ -220,10 +253,22 @@ We will integrate the front camera as follows.
   this changes CSID680 `RX_CFG0` from Linux's `0x01300000` to the repeated
   same-machine Windows value `0x11300000`. Keep D-PHY and active-TPG paths
   byte-identical.
-- Report `RX_CFG0` and `TOTAL_PKTS` when the experimental C-PHY stream stops.
-  A zero count localizes the failure to sensor/PHY/receiver ingress; a nonzero
-  count with no completed V4L2 buffer moves the investigation downstream to
-  CSID RDI/VFE completion.
+- Sample CSID680 status from the normal powered STREAMOFF path, before pipeline
+  PM disables its clocks and independently of the one-shot `need_vc_update`
+  configuration guard. The `ead11c748e4e` diagnostic inside
+  `configure_stream(false)` did not run because normal teardown deliberately
+  does not repeat shared virtual-channel configuration.
+- Restrict the snapshot to the X1E80100 3844x2640 RAW10 C-PHY route. Report
+  `RX_CFG0`, `RX_CFG1`, `TOTAL_PKTS`, ECC/CRC counters, top/buffer/RX IRQ
+  state, and each linked RDI's IRQ/configuration/crop state without writing any
+  stream registers.
+- For the matching 3840x2640 packed-RAW VFE680 route, report write-master
+  address/increment/image/packer configuration plus IRQ, violation, overflow,
+  and image-violation state before disabling the writer.
+- Sample IMX681 `MODE_SELECT` and `FRAME_COUNT` before and after stream-on and
+  before stream-off. Diagnostic read failures remain nonfatal and must never
+  replace the authoritative `MODE_SELECT` write result or alter best-effort
+  teardown.
 
 ### Privacy indicator
 
@@ -275,10 +320,15 @@ The reviewed source milestone consists of these signed commits on
 - `ead11c748e4e8fb984412093be73d2228bd68e89` — match the X1E CSID680 C-PHY
   receiver field to same-machine Windows and expose stop-time receiver and
   packet-count evidence for the next raw gate.
+- `4d190bc96139bdf7ddb3cabd0551a86826600aae` — move the receiver snapshot
+  onto powered STREAMOFF, add matching CSID680/VFE680 packet, error, IRQ, and
+  write-master evidence, and sample nonfatal IMX681 `MODE_SELECT` and
+  `FRAME_COUNT` state around stream transitions.
 
 The earlier `e0ce71102628` source passed local module/DTB builds, binding
 validation, and strict checkpatch before packaging. Strict checkpatch also
-passes the `0097c12b0fec` amendment.
+passes the `0097c12b0fec` and `4d190bc96139` amendments; the latter additionally
+passes the targeted `W=1` CAMSS, CCS, and CCS PLL module builds.
 
 The canonical remote package build completed successfully on 2026-08-28 in
 33 minutes using `binary-indep binary-qcom-x1e` with ten jobs. Its manifest
@@ -373,8 +423,76 @@ SHA-256 values are:
 - package list: `08a5dc85c04b51875e7696cf9db220b22ded22b2274212393f197a5538ac8756`
 - build arguments: `f1f24702771b87fb7afeb3f73274efcfdb87ca53436265f4dc4c4deb5e48c092`
 
-No package was installed, no live module or camera device was touched, and no
-reboot was performed as part of this build and provenance gate.
+At that stage no package was installed, no live module or camera device was
+touched, and no reboot was performed as part of the build and provenance gate.
+
+### `ead11c748e4e` boot and runtime result
+
+The verified package was later installed and booted as
+`7.2.0-jg-0sp11v14-qcom-x1e`. Loaded module source versions matched the
+immutable artifact evidence:
+
+- `qcom-camss`: `26CF187C5D69D7818A1BDCB`
+- `ccs`: `426DF2BB77E8D8D0F7BDAF8`
+- `ccs-pll`: `F5D68994B5EB8E947AC4F6B`
+- `phy-qcom-mipi-csi2`: `F578CE5728BAC71AB6C9374`
+
+The canonical validator again negotiated IMX681 3844x2640
+`SRGGB10_1X10`, CSIPHY2, CSID0's 3840x2640 crop, VFE0 RDI0, packed `pRAA`,
+4800-byte stride, and 12,672,000-byte buffers. `VIDIOC_REQBUFS`, queueing, and
+`VIDIOC_STREAMON` succeeded. The PHY selected the 1.0-Gsymbol/s table for the
+969.6-Msymbol/s stream, but no buffer completed in 40 seconds and
+`capture.raw` remained zero bytes.
+
+The intended `RX_CFG0`/`TOTAL_PKTS` stop line did not appear. Its placement
+inside `configure_stream(false)` was suppressed by the normal one-shot
+virtual-channel configuration guard, so this run does not establish the
+packet count. Teardown again received `-ENXIO` while writing `MODE_SELECT=0`
+and scheduled runtime power-down. Evidence is retained in
+`/home/leon/.local/state/codex-desktop/tmp/sp11-imx681-raw.bZEgekvb/`.
+
+### `4d190bc96139` local diagnostic package build
+
+The native ARM64 Docker build completed locally on 2026-08-28 in approximately
+54 minutes using `binary-indep binary-qcom-x1e` with eight jobs. The manifest
+records exact source HEAD `4d190bc96139bdf7ddb3cabd0551a86826600aae`, the
+requested integration branch, no local patches, and the direct-root rules
+runner. Exactly four packages were produced; each reports source
+`linux-qcom-x1e` and version `7.2.0-jg-0sp11v14`, with the expected `arm64` or
+`all` architecture.
+
+The modules package reports vermagic
+`7.2.0-jg-0sp11v14-qcom-x1e` for the four inspected camera modules. Their
+packaged source versions are:
+
+- `qcom-camss`: `0486AE0FB983546F7875668`
+- `ccs`: `51A4C4B08DF03EDE294DD26`
+- `ccs-pll`: `F5D68994B5EB8E947AC4F6B`
+- `phy-qcom-mipi-csi2`: `F578CE5728BAC71AB6C9374`
+
+The packaged CAMSS module contains the new powered stop-path diagnostic
+formats, including `TOTAL_PKTS`, ECC/CRC state, exact RDI configuration, and
+the VFE write-master address/increment/image/packer snapshot. The packaged CCS
+module contains the IMX681 pre/post-stream state format for `MODE_SELECT` and
+`FRAME_COUNT`. This verifies that the intended read-only probes are present in
+the packages; it does not claim that raw capture is repaired.
+
+The verified packages, manifest, package list, build arguments, and checksum
+manifest are retained separately in the read-only directory
+`build/docker-sp11-qcom-x1e-kernel/artifacts-v14-4d190bc96139/`. Its recorded
+SHA-256 values are:
+
+- image: `705e444e84b8fa99db21d4863370bc529559fac372f2599f3878a6696c2134c9`
+- modules: `d99e7dfd757a52d8470c94c2f9a1a073b0f08dc21373c06044cae059f20efaca`
+- flavour headers: `1d4a9e051616ccd66c59e0f98c760ba2f7ccd62bde290b6110c3ee343ee17d88`
+- common headers: `87e416890efeaeda7e56c738b7ac4d53c957d2f85d9ca4920a8858049a2fc043`
+- build manifest: `aa5d7ef62792828b15feb030e3429c3275efe4422608829a6dee026a2f5217a9`
+- package list: `08a5dc85c04b51875e7696cf9db220b22ded22b2274212393f197a5538ac8756`
+- build arguments: `f1f24702771b87fb7afeb3f73274efcfdb87ca53436265f4dc4c4deb5e48c092`
+
+No package from this diagnostic build was installed, no live module or camera
+device was touched, and no reboot was performed as part of this build and
+provenance gate.
 
 ## Consequences
 
@@ -415,12 +533,18 @@ reboot was performed as part of this build and provenance gate.
 
 ## Acceptance gates
 
+For `ead11c748e4e`, gates 1–4 pass and gate 5 fails with zero completed
+buffers. Gates 6–7 remain blocked. The `4d190bc96139` package is diagnostic
+evidence for localizing gate 5, not a claim that capture is fixed.
+
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.
 2. The installed v14 kernel boots, and the live endpoint bytes are
    `00 00 00 00 39 ca ec 00`.
-3. CCS binds at `1-0010`; the old overflow and link-frequency probe errors are
-   absent.
+3. CCS binds at `1-0010`; `no valid link frequencies` and
+   `no supported mbus code found` are absent. The separately understood
+   IREAL-to-`u32` formatting warning is non-blocking unless it again
+   accompanies probe failure.
 4. The media graph negotiates 3844x2640 RAW10 through the sensor/PHY/CSID sink
    and 3840x2640 packed RAW10 through the CSID source/VFE/video node.
 5. At least ten exact-size frames capture without truncated buffers or emitted
@@ -432,8 +556,10 @@ reboot was performed as part of this build and provenance gate.
 7. The camera enumerates through PipeWire and completes repeated browser/WebRTC
    sessions without stale nodes or buffer-allocation failures.
 
-Do not read camera MMIO while the stream is inactive. The reference platform
-can hang the bus when camera registers are read with the power/clock domain off.
+Do not read camera MMIO after pipeline PM has disabled the camera clocks. The
+`4d190bc96139` snapshots are confined to the powered STREAMOFF path before
+CSID/VFE shutdown. The reference platform can hang the bus when camera
+registers are read with the power/clock domain off.
 
 ## References
 
