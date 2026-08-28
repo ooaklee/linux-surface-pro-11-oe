@@ -440,7 +440,7 @@ ensure_clean_source() {
 }
 
 prepare_git_source() {
-  local safe_branch dir local_commits ref_kind remote_ref remote_head fetched_head
+  local safe_branch dir local_commits ref_kind fetched_head tracking_head
   safe_branch="${GIT_BRANCH//\//-}"
   dir="$source_parent/git-$safe_branch"
   ref_kind=""
@@ -450,28 +450,30 @@ prepare_git_source() {
     git clone --depth 1 --branch "$GIT_BRANCH" "$GIT_URL" "$dir"
   else
     git -C "$dir" remote set-url origin "$GIT_URL"
-    if remote_ref="$(git ls-remote --exit-code --heads \
-      "$GIT_URL" "refs/heads/$GIT_BRANCH")"; then
+    if git -C "$dir" fetch --force origin \
+      "refs/heads/$GIT_BRANCH:refs/remotes/origin/$GIT_BRANCH"; then
       ref_kind="head"
-    elif remote_ref="$(git ls-remote --exit-code --tags \
-      "$GIT_URL" "refs/tags/$GIT_BRANCH")"; then
+      fetched_head="$(git -C "$dir" rev-parse FETCH_HEAD)"
+      tracking_head="$(git -C "$dir" rev-parse \
+        "refs/remotes/origin/$GIT_BRANCH")"
+    elif git -C "$dir" fetch --force origin \
+      "refs/tags/$GIT_BRANCH:refs/tags/$GIT_BRANCH"; then
       ref_kind="tag"
+      fetched_head="$(git -C "$dir" rev-parse FETCH_HEAD)"
+      tracking_head="$(git -C "$dir" rev-parse "refs/tags/$GIT_BRANCH")"
     else
       echo "Git ref not found as a branch or tag: $GIT_BRANCH" >&2
       echo "Remote: $GIT_URL" >&2
       exit 1
     fi
-    read -r remote_head _ <<<"$remote_ref"
+    if [ "$fetched_head" != "$tracking_head" ]; then
+      echo "Fetched object does not match the updated local tracking ref." >&2
+      echo "FETCH_HEAD: $fetched_head" >&2
+      echo "Tracking:   $tracking_head" >&2
+      exit 1
+    fi
+
     if [ "$ref_kind" = "head" ]; then
-      git -C "$dir" fetch --force origin \
-        "refs/heads/$GIT_BRANCH:refs/remotes/origin/$GIT_BRANCH"
-      fetched_head="$(git -C "$dir" rev-parse "refs/remotes/origin/$GIT_BRANCH")"
-      if [ "$fetched_head" != "$remote_head" ]; then
-        echo "Fetched branch tip does not match the advertised remote ref." >&2
-        echo "Remote:  $remote_head" >&2
-        echo "Fetched: $fetched_head" >&2
-        exit 1
-      fi
       git -C "$dir" checkout "$GIT_BRANCH"
       local_commits="$(git -C "$dir" rev-list --count "origin/$GIT_BRANCH..HEAD" 2>/dev/null || echo 0)"
       if [ "$local_commits" != "0" ]; then
@@ -481,15 +483,6 @@ prepare_git_source() {
       fi
       git -C "$dir" reset --hard "origin/$GIT_BRANCH"
     else
-      git -C "$dir" fetch --force origin \
-        "refs/tags/$GIT_BRANCH:refs/tags/$GIT_BRANCH"
-      fetched_head="$(git -C "$dir" rev-parse "refs/tags/$GIT_BRANCH")"
-      if [ "$fetched_head" != "$remote_head" ]; then
-        echo "Fetched tag does not match the advertised remote ref." >&2
-        echo "Remote:  $remote_head" >&2
-        echo "Fetched: $fetched_head" >&2
-        exit 1
-      fi
       git -C "$dir" checkout --detach "refs/tags/$GIT_BRANCH"
       git -C "$dir" reset --hard "refs/tags/$GIT_BRANCH"
     fi
