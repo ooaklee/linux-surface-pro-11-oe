@@ -93,7 +93,7 @@ entity_names() {
     /^- entity [0-9]+: / {
       name = $0
       sub(/^- entity [0-9]+: /, "", name)
-      sub(/ \([0-9]+ pads?, [0-9]+ links?\).*$/, "", name)
+      sub(/ \([^)]*\)$/, "", name)
       print name
     }
   '
@@ -113,7 +113,7 @@ imx681_routes_to_phy() {
     function entity_name(header, name) {
       name = header
       sub(/^- entity [0-9]+: /, "", name)
-      sub(/ \([0-9]+ pads?, [0-9]+ links?\).*$/, "", name)
+      sub(/ \([^)]*\)$/, "", name)
       return name
     }
 
@@ -123,7 +123,7 @@ imx681_routes_to_phy() {
       next
     }
 
-    /^[[:space:]]*pad[0-9]+: Source/ {
+    tolower($0) ~ /^[[:space:]]*pad[0-9]+: source/ {
       pad = $0
       sub(/^[[:space:]]*pad/, "", pad)
       sub(/:.*/, "", pad)
@@ -146,7 +146,7 @@ outgoing_entities() {
     function entity_name(header, name) {
       name = header
       sub(/^- entity [0-9]+: /, "", name)
-      sub(/ \([0-9]+ pads?, [0-9]+ links?\).*$/, "", name)
+      sub(/ \([^)]*\)$/, "", name)
       return name
     }
 
@@ -179,7 +179,7 @@ entity_device_node() {
     function entity_name(header, name) {
       name = header
       sub(/^- entity [0-9]+: /, "", name)
-      sub(/ \([0-9]+ pads?, [0-9]+ links?\).*$/, "", name)
+      sub(/ \([^)]*\)$/, "", name)
       return name
     }
 
@@ -205,7 +205,7 @@ entity_pad_mbus_format() {
     function entity_name(header, name) {
       name = header
       sub(/^- entity [0-9]+: /, "", name)
-      sub(/ \([0-9]+ pads?, [0-9]+ links?\).*$/, "", name)
+      sub(/ \([^)]*\)$/, "", name)
       return name
     }
 
@@ -221,9 +221,9 @@ entity_pad_mbus_format() {
       sub(/:.*/, "", pad)
     }
 
-    current == wanted && pad == wanted_pad && /\[fmt:/ {
+    current == wanted && pad == wanted_pad && /(^|[[:space:]])fmt:/ {
       format = $0
-      sub(/^.*\[fmt:/, "", format)
+      sub(/^.*fmt:/, "", format)
       sub(/\/.*/, "", format)
       print format
       exit
@@ -239,7 +239,7 @@ entity_pad_full_format() {
     function entity_name(header, name) {
       name = header
       sub(/^- entity [0-9]+: /, "", name)
-      sub(/ \([0-9]+ pads?, [0-9]+ links?\).*$/, "", name)
+      sub(/ \([^)]*\)$/, "", name)
       return name
     }
 
@@ -255,9 +255,9 @@ entity_pad_full_format() {
       sub(/:.*/, "", pad)
     }
 
-    current == wanted && pad == wanted_pad && /\[fmt:/ {
+    current == wanted && pad == wanted_pad && /(^|[[:space:]])fmt:/ {
       format = $0
-      sub(/^.*\[fmt:/, "", format)
+      sub(/^.*fmt:/, "", format)
       sub(/[[:space:]\]].*$/, "", format)
       print format
       exit
