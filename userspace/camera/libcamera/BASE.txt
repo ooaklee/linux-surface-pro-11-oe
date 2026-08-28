@@ -1,0 +1,9 @@
+Upstream project: https://git.libcamera.org/libcamera/libcamera.git
+Upstream tag: v0.7.0
+Upstream commit: b7854fd07d42168f099b5ce30d1702e0e0875bf5
+Ubuntu package validated on device: 0.7.0-1ubuntu2 (arm64, resolute)
+Ubuntu orig tarball SHA-256: ebd90a3aa2ca87a39323ffb7a4f5bbf72090b43a2431133759620b63e982db87
+Ubuntu Debian tarball SHA-256: 0ee3195d74ad85b089c62eb7b2904023f8556544b2d9dbcc67aa834ddde5a09e
+Patch validation: applied and compiled after Ubuntu's 0.7.0-1ubuntu2 patch series
+IPA validation: signed module accepted by the same build's ipa_verify
+Validation date: 2026-08-28

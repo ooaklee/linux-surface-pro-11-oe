@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: CC0-1.0
+# Sony IMX681 front camera in the Microsoft Surface Pro 11.
+#
+# The colour matrices are seed values published by sp11-imx681-linux at
+# b08f76f40b8d7b715bd4da6aef484f86142cc147 and attributed there to Windows
+# CAMX tuning. They still require validation against a colour target on Linux.
+#
+# Black level is deliberately left unspecified. The simple IPA will estimate
+# it from image statistics until a value has been measured from raw dark frames.
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+  - Awb:
+  - Ccm:
+      ccms:
+        - ct: 2800
+          ccm: [ 1.910, -0.735, -0.176,
+                -0.303,  1.436, -0.133,
+                -0.150, -1.182,  2.332 ]
+        - ct: 4000
+          ccm: [ 1.415, -0.167, -0.248,
+                -0.364,  1.460, -0.095,
+                -0.101, -0.669,  1.770 ]
+        - ct: 5000
+          ccm: [ 1.365, -0.306, -0.059,
+                -0.270,  1.375, -0.105,
+                -0.040, -0.370,  1.410 ]
+        - ct: 6500
+          ccm: [ 1.258, -0.257, -0.002,
+                -0.245,  1.301, -0.055,
+                 0.021, -0.598,  1.577 ]
+  - Adjust:
+  - Agc:
+...

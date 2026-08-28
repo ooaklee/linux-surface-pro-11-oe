@@ -154,6 +154,9 @@ We will integrate the front camera as follows.
   `7.2.0-jg-0sp11v14` changelog entry.
 - Build from the exact pushed integration-branch commit with the repository's
   qcom-x1e Docker build script, producing `binary-indep binary-qcom-x1e`.
+- On a reused Docker source volume, refresh the requested branch or tag through
+  an explicit destination ref and require the updated tracking ref to match
+  `FETCH_HEAD`; an ambiguous fetch can otherwise leave a stale shallow ref.
 - Install only artifacts whose package version and recorded source commit match
   the milestone. Do not use a wildcard copied from an earlier v13 build.
 - Treat `sp11-kernel-build-manifest.txt` and its `Source HEAD` field as the
@@ -174,14 +177,18 @@ The reviewed source milestone consists of these signed commits on
   LED and orientation properties in the MIPI CCS binding.
 - `1592ec3774189f107d9267ffd65a71e841bccf1e` — restore the coherent IMX681
   sensor, CAMSS, C-PHY, device-tree, control, and v14 changelog path.
+- `e0ce71102628902fa5281a2adcadc19b2d88d4f0` — preserve the reported Bayer
+  layout across fixed-table programming and propagate the final sensor
+  `MODE_SELECT` failure instead of reporting a false streaming success.
 
 The final local `make LOCALVERSION= -j8 modules dtbs` completed successfully.
 The CCS, qcom-camss, and generic MIPI CSI-2 PHY modules all report the exact
 local validation vermagic `7.2.0-jg-0sp11v13-qcom-x1e`; both OLED DTBs report
 model `Microsoft Surface Pro 11th Edition (OLED)` and link frequency
 `0x0000000039caec00`. `dt-doc-validate`, the targeted `dt-validate`, and
-checkpatch passed. The canonical v14 package build must report source HEAD
-`1592ec3774189f107d9267ffd65a71e841bccf1e` in its manifest.
+strict checkpatch passed. A targeted `W=1` CCS module build also passed after
+the final stream-state correction. The canonical v14 package build must report
+source HEAD `e0ce71102628902fa5281a2adcadc19b2d88d4f0` in its manifest.
 
 ## Consequences
 
@@ -202,9 +209,15 @@ checkpatch passed. The canonical v14 package build must report source HEAD
 - The six explicit CSID drop-register writes are based on generic CSID behavior
   and the completed hardware reference. Windows traces do not independently
   establish them. Other CSID680 routes must be regression-tested.
+- The v14 CSID680 path only unmasks register-update completion, while VFE680 RDI
+  disables its interrupt masks. The raw validator can reject emitted camera
+  errors and truncated buffers, but a quiet kernel log does not prove that
+  hidden FIFO or image-violation status never occurred. Exact frame sizes,
+  repeated streaming, and raw-image inspection remain separate evidence gates;
+  add targeted IRQ instrumentation only if runtime symptoms justify it.
 - The kernel milestone is not the whole webcam integration. Raw capture must
-  pass before the libcamera soft-IPA patch, sensor tuning, PipeWire hardening,
-  and browser validation are installed.
+  pass before the libcamera soft-IPA patch and sensor tuning are installed or
+  PipeWire/browser changes are considered.
 
 ## Acceptance gates
 
@@ -216,10 +229,12 @@ checkpatch passed. The canonical v14 package build must report source HEAD
    absent.
 4. The media graph negotiates 3844x2640 RAW10 through the sensor/PHY/CSID sink
    and 3840x2640 packed RAW10 through the CSID source/VFE/video node.
-5. At least ten frames capture without FIFO overflow, image violation, or
-   truncated buffers; repeated start/stop and suspend/resume also pass.
-6. Exposure and gain visibly affect real frames, simple-IPA AE converges, and
-   the privacy LED is on only while streaming.
+5. At least ten exact-size frames capture without truncated buffers or emitted
+   camera-path errors; sampled range, entropy, and temporal-difference checks
+   pass, and decoded raw inspection shows stable, non-corrupt image data.
+6. Repeated start/stop and suspend/resume pass. Exposure and gain visibly affect
+   real frames, simple-IPA AE converges, and the privacy LED is on only while
+   streaming.
 7. The camera enumerates through PipeWire and completes repeated browser/WebRTC
    sessions without stale nodes or buffer-allocation failures.
 
@@ -232,6 +247,7 @@ can hang the bus when camera registers are read with the power/clock domain off.
 - [Hardware-proven Snapdragon reference](https://github.com/karsies-wq/sp11-imx681-linux/tree/b08f76f40b8d7b715bd4da6aef484f86142cc147)
 - [linux-surface PR #2156](https://github.com/linux-surface/linux-surface/pull/2156)
 - [SP11 front-camera tracking issue #43](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/43)
+- [ADR0066: SP11 IMX681 libcamera Simple IPA Integration](adr-0066-sp11-imx681-libcamera-simple-ipa.md)
 - ADR-0002 (boot shim image strategy)
 - ADR-0003 (Denali DTB and GRUB injection)
 - ADR-0020 through ADR-0023 (Docker kernel build workflow)
