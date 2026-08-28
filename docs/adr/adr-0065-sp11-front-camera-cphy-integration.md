@@ -254,10 +254,31 @@ The reviewed source milestone consists of these signed commits on
 
 The earlier `e0ce71102628` source passed local module/DTB builds, binding
 validation, and strict checkpatch before packaging. Strict checkpatch also
-passes the `0097c12b0fec` amendment; its canonical remote package build is a
-separate pending gate. The resulting manifest must report source HEAD
-`0097c12b0fec69b2d1aef031d4cd63fd78fd7a48`; the reused build volume and
-unchanged Debian v14 version make filenames alone insufficient provenance.
+passes the `0097c12b0fec` amendment.
+
+The canonical remote package build completed successfully on 2026-08-28 in
+33 minutes using `binary-indep binary-qcom-x1e` with ten jobs. Its manifest
+reports source HEAD `0097c12b0fec69b2d1aef031d4cd63fd78fd7a48`, the requested
+integration branch, and no local patches. The four copied packages all report
+version `7.2.0-jg-0sp11v14` and the expected `arm64` or `all` architecture.
+The modules package contains `ccs.ko.zst` and `qcom-camss.ko.zst`; both report
+vermagic `7.2.0-jg-0sp11v14-qcom-x1e`, with source versions
+`426DF2BB77E8D8D0F7BDAF8` and `2CE131610DCEBDD881BBC84` respectively.
+
+Remote and local SHA-256 values matched after copying the build into the
+ignored, source-qualified directory
+`build/docker-sp11-qcom-x1e-kernel/artifacts-v14-0097c12b0fec/`:
+
+- image: `cb6eeebe50cdbebdd532f007166e0f916a404cc634fae6fa23b96fd1d3ea2947`
+- modules: `be840903aaa30871e9114c4b792bf89be26264fca0e902299e6c104e555d8e4e`
+- flavour headers: `76481f3974f3b08351c35a8a89af8b957d4a12174d94bc52c1e9bad3d2c0f88b`
+- common headers: `8db4fedfab45d4d96db344deb660cad29c8f0f923e5b519e46a4e041170497de`
+- build manifest: `bad0d666d386e81613fd04c98c75c82350b72bec40e5f75dccbeda1e05915353`
+
+No package was installed, no module was loaded, and no reboot was performed as
+part of this build gate. The reused volume and unchanged Debian v14 version
+still make filenames alone insufficient provenance; retain the manifest and
+hashes with the packages.
 
 ## Consequences
 
