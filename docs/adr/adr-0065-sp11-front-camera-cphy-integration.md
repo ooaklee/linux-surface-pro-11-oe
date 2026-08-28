@@ -1,0 +1,238 @@
+---
+id: adr-0065-sp11-front-camera-cphy-integration
+title: "ADR0065: SP11 Front Camera C-PHY Integration"
+# prettier-ignore
+description: Architecture Decision Record (ADR) for integrating the Surface Pro 11 Sony IMX681 front camera using the hardware-proven 969.6 Msymbol/s C-PHY path, a single truthful sensor mode, reversible kernel packaging, and evidence-gated userspace enablement.
+---
+
+# ADR0065: SP11 Front Camera C-PHY Integration
+
+## Status
+
+Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28.
+Kernel package, reboot, raw-capture, and userspace validation remain required
+before the front camera is described as working on this device.
+
+This decision supersedes the unverified 1.2 GHz / 2.4 Gsymbol/s model recorded
+in the earlier local draft. That draft was never committed.
+
+## Context
+
+The Surface Pro 11 OLED unit exposes a Sony IMX681 front camera at CCI/I2C
+`1-0010`. The v13 kernel creates the device and CAMSS media controller, but CCS
+does not bind. The boot journal reports:
+
+```text
+value 327680000 overflows!
+no valid link frequencies for 10 bpp
+no supported mbus code found
+```
+
+The integration branch already contains model-scoped IMX681 support, the
+x1e80100 C-PHY receive path, CSID680/VFE680 fixes, the Denali device-tree
+nodes, and in-code CCS limit overrides for both observed manufacturer IDs
+(`0x4260` and `0x3b60`). A later change moved the endpoint to 1.2 GHz and made
+CAMSS double it to 2.4 Gsymbol/s. That conflicts with the sensor mode table
+and with the only complete hardware-proven Snapdragon implementation.
+
+### Evidence and provenance
+
+The decision deliberately separates three evidence classes.
+
+1. **Direct evidence from this device's Windows capture**
+
+   The private capture repository at commit `f35cbc4` directly establishes
+   MCLK4 at 19.2 MHz, reset GPIO237, and the LDO7B 2.8 V and LDO3M 1.8 V
+   resources. It also records a front-camera exposure capability of
+   `5000..2000000` WinRT ticks in steps of 10 ticks, with automatic exposure
+   available. WinRT ticks are 100 ns, so this is a 0.5 ms to 200 ms control
+   range with a 1 microsecond step.
+
+   The capture does **not** contain decoded CCI register transactions or
+   active CAMSS/CSIPHY MMIO. It therefore does not directly prove the sensor
+   PLL registers, C-PHY rate, CDR value, physical trio, exposure register, or
+   gain register. Relevant audit files are:
+
+   - `analysis/camera-integration-20260827/privileged-camera-followup.md`
+   - `analysis/camera-integration-20260827/windows-control-capabilities.json`
+   - `analysis/camera-integration-20260827/source-audit.md`
+   - `windbg/31-camera-cci-register-writes-pending.md`
+   - `windbg/32-camera-camss-mmio-dump.txt`
+
+2. **Hardware-proven Snapdragon Linux reference**
+
+   `karsies-wq/sp11-imx681-linux` at
+   `b08f76f40b8d7b715bd4da6aef484f86142cc147` reports a complete front-camera
+   path on the same platform family: CSIPHY2/trio0, the 1.0 Gsymbol/s AFE row,
+   a clean CDR window from `0x46` through `0x4e`, CDR `0x4a`, and a
+   3844x2640 RAW10 sensor stream cropped by CSID to 3840x2640. Its decisive
+   line-length change is 7552 to 8704 pixels, avoiding receiver FIFO overflow.
+   It demonstrates repeated raw capture and a libcamera/PipeWire/browser path.
+
+   The mode table programs PLL2 with 19.2 MHz / 3 multiplied by 303, producing
+   a 1.9392 GHz OP clock. The CCS link-frequency convention is half that clock:
+   969.6 MHz. The generic x1e80100 PHY consumes the C-PHY symbol rate directly,
+   so CAMSS must pass 969.6 MHz without another factor of two.
+
+3. **Intel IMX681 work**
+
+   `linux-surface/linux-surface#2156` targets Intel IPU6 and a D-PHY receiver.
+   It is useful for sensor-table provenance and corroborating the 969.6 MHz
+   sensor configuration, but its receiver changes must not be cherry-picked
+   into Qualcomm CAMSS. Its analogue-gain interpretation also conflicts with
+   later Snapdragon measurements, where `0x0204` is ineffective and global
+   U8.8 gain at `0x020e/0x020f` changes the image.
+
+### Boot and deployment behavior
+
+The qcom-x1e package uses stubble/UKI construction with auto-selected embedded
+DTBs. Although GRUB contains a `devicetree /sp11-denali.dtb` directive, the
+live tree does not match that loose file:
+
+| Source | Link frequency |
+| --- | ---: |
+| Live `/proc/device-tree` | 1,000,000,000 |
+| Loose `/boot/sp11-denali.dtb` | 1,200,000,000 |
+| Corrected source/build DTB | 969,600,000 |
+
+The installed kernel must therefore contain the corrected OLED DTB in its
+embedded auto-DTB section. Copying only a loose DTB is not an acceptance test.
+No deployment may copy another machine's full DTB or hard-code its Bluetooth
+address.
+
+## Decision
+
+We will integrate the front camera as follows.
+
+### Kernel data path
+
+- Advertise `link-frequencies = /bits/ 64 <969600000>` on the IMX681 C-PHY
+  endpoint.
+- Pass that value directly as the C-PHY symbol rate in CAMSS.
+- Select the x1e80100 1.0 Gsymbol/s C-PHY AFE table with CDR `0x4a` on all
+  three table lanes. Runtime override value zero continues to mean "use the
+  table default".
+- Use CSIPHY2 with one C-PHY trio. Preserve D-PHY behavior for other cameras.
+- Program CSID680's frame, pixel, and line drop engines to the same explicit
+  keep-all state used by the generic CSID implementation: period 1, pattern 0.
+- Decode the 3844-pixel RAW10 input, crop horizontally to 3840 pixels, and feed
+  VFE680 RDI in MIPI_RAW mode. The resulting 4800-byte packed RAW10 line is
+  naturally 16-byte aligned.
+
+### Sensor and controls
+
+- Expose only the hardware-proven 3844x2640 sensor mode. Remove the runtime
+  `imx681_windows` switch and its incompatible 1.2 GHz table until genuine
+  per-state mode selection also updates link frequency and control ranges.
+- Keep the mode's line length at 8704 and frame length at 3177.
+- Expose one standard `V4L2_CID_ANALOGUE_GAIN` control with range `0..960`,
+  step 1, and default 192. For this IMX681 only, map it to global U8.8 gain at
+  `0x020e/0x020f` using `0x0100 + value * 4`; do not expose a duplicate digital
+  gain control. This is the standard control driven by libcamera's simple IPA.
+- Treat `0x0229..0x022b` as the measured 24-bit line-count exposure register.
+  Convert the Windows control-domain bounds to sensor lines and start at the
+  proven 3100-line integration value.
+- Keep the in-code, model-scoped limits and vendor/mode tables. A missing
+  `ccs-sensor-3b60-0681-0010.fw` warning is not a reason to rename or install
+  the reference unit's `0x4260` static firmware blob.
+
+### Privacy indicator
+
+- Keep the GPIO225 indicator default-off and connect it to the sensor through
+  `leds` / `led-names = "privacy"`. V4L2 core owns stream-time toggling.
+- Extend the MIPI CCS binding to admit the common privacy LED and orientation
+  properties. Remove the undeclared `clock-names` and deprecated duplicate
+  `clock-frequency` properties; the assigned MCLK4 rate remains 19.2 MHz and
+  CCS reads that rate from the clock provider.
+- GPIO225 active-high is supported by the separate hardware-proven reference,
+  but not by this device's Windows trace. Its on/off behavior remains a
+  post-install hardware validation gate.
+
+### Build and release
+
+- Record all camera milestone changes in the existing
+  `7.2.0-jg-0sp11v14` changelog entry.
+- Build from the exact pushed integration-branch commit with the repository's
+  qcom-x1e Docker build script, producing `binary-indep binary-qcom-x1e`.
+- Install only artifacts whose package version and recorded source commit match
+  the milestone. Do not use a wildcard copied from an earlier v13 build.
+- Treat `sp11-kernel-build-manifest.txt` and its `Source HEAD` field as the
+  package provenance authority. The persistent build volume contains an older
+  v14 build with the same Debian version, so filenames alone cannot distinguish
+  the corrected package.
+- Prefer the coherent v14 package over overwriting v13 packaged modules. If a
+  diagnostic v13 hotfix is needed, all CCS, CAMSS, and generic PHY modules must
+  have an exact v13 vermagic and be installed reversibly under an `updates/`
+  directory with a backed-up embedded DTB.
+
+### Recorded source milestone
+
+The reviewed source milestone consists of these signed commits on
+`sp11/integration-7.2.x-ooaklee-karsies-wq-cams`:
+
+- `4b47a0c09c8d9efb9872abe1cb10a03d28accbcc` — admit the inherited privacy
+  LED and orientation properties in the MIPI CCS binding.
+- `1592ec3774189f107d9267ffd65a71e841bccf1e` — restore the coherent IMX681
+  sensor, CAMSS, C-PHY, device-tree, control, and v14 changelog path.
+
+The final local `make LOCALVERSION= -j8 modules dtbs` completed successfully.
+The CCS, qcom-camss, and generic MIPI CSI-2 PHY modules all report the exact
+local validation vermagic `7.2.0-jg-0sp11v13-qcom-x1e`; both OLED DTBs report
+model `Microsoft Surface Pro 11th Edition (OLED)` and link frequency
+`0x0000000039caec00`. `dt-doc-validate`, the targeted `dt-validate`, and
+checkpatch passed. The canonical v14 package build must report source HEAD
+`1592ec3774189f107d9267ffd65a71e841bccf1e` in its manifest.
+
+## Consequences
+
+- The sensor, CAMSS, and generic PHY now use one consistent rate contract.
+  The old 1.2 GHz doubled path, which selected the 2.35 Gsymbol/s table while
+  the sensor emitted about 969.6 Msymbol/s, is removed.
+- Userspace sees only a mode the driver will actually program. Adding further
+  modes later requires proper V4L2 state, control-range, and link-frequency
+  selection rather than another global module parameter.
+- Auto-exposure can drive the standard gain and exposure controls used by the
+  simple IPA, but convergence and image quality remain runtime gates. The
+  fixed 3177-line frame limits the initial control range to about 71 ms even
+  though Windows advertises up to 200 ms; longer exposure requires deliberate
+  frame-length control rather than writing past the current frame.
+- The privacy LED is managed by the media stack instead of a polling service.
+  Incorrect polarity must be fixed in DT after hardware testing, not hidden by
+  a permanently running GPIO script.
+- The six explicit CSID drop-register writes are based on generic CSID behavior
+  and the completed hardware reference. Windows traces do not independently
+  establish them. Other CSID680 routes must be regression-tested.
+- The kernel milestone is not the whole webcam integration. Raw capture must
+  pass before the libcamera soft-IPA patch, sensor tuning, PipeWire hardening,
+  and browser validation are installed.
+
+## Acceptance gates
+
+1. Package build completes from the recorded source commit and produces v14
+   artifacts with no DT binding or module build errors.
+2. The installed v14 kernel boots, and the live endpoint bytes are
+   `00 00 00 00 39 ca ec 00`.
+3. CCS binds at `1-0010`; the old overflow and link-frequency probe errors are
+   absent.
+4. The media graph negotiates 3844x2640 RAW10 through the sensor/PHY/CSID sink
+   and 3840x2640 packed RAW10 through the CSID source/VFE/video node.
+5. At least ten frames capture without FIFO overflow, image violation, or
+   truncated buffers; repeated start/stop and suspend/resume also pass.
+6. Exposure and gain visibly affect real frames, simple-IPA AE converges, and
+   the privacy LED is on only while streaming.
+7. The camera enumerates through PipeWire and completes repeated browser/WebRTC
+   sessions without stale nodes or buffer-allocation failures.
+
+Do not read camera MMIO while the stream is inactive. The reference platform
+can hang the bus when camera registers are read with the power/clock domain off.
+
+## References
+
+- [jglathe/linux_ms_dev_kit issue #74 resolution](https://github.com/jglathe/linux_ms_dev_kit/issues/74#issuecomment-5302651457)
+- [Hardware-proven Snapdragon reference](https://github.com/karsies-wq/sp11-imx681-linux/tree/b08f76f40b8d7b715bd4da6aef484f86142cc147)
+- [linux-surface PR #2156](https://github.com/linux-surface/linux-surface/pull/2156)
+- [SP11 front-camera tracking issue #43](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/43)
+- ADR-0002 (boot shim image strategy)
+- ADR-0003 (Denali DTB and GRUB injection)
+- ADR-0020 through ADR-0023 (Docker kernel build workflow)
+- ADR-0052 (SP11 integration-fork kernel build)
