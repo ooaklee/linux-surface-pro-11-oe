@@ -19,6 +19,13 @@ The amendment records the compound-subdevice link-frequency fix, the fully
 specified Linux clock tuple, and failure-path cleanup needed for the next
 packaged experiment.
 
+Amended again after booting the provenance-verified `0097c12b0fec` package.
+The complete RAW10 graph and `VIDIOC_STREAMON` succeeded, but neither the
+CSID0/VFE0 route nor the same-machine Windows-selected CSID1/VFE1 diagnostic
+route completed a buffer. The next bounded package therefore matches the one
+remaining CSID680 receiver-field delta from the same-machine Windows oracle
+and exposes a packet-count diagnostic before userspace installation proceeds.
+
 This decision supersedes the earlier local draft that treated a statically
 decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
 to 2.4 Gsymbol/s at the receiver. The 1.2 Gsymbol/s sensor configuration is
@@ -203,6 +210,15 @@ We will integrate the front camera as follows.
 - If an upstream subdevice fails to start, stop only the downstream CAMSS
   subdevices that started successfully before ending and flushing the media
   pipeline. Repeated failed opens must not leave receiver blocks active.
+- On X1E80100 real-sensor C-PHY routes, retain `TPG_NUM_SEL=1` while leaving
+  the TPG mux disabled. Together with C-PHY selection and CSIPHY2 selection,
+  this changes CSID680 `RX_CFG0` from Linux's `0x01300000` to the repeated
+  same-machine Windows value `0x11300000`. Keep D-PHY and active-TPG paths
+  byte-identical.
+- Report `RX_CFG0` and `TOTAL_PKTS` when the experimental C-PHY stream stops.
+  A zero count localizes the failure to sensor/PHY/receiver ingress; a nonzero
+  count with no completed V4L2 buffer moves the investigation downstream to
+  CSID RDI/VFE completion.
 
 ### Privacy indicator
 
@@ -251,6 +267,9 @@ The reviewed source milestone consists of these signed commits on
 - `0097c12b0fec69b2d1aef031d4cd63fd78fd7a48` — resolve the compound CCS
   transmitter rate, program the complete derived Linux clock tuple, group the
   first-frame controls, and make failed stream attempts unwind cleanly.
+- `ead11c748e4e8fb984412093be73d2228bd68e89` — match the X1E CSID680 C-PHY
+  receiver field to same-machine Windows and expose stop-time receiver and
+  packet-count evidence for the next raw gate.
 
 The earlier `e0ce71102628` source passed local module/DTB builds, binding
 validation, and strict checkpatch before packaging. Strict checkpatch also
@@ -279,6 +298,34 @@ No package was installed, no module was loaded, and no reboot was performed as
 part of this build gate. The reused volume and unchanged Debian v14 version
 still make filenames alone insufficient provenance; retain the manifest and
 hashes with the packages.
+
+### `0097c12b0fec` runtime result
+
+The verified package booted as `7.2.0-jg-0sp11v14-qcom-x1e`; loaded CCS and
+CAMSS source versions matched its manifest. The bounded raw validator then:
+
+- negotiated `SRGGB10_1X10` at 3844x2640 from IMX681 through CSIPHY2 and the
+  CSID sink;
+- negotiated the 3840x2640 CSID crop, packed `pRAA`, 4800-byte stride, and
+  12,672,000-byte V4L2 buffers through CSID0/VFE0 RDI0;
+- completed buffer allocation, queueing, and `VIDIOC_STREAMON` successfully;
+- completed zero buffers in 40 seconds and produced a zero-byte raw file;
+- logged the 969.6 MHz C-PHY selection and no visible FIFO, violation, or
+  truncation error, followed by the known best-effort standby NACK.
+
+A separate 12-second diagnostic moved the same negotiated stream to the
+same-machine Windows-selected CSID1/VFE1 RDI0 instances. It also completed
+zero buffers. Both tests restored the CSID0/VFE0 links and PipeWire services.
+The evidence is retained in the private runtime directories
+`sp11-imx681-raw.83cIgrOU` and `sp11-imx681-csid1.5qyXQfiF` under the Codex
+desktop temporary-state tree.
+
+The same-machine Windows branch at `68b1b3124a799060316d58131fe3f1511bdfd335`
+establishes `RX_CFG0=0x11300000`. Its exact 2.4-Gsymbol/s PHY table belongs to
+a distinct 3840x2640, PLL2 `3/375`, 1.2-GHz-link sensor mode. Do not mix that
+table with the current 3844x2640, PLL2 `3/303`, 969.6-Msymbol/s Linux mode.
+Its IPP/VFE PIX patches also remain static and incomplete, so they are not part
+of this bounded RDI transport experiment.
 
 ## Consequences
 
@@ -344,6 +391,7 @@ can hang the bus when camera registers are read with the power/clock domain off.
 - [jglathe/linux_ms_dev_kit issue #74 resolution](https://github.com/jglathe/linux_ms_dev_kit/issues/74#issuecomment-5302651457)
 - [Hardware-proven Snapdragon reference](https://github.com/karsies-wq/sp11-imx681-linux/tree/b08f76f40b8d7b715bd4da6aef484f86142cc147)
 - [Static Windows package oracle](https://github.com/geocausa/SP11X1ECamera/tree/41003427f47edd27cd98f846b4282327824ee16f)
+- [Same-machine Windows C-PHY receiver oracle](https://github.com/geocausa/SP11X1ECamera/tree/68b1b3124a799060316d58131fe3f1511bdfd335)
 - [linux-surface PR #2156](https://github.com/linux-surface/linux-surface/pull/2156)
 - [SP11 front-camera tracking issue #43](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/43)
 - [ADR0066: SP11 IMX681 libcamera Simple IPA Integration](adr-0066-sp11-imx681-libcamera-simple-ipa.md)
