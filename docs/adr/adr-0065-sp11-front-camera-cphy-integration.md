@@ -26,6 +26,11 @@ route completed a buffer. The next bounded package therefore matches the one
 remaining CSID680 receiver-field delta from the same-machine Windows oracle
 and exposes a packet-count diagnostic before userspace installation proceeds.
 
+Amended once more after a native ARM64 local Docker build of
+`ead11c748e4e` completed and its package and module provenance passed two
+independent checks. The package remains uninstalled; boot and raw-capture
+validation are separate gates that require an explicit maintenance step.
+
 This decision supersedes the earlier local draft that treated a statically
 decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
 to 2.4 Gsymbol/s at the receiver. The 1.2 Gsymbol/s sensor configuration is
@@ -326,6 +331,50 @@ a distinct 3840x2640, PLL2 `3/375`, 1.2-GHz-link sensor mode. Do not mix that
 table with the current 3844x2640, PLL2 `3/303`, 969.6-Msymbol/s Linux mode.
 Its IPP/VFE PIX patches also remain static and incomplete, so they are not part
 of this bounded RDI transport experiment.
+
+### `ead11c748e4e` local package build
+
+The native ARM64 Docker build completed locally on 2026-08-28 in approximately
+46 minutes using `binary-indep binary-qcom-x1e` with eight jobs. The manifest
+records source HEAD `ead11c748e4e8fb984412093be73d2228bd68e89`, the requested
+integration branch, no local patches, and the direct-root rules runner. Exactly
+four packages were produced; each reports source `linux-qcom-x1e` and version
+`7.2.0-jg-0sp11v14`, with the expected `arm64` or `all` architecture.
+
+The modules package contains the expected CAMSS, CCS, CCS PLL, and Qualcomm
+MIPI CSI-2 PHY modules. All report vermagic
+`7.2.0-jg-0sp11v14-qcom-x1e`. Their packaged source versions are:
+
+- `qcom-camss`: `26CF187C5D69D7818A1BDCB`
+- `ccs`: `426DF2BB77E8D8D0F7BDAF8`
+- `ccs-pll`: `F5D68994B5EB8E947AC4F6B`
+- `phy-qcom-mipi-csi2`: `F578CE5728BAC71AB6C9374`
+
+The packaged CAMSS module differs from the prior package source version
+`2CE131610DCEBDD881BBC84` and contains the new stop-time diagnostic format:
+
+```text
+CSID%u C-PHY stop: RX_CFG0=%#010x TOTAL_PKTS=%u RDI%u_CFG0=%#010x RDI%u_HCROP=%#010x
+```
+
+The packaged CAMSS source version is authoritative; a different value observed
+in a host incremental build did not share the final package build context.
+
+The verified packages, manifest, package list, build arguments, and checksum
+manifest are retained in the distinct read-only directory
+`build/docker-sp11-qcom-x1e-kernel/artifacts-v14-ead11c748e4e/`. Its recorded
+SHA-256 values are:
+
+- image: `6122b59ec1b69c30f31c7bfc12f37349ce7f43b07a6adfcfa6d882b867286ae3`
+- modules: `aa41fce90ae91bc2a7dd502bfe60e70873a13af37549bdc789d82c818610159e`
+- flavour headers: `e0c6178d9e2dc081a04365f3ffc2bef3503b8a6e99234567c47ddc8aa64f4268`
+- common headers: `f81ac09b161c126761f25d7e5c365ecb70f80d67eeca6d0d7d7c5f27b20f0189`
+- build manifest: `551ab27db38d2f69e87c117b0516e8f3692fab6af13bf488e393ff8e95f5f3c0`
+- package list: `08a5dc85c04b51875e7696cf9db220b22ded22b2274212393f197a5538ac8756`
+- build arguments: `f1f24702771b87fb7afeb3f73274efcfdb87ca53436265f4dc4c4deb5e48c092`
+
+No package was installed, no live module or camera device was touched, and no
+reboot was performed as part of this build and provenance gate.
 
 ## Consequences
 
