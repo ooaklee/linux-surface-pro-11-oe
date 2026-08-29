@@ -219,8 +219,13 @@ dpkg-query -W -f="\${binary:Package}\t\${Version}\t\${Architecture}\n" |
 
 file /out/stage/bin/sp11-iptsd /out/stage/bin/sp11-iptsd-check-device |
   tee /out/stage/FILE.txt
-ldd /out/stage/bin/sp11-iptsd > /out/stage/LDD.iptsd.txt
-ldd /out/stage/bin/sp11-iptsd-check-device > /out/stage/LDD.check-device.txt
+# ldd prints the ASLR-selected load address for every object. Preserve the
+# dependency names and resolved paths, but normalize those per-run addresses so
+# the release manifest can be reproduced from the same source and toolchain.
+ldd /out/stage/bin/sp11-iptsd |
+  sed -E "s/\\(0x[[:xdigit:]]+\\)/(0xADDR)/g" > /out/stage/LDD.iptsd.txt
+ldd /out/stage/bin/sp11-iptsd-check-device |
+  sed -E "s/\\(0x[[:xdigit:]]+\\)/(0xADDR)/g" > /out/stage/LDD.check-device.txt
 
 (
   cd /out/stage

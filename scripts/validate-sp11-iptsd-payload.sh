@@ -168,8 +168,17 @@ grep -Eq '^MESON_OPTIONS=.*-Dforce_access_checks=true' "$PAYLOAD/BUILD.env" ||
   fail "payload was not built with forced access checks"
 
 for package in binutils build-essential g++ libc6-dev meson ninja-build; do
-  grep -Eq "^${package}(:[^[:space:]]+)?[[:space:]]" \
-    "$PAYLOAD/SBOM.dpkg.tsv" || fail "SBOM omits build package: $package"
+  awk -F '\t' -v expected="$package" '
+    {
+      name = $1
+      sub(/:.*/, "", name)
+      if (name == expected) {
+        found = 1
+        exit
+      }
+    }
+    END { exit !found }
+  ' "$PAYLOAD/SBOM.dpkg.tsv" || fail "SBOM omits build package: $package"
 done
 
 echo "SP11 iptsd payload matches the pinned release."
