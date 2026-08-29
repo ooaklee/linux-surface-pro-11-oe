@@ -18,6 +18,24 @@ image at either fixed gain because that kernel writes an inert exposure
 register. Do not tune around this kernel defect; first retest this unchanged
 package set with the isolated `b1754869f458` exposure-latch correction.
 
+## Browser access
+
+WirePlumber already exports the processed camera as `Built-in Front Camera`.
+No V4L2 loopback, `libcamerify`, custom WirePlumber rule, or additional
+`pipewire-libcamera` package is needed; that package is only a transitional
+dependency for the installed `libspa-0.2-libcamera` plugin.
+
+Firefox 154 requires `media.webrtc.camera.allow-pipewire` set to `true` in
+`about:config`, followed by a complete Firefox restart. Chrome 152 requires
+`chrome://flags/#enable-webrtc-pipewire-camera` set to **Enabled**, followed by
+Relaunch. Allow the desktop camera prompt and the site's camera permission,
+then select `Built-in Front Camera`.
+
+Both paths have created active IMX681 PipeWire streams. A Meet preview
+negotiated 960x540 ABGR8888/sRGB and was upright and usable under suboptimal
+mixed lighting. Final image tuning still follows the exposure-only kernel
+validation, covered-lens pedestal check, and controlled colour-chart work.
+
 The standalone kernel control code `x` uses Sony's reciprocal mapping
 `gain = 1024 / (1024 - x)` for `x=0..960`.
 `AnalogueGainLinear{ 0, 1024, -1, 1024 }` expresses that relationship to

@@ -11,9 +11,10 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 
 Accepted on 2026-08-28 as the userspace integration design for the
 `7.2.0-jg-0sp11v14` camera milestone. The standalone raw transport gate and
-coherent userspace-package installation now pass. Exposure response, final
-image quality, repeated streaming, PipeWire, and browser acceptance remain
-runtime gates.
+coherent userspace-package installation now pass. PipeWire/browser discovery
+and an initial processed preview also pass. Exposure response, final image
+calibration, repeated streaming, suspend/resume, and privacy remain runtime
+gates.
 
 Amended on 2026-08-29 for kernel commit `6621d73e732c`, which replaces the CCS
 U8.8 gain path with turbineBMW's hardware-validated standalone IMX681 driver.
@@ -32,6 +33,18 @@ to tune around the current kernel: on `6621d73e732c`, exposure codes 128 and
 2400 are photometrically indistinguishable at either fixed gain because the
 driver writes the wrong sensor latch. Kernel commit `b1754869f458` is the
 isolated correction awaiting package, boot, and response validation.
+
+On 2026-08-29 WirePlumber exported the sensor as `Built-in Front Camera`, a
+PipeWire `Video/Source` with camera role, and the desktop portal reported a
+camera present. Firefox 154 required
+`media.webrtc.camera.allow-pipewire=true`; Chrome 152 required the
+`WebRtcPipeWireCamera` feature. With those browser backends selected, both
+clients created active streams from the IMX681 source. libcamera configured a
+960x540 ABGR8888/sRGB processed stream without a new camera-path error, and the
+user-visible Meet preview was upright, recognizable, and judged good despite
+suboptimal mixed room lighting. This qualifies discovery and an initial
+processed preview, not exposure linearity, repeated sessions, suspend/resume,
+or colour calibration.
 
 ## Context
 
@@ -193,17 +206,23 @@ machine's paths in a service.
   after booting the isolated `b1754869f458` correction first.
 - Longer exposure, LED polarity, and Bayer order remain explicit measurement
   work rather than unverified constants.
-- PipeWire allocation backports, service-hardening changes, custom WirePlumber
-  rules, and browser workarounds remain conditional remedies, not default
-  configuration.
+- No PipeWire allocation backport, custom WirePlumber rule, V4L2 loopback, or
+  `libcamerify` shim is required for browser capture. The installed
+  `libspa-0.2-libcamera` plugin already exports the processed source;
+  `pipewire-libcamera` is only a transitional package for that installed
+  plugin. Current Firefox and Chrome releases still need their respective
+  PipeWire-camera feature selected.
 
 ## Acceptance gates
 
 Gates 1--3 pass for the installed coherent package set. The gain-response half
 of gate 4 passes, but its exposure-monotonic requirement fails on kernel
-`6621d73e732c`; covered-lens pedestal work remains pending. Gates 5--6 are not
-yet qualified. The same package set must be retested after the exposure-only
-kernel correction before tuning or release.
+`6621d73e732c`; covered-lens pedestal work remains pending. Gate 5 passes its
+initial Plasma Camera, PipeWire, Firefox, and Chrome discovery/stream-creation
+subset, including an upright usable Meet preview, but repeated sessions and
+suspend/resume remain pending. Gate 6 is not yet qualified. The same package
+set must be retested after the exposure-only kernel correction before tuning
+or release.
 
 1. The native ARM64 Ubuntu 26.04 Docker builder rejects dirty target inputs,
    including its own script, verifies the exact Ubuntu DSC and payload hashes,

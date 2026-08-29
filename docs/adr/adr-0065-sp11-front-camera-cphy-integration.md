@@ -17,8 +17,9 @@ sampled-content gates pass at approximately 30 fps. A stable-light control
 matrix then proved that gain affects real frames while the advertised exposure
 control is photometrically inert. Kernel commit `b1754869f458` makes the next
 bounded correction solely to the exposure address and width. Its package and
-post-boot response test remain pending; image quality, repeated streaming,
-suspend/resume, privacy, and browser qualification also remain open.
+post-boot response test remain pending. PipeWire/browser discovery and an
+initial processed preview now pass; repeated streaming, suspend/resume,
+privacy, exposure response, and final image calibration remain open.
 
 Amended later on 2026-08-28 after the first v14-ABI runtime investigation
 reached the sensor's final `MODE_SELECT` write but produced no completed
