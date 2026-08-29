@@ -10,17 +10,28 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 ## Status
 
 Accepted on 2026-08-28 as the userspace integration design for the
-`7.2.0-jg-0sp11v14` camera milestone. Package installation remains gated on a
-successful v14 raw capture. Image-quality, PipeWire, and browser acceptance
-remain runtime gates.
+`7.2.0-jg-0sp11v14` camera milestone. The standalone raw transport gate and
+coherent userspace-package installation now pass. Exposure response, final
+image quality, repeated streaming, PipeWire, and browser acceptance remain
+runtime gates.
 
 Amended on 2026-08-29 for kernel commit `6621d73e732c`, which replaces the CCS
 U8.8 gain path with turbineBMW's hardware-validated standalone IMX681 driver.
-The previously built libcamera artifacts use incompatible linear CCS gain
-semantics and must not be installed with that kernel. The source bundle now
-uses turbine's reciprocal helper, sensor metadata, and conservative measured-
-black-level tuning; a fresh coherent package build remains required after the
-kernel raw gate passes.
+The source bundle uses turbine's reciprocal helper, sensor metadata, and
+conservative measured-black-level tuning.
+
+The resulting five-package set is installed at the single version
+`0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43`
+from support commit `92acde621d348d759d9ec4bba2d9d33a2b902a9a` and private build directory
+`build/libcamera-docker/build.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43.nbWGvSKp/`.
+The installed core/IPA signature verifies, fresh logs select
+`/usr/share/libcamera/ipa/simple/imx681.yaml`, and the helper reports the
+intended approximately 1x-to-16x real-gain range. A stable-light raw matrix
+shows that gain affects captured data. The remaining darkness is not a reason
+to tune around the current kernel: on `6621d73e732c`, exposure codes 128 and
+2400 are photometrically indistinguishable at either fixed gain because the
+driver writes the wrong sensor latch. Kernel commit `b1754869f458` is the
+isolated correction awaiting package, boot, and response validation.
 
 ## Context
 
@@ -176,6 +187,10 @@ machine's paths in a service.
 - Initial processing uses the reference's measured black pedestal but no CCM;
   neither black level nor colour is described as qualified on this unit until
   local dark-frame and chart measurements pass.
+- The installed helper, model-named tuning, package/signature coherence, and
+  gain mapping operate as designed. Userspace tuning must not compensate for
+  the `6621d73e732c` kernel's inert exposure write; retest the unchanged package
+  after booting the isolated `b1754869f458` correction first.
 - Longer exposure, LED polarity, and Bayer order remain explicit measurement
   work rather than unverified constants.
 - PipeWire allocation backports, service-hardening changes, custom WirePlumber
@@ -183,6 +198,12 @@ machine's paths in a service.
   configuration.
 
 ## Acceptance gates
+
+Gates 1--3 pass for the installed coherent package set. The gain-response half
+of gate 4 passes, but its exposure-monotonic requirement fails on kernel
+`6621d73e732c`; covered-lens pedestal work remains pending. Gates 5--6 are not
+yet qualified. The same package set must be retested after the exposure-only
+kernel correction before tuning or release.
 
 1. The native ARM64 Ubuntu 26.04 Docker builder rejects dirty target inputs,
    including its own script, verifies the exact Ubuntu DSC and payload hashes,

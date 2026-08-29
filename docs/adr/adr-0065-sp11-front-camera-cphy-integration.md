@@ -11,13 +11,14 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 
 Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28
 and superseded on 2026-08-29 by the matched standalone-IMX681/turbine C-PHY
-profile in kernel commit `6621d73e732c`. The earlier CCS packages booted,
-bound, negotiated the complete graph, and accepted `VIDIOC_STREAMON`, but
-every runtime attempt completed zero buffers and CSID received zero packets.
-The replacement commit is source- and compile-verified but not yet packaged,
-installed, or runtime-tested. Raw capture, image quality, repeated streaming,
-and userspace validation therefore remain required before the front camera is
-described as working on this device.
+profile in kernel commit `6621d73e732c`. That package is now built, installed,
+and booted: topology, stream negotiation, ten-frame packed-RAW10 capture, and
+sampled-content gates pass at approximately 30 fps. A stable-light control
+matrix then proved that gain affects real frames while the advertised exposure
+control is photometrically inert. Kernel commit `b1754869f458` makes the next
+bounded correction solely to the exposure address and width. Its package and
+post-boot response test remain pending; image quality, repeated streaming,
+suspend/resume, privacy, and browser qualification also remain open.
 
 Amended later on 2026-08-28 after the first v14-ABI runtime investigation
 reached the sensor's final `MODE_SELECT` write but produced no completed
@@ -419,6 +420,10 @@ The reviewed source milestone consists of these signed commits on
   profile with the turbine standalone 3840x2640 sensor transaction stream and
   observed 2.406-Gsymbol/s X1E C-PHY lifecycle while retaining this machine's
   proven sensor address `0x10`.
+- `b1754869f458ebc3b01cf449f8b1f6aa8edd13e0` — correct only the standalone
+  exposure latch from inert 16-bit `0x0202` to 24-bit `0x0229`, after the
+  stable-light control matrix separated exposure failure from working gain and
+  transport. Frame timing and every other camera layer remain unchanged.
 
 The earlier `e0ce71102628` source passed local module/DTB builds, binding
 validation, and strict checkpatch before packaging. Strict checkpatch also
@@ -431,6 +436,9 @@ IMX681, Qualcomm MIPI CSI-2 PHY, and CAMSS modules, and the Denali OLED DTB
 build. The copied standalone driver, mode table, and observed register table
 are byte-identical to the reconstructed turbine bundle before the local PHY-
 architecture adaptation.
+Commit `b1754869f458` passes strict checkpatch and a targeted ten-job `W=1`
+ARM64 `imx681.ko` build. Runtime validation remains tied to the package build
+and post-boot fixed-light matrix recorded below.
 
 The canonical remote package build completed successfully on 2026-08-28 in
 33 minutes using `binary-indep binary-qcom-x1e` with ten jobs. Its manifest
@@ -742,6 +750,40 @@ No package was installed, no live module or camera device was touched, and no
 reboot was performed as part of this build and artifact verification. Runtime
 gates remain pending until the package is deliberately installed and booted.
 
+### `6621d73e732c` boot, raw, and stable-light control result
+
+The provenance-verified package was installed and booted as
+`7.2.0-jg-0sp11v14-qcom-x1e`. The loaded `imx681` reports source version
+`3537F7270BB6A2B0D1FAE0C` and the expected v14 ARM64 vermagic. With the room
+lighting held stable, PipeWire and WirePlumber clients stopped, and a two-second
+settle between cases, four raw captures varied one control at a time:
+
+| Case | Exposure | Gain | Sample mean | Stddev | Entropy |
+|---|---:|---:|---:|---:|---:|
+| A | 128 | 0 | 65.634 | 19.485 | 2.458 |
+| B | 2400 | 0 | 65.621 | 19.225 | 2.455 |
+| C | 128 | 768 | 69.382 | 26.877 | 4.116 |
+| D | 2400 | 768 | 69.371 | 26.920 | 4.117 |
+
+Every case completed ten exact 12,672,000-byte frames, with 33.29--33.40 ms
+cadence, changing-frame/content checks passing, and no emitted CSID ECC/CRC or
+VFE camera-path error. Raising gain changed the sampled distribution; changing
+exposure from 128 to 2400 changed mean luminance by less than 0.02 percent at
+either fixed gain. The test was captured on 2026-08-29 at approximately 05:26
+BST. The original controls and user camera services were restored after the
+matrix.
+
+This result isolates a kernel control defect. The standalone driver inherited
+`CCI_REG16(0x0202)`, while its own imported mode table seeds coarse exposure as
+the 24-bit bytes `0x0229..0x022b = 00 0d da`. The prior model-scoped Karsies
+implementation and the public IMX681 reference driver use that same 24-bit
+field. The same-machine Windows/QTI package provides independent static
+byte-level corroboration; it is not a live Windows CCI transaction trace.
+Commit `b1754869f458` therefore changes only exposure to
+`CCI_REG24(0x0229)`. It deliberately leaves frame-length programming, timing
+metadata, exposure bounds, gain, mode tables, DT, CAMSS, and C-PHY unchanged so
+the post-boot 128-versus-2400 comparison tests exactly one live variable.
+
 ## Consequences
 
 - The sensor, CAMSS, and generic PHY now use one hardware-validated matched
@@ -755,12 +797,12 @@ gates remain pending until the package is deliberately installed and booted.
 - Userspace sees only a mode the driver will actually program. Adding further
   modes later requires proper V4L2 state, control-range, and link-frequency
   selection rather than another global module parameter.
-- Auto-exposure can drive the standard gain and exposure controls used by the
-  simple IPA, but the standalone driver uses Sony's reciprocal analogue-gain
-  code rather than the CCS U8.8 mapping. Convergence and image quality remain
-  runtime gates. The default 2708-line frame limits the initial control range
-  though Windows advertises up to 200 ms; longer exposure requires deliberate
-  frame-length control rather than writing past the current frame.
+- The simple IPA can drive both standard controls, and reciprocal gain changes
+  real frames. On `6621d73e732c`, however, exposure values are accepted and
+  reported without affecting photons, so AE compensates with gain and cannot
+  yet qualify image quality. Commit `b1754869f458` corrects only that live
+  exposure latch. The default 2708-line control model and longer-exposure
+  policy remain separate timing work after the isolated response test passes.
 - The privacy LED is managed by the media stack instead of a polling service.
   Incorrect polarity must be fixed in DT after hardware testing, not hidden by
   a permanently running GPIO script.
@@ -785,10 +827,12 @@ gates remain pending until the package is deliberately installed and booted.
 ## Acceptance gates
 
 For `4d190bc96139` and `347eb9702bf1`, gates 1–4 passed and gate 5 failed with
-zero completed buffers and zero CSID packets. Gates 6–7 remain blocked. For
-`6621d73e732c`, gate 1 passes through a canonical package build from the exact
-source commit, with verified modules and DTBs. Runtime gates 2–7 remain
-pending; this is not yet a claim that capture is fixed.
+zero completed buffers and zero CSID packets. For `6621d73e732c`, gates 1–5
+pass. Gate 6 passes its gain-response half but fails its exposure-response half
+and still requires repeated-stream, suspend/resume, simple-IPA convergence, and
+privacy checks. Gate 7 remains unqualified. Commit `b1754869f458` is the
+isolated source correction for the failed exposure half; it must be packaged,
+booted, and retested before these gate results advance.
 
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.

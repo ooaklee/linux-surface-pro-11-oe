@@ -849,13 +849,34 @@ EOF
   Controls were dynamically located on '$SENSOR_CONTROL_ENTITY':
     v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --list-ctrls
 
-  Use only the advertised ranges, set a low and then a high value, and rerun
-  this script twice. Retain the private output paths it prints and require a
-  monotonic shift in decoded mean/histogram as well as a visual difference:
+  Keep the scene and room lighting unchanged for the entire test. First record
+  the original controls, then stop all active PipeWire/WirePlumber services and
+  sockets so a background client cannot replay different controls:
+    v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --get-ctrl=exposure,analogue_gain
+    systemctl --user stop wireplumber.service wireplumber.socket \
+      pipewire.service pipewire.socket
+
+  Create one private directory and capture this four-way matrix. It changes one
+  factor at a time, waits two seconds after every control change, and never
+  overwrites an earlier case:
+    sweep_dir="\$(mktemp -d "\${TMPDIR:-/tmp}/sp11-imx681-controls.XXXXXXXX")"
     v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --set-ctrl=exposure=128,analogue_gain=0
-    $0 --expected-release '$EXPECTED_RELEASE'
+    sleep 2
+    $0 --expected-release '$EXPECTED_RELEASE' --output "\$sweep_dir/A-e128-g0.raw"
+    v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --set-ctrl=exposure=2400,analogue_gain=0
+    sleep 2
+    $0 --expected-release '$EXPECTED_RELEASE' --output "\$sweep_dir/B-e2400-g0.raw"
+    v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --set-ctrl=exposure=128,analogue_gain=768
+    sleep 2
+    $0 --expected-release '$EXPECTED_RELEASE' --output "\$sweep_dir/C-e128-g768.raw"
     v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --set-ctrl=exposure=2400,analogue_gain=768
-    $0 --expected-release '$EXPECTED_RELEASE'
+    sleep 2
+    $0 --expected-release '$EXPECTED_RELEASE' --output "\$sweep_dir/D-e2400-g768.raw"
+
+  Require monotonic decoded mean/histogram shifts for A->B and C->D (exposure)
+  and for A->C and B->D (gain), while every transport/content gate still
+  passes. Restore the recorded controls and only the user units that were
+  active before the matrix; verify PipeWire/WirePlumber return to that state.
 
   In this standalone driver, gain code 0 is 1x, 768 is 4x, and 960 is 16x.
   Exposure is a line count and is initially capped by the 2708-line frame;

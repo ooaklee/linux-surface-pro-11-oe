@@ -5,6 +5,19 @@ sensor metadata, reciprocal Sony analogue-gain control, and model-named tuning
 data. Apply it only after the v14 kernel passes the raw-capture gates in
 ADR-0065.
 
+## Current runtime status
+
+The coherent five-package set built from support commit `92acde621d34` is
+installed at version
+`0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43`.
+The installed IPA signature verifies, libcamera selects
+`simple/imx681.yaml`, the IMX681 helper reports approximately 1x--16x, and
+gain changes affect captured data. A stable-light matrix on kernel
+`6621d73e732c` also proves that exposure 128 and 2400 produce the same sampled
+image at either fixed gain because that kernel writes an inert exposure
+register. Do not tune around this kernel defect; first retest this unchanged
+package set with the isolated `b1754869f458` exposure-latch correction.
+
 The standalone kernel control code `x` uses Sony's reciprocal mapping
 `gain = 1024 / (1024 - x)` for `x=0..960`.
 `AnalogueGainLinear{ 0, 1024, -1, 1024 }` expresses that relationship to
@@ -13,11 +26,11 @@ exposure/gain/blanking delays, and a measured RAW10 black pedestal of 64
 (4096 on libcamera's 16-bit scale).
 
 Turbine's three source commits compile against libcamera v0.7.1. The combined
-Ubuntu quilt patch dry-applies after the exact `0.7.0-1ubuntu2` distro series;
-the canonical builder must still compile, sign, and verify a fresh coherent
-package set after the kernel raw gate passes. Earlier built artifacts encode
-the superseded CCS gain equation and must not be installed with the standalone
-kernel. `BASE.txt` records the source hashes and current validation state.
+Ubuntu quilt patch applies after the exact `0.7.0-1ubuntu2` distro series, and
+the canonical builder compiles, signs, and verifies the coherent package set
+described above. Earlier pre-standalone artifacts encode the superseded CCS
+gain equation and must not be installed with this kernel. `BASE.txt` records
+the source hashes and current validation state.
 
 The sensor model reported by the standalone driver is `imx681`. The tuning
 filename must therefore be `imx681.yaml`, not `smiapp.yaml`. The patch adds
