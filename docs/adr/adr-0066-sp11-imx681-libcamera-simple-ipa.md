@@ -205,6 +205,33 @@ V4L2 core owns the device-tree privacy LED. We will not install the reference
 GPIO polling daemon, hard-code a GPIO chip or `/dev/videoN`, or encode another
 machine's paths in a service.
 
+### Release boundary
+
+Publish the validated userspace set as
+[`sp11-imx681-libcamera-v1`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-imx681-libcamera-v1),
+paired with the
+[`7.2.0-jg-0sp11v14` kernel release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v14).
+The two release descriptions link to each other because installing only the
+kernel exposes raw capture while ordinary applications need the coherent
+libcamera processing set.
+
+`scripts/publish-sp11-imx681-libcamera-release.sh` accepts one explicit
+eight-file builder output directory. It refuses extra files, mixed versions,
+unverified manifests, changed build inputs, existing tags, and unpushed release
+tooling. Before staging, it independently binds all five ARM64 packages and the
+`.buildinfo` to the original `.changes`, compares their size and SHA-256 records
+with the manifest, checks the packaged tuning against the authenticated support
+asset, and reruns the same-build IPA signature verifier.
+
+The public assets are the five runtime packages, original `.changes`, original
+`.buildinfo`, build manifest, and a generated `SHA256SUMS` that covers those
+eight files exactly once. Local `RELEASE-NOTES.md` is the GitHub body only and
+is neither uploaded nor included in the checksum set. Publication uses an
+explicit support commit as the immutable tag target and validates exact asset
+membership and hashes from a fresh download. The original Ubuntu source URL
+and hashes, downstream patch, tuning, and builder remain available through the
+tagged support tree and attached provenance records.
+
 ## Consequences
 
 - The simple IPA operates in physical gain units across the standalone
@@ -272,6 +299,7 @@ while retaining those remaining gates.
 ## References
 
 - [ADR0065: SP11 Front Camera C-PHY Integration](adr-0065-sp11-front-camera-cphy-integration.md)
+- [ADR0051: Release and Tag Integrity](adr-0051-release-and-tag-cleanup.md)
 - [Hardware-proven Snapdragon reference](https://github.com/karsies-wq/sp11-imx681-linux/tree/b08f76f40b8d7b715bd4da6aef484f86142cc147)
 - [Turbine IMX681 libcamera source bundle](https://github.com/turbineBMW/surface-pro-11-linux/tree/main/userspace/libcamera)
 - [libcamera sensor helper implementation](https://git.libcamera.org/libcamera/libcamera.git/tree/src/ipa/libipa/camera_sensor_helper.cpp?h=v0.7.0)
