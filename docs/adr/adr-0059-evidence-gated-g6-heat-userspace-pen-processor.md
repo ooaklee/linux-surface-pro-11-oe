@@ -9,7 +9,9 @@ description: Architecture Decision Record (ADR) for processing the Surface Pro 1
 
 ## Status
 
-Accepted and offline-verified (2026-08-21). Implemented by commit
+Accepted and offline-verified (2026-08-21), then superseded for production pen
+input by ADR0067 (2026-08-29). This decision is retained for the raw
+`/dev/g6ts-heat` diagnostic and replay architecture. Implemented by commit
 `7f76bf5b17660024d320d90ef65cd7dc24461fa8`, which adds the daemon,
 deterministic replay, typed uinput integration, systemd unit, and OpenEmbedded
 recipe. The implementation has passed macOS and Linux builds, sanitizer runs,
@@ -17,6 +19,13 @@ static analysis, and replay of the P4-P8 capture corpora. Live hardware pen
 output remains deliberately disabled until the raw presence and
 contact-related mappings are validated; this status does not claim
 hardware-verified pen parity.
+
+## Superseding note (2026-08-29)
+
+ADR0067 replaces `g6-pen` as the production pen-input direction. The raw ABI,
+daemon, and replay tooling remain available for controlled diagnostics, while
+the package no longer enables `g6-pen.service` automatically. This note does
+not rewrite the accepted decision below.
 
 ## Context
 

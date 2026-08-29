@@ -1,0 +1,116 @@
+#!/bin/sh
+# Restart SP11 iptsd around sleep while the kernel recreates its HIDRAW bridge.
+# Adapted from turbineBMW/surface-pro-11-linux commit 05e5335bc72476d44390336701cf03efa5fd0165.
+
+set -eu
+
+SYSTEMCTL="@SYSTEMCTL@"
+SYSTEMD_ESCAPE="@SYSTEMD_ESCAPE@"
+CHECK_DEVICE="@CHECKER@"
+BINARY="@IPTSD@"
+UNIT_GLOB="sp11-iptsd@*.service"
+
+log() {
+	echo "sp11-iptsd-sleep: $*"
+}
+
+is_sp11_hidraw() {
+	device="$1"
+	device_path="$(readlink -f "/sys/class/hidraw/${device##*/}/device" 2>/dev/null || true)"
+	case "$device_path" in
+		*/001C:045E:0C80.*|*/001C:045E:0C83.*)
+			return 0
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+process_owns_device() {
+	pid="$1"
+	device="$2"
+	for fd in "/proc/$pid/fd/"*; do
+		[ -e "$fd" ] || continue
+		[ "$(readlink -f "$fd" 2>/dev/null || true)" = "$device" ] && return 0
+	done
+	return 1
+}
+
+phase="${1:-unknown}"
+operation="${2:-unknown}"
+
+case "$operation" in
+	suspend|hibernate|hybrid-sleep|suspend-then-hibernate)
+		;;
+	*)
+		exit 0
+		;;
+esac
+
+case "$phase" in
+	pre)
+		units="$($SYSTEMCTL list-units "$UNIT_GLOB" --state=active --plain --no-legend |
+			awk '{print $1}')"
+		stopped=0
+		for unit in $units; do
+			old_pid="$($SYSTEMCTL show "$unit" -p MainPID --value)"
+			[ "$old_pid" -gt 0 ] || {
+				log "pre failure: invalid PID for $unit"
+				exit 1
+			}
+			[ "$(readlink -f "/proc/$old_pid/exe")" = "$BINARY" ] || {
+				log "pre failure: executable mismatch for $unit PID $old_pid"
+				exit 1
+			}
+			$SYSTEMCTL stop "$unit"
+			stopped=$((stopped + 1))
+		done
+		log "pre complete: stopped=$stopped operation=$operation"
+		;;
+	post)
+		attempts=0
+		while [ "$attempts" -lt 50 ]; do
+			eligible=0
+			for device in /dev/hidraw*; do
+				[ -e "$device" ] || continue
+				is_sp11_hidraw "$device" || continue
+				if "$CHECK_DEVICE" --quiet "$device"; then
+					instance="$($SYSTEMD_ESCAPE --path "$device")"
+					unit="sp11-iptsd@$instance.service"
+					$SYSTEMCTL restart "$unit"
+					ready_attempts=0
+					while [ "$ready_attempts" -lt 50 ]; do
+						new_pid="$($SYSTEMCTL show "$unit" -p MainPID --value)"
+						if [ "$new_pid" -gt 0 ] &&
+							[ "$($SYSTEMCTL is-active "$unit" || true)" = "active" ] &&
+							[ "$(readlink -f "/proc/$new_pid/exe" 2>/dev/null || true)" = "$BINARY" ] &&
+							process_owns_device "$new_pid" "$device"; then
+							break
+						fi
+						ready_attempts=$((ready_attempts + 1))
+						sleep 0.1
+					done
+					[ "$ready_attempts" -lt 50 ] || {
+						log "post failure: readiness timeout for $unit"
+						exit 1
+					}
+					eligible=$((eligible + 1))
+				fi
+			done
+			[ "$eligible" -gt 0 ] && {
+				log "post complete: eligible=$eligible operation=$operation"
+				exit 0
+			}
+			attempts=$((attempts + 1))
+			sleep 0.1
+		done
+		log "post failure: no eligible SP11 digitizer appeared"
+		exit 1
+		;;
+	*)
+		exit 0
+		;;
+esac
+
+exit 0

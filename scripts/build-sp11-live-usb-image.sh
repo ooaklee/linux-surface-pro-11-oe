@@ -12,6 +12,7 @@ VALIDATE="false"
 VALIDATE_IMAGE=""
 GRUB_MODE="menu"
 DESKTOP="gnome"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<EOF
@@ -46,7 +47,8 @@ EOF
 
 validate_image() {
   local image="$1"
-  local expect_kernel_debs image_dir image_base
+  local infer_current_payload="${2:-false}"
+  local expect_iptsd expect_kernel_debs image_dir image_base
 
   if [ ! -f "$image" ]; then
     echo "Image not found: $image" >&2
@@ -54,11 +56,20 @@ validate_image() {
   fi
 
   expect_kernel_debs="${SP11_EXPECT_KERNEL_DEBS:-false}"
+  if [ "${SP11_EXPECT_IPTSD+x}" = "x" ]; then
+    expect_iptsd="$SP11_EXPECT_IPTSD"
+  elif [ "$infer_current_payload" = "true" ] &&
+       [ -f "$repo_dir/$PAYLOAD_DIR/iptsd-sp11/SHA256SUMS" ]; then
+    expect_iptsd="true"
+  else
+    expect_iptsd="false"
+  fi
   image_dir="$(cd "$(dirname "$image")" && pwd)"
   image_base="$(basename "$image")"
 
   docker run --rm -i --platform linux/arm64 \
     -e "SP11_EXPECT_KERNEL_DEBS=$expect_kernel_debs" \
+    -e "SP11_EXPECT_IPTSD=$expect_iptsd" \
     -v "$image_dir:/image:ro" \
     ubuntu:24.04 \
     bash -s -- "$image_base" <<'EOF'
@@ -78,6 +89,7 @@ apt-get install -y --no-install-recommends \
 
 image="/image/$1"
 expect_kernel_debs="${SP11_EXPECT_KERNEL_DEBS:-false}"
+expect_iptsd="${SP11_EXPECT_IPTSD:-false}"
 layout="$(mktemp)"
 dtb_copy="$(mktemp)"
 boot_copy="$(mktemp)"
@@ -185,6 +197,120 @@ echo
 echo "== Support Helpers =="
 support_listing="$(mktemp)"
 fls -r -p -o "$data_start" "$image" > "$support_listing"
+
+iptsd_payload_present="false"
+if grep -q 'payload/iptsd-sp11/' "$support_listing"; then
+  iptsd_payload_present="true"
+fi
+if [ "$expect_iptsd" = "true" ] && [ "$iptsd_payload_present" != "true" ]; then
+  echo "Missing /payload/iptsd-sp11; expected the pen userspace payload." >&2
+  exit 1
+fi
+if [ "$iptsd_payload_present" = "true" ]; then
+  for required in \
+    payload/iptsd-sp11/SHA256SUMS \
+    payload/iptsd-sp11/SOURCE.env \
+    payload/iptsd-sp11/BUILD.env \
+    payload/iptsd-sp11/bin/sp11-iptsd \
+    payload/iptsd-sp11/bin/sp11-iptsd-check-device \
+    payload/iptsd-sp11/licenses/LICENSE.iptsd \
+    payload/iptsd-sp11/licenses/LICENSE.integration; do
+    if ! grep -q "$required" "$support_listing"; then
+      echo "Incomplete SP11 iptsd payload: missing /$required." >&2
+      exit 1
+    fi
+  done
+  if ! grep -Eq 'payload/iptsd-sp11/sources/iptsd-[0-9a-f]{40}\.tar\.gz' \
+    "$support_listing"; then
+    echo "Incomplete SP11 iptsd payload: corresponding source archive is absent." >&2
+    exit 1
+  fi
+  for required in \
+    support/scripts/install-sp11-iptsd.sh \
+    support/scripts/validate-sp11-iptsd-payload.sh \
+    support/userspace/iptsd-sp11/SOURCE.env \
+    support/userspace/iptsd-sp11/PAYLOAD.sha256 \
+    support/userspace/iptsd-sp11/config/surface-pro-11-0c80.conf \
+    support/userspace/iptsd-sp11/config/surface-pro-11-0c83.conf \
+    support/userspace/iptsd-sp11/packaging/70-sp11-iptsd.rules.in \
+    support/userspace/iptsd-sp11/packaging/sp11-iptsd@.service.in \
+    support/userspace/iptsd-sp11/packaging/sp11-iptsd-restart.in; do
+    if ! grep -q "$required" "$support_listing"; then
+      echo "Incomplete SP11 iptsd support bundle: missing /$required." >&2
+      exit 1
+    fi
+  done
+
+  strict_root="$(mktemp -d)"
+  recover_data_file() {
+    path="$1"
+    destination="$2"
+    inode="$(
+      awk -v path="$path" '
+        length($0) >= length(path) &&
+        substr($0, length($0) - length(path) + 1) == path {
+          sub(/:/, "", $2)
+          print $2
+          exit
+        }
+      ' "$support_listing"
+    )"
+    if [ -z "$inode" ]; then
+      echo "Could not recover /$path from SP11DATA." >&2
+      exit 1
+    fi
+    mkdir -p "$(dirname "$destination")"
+    icat -o "$data_start" "$image" "$inode" > "$destination"
+  }
+
+  recover_data_file payload/iptsd-sp11/SHA256SUMS \
+    "$strict_root/payload/iptsd-sp11/SHA256SUMS"
+  while read -r hash relative extra; do
+    [ -n "$hash" ] && [ -n "$relative" ] && [ -z "${extra:-}" ] || {
+      echo "Malformed embedded iptsd checksum manifest." >&2
+      exit 1
+    }
+    relative="${relative#./}"
+    case "$relative" in
+      ""|/*|../*|*/../*)
+        echo "Unsafe embedded iptsd manifest path: $relative" >&2
+        exit 1
+        ;;
+    esac
+    recover_data_file "payload/iptsd-sp11/$relative" \
+      "$strict_root/payload/iptsd-sp11/$relative"
+  done < "$strict_root/payload/iptsd-sp11/SHA256SUMS"
+
+  embedded_manifest_files="$(mktemp)"
+  embedded_actual_files="$(mktemp)"
+  awk '{print $2}' "$strict_root/payload/iptsd-sp11/SHA256SUMS" |
+    sed 's#^\./##' | LC_ALL=C sort > "$embedded_manifest_files"
+  awk '
+    $1 ~ /^r\// && $0 ~ /payload\/iptsd-sp11\// {
+      path = $0
+      sub(/^.*: /, "", path)
+      sub(/^payload\/iptsd-sp11\//, "", path)
+      if (path != "SHA256SUMS")
+        print path
+    }
+  ' "$support_listing" | LC_ALL=C sort > "$embedded_actual_files"
+  cmp -s "$embedded_manifest_files" "$embedded_actual_files" || {
+    echo "Embedded iptsd manifest does not cover its exact image file set." >&2
+    exit 1
+  }
+
+  recover_data_file support/scripts/validate-sp11-iptsd-payload.sh \
+    "$strict_root/support/scripts/validate-sp11-iptsd-payload.sh"
+  recover_data_file support/userspace/iptsd-sp11/SOURCE.env \
+    "$strict_root/support/userspace/iptsd-sp11/SOURCE.env"
+  recover_data_file support/userspace/iptsd-sp11/PAYLOAD.sha256 \
+    "$strict_root/support/userspace/iptsd-sp11/PAYLOAD.sha256"
+  chmod 0755 "$strict_root/support/scripts/validate-sp11-iptsd-payload.sh"
+  "$strict_root/support/scripts/validate-sp11-iptsd-payload.sh" \
+    --payload "$strict_root/payload/iptsd-sp11" \
+    --integration "$strict_root/support/userspace/iptsd-sp11"
+fi
+
 install_helper_inode="$(
   awk '$0 ~ /support\/scripts\/install-sp11-support\.sh$/ { sub(/:/, "", $2); print $2; exit }' "$support_listing"
 )"
@@ -368,7 +494,6 @@ case "$DESKTOP" in
     ;;
 esac
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$repo_dir/$WORK_DIR" "$(dirname "$repo_dir/$OUT")"
 work_abs="$(cd "$repo_dir/$WORK_DIR" && pwd)"
 
@@ -404,6 +529,8 @@ cp -R "$repo_dir/docs" "$work_abs/support/"
 cp -R "$repo_dir/patches" "$work_abs/support/"
 cp -R "$repo_dir/scripts" "$work_abs/support/"
 cp -R "$repo_dir/tools" "$work_abs/support/"
+mkdir -p "$work_abs/support/userspace"
+cp -R "$repo_dir/userspace/iptsd-sp11" "$work_abs/support/userspace/"
 
 write_grub_common() {
   cat <<'EOF'
@@ -815,5 +942,5 @@ if [ "$VALIDATE" = "true" ]; then
     find "$repo_dir/$PAYLOAD_DIR/kernel-debs" -maxdepth 1 -type f -name '*.deb' | grep -q .; then
     export SP11_EXPECT_KERNEL_DEBS="true"
   fi
-  validate_image "$repo_dir/$OUT"
+  validate_image "$repo_dir/$OUT" true
 fi

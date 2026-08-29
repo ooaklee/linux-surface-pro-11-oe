@@ -4,6 +4,7 @@ build/
 scripts/tmp/
 
 # Local payload and firmware artifacts.
+payload/iptsd-sp11/
 payload/**/*.bin
 payload/**/*.mbn
 payload/**/*.elmbin

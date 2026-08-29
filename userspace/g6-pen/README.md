@@ -1,5 +1,10 @@
 # Surface G6 userspace pen processor
 
+> **Diagnostic status:** ADR0067 supersedes this daemon for production pen
+> input. Keep `g6-pen.service` disabled unless collecting controlled raw HEAT
+> diagnostics or running deterministic replay. Never run it concurrently with
+> `sp11-iptsd@.service`.
+
 `g6-pen` consumes the kernel's versioned `/dev/g6ts-heat` stream, assembles
 complete G6 HEAT cycles, tracks generation/reset boundaries, and exposes a
 typed virtual pen with uinput.  It also replays the identical record ABI (or a
@@ -54,8 +59,9 @@ while preserving the first/second `0b` distinction.  Startup traffic before an
 anchor is ignored; a new `0c`, duplicate, sequence gap, or a window longer than
 30 ms closes an incomplete bundle.  Sequence continuity uses uint32 wrap
 semantics.  A sequence gap or generation boundary discards partial assembly but
-preserves tracking so the next decoded cycle resumes the stroke.  The kernel
-also exports reports `07` and `6e`; they remain ordered, opaque sideband and can
+preserves tracking so the next decoded cycle resumes the stroke. The raw
+diagnostic ABI also exports reports `07` and `6e`; they remain ordered, opaque
+sideband and can
 neither complete a cycle nor open tracking.  In particular, an all-zero `0x6e`
 identity is normal and is not a pen-input blocker.
 

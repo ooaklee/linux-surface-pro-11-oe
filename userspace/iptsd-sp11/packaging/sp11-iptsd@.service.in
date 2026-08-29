@@ -1,0 +1,16 @@
+[Unit]
+Description=Surface Pro 11 Precise Touch and Stylus daemon for %I
+Documentation=https://github.com/linux-surface/iptsd
+StopWhenUnneeded=yes
+BindsTo=%i.device
+After=%i.device
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=@IPTSD@ /%I
+Restart=on-failure
+RestartSec=1s
+KillSignal=SIGTERM
+TimeoutStopSec=15s

@@ -127,9 +127,9 @@ The decision deliberately separates five evidence classes.
 
 1. **Direct evidence from this device's Windows capture**
 
-   The private capture repository at commit `f35cbc4` directly establishes
-   MCLK4 at 19.2 MHz, reset GPIO237, and the LDO7B 2.8 V and LDO3M 1.8 V
-   resources. It also records a front-camera exposure capability of
+   A same-device Windows capture directly establishes MCLK4 at 19.2 MHz,
+   reset GPIO237, and the LDO7B 2.8 V and LDO3M 1.8 V resources. It also
+   records a front-camera exposure capability of
    `5000..2000000` WinRT ticks in steps of 10 ticks, with automatic exposure
    available. WinRT ticks are 100 ns, so this is a 0.5 ms to 200 ms control
    range with a 1 microsecond step.
@@ -137,13 +137,8 @@ The decision deliberately separates five evidence classes.
    The capture does **not** contain decoded CCI register transactions or
    active CAMSS/CSIPHY MMIO. It therefore does not directly prove the sensor
    PLL registers, C-PHY rate, CDR value, physical trio, exposure register, or
-   gain register. Relevant audit files are:
-
-   - `analysis/camera-integration-20260827/privileged-camera-followup.md`
-   - `analysis/camera-integration-20260827/windows-control-capabilities.json`
-   - `analysis/camera-integration-20260827/source-audit.md`
-   - `windbg/31-camera-cci-register-writes-pending.md`
-   - `windbg/32-camera-camss-mmio-dump.txt`
+   gain register. Raw capture material remains private because it can contain
+   device-specific data; this ADR records only the bounded, sanitized result.
 
 2. **Static Windows driver-package oracle from this device**
 
@@ -506,17 +501,16 @@ CAMSS source versions matched its manifest. The bounded raw validator then:
 A separate 12-second diagnostic moved the same negotiated stream to the
 same-machine Windows-selected CSID1/VFE1 RDI0 instances. It also completed
 zero buffers. Both tests restored the CSID0/VFE0 links and PipeWire services.
-The evidence is retained in the private runtime directories
-`sp11-imx681-raw.83cIgrOU` and `sp11-imx681-csid1.5qyXQfiF` under the Codex
-desktop temporary-state tree.
+The raw runtime logs remain private because they can contain device-specific
+data; the bounded result above is the public evidence record.
 
-The same-machine Windows branch at `68b1b3124a799060316d58131fe3f1511bdfd335`
-establishes `RX_CFG0=0x11300000`. Its exact 2.4-Gsymbol/s PHY table belongs to
-a distinct 3840x2640, PLL2 `3/375`, 1.2-GHz-link sensor mode. Do not mix that
-table with the then-current 3844x2640, PLL2 `3/303`, 969.6-Msymbol/s Linux
-mode; both isolated profiles are superseded by the matched turbine stack.
-Its IPP/VFE PIX patches also remain static and incomplete, so they are not part
-of this bounded RDI transport experiment.
+The same-machine Windows analysis establishes `RX_CFG0=0x11300000`. Its exact
+2.4-Gsymbol/s PHY table belongs to a distinct 3840x2640, PLL2 `3/375`,
+1.2-GHz-link sensor mode. Do not mix that table with the then-current
+3844x2640, PLL2 `3/303`, 969.6-Msymbol/s Linux mode; both isolated profiles are
+superseded by the matched turbine stack. Its IPP/VFE PIX patches also remain
+static and incomplete, so they are not part of this bounded RDI transport
+experiment.
 
 ### `ead11c748e4e` local package build
 
