@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Exercise the non-persistent SP11 IMX681 raw path after booting the v14
-# integration kernel. This script deliberately uses only Media Controller and
-# V4L2 ioctls. It never reads camera MMIO, whether the stream is active or not.
+# Exercise the non-persistent SP11 standalone-IMX681 raw path after booting the
+# v14 integration kernel. This script deliberately uses only Media Controller
+# and V4L2 ioctls. It never reads camera MMIO, whether the stream is active or
+# not.
 
 set -euo pipefail
 
@@ -13,7 +14,7 @@ readonly DEFAULT_EXPECTED_RELEASE="7.2.0-jg-0sp11v14-qcom-x1e"
 readonly PHY_ENTITY="msm_csiphy2"
 readonly CSID_ENTITY="msm_csid0"
 readonly VFE_ENTITY="msm_vfe0_rdi0"
-readonly SENSOR_WIDTH=3844
+readonly SENSOR_WIDTH=3840
 readonly OUTPUT_WIDTH=3840
 readonly FRAME_HEIGHT=2640
 readonly EXPECTED_BYTES_PER_LINE=4800
@@ -46,10 +47,10 @@ Discovers and configures this exact transient media route:
   imx681 -> msm_csiphy2 -> msm_csid0 -> msm_vfe0_rdi0 -> discovered video node
 
 The script discovers the sensor's negotiated 10-bit Bayer order instead of
-assuming one. The sensor, CSIPHY, and CSID sink use that RAW10 media-bus code at
-3844x2640. The CSID source, VFE, and capture node use the hardware-cropped
-3840x2640 image and the matching packed-RAW10 fourcc. At least ten complete
-frames are captured, with an expected payload of 12,672,000 bytes per frame.
+assuming one. The complete sensor, CSIPHY, CSID, VFE, and capture route uses
+the hardware-validated 3840x2640 RAW10 mode and matching packed-RAW10 fourcc.
+At least ten complete frames are captured, with an expected payload of
+12,672,000 bytes per frame.
 
 Options:
   --frames COUNT              Capture 10..100 frames (default: 10).
@@ -265,10 +266,6 @@ entity_pad_full_format() {
   '
 }
 
-imx681_control_entities() {
-  entity_names | awk 'tolower($0) ~ /imx681/ && tolower($0) ~ /pixel_array/'
-}
-
 discover_pipeline() {
   local media=""
   local topology=""
@@ -279,7 +276,6 @@ discover_pipeline() {
   local -a failed_media_queries=()
   local -a sensor_routes=()
   local -a video_entities=()
-  local -a control_entities=()
   local sensor_entity=""
   local sensor_pad=""
   local video_entity=""
@@ -348,13 +344,8 @@ discover_pipeline() {
         ;;
     esac
 
-    control_entity=""
-    control_device=""
-    mapfile -t control_entities < <(imx681_control_entities <<<"$topology")
-    if [ "${#control_entities[@]}" -eq 1 ]; then
-      control_entity="${control_entities[0]}"
-      control_device="$(entity_device_node "$control_entity" <<<"$topology")"
-    fi
+    control_entity="$sensor_entity"
+    control_device="$(entity_device_node "$control_entity" <<<"$topology")"
 
     match_count=$((match_count + 1))
     MEDIA_DEVICE="$media"
@@ -377,21 +368,9 @@ discover_pipeline() {
     die "media-ctl could not query device(s): ${failed_media_queries[*]}. Check device permissions and the v14 CAMSS probe log."
   fi
   [ "$match_count" -gt 0 ] || die \
-    "No media device contains a bound IMX681 link to the exact $PHY_ENTITY -> $CSID_ENTITY -> $VFE_ENTITY path. Check the v14 boot and CCS probe log."
+    "No media device contains a bound IMX681 link to the exact $PHY_ENTITY -> $CSID_ENTITY -> $VFE_ENTITY path. Check the v14 boot and standalone IMX681 probe log."
   [ "$match_count" -eq 1 ] || die \
     "Found $match_count matching IMX681 CAMSS graphs; refusing an ambiguous capture."
-}
-
-read_parameter() {
-  local path="$1"
-  local label="$2"
-  local expected="$3"
-  local actual=""
-
-  [ -r "$path" ] || return 0
-  actual="$(<"$path")"
-  [ "$actual" = "$expected" ] ||
-    die "$label is '$actual', expected '$expected' for the proven route. Reboot without the override."
 }
 
 select_kernel_log_method() {
@@ -443,19 +422,10 @@ preflight() {
   [ "$running_release" = "$EXPECTED_RELEASE" ] || die \
     "Running kernel is '$running_release'; expected '$EXPECTED_RELEASE'. Boot the tested v14 ABI (or pass the exact intended release with --expected-release)."
 
-  for module in ccs qcom_camss phy_qcom_mipi_csi2; do
+  for module in imx681 qcom_camss phy_qcom_mipi_csi2; do
     [ -d "/sys/module/$module" ] ||
       die "Required module '$module' is not loaded in the running kernel."
   done
-
-  read_parameter "/sys/module/ccs/parameters/imx681_mode_skip" \
-    "ccs.imx681_mode_skip" "0"
-  read_parameter "/sys/module/phy_qcom_mipi_csi2/parameters/cphy_trio" \
-    "phy_qcom_mipi_csi2.cphy_trio" "0"
-  read_parameter "/sys/module/phy_qcom_mipi_csi2/parameters/cphy_settle" \
-    "phy_qcom_mipi_csi2.cphy_settle" "0"
-  read_parameter "/sys/module/phy_qcom_mipi_csi2/parameters/cphy_cdr" \
-    "phy_qcom_mipi_csi2.cphy_cdr" "0"
 
   for node in "$MEDIA_DEVICE" "$VIDEO_DEVICE"; do
     [ -c "$node" ] || die "Discovered node '$node' is not a character device."
@@ -562,8 +532,8 @@ configure_pipeline() {
   set_pad_format "$PHY_ENTITY" 1 "$SENSOR_WIDTH"
   set_pad_format "$CSID_ENTITY" 0 "$SENSOR_WIDTH"
 
-  # The v14 CSID decodes the 3844-pixel input and crops four pixels in
-  # hardware. Its source and everything downstream therefore use 3840.
+  # The standalone hardware-validated mode is 3840 pixels wide end to end;
+  # unlike the superseded CCS experiment it requires no CSID crop.
   set_pad_format "$CSID_ENTITY" 1 "$OUTPUT_WIDTH"
   set_pad_format "$VFE_ENTITY" 0 "$OUTPUT_WIDTH"
   set_pad_format "$VFE_ENTITY" 1 "$OUTPUT_WIDTH"
@@ -884,16 +854,16 @@ EOF
   monotonic shift in decoded mean/histogram as well as a visual difference:
     v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --set-ctrl=exposure=128,analogue_gain=0
     $0 --expected-release '$EXPECTED_RELEASE'
-    v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --set-ctrl=exposure=3000,analogue_gain=192
+    v4l2-ctl -d '$SENSOR_CONTROL_DEVICE' --set-ctrl=exposure=2400,analogue_gain=768
     $0 --expected-release '$EXPECTED_RELEASE'
 
-  In v14, gain code 0 is about 1x, 192 about 4x, and 960 about 16x.
-  Exposure is a line count and is capped by the current 3177-line frame;
+  In this standalone driver, gain code 0 is 1x, 768 is 4x, and 960 is 16x.
+  Exposure is a line count and is initially capped by the 2708-line frame;
   inspect --list-ctrls rather than assuming a future kernel has the same cap.
 EOF
   else
     cat <<'EOF'
-  The IMX681 pixel-array control subdevice was not uniquely identifiable.
+  The standalone IMX681 control subdevice was not uniquely identifiable.
   Inspect the saved topology and use v4l2-ctl --list-ctrls on its discovered
   /dev/v4l-subdev node before changing standard exposure/analogue_gain.
 EOF

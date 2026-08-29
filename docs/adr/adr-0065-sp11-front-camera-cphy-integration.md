@@ -2,19 +2,22 @@
 id: adr-0065-sp11-front-camera-cphy-integration
 title: "ADR0065: SP11 Front Camera C-PHY Integration"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for integrating the Surface Pro 11 Sony IMX681 front camera using the hardware-proven 969.6 Msymbol/s C-PHY path, a single truthful sensor mode, reversible kernel packaging, and evidence-gated userspace enablement.
+description: Architecture Decision Record (ADR) for integrating the Surface Pro 11 Sony IMX681 front camera using a hardware-validated standalone 3840x2640 sensor profile, the observed 2.406-Gsymbol/s X1E C-PHY lifecycle, reversible kernel packaging, and evidence-gated userspace enablement.
 ---
 
 # ADR0065: SP11 Front Camera C-PHY Integration
 
 ## Status
 
-Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28.
-Package build provenance is verified through `347eb9702bf1`; installation,
-boot, binding, and graph negotiation are verified through `4d190bc96139`.
-Raw capture still fails on the installed package, so image-quality,
-repeated-stream, and userspace validation remain required before the front
-camera is described as working on this device.
+Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28
+and superseded on 2026-08-29 by the matched standalone-IMX681/turbine C-PHY
+profile in kernel commit `6621d73e732c`. The earlier CCS packages booted,
+bound, negotiated the complete graph, and accepted `VIDIOC_STREAMON`, but
+every runtime attempt completed zero buffers and CSID received zero packets.
+The replacement commit is source- and compile-verified but not yet packaged,
+installed, or runtime-tested. Raw capture, image quality, repeated streaming,
+and userspace validation therefore remain required before the front camera is
+described as working on this device.
 
 Amended later on 2026-08-28 after the first v14-ABI runtime investigation
 reached the sensor's final `MODE_SELECT` write but produced no completed
@@ -53,15 +56,29 @@ the downstream pipeline is still active.
 
 The provenance-verified local package build from `347eb9702bf1` completed on
 2026-08-29. It contains the intended sparse-PLL source and active-stream probe,
-but it has not been installed or runtime-tested; the build result alone is not
-a claim that capture is fixed.
+and was subsequently installed and runtime-tested. The sensor accepted
+`MODE_SELECT=1`, then both `MODE_SELECT` and `FRAME_COUNT` returned `-ENXIO` at
+the nonfatal 100 ms sample. The 40-second capture completed zero buffers while
+CSID reported `TOTAL_PKTS=0`, no receive IRQs, and no ECC or CRC errors. This
+rejects the sparse-PLL A/B and leaves the failure upstream of CSID packet
+decode.
+
+The decision was then amended around the hardware-validated camera bundle in
+`turbineBMW/surface-pro-11-linux`. That reference captured three changing,
+exact-size 3840x2640 packed-RAW10 frames at approximately 33.328 ms cadence
+using a coherent pair: its standalone IMX681 global/mode transaction stream
+and the observed X1E80100 C-PHY reset/configuration/IRQ/shutdown lifecycle at
+2.406 Gsymbol/s. Kernel commit `6621d73e732c` ports that pair while retaining
+this machine's repeatedly proven sensor address `0x10`; the reference unit's
+`0x1a` address is a machine-specific difference, not part of the mode table.
 
 This decision supersedes the earlier local draft that treated a statically
 decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
-to 2.4 Gsymbol/s at the receiver. The 1.2 Gsymbol/s sensor configuration is
-real package evidence, but it is a distinct 3840x2640 mode and is not the
-current 3844x2640 Linux recipe. The doubled receiver interpretation was never
-hardware-proven or committed.
+to 2.4 Gsymbol/s at the receiver without a matched sensor transaction stream
+or receiver oracle. That earlier interpretation was unproven and remains
+rejected. The new 2.406-Gsymbol/s decision is independently justified by
+turbine's complete standalone mode, exact observed PHY lifecycle, and changing
+raw frames; it is not a resurrection of the old isolated-rate draft.
 
 ## Context
 
@@ -93,7 +110,7 @@ and with the only complete hardware-proven Snapdragon implementation.
 
 ### Evidence and provenance
 
-The decision deliberately separates four evidence classes.
+The decision deliberately separates five evidence classes.
 
 1. **Direct evidence from this device's Windows capture**
 
@@ -183,6 +200,31 @@ The decision deliberately separates four evidence classes.
    later Snapdragon measurements, where `0x0204` is ineffective and global
    U8.8 gain at `0x020e/0x020f` changes the image.
 
+5. **Hardware-validated turbine standalone profile**
+
+   `turbineBMW/surface-pro-11-linux` main commit
+   `b1f5237957b9b7bf0ee36a5885fab494210d7fed` publishes a reconstructable
+   camera bundle at `675d89b381d8b730a3f2eff1086875481ee5b515`. The relevant
+   source commits are standalone IMX681 `00cece0b87c40c76c14b6c7ab68a6d3603554614`,
+   Denali camera wiring `8915ca862de45dff36d04671c16346bc01042505`,
+   X1E C-PHY/CSID plumbing `b1eae4e601697ffe783b47c052f1bc5d37cb9917`,
+   and the observed receiver lifecycle
+   `8c1731648d0461047cf8849eee0b1f854a87d4d7`.
+
+   Its hardware record is narrower than complete desktop qualification but is
+   decisive for transport: three exact 12,672,000-byte, mutually changing
+   3840x2640 packed-RAW10 frames at approximately 30 fps. The sensor table
+   programs PLL bytes `0301=06`, `0303=02`, `0305=02`, `0306=00`, `0307=e1`,
+   `030d=03`, `030e=01`, `030f=77`; V4L2 reports half the actual C-PHY symbol
+   rate as 1.203 GHz and the receiver consumes 2.406 Gsymbol/s. This profile is
+   a coherent replacement for the failed 3844/969.6 experiment, not a source
+   of isolated PLL or AFE values to mix into it.
+
+   The reference hardware used sensor address `0x1a`; this machine repeatedly
+   completed model, stream-state, and control transactions at `0x10`. Kernel
+   commit `6621d73e732c` therefore keeps `0x10` while importing the address-
+   independent transaction stream and receiver lifecycle.
+
 ### Boot and deployment behavior
 
 The qcom-x1e package uses stubble/UKI construction with auto-selected embedded
@@ -194,19 +236,49 @@ live tree does not match that loose file:
 | Historical v13 live `/proc/device-tree` | 1,000,000,000 |
 | Historical loose `/boot/sp11-denali.dtb` | 1,200,000,000 |
 | Verified `ead11c748e4e` live `/proc/device-tree` | 969,600,000 |
-| Corrected source/build DTB | 969,600,000 |
+| Installed `347eb9702bf1` live `/proc/device-tree` | 969,600,000 |
+| `6621d73e732c` replacement source/build DTB | 1,203,000,000 |
 
 The installed kernel must therefore contain the corrected OLED DTB in its
 embedded auto-DTB section. Copying only a loose DTB is not an acceptance test.
 No deployment may copy another machine's full DTB or hard-code its Bluetooth
-address. The current live link-frequency bytes are verified as
-`00 00 00 00 39 ca ec 00`.
+address. The current installed CCS kernel still exposes
+`00 00 00 00 39 ca ec 00`; the replacement package must expose
+`00 00 00 00 47 b4 52 c0` after boot.
 
 ## Decision
 
 We will integrate the front camera as follows.
 
-### Kernel data path
+### Superseding standalone kernel data path
+
+- Bind `sony,imx681` at this machine's proven CCI1/master1 address `0x10` and
+  retain MCLK4 at 19.2 MHz, reset GPIO237 active-low, LDO7B 2.8 V, and LDO3M
+  1.8 V. Do not copy the reference unit's `0x1a` address.
+- Program the standalone driver's complete global table followed by its single
+  3840x2640 RAW10 mode. Keep its full PLL tuple, 6752-pixel line length,
+  2708-line default frame, and reciprocal Sony analogue-gain code as one
+  sensor profile.
+- Advertise one C-PHY trio with a 1.203 GHz V4L2 link frequency and carry the
+  corresponding 2.406-Gsymbol/s rate into the generic X1E PHY. Do not combine
+  this receiver sequence with the rejected 969.6-Msymbol/s CCS mode.
+- Replay the observed X1E80100 reset, trio toggle, common, analogue,
+  configuration, IRQ-clear, and shutdown tables only for that exact X1E C-PHY
+  rate. Request the generic-PHY IRQ disabled, enable it only during the powered
+  interval, run the hardware reset before lane configuration, and shut lanes
+  down before disabling IRQs, clocks, or supplies.
+- Preserve 3840 pixels end to end with no CSID crop. Retain the existing
+  3844-only crop helper solely for the superseded mode, while keeping
+  `TOTAL_PKTS`, ECC/CRC, IRQ, RDI, and VFE stop diagnostics available for both
+  3840 and 3844 IMX681 signatures.
+- Keep CCI at the already reliable 400 kHz for the first bounded A/B; turbine's
+  1 MHz bus rate is not necessary to test the matched sensor/PHY pair.
+
+### Superseded CCS kernel data path
+
+The following decisions describe the earlier zero-packet implementation and
+remain only as historical evidence; kernel commit `6621d73e732c` replaces the
+active sensor and C-PHY profile.
 
 - Advertise `link-frequencies = /bits/ 64 <969600000>` on the IMX681 C-PHY
   endpoint.
@@ -343,12 +415,22 @@ The reviewed source milestone consists of these signed commits on
 - `347eb9702bf18f2d81e4e29767a416172acbfe66` — reject the unproven complete
   divider tuple after its zero-packet result, restore the reference's sparse
   PLL ownership, and sample sensor state after 100 ms of active streaming.
+- `6621d73e732c5dc24cdb6c28240e900bcb32c192` — supersede the failed CCS
+  profile with the turbine standalone 3840x2640 sensor transaction stream and
+  observed 2.406-Gsymbol/s X1E C-PHY lifecycle while retaining this machine's
+  proven sensor address `0x10`.
 
 The earlier `e0ce71102628` source passed local module/DTB builds, binding
 validation, and strict checkpatch before packaging. Strict checkpatch also
 passes the `0097c12b0fec`, `4d190bc96139`, and `347eb9702bf1` amendments.
 The latter passes a targeted `W=1` CCS module build; `4d190bc96139`
 additionally passed the targeted CAMSS and CCS PLL module builds.
+Commit `6621d73e732c` passes strict checkpatch for both tracked diffs and all
+three new source files, targeted and `W=1` ARM64 builds of the standalone
+IMX681, Qualcomm MIPI CSI-2 PHY, and CAMSS modules, and the Denali OLED DTB
+build. The copied standalone driver, mode table, and observed register table
+are byte-identical to the reconstructed turbine bundle before the local PHY-
+architecture adaptation.
 
 The canonical remote package build completed successfully on 2026-08-28 in
 33 minutes using `binary-indep binary-qcom-x1e` with ten jobs. Its manifest
@@ -398,7 +480,8 @@ desktop temporary-state tree.
 The same-machine Windows branch at `68b1b3124a799060316d58131fe3f1511bdfd335`
 establishes `RX_CFG0=0x11300000`. Its exact 2.4-Gsymbol/s PHY table belongs to
 a distinct 3840x2640, PLL2 `3/375`, 1.2-GHz-link sensor mode. Do not mix that
-table with the current 3844x2640, PLL2 `3/303`, 969.6-Msymbol/s Linux mode.
+table with the then-current 3844x2640, PLL2 `3/303`, 969.6-Msymbol/s Linux
+mode; both isolated profiles are superseded by the matched turbine stack.
 Its IPP/VFE PIX patches also remain static and incomplete, so they are not part
 of this bounded RDI transport experiment.
 
@@ -595,23 +678,46 @@ SHA-256 values are:
 - build arguments: `f1f24702771b87fb7afeb3f73274efcfdb87ca53436265f4dc4c4deb5e48c092`
 
 No package was installed, no live module or camera device was touched, and no
-reboot was performed as part of this build and provenance gate. Installation
-and the active-stream `100 ms`/packet-count runtime A/B remain pending.
+reboot was performed as part of the build itself. The package was later
+installed and booted. Loaded source versions matched the artifacts, the media
+graph again negotiated, and `VIDIOC_STREAMON` succeeded. The nonfatal 100 ms
+sample then reported `-ENXIO` for both sensor registers and the 40-second
+capture ended with an empty file, `TOTAL_PKTS=0`, no receive IRQs, and no
+ECC/CRC errors. The `347eb9702bf1` A/B therefore failed its runtime gate.
+
+### `6621d73e732c` standalone turbine-profile source milestone
+
+The replacement is not an isolated rate or PLL experiment. It imports the
+complete standalone IMX681 global/mode tables, exact 3840x2640 geometry and
+timing, and the exact observed X1E receiver configuration as a matched pair.
+The generic-PHY adaptation also closes prerequisite lifecycle gaps that the
+legacy turbine CAMSS path handled elsewhere: IRQ ownership, powered reset,
+lane-start failure unwind, and shutdown before clocks and supplies. It leaves
+the current CSID/VFE RDI data path in place so the first runtime comparison is
+bounded at the sensor/receiver boundary.
+
+The source is pushed on
+`sp11/integration-7.2.x-ooaklee-karsies-wq-cams`; packaging and runtime gates
+remain pending. A build result will not by itself establish that this machine
+accepts the reference transaction stream or emits packets.
 
 ## Consequences
 
-- The sensor, CAMSS, and generic PHY now use one consistent rate contract.
-  The old 1.2 GHz doubled path, which selected the 2.35 Gsymbol/s table while
-  the sensor emitted about 969.6 Msymbol/s, is removed.
-- A genuine static Windows 1.2 Gsymbol/s mode is recorded separately. It does
-  not rehabilitate the removed doubled-rate implementation or change the v14
-  raw-capture gate.
+- The sensor, CAMSS, and generic PHY now use one hardware-validated matched
+  rate contract: V4L2 1.203 GHz represents the standalone mode's observed
+  2.406-Gsymbol/s C-PHY rate. The failed CCS 969.6-Msymbol/s profile remains
+  only as recorded history.
+- The static Windows package and turbine table independently converge on the
+  `03 01 77` PLL2 suffix, but the replacement is justified by turbine's actual
+  changing-frame capture and complete transaction/lifecycle pair, not by
+  treating either static number as sufficient on its own.
 - Userspace sees only a mode the driver will actually program. Adding further
   modes later requires proper V4L2 state, control-range, and link-frequency
   selection rather than another global module parameter.
 - Auto-exposure can drive the standard gain and exposure controls used by the
-  simple IPA, but convergence and image quality remain runtime gates. The
-  fixed 3177-line frame limits the initial control range to about 64 ms even
+  simple IPA, but the standalone driver uses Sony's reciprocal analogue-gain
+  code rather than the CCS U8.8 mapping. Convergence and image quality remain
+  runtime gates. The default 2708-line frame limits the initial control range
   though Windows advertises up to 200 ms; longer exposure requires deliberate
   frame-length control rather than writing past the current frame.
 - The privacy LED is managed by the media stack instead of a polling service.
@@ -637,21 +743,21 @@ and the active-stream `100 ms`/packet-count runtime A/B remain pending.
 
 ## Acceptance gates
 
-For `4d190bc96139`, gates 1–4 pass and gate 5 fails with zero completed
-buffers. Gates 6–7 remain blocked. For `347eb9702bf1`, gate 1 now passes with
-the provenance-verified local package build; installation and runtime gates
-2–7 remain pending. It is not yet a claim that capture is fixed.
+For `4d190bc96139` and `347eb9702bf1`, gates 1–4 passed and gate 5 failed with
+zero completed buffers and zero CSID packets. Gates 6–7 remain blocked. For
+`6621d73e732c`, source gate 1 passes through module/DTB compilation but the
+packaged-build portion and runtime gates 2–7 remain pending. It is not yet a
+claim that capture is fixed.
 
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.
 2. The installed v14 kernel boots, and the live endpoint bytes are
-   `00 00 00 00 39 ca ec 00`.
-3. CCS binds at `1-0010`; `no valid link frequencies` and
-   `no supported mbus code found` are absent. The separately understood
-   IREAL-to-`u32` formatting warning is non-blocking unless it again
-   accompanies probe failure.
-4. The media graph negotiates 3844x2640 RAW10 through the sensor/PHY/CSID sink
-   and 3840x2640 packed RAW10 through the CSID source/VFE/video node.
+   `00 00 00 00 47 b4 52 c0`.
+3. Standalone `imx681` binds at `1-0010`, detects model `0x0681`, and the old
+   CCS limit/link-frequency warnings are absent. A probe at the turbine unit's
+   `0x1a` address is not expected on this machine.
+4. The media graph negotiates 3840x2640 RAW10 end to end through IMX681,
+   CSIPHY2, CSID0, VFE0 RDI0, and the packed-RAW video node with no CSID crop.
 5. At least ten exact-size frames capture without truncated buffers or emitted
    camera-path errors; sampled range, entropy, and temporal-difference checks
    pass, and decoded raw inspection shows stable, non-corrupt image data.
@@ -670,8 +776,11 @@ registers are read with the power/clock domain off.
 
 - [jglathe/linux_ms_dev_kit issue #74 resolution](https://github.com/jglathe/linux_ms_dev_kit/issues/74#issuecomment-5302651457)
 - [Hardware-proven Snapdragon reference](https://github.com/karsies-wq/sp11-imx681-linux/tree/b08f76f40b8d7b715bd4da6aef484f86142cc147)
+- [Hardware-validated turbine kernel bundle](https://github.com/turbineBMW/surface-pro-11-linux/tree/main/kernel)
+- [Turbine libcamera source bundle](https://github.com/turbineBMW/surface-pro-11-linux/tree/main/userspace/libcamera)
 - [Static Windows package oracle](https://github.com/geocausa/SP11X1ECamera/tree/41003427f47edd27cd98f846b4282327824ee16f)
 - [Same-machine Windows C-PHY receiver oracle](https://github.com/geocausa/SP11X1ECamera/tree/68b1b3124a799060316d58131fe3f1511bdfd335)
+- [Zero-packet handoff](https://github.com/geocausa/SP11X1ECamera/tree/collab/oaklee-zero-packet-handoff)
 - [linux-surface PR #2156](https://github.com/linux-surface/linux-surface/pull/2156)
 - [SP11 front-camera tracking issue #43](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/43)
 - [ADR0066: SP11 IMX681 libcamera Simple IPA Integration](adr-0066-sp11-imx681-libcamera-simple-ipa.md)

@@ -1,75 +1,92 @@
-Description: Add Sony IMX681 support to the simple IPA
- The SP11 kernel exposes V4L2_CID_ANALOGUE_GAIN as code x in the range
- 0..960 and programs global U8.8 gain 0x0100 + 4*x. Describe the resulting
- real-gain relationship, 1 + x/64, to the simple IPA and ship model-named
- tuning data. Leave black level unset until raw dark frames establish it.
-Origin: other, https://github.com/ooaklee/linux-surface-pro-11-oe
+Description: Add standalone Sony IMX681 support to libcamera Simple IPA
+ The standalone SP11 kernel driver exposes Sony's reciprocal analogue-gain
+ code in the range 0..960. Add the corresponding sensor helper, the measured
+ unit-cell/control-delay metadata, and conservative model-named tuning with
+ the hardware-measured 64-code RAW10 black pedestal. Leave colour correction
+ disabled until a controlled chart measurement establishes a real matrix.
+Origin: other, https://github.com/turbineBMW/surface-pro-11-linux/tree/main/userspace/libcamera
 Forwarded: no
-Last-Update: 2026-08-28
+Last-Update: 2026-08-29
 ---
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index b217363..47900e0 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -309,6 +309,16 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 3
+ 			},
+ 		} },
++		{ "imx681", {
++			.unitCellSize = { 1000, 1000 },
++			.testPatternModes = {},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "imx708", {
+ 			.unitCellSize = { 1400, 1400 },
+ 			.testPatternModes = {
 diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
-index e3e3e5355..861edda42 100644
+index e3e3e53..2fd9cb5 100644
 --- a/src/ipa/libipa/camera_sensor_helper.cpp
 +++ b/src/ipa/libipa/camera_sensor_helper.cpp
-@@ -645,1 +645,12 @@
+@@ -642,6 +642,18 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx477", CameraSensorHelperImx477)
+ 
 +class CameraSensorHelperImx681 : public CameraSensorHelper
 +{
 +public:
 +	CameraSensorHelperImx681()
 +	{
-+		/* The kernel maps code x to U8.8 gain 0x0100 + 4 * x. */
-+		gain_ = AnalogueGainLinear{ 1, 64, 0, 64 };
++		/* The black pedestal is 64 at 10 bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
 +	}
 +};
 +REGISTER_CAMERA_SENSOR_HELPER("imx681", CameraSensorHelperImx681)
 +
  class CameraSensorHelperImx708 : public CameraSensorHelper
+ {
+ public:
 diff --git a/src/ipa/simple/data/imx681.yaml b/src/ipa/simple/data/imx681.yaml
 new file mode 100644
-index 000000000..2f83c2f70
+index 0000000..f2bfac6
 --- /dev/null
 +++ b/src/ipa/simple/data/imx681.yaml
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,16 @@
 +# SPDX-License-Identifier: CC0-1.0
-+# Sony IMX681 front camera in the Microsoft Surface Pro 11.
-+#
-+# The colour matrices are seed values published by sp11-imx681-linux at
-+# b08f76f40b8d7b715bd4da6aef484f86142cc147 and attributed there to Windows
-+# CAMX tuning. They still require validation against a colour target on Linux.
-+#
-+# Black level is deliberately left unspecified. The simple IPA will estimate
-+# it from image statistics until a value has been measured from raw dark frames.
++# SPDX-FileCopyrightText: 2026 turbinebmw
 +%YAML 1.1
 +---
 +version: 1
 +algorithms:
++  # The measured black pedestal is 64 at 10 bits. Simple IPA tuning values use
++  # libcamera's 16-bit scale, where 64 << 6 is 4096.
 +  - BlackLevel:
++      blackLevel: 4096
 +  - Awb:
-+  - Ccm:
-+      ccms:
-+        - ct: 2800
-+          ccm: [ 1.910, -0.735, -0.176,
-+                -0.303,  1.436, -0.133,
-+                -0.150, -1.182,  2.332 ]
-+        - ct: 4000
-+          ccm: [ 1.415, -0.167, -0.248,
-+                -0.364,  1.460, -0.095,
-+                -0.101, -0.669,  1.770 ]
-+        - ct: 5000
-+          ccm: [ 1.365, -0.306, -0.059,
-+                -0.270,  1.375, -0.105,
-+                -0.040, -0.370,  1.410 ]
-+        - ct: 6500
-+          ccm: [ 1.258, -0.257, -0.002,
-+                -0.245,  1.301, -0.055,
-+                 0.021, -0.598,  1.577 ]
++  # A color correction matrix must be measured from a controlled chart before
++  # enabling Ccm. The generic identity matrix is not a calibration.
 +  - Adjust:
 +  - Agc:
 +...
 diff --git a/src/ipa/simple/data/meson.build b/src/ipa/simple/data/meson.build
-index 92795ee4c..df76092ad 100644
+index 92795ee..df76092 100644
 --- a/src/ipa/simple/data/meson.build
 +++ b/src/ipa/simple/data/meson.build
-@@ -4,1 +4,2 @@
+@@ -1,10 +1,11 @@
+ # SPDX-License-Identifier: CC0-1.0
+ 
+ conf_files = files([
 +    'imx681.yaml',
      'uncalibrated.yaml',
+ ])
+ 
+ # The install_dir must match the name from the IPAModuleInfo
+ install_data(conf_files,
+              install_dir : ipa_data_dir / 'simple',
+              install_tag : 'runtime')

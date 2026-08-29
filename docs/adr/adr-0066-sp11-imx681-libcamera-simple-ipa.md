@@ -2,7 +2,7 @@
 id: adr-0066-sp11-imx681-libcamera-simple-ipa
 title: "ADR0066: SP11 IMX681 libcamera Simple IPA Integration"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for integrating the Surface Pro 11 IMX681 with libcamera's simple IPA through a model-specific gain helper, evidence-gated tuning, and a coherently signed Ubuntu package build.
+description: Architecture Decision Record (ADR) for integrating the Surface Pro 11 standalone IMX681 with libcamera's simple IPA through reciprocal Sony gain semantics, hardware-derived sensor metadata, evidence-gated tuning, and a coherently signed Ubuntu package build.
 ---
 
 # ADR0066: SP11 IMX681 libcamera Simple IPA Integration
@@ -14,29 +14,38 @@ Accepted on 2026-08-28 as the userspace integration design for the
 successful v14 raw capture. Image-quality, PipeWire, and browser acceptance
 remain runtime gates.
 
+Amended on 2026-08-29 for kernel commit `6621d73e732c`, which replaces the CCS
+U8.8 gain path with turbineBMW's hardware-validated standalone IMX681 driver.
+The previously built libcamera artifacts use incompatible linear CCS gain
+semantics and must not be installed with that kernel. The source bundle now
+uses turbine's reciprocal helper, sensor metadata, and conservative measured-
+black-level tuning; a fresh coherent package build remains required after the
+kernel raw gate passes.
+
 ## Context
 
-The v14 kernel identifies the front camera as `imx681` and exposes one standard
-`V4L2_CID_ANALOGUE_GAIN` control. Control code `x` is in the range `0..960` and
-programs the sensor's effective global U8.8 gain as:
+The replacement v14 kernel identifies the standalone front camera as `imx681`
+and exposes one standard `V4L2_CID_ANALOGUE_GAIN` control. Control code `x` is
+in the range `0..960` and uses Sony's reciprocal analogue-gain equation:
 
 ```text
-register value = 0x0100 + 4 * x
-real gain      = 1 + x / 64
+real gain = 1024 / (1024 - x)
+code      = 1024 - 1024 / real gain
 ```
 
 Ubuntu Resolute currently ships libcamera `0.7.0-1ubuntu2`. Its simple IPA
 creates a sensor helper from the sensor model and selects tuning data using
 `sensor->model() + ".yaml"`. Version 0.7 has no IMX681 helper. Without one it
-interprets kernel codes `0..960` as real gain and uses the default code `192`
-as its nominal 1x threshold. Code 192 is actually 4x, so automatic exposure
-cannot correctly reduce the initial sensor gain in a bright scene.
+interprets kernel codes `0..960` directly as real gain instead of mapping code
+0 to 1x, 768 to 4x, and 960 to 16x.
 
 The tuning file must consequently be named `simple/imx681.yaml`, not
-`smiapp.yaml`. The completed Snapdragon reference publishes useful factory CCM
-seed values, but neither this device's Windows trace nor a Linux colour-target
-capture has validated them. The Windows corpus also does not establish a RAW10
-black pedestal or Bayer order.
+`smiapp.yaml`. Turbine's working standalone profile records a 1000 nm unit
+cell, two-frame control delays, and a measured RAW10 black pedestal of 64
+(4096 on libcamera's 16-bit scale). Those values are materially stronger than
+the earlier uncalibrated CCM seeds, but the pedestal still requires a covered-
+lens confirmation on this unit and no colour matrix is enabled without a
+controlled chart measurement.
 
 libcamera generates an IPA signing key at build time. `libcamera0.7` embeds the
 public key, while `libcamera-ipa` contains modules signed with the matching
@@ -50,16 +59,19 @@ We will integrate the IMX681 into libcamera as follows.
 
 ### Sensor helper and tuning
 
+- Add the `imx681` camera-sensor properties with a 1000 nm unit cell and
+  two-frame exposure, gain, vertical-blanking, and horizontal-blanking delays.
 - Add `CameraSensorHelperImx681` with
-  `AnalogueGainLinear{ 1, 64, 0, 64 }`. This expresses exactly
-  `gain = 1 + code / 64` and its inverse.
-- Do not assert a fixed helper black level yet. Measure covered-lens RAW10
-  frames first and retain simple IPA black-level estimation until the pedestal
-  is defensible.
+  `AnalogueGainLinear{ 0, 1024, -1, 1024 }`, which expresses the standalone
+  driver's reciprocal Sony gain equation and its inverse.
+- Set the helper and Simple IPA black level to 4096 on libcamera's 16-bit
+  scale, corresponding to turbine's measured RAW10 pedestal of 64. Confirm it
+  with covered-lens frames on this unit before final image qualification.
 - Install model-named tuning as
   `/usr/share/libcamera/ipa/simple/imx681.yaml`.
-- Treat the four reference factory CCMs as seed values pending Linux colour
-  validation. Do not use a CCM to hide an incorrect Bayer order.
+- Leave CCM disabled until a controlled Linux colour-chart capture produces a
+  defensible matrix. Do not use an identity or borrowed matrix to hide an
+  incorrect Bayer order.
 - Retain libcamera 0.7's stock Adjust defaults and global AGC target. Any gamma,
   contrast, saturation, or exposure-target change must be sensor-scoped and
   justified by captured output.
@@ -152,18 +164,20 @@ machine's paths in a service.
 
 ## Consequences
 
-- The simple IPA operates in physical gain units and can reduce gain below the
-  kernel's 4x startup default instead of treating code 192 as nominal 1x.
+- The simple IPA operates in physical gain units across the standalone
+  driver's reciprocal 1x-to-16x code range instead of treating raw codes as
+  gains or applying the superseded CCS linear equation.
 - The patch, tuning data, signing key, core library, and IPA remain a coherent,
   reversible Ubuntu package build.
 - A package build no longer depends on mutable host build dependencies or a
   shared source directory. Each invocation has a timestamp-and-random-nonce
   version, disposable container workspace, bounded private output set, and
   auditable provenance records.
-- Initial processed colour benefits from reference seed matrices but is not
-  described as calibrated until Linux measurements pass.
-- Black level, longer-than-71-ms exposure, LED polarity, and Bayer order remain
-  explicit measurement work rather than unverified constants.
+- Initial processing uses the reference's measured black pedestal but no CCM;
+  neither black level nor colour is described as qualified on this unit until
+  local dark-frame and chart measurements pass.
+- Longer exposure, LED polarity, and Bayer order remain explicit measurement
+  work rather than unverified constants.
 - PipeWire allocation backports, service-hardening changes, custom WirePlumber
   rules, and browser workarounds remain conditional remedies, not default
   configuration.
@@ -184,9 +198,11 @@ machine's paths in a service.
    image, source, package, and hash fields pass the host post-check and repeated
    same-build IPA verification.
 3. `cam` emits neither a helper-creation failure nor an uncalibrated tuning
-   fallback, and reports gain approximately `1..16`.
-4. Automatic exposure can descend below 4x in a bright scene, while exposure
-   and gain sweeps remain monotonic.
+   fallback, selects `simple/imx681.yaml`, and reports gain approximately
+   `1..16` using the reciprocal mapping.
+4. Automatic exposure and manual sweeps remain monotonic; code 0, 768, and 960
+   correspond approximately to 1x, 4x, and 16x. Covered-lens frames confirm or
+   deliberately revise the 64-code RAW10 pedestal.
 5. Repeated `cam`, GStreamer, PipeWire, and browser sessions work across
    suspend/resume without DMA-import, allocation, IPA, or EGL failures.
 6. The privacy LED is off while idle, on only during a real stream, and returns
@@ -196,4 +212,5 @@ machine's paths in a service.
 
 - [ADR0065: SP11 Front Camera C-PHY Integration](adr-0065-sp11-front-camera-cphy-integration.md)
 - [Hardware-proven Snapdragon reference](https://github.com/karsies-wq/sp11-imx681-linux/tree/b08f76f40b8d7b715bd4da6aef484f86142cc147)
+- [Turbine IMX681 libcamera source bundle](https://github.com/turbineBMW/surface-pro-11-linux/tree/main/userspace/libcamera)
 - [libcamera sensor helper implementation](https://git.libcamera.org/libcamera/libcamera.git/tree/src/ipa/libipa/camera_sensor_helper.cpp?h=v0.7.0)

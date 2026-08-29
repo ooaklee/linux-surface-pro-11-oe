@@ -1,32 +1,36 @@
 # SP11 IMX681 libcamera integration
 
-This bundle teaches libcamera 0.7's simple IPA how the kernel's IMX681 gain
-control maps to real gain and installs model-named tuning data. Apply it only
-after the v14 kernel passes the raw-capture gates in ADR-0065.
+This bundle teaches libcamera 0.7's simple IPA about the standalone IMX681
+sensor metadata, reciprocal Sony analogue-gain control, and model-named tuning
+data. Apply it only after the v14 kernel passes the raw-capture gates in
+ADR-0065.
 
-The kernel control code `x` programs global U8.8 gain as `0x0100 + 4*x`, so
-real gain is `1 + x/64`. `AnalogueGainLinear{ 1, 64, 0, 64 }` expresses that
-relationship to libcamera. Without the helper, the simple IPA treats codes
-`0..960` as real gain and uses the kernel default, 192, as its 1x threshold;
-automatic exposure then cannot reduce the initial 4x sensor gain correctly.
+The standalone kernel control code `x` uses Sony's reciprocal mapping
+`gain = 1024 / (1024 - x)` for `x=0..960`.
+`AnalogueGainLinear{ 0, 1024, -1, 1024 }` expresses that relationship to
+libcamera. The patch also records the measured 1000 nm unit cell, two-frame
+exposure/gain/blanking delays, and a measured RAW10 black pedestal of 64
+(4096 on libcamera's 16-bit scale).
 
-The patch applies and the simple IPA target compiles against both upstream tag
-`v0.7.0` and Ubuntu's exact `0.7.0-1ubuntu2` source after its distro patch
-series. The Ubuntu validation also signs the IPA and verifies it with the
-matching build's `ipa_verify`. `BASE.txt` records the source hashes.
+Turbine's three source commits compile against libcamera v0.7.1. The combined
+Ubuntu quilt patch dry-applies after the exact `0.7.0-1ubuntu2` distro series;
+the canonical builder must still compile, sign, and verify a fresh coherent
+package set after the kernel raw gate passes. Earlier built artifacts encode
+the superseded CCS gain equation and must not be installed with the standalone
+kernel. `BASE.txt` records the source hashes and current validation state.
 
-The sensor model reported by the CCS driver is `imx681`. The tuning filename
-must therefore be `imx681.yaml`, not `smiapp.yaml`. The patch adds that file to
-the simple IPA's Meson install set. The standalone YAML beside the patch is an
-audit copy and must stay byte-identical to the copy carried by the patch.
+The sensor model reported by the standalone driver is `imx681`. The tuning
+filename must therefore be `imx681.yaml`, not `smiapp.yaml`. The patch adds
+that file to the simple IPA's Meson install set. The standalone YAML beside
+the patch is an audit copy and must stay byte-identical to the copy carried by
+the patch.
 
 ## Deliberate limits
 
-- No fixed black level is asserted. The simple IPA estimates it until raw dark
-  frames provide a defensible value.
-- The CCMs are seed values from `karsies-wq/sp11-imx681-linux` commit
-  `b08f76f40b8d7b715bd4da6aef484f86142cc147`; validate them with a colour
-  target before treating image quality as calibrated.
+- The black pedestal of 64 is hardware evidence from turbineBMW's working
+  standalone profile; confirm it with covered-lens raw frames on this unit.
+- No CCM is enabled. Add one only after a controlled colour-chart measurement;
+  an identity matrix or another unit's seed values are not calibration.
 - The patch does not change the global AGC target or Adjust defaults.
 - It does not add a privacy-LED daemon. V4L2 core owns the DT privacy LED.
 - It does not relax PipeWire service hardening.
@@ -502,9 +506,10 @@ sudo apt install --allow-downgrades \
 4. Require a log line selecting `.../simple/imx681.yaml`; reject a fallback to
    `uncalibrated.yaml` or `Failed to create camera sensor helper for imx681`.
 5. During a stream, require the simple IPA to report a real-gain range near
-   `1-16`, not kernel codes `0-960`. Capture at least 30 frames and confirm AE
-   can move gain below the 4x kernel default in a bright scene.
-6. Validate black level from raw dark frames and the CCMs with a colour target.
-   Keep the estimator and seed matrices until those measurements pass.
+   `1-16`, not kernel codes `0-960`. Capture at least 30 frames and confirm
+   manual codes 0, 768, and 960 behave approximately as 1x, 4x, and 16x while
+   AE moves monotonically across the same range.
+6. Confirm the 64-code RAW10 pedestal with covered-lens frames. Keep CCM
+   disabled until a controlled colour target produces a defensible matrix.
 7. Repeat stream start/stop and PipeWire/WebRTC tests. The privacy LED must be
    on only while V4L2 is streaming.

@@ -5,6 +5,7 @@ Ubuntu package validated on device: 0.7.0-1ubuntu2 (arm64, resolute)
 Ubuntu DSC SHA-256: 27a10011fd5efe43564e94bb0328342ec11441963bed37db10a2d524553a02d8
 Ubuntu orig tarball SHA-256: ebd90a3aa2ca87a39323ffb7a4f5bbf72090b43a2431133759620b63e982db87
 Ubuntu Debian tarball SHA-256: 0ee3195d74ad85b089c62eb7b2904023f8556544b2d9dbcc67aa834ddde5a09e
-Patch validation: applied and compiled after Ubuntu's 0.7.0-1ubuntu2 patch series
-IPA validation: signed module accepted by the same build's ipa_verify
-Validation date: 2026-08-28
+Patch validation: dry-run applies after Ubuntu's 0.7.0-1ubuntu2 patch series
+IPA validation: fresh standalone-profile package build pending the kernel raw gate
+Turbine userspace source: repository b1f5237957b9, libcamera tip 72dc8cff6447
+Validation date: 2026-08-29
