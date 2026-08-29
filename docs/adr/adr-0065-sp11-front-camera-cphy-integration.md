@@ -10,8 +10,9 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 ## Status
 
 Accepted for the `7.2.0-jg-0sp11v14` implementation milestone on 2026-08-28.
-Package build, installation, boot, binding, and graph negotiation are verified
-through `ead11c748e4e`. Raw capture still fails, so image-quality,
+Package build provenance is verified through `347eb9702bf1`; installation,
+boot, binding, and graph negotiation are verified through `4d190bc96139`.
+Raw capture still fails on the installed package, so image-quality,
 repeated-stream, and userspace validation remain required before the front
 camera is described as working on this device.
 
@@ -49,6 +50,11 @@ after receiver teardown and does not establish when the sensor became
 unreachable. Commit `347eb9702bf1` therefore restores the working reference's
 sparse PLL overrides and adds a nonfatal sensor-state sample after 100 ms while
 the downstream pipeline is still active.
+
+The provenance-verified local package build from `347eb9702bf1` completed on
+2026-08-29. It contains the intended sparse-PLL source and active-stream probe,
+but it has not been installed or runtime-tested; the build result alone is not
+a claim that capture is fixed.
 
 This decision supersedes the earlier local draft that treated a statically
 decoded 1.2 Gsymbol/s Windows sensor mode as a half-rate value and doubled it
@@ -548,6 +554,50 @@ leaves geometry, endpoint rate, C-PHY table/CDR, CSID, and VFE unchanged;
 restores only the sparse PLL register ownership used by the working Snapdragon
 reference; and samples sensor state at 100 ms before downstream teardown.
 
+### `347eb9702bf1` local diagnostic package build
+
+The native ARM64 Docker build completed locally on 2026-08-29 in approximately
+44 minutes using `binary-indep binary-qcom-x1e` with eight jobs. Its manifest
+records exact source HEAD `347eb9702bf18f2d81e4e29767a416172acbfe66`, the
+requested integration branch, no local patches, and the direct-root rules
+runner. Exactly four selected packages were exported; each reports source
+`linux-qcom-x1e` and version `7.2.0-jg-0sp11v14`, with the expected `arm64` or
+`all` architecture.
+
+The modules package reports full vermagic
+`7.2.0-jg-0sp11v14-qcom-x1e SMP preempt mod_unload modversions aarch64` for
+the four inspected camera modules. Their packaged source versions are:
+
+- `qcom-camss`: `0486AE0FB983546F7875668`
+- `ccs`: `3D5D2364F6C1C7A42CDB0FD`
+- `ccs-pll`: `F5D68994B5EB8E947AC4F6B`
+- `phy-qcom-mipi-csi2`: `F578CE5728BAC71AB6C9374`
+
+The CCS source version changes from the installed `4d190bc96139` package,
+while the three intentionally unchanged camera modules retain their prior
+source versions. The packaged CCS module contains both the IMX681 stream-state
+format and the `active-100ms` label. The packaged CAMSS module retains the
+powered CSID/VFE packet, IRQ, error, and write-master diagnostic formats. The
+manifest's exact source HEAD is the authority for the sparse four-register PLL
+override.
+
+The packages, manifest, package list, build arguments, and checksum manifest
+are retained in the distinct read-only directory
+`build/docker-sp11-qcom-x1e-kernel/artifacts-v14-347eb9702bf1/`. Its recorded
+SHA-256 values are:
+
+- image: `ba7060ef0276817f8cf33078b69d3dddf0b2cc7b25b405884b7e6ff78c58f7a4`
+- modules: `bce41fa965810309c89671ffbd7815e2c21b5680cd86527f0fe783c2a3100b77`
+- flavour headers: `38d13a8b54b63a0515d4ca6b3a5690ba48b526763812d7eb330e61fa83499f2d`
+- common headers: `d57cc4181e15cf4146f1697df74ef2ffc8c63b2fd3c7ca936943289e2cb14e04`
+- build manifest: `d1f1eb90d6d883b0b404f266c228037b4d801a986e1f026ba21992ec3213bd94`
+- package list: `08a5dc85c04b51875e7696cf9db220b22ded22b2274212393f197a5538ac8756`
+- build arguments: `f1f24702771b87fb7afeb3f73274efcfdb87ca53436265f4dc4c4deb5e48c092`
+
+No package was installed, no live module or camera device was touched, and no
+reboot was performed as part of this build and provenance gate. Installation
+and the active-stream `100 ms`/packet-count runtime A/B remain pending.
+
 ## Consequences
 
 - The sensor, CAMSS, and generic PHY now use one consistent rate contract.
@@ -588,10 +638,9 @@ reference; and samples sensor state at 100 ms before downstream teardown.
 ## Acceptance gates
 
 For `4d190bc96139`, gates 1–4 pass and gate 5 fails with zero completed
-buffers. Gates 6–7 remain blocked. The `347eb9702bf1` source is the next
-diagnostic/corrective candidate and still requires a provenance-verified
-package build, installation, and runtime validation; it is not yet a claim
-that capture is fixed.
+buffers. Gates 6–7 remain blocked. For `347eb9702bf1`, gate 1 now passes with
+the provenance-verified local package build; installation and runtime gates
+2–7 remain pending. It is not yet a claim that capture is fixed.
 
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.
