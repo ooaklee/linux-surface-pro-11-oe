@@ -16,10 +16,13 @@ and booted: topology, stream negotiation, ten-frame packed-RAW10 capture, and
 sampled-content gates pass at approximately 30 fps. A stable-light control
 matrix then proved that gain affects real frames while the advertised exposure
 control is photometrically inert. Kernel commit `b1754869f458` makes the next
-bounded correction solely to the exposure address and width. Its package and
-post-boot response test remain pending. PipeWire/browser discovery and an
-initial processed preview now pass; repeated streaming, suspend/resume,
-privacy, exposure response, and final image calibration remain open.
+bounded correction solely to the exposure address and width. Its
+provenance-verified package build passes; installation and the post-boot
+response test remain pending. Commit `64999b9fc6e6` then removes the unvalidated
+C-PHY alternatives and tuning interface while preserving the exact working
+trio-0 sequence. PipeWire/browser discovery and an initial processed preview
+now pass; repeated streaming, suspend/resume, privacy, exposure response, and
+final image calibration remain open.
 
 Amended later on 2026-08-28 after the first v14-ABI runtime investigation
 reached the sensor's final `MODE_SELECT` write but produced no completed
@@ -269,6 +272,10 @@ We will integrate the front camera as follows.
   rate. Request the generic-PHY IRQ disabled, enable it only during the powered
   interval, run the hardware reset before lane configuration, and shut lanes
   down before disabling IRQs, clocks, or supplies.
+- Keep that trace-derived trio-0, 2.406-Gsymbol/s lifecycle as the only
+  supported X1E80100 C-PHY profile. Pass the endpoint's physical trio through
+  the generic-PHY submode and reject unsupported trio, count, or rate before
+  receiver power or MMIO. Preserve the generic D-PHY path unchanged.
 - Preserve 3840 pixels end to end with no CSID crop. Retain the existing
   3844-only crop helper solely for the superseded mode, while keeping
   `TOTAL_PKTS`, ECC/CRC, IRQ, RDI, and VFE stop diagnostics available for both
@@ -285,9 +292,10 @@ active sensor and C-PHY profile.
 - Advertise `link-frequencies = /bits/ 64 <969600000>` on the IMX681 C-PHY
   endpoint.
 - Pass that value directly as the C-PHY symbol rate in CAMSS.
-- Select the x1e80100 1.0 Gsymbol/s C-PHY AFE table with CDR `0x4a` on all
-  three table lanes. Runtime override value zero continues to mean "use the
-  table default".
+- Selected the x1e80100 1.0 Gsymbol/s C-PHY AFE table with CDR `0x4a` on all
+  three table lanes and treated runtime override value zero as "use the table
+  default". Commit `64999b9fc6e6` removes that superseded table family and its
+  trio, settle, and CDR override interface.
 - Use CSIPHY2 with one C-PHY trio. Preserve D-PHY behavior for other cameras.
 - Program CSID680's frame, pixel, and line drop engines to the same explicit
   keep-all state used by the generic CSID implementation: period 1, pattern 0.
@@ -425,6 +433,10 @@ The reviewed source milestone consists of these signed commits on
   exposure latch from inert 16-bit `0x0202` to 24-bit `0x0229`, after the
   stable-light control matrix separated exposure failure from working gain and
   transport. Frame timing and every other camera layer remain unchanged.
+- `64999b9fc6e60ebccdc3755563cafcc63930cc90` — remove the unvalidated
+  eight-rate C-PHY tables, nearest/default fallback, and global tuning
+  parameters; advertise only trio 0 at 2.406 Gsymbol/s in X1E SoC data and fail
+  unsupported C-PHY profiles before receiver power or MMIO.
 
 The earlier `e0ce71102628` source passed local module/DTB builds, binding
 validation, and strict checkpatch before packaging. Strict checkpatch also
@@ -440,6 +452,10 @@ architecture adaptation.
 Commit `b1754869f458` passes strict checkpatch and a targeted ten-job `W=1`
 ARM64 `imx681.ko` build. Runtime validation remains tied to the package build
 and post-boot fixed-light matrix recorded below.
+Commit `64999b9fc6e6` passes strict checkpatch, a byte-for-byte comparison with
+the previously proven observed table, dead-symbol searches, and ten-job `W=1`
+ARM64 module builds for IMX681, the Qualcomm MIPI CSI-2 PHY, and CAMSS. The
+sleepable lifecycle writer is no longer reachable from hard IRQ context.
 
 The canonical remote package build completed successfully on 2026-08-28 in
 33 minutes using `binary-indep binary-qcom-x1e` with ten jobs. Its manifest
@@ -561,7 +577,7 @@ inside `configure_stream(false)` was suppressed by the normal one-shot
 virtual-channel configuration guard, so this run does not establish the
 packet count. Teardown again received `-ENXIO` while writing `MODE_SELECT=0`
 and scheduled runtime power-down. Evidence is retained in
-`/home/leon/.local/state/codex-desktop/tmp/sp11-imx681-raw.bZEgekvb/`.
+the contemporaneous local validation record; it is not a repository artifact.
 
 ### `4d190bc96139` local diagnostic package build
 
@@ -785,12 +801,70 @@ Commit `b1754869f458` therefore changes only exposure to
 metadata, exposure bounds, gain, mode tables, DT, CAMSS, and C-PHY unchanged so
 the post-boot 128-versus-2400 comparison tests exactly one live variable.
 
+### `b1754869f458` provenance-verified package build
+
+The local ARM64 Docker build completed successfully on 2026-08-29 from git
+source HEAD `b1754869f458ebc3b01cf449f8b1f6aa8edd13e0`, with no local patches,
+the `binary-indep binary-qcom-x1e` target, and ten jobs. All four packages
+report version `7.2.0-jg-0sp11v14`; the image, modules, and flavour headers are
+`arm64`, and the common headers package is `all`.
+
+The packaged modules report full vermagic
+`7.2.0-jg-0sp11v14-qcom-x1e SMP preempt mod_unload modversions aarch64` and
+these source versions:
+
+- `imx681`: `F301258D0B6B33933A0A086`
+- `qcom-camss`: `DBD35CBCA4AC946BFB30854`
+- `phy-qcom-mipi-csi2`: `F72877655458B25D6F0FBB5`
+
+Both packaged Denali OLED DTBs retain `sony,imx681` at `0x10`, C-PHY bus type,
+physical trio 0, and the 1,203,000,000 Hz V4L2 link frequency. The packages,
+manifest, package list, build arguments, and checksum manifest are retained in
+`build/docker-sp11-qcom-x1e-kernel/artifacts-v14-b1754869f458/`. Strict
+`SHA256SUMS` verification passes with these values:
+
+- image: `d6246abdb1c6e47dc43a2f9d313f79bb7d835c901bff4fc0c395e7ab044924ac`
+- modules: `f6205aea9dc70836c471741df35494e1e7871335cffda17e253e01f53fd5ae18`
+- flavour headers: `6102278fc032f92cb91097ff87bfd99c0e5bc255d36362beffa560a69f95f57b`
+- common headers: `b809d66dc5247c537bcb97592808342d44955a92d39dfb912bc44be498e1749a`
+- build manifest: `0733db7a3b0ec07002475c68b74919411159081c0a0099ca69b8636699cfb02c`
+- package list: `08a5dc85c04b51875e7696cf9db220b22ded22b2274212393f197a5538ac8756`
+- build arguments: `13cf9b25abf149feb8fb8f726bb84e32cc4ae989b2521da95eb25efb8fc2b39a`
+
+This verification did not install a package, load a module, access camera
+hardware, or reboot the device. The fixed-light exposure-response gate remains
+pending.
+
+### Exact-profile C-PHY consolidation
+
+Kernel commit `64999b9fc6e60ebccdc3755563cafcc63930cc90` removes the
+second, unvalidated X1E C-PHY implementation: eight generated tables spanning
+1.0--2.5 Gsymbol/s, nearest/default rate selection, the generic fallback
+writer, and global trio, settle, and CDR module parameters. The sole canonical
+X1E table now contains the previously working observed sequence byte for byte.
+
+CAMSS passes the endpoint's physical C-PHY trio through the generic-PHY
+submode instead of imposing an X1 policy in the global endpoint parser. X1E SoC
+data advertises only `BIT(0)` and 2,406,000,000 symbols/s. The provider rejects
+an unsupported trio during mode selection and rejects an unsupported count or
+rate during configuration, all before receiver power or MMIO; the enable path
+independently checks the complete SoC, mode, trio, count, and rate contract.
+The D-PHY configuration and programming path is unchanged.
+
+The observed IRQ-clear table now has a dedicated hard-IRQ writer containing
+only ordered register writes and its bounded 1 us busy waits. The general
+lifecycle writer is explicitly sleepable and is used only from process-context
+enable and disable paths. This consolidation is source-validated but not yet a
+new runtime package milestone; the next package must retain the same raw and
+browser acceptance results.
+
 ## Consequences
 
 - The sensor, CAMSS, and generic PHY now use one hardware-validated matched
   rate contract: V4L2 1.203 GHz represents the standalone mode's observed
-  2.406-Gsymbol/s C-PHY rate. The failed CCS 969.6-Msymbol/s profile remains
-  only as recorded history.
+  2.406-Gsymbol/s C-PHY rate on physical trio 0. Other X1 C-PHY rates, counts,
+  and trios fail before receiver power or MMIO; the failed CCS
+  969.6-Msymbol/s profile remains only as recorded history.
 - The static Windows package and turbine table independently converge on the
   `03 01 77` PLL2 suffix, but the replacement is justified by turbine's actual
   changing-frame capture and complete transaction/lifecycle pair, not by
@@ -832,8 +906,11 @@ zero completed buffers and zero CSID packets. For `6621d73e732c`, gates 1–5
 pass. Gate 6 passes its gain-response half but fails its exposure-response half
 and still requires repeated-stream, suspend/resume, simple-IPA convergence, and
 privacy checks. Gate 7 remains unqualified. Commit `b1754869f458` is the
-isolated source correction for the failed exposure half; it must be packaged,
-booted, and retested before these gate results advance.
+isolated source correction for the failed exposure half; its package provenance
+gate passes, but it must still be deliberately installed, booted, and retested
+before these gate results advance. Commit `64999b9fc6e6` separately requires a
+raw/browser regression package before the C-PHY consolidation is declared
+runtime-equivalent.
 
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.
