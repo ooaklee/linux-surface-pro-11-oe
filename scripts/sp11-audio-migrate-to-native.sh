@@ -9,8 +9,6 @@ CONF_D_DIR="/usr/share/alsa/ucm2/conf.d"
 PARAM="soundwire_qcom.sp11_feedback_active_offset2_zero=1"
 GRUB_D_FILE="/etc/default/grub.d/99-surface-pro-11.cfg"
 GRUB_AUDIO_DROPIN="/etc/default/grub.d/98-sp11-native-audio-offset2.cfg"
-TPLG_SRC="${TPLG_SRC:-/home/leon/Workspace/repos/SP11X1e-audio/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin}"
-UCM_SRC_DIR="${UCM_SRC_DIR:-/home/leon/Workspace/repos/SP11X1e-audio/deploy/ucm2/Qualcomm/x1e80100}"
 KERNEL_ALLOWLIST=(
 	"7.2.0-jg-0sp11v9-qcom-x1e"
 	"7.2.0-jg-0sp11v10-qcom-x1e"
@@ -41,6 +39,10 @@ if [ -z "${REAL_HOME:-}" ]; then
 	REAL_HOME="$HOME"
 	log "WARNING: resolved home for ${REAL_USER} was empty; using ${HOME}."
 fi
+
+DEFAULT_AUDIO_SOURCE_ROOT="${REAL_HOME}/Workspace/repos/SP11X1e-audio"
+TPLG_SRC="${TPLG_SRC:-${DEFAULT_AUDIO_SOURCE_ROOT}/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin}"
+UCM_SRC_DIR="${UCM_SRC_DIR:-${DEFAULT_AUDIO_SOURCE_ROOT}/deploy/ucm2/Qualcomm/x1e80100}"
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
@@ -430,6 +432,10 @@ EOF
 }
 
 run_install() {
+	log "Using topology source: ${TPLG_SRC}"
+	log "Using UCM source directory: ${UCM_SRC_DIR}"
+	log "To use different sources, pass --tplg PATH and --ucm-dir PATH."
+
 	check_kernel
 	verify_sources
 	collect_user_workarounds

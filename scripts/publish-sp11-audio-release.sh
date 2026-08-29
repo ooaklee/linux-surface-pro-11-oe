@@ -4,7 +4,7 @@ umask 022
 
 DEFAULT_TAG="sp11-audio-v19c"
 DEFAULT_KERNEL_TAG="sp11-qcom-x1e-7.2.0-jg-0sp11v12"
-DEFAULT_SOURCE_ROOT="/home/leon/Workspace/repos/SP11X1e-audio"
+DEFAULT_SOURCE_ROOT="${HOME}/Workspace/repos/SP11X1e-audio"
 
 TAG="$DEFAULT_TAG"
 KERNEL_TAG="$DEFAULT_KERNEL_TAG"
@@ -134,7 +134,11 @@ require_tool sha256sum
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_dir"
 
-[[ -d "$SOURCE_ROOT" ]] || die "SP11X1e-audio source root not found: $SOURCE_ROOT"
+printf 'Using SP11X1e-audio source root: %s\n' "$SOURCE_ROOT"
+printf 'To use a different checkout, pass --source-root DIR.\n'
+
+[[ -d "$SOURCE_ROOT" ]] || \
+	die "SP11X1e-audio source root not found: $SOURCE_ROOT (override with --source-root DIR)"
 SOURCE_ROOT="$(cd "$SOURCE_ROOT" && pwd -P)"
 
 native_dir="$SOURCE_ROOT/deploy/native-audio-v19c"

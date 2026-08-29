@@ -46,11 +46,15 @@ forward as a fallback sink.
 
 ```bash
 git clone https://github.com/geocausa/SP11X1e-audio.git \
-  /home/leon/Workspace/repos/SP11X1e-audio
+  ~/Workspace/repos/SP11X1e-audio
 
 # For an existing checkout instead:
-git -C /home/leon/Workspace/repos/SP11X1e-audio pull --ff-only
+git -C ~/Workspace/repos/SP11X1e-audio pull --ff-only
 ```
+
+Here `~` is the invoking user's home. If the migration script itself is run
+through `sudo`, it resolves this default from the original user's home rather
+than root's home.
 
 2. Boot the native kernel and confirm its exact release.
 
@@ -74,7 +78,9 @@ Continue only with `7.2.0-jg-0sp11v9-qcom-x1e` or
 ./scripts/sp11-audio-migrate-to-native.sh --install
 ```
 
-To use a checkout elsewhere, override both artifact locations:
+The script prints the topology and UCM source paths it will use before running
+its system and source checks. To use a checkout elsewhere, override both
+artifact locations:
 
 ```bash
 ./scripts/sp11-audio-migrate-to-native.sh --install \
