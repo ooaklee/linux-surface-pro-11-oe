@@ -16,13 +16,21 @@ and booted: topology, stream negotiation, ten-frame packed-RAW10 capture, and
 sampled-content gates pass at approximately 30 fps. A stable-light control
 matrix then proved that gain affects real frames while the advertised exposure
 control is photometrically inert. Kernel commit `b1754869f458` makes the next
-bounded correction solely to the exposure address and width. Its
-provenance-verified package build passes; installation and the post-boot
-response test remain pending. Commit `64999b9fc6e6` then removes the unvalidated
-C-PHY alternatives and tuning interface while preserving the exact working
-trio-0 sequence. PipeWire/browser discovery and an initial processed preview
-now pass; repeated streaming, suspend/resume, privacy, exposure response, and
-final image calibration remain open.
+bounded correction solely to the exposure address and width. Commit
+`64999b9fc6e6` then removes the unvalidated C-PHY alternatives and tuning
+interface while preserving the exact working trio-0 sequence.
+
+The provenance-verified `64999b9fc6e6` package is now installed and booted.
+The loaded sensor, CAMSS, and generic-PHY modules match the package; ten
+independent raw start/stop cycles and a continuous 60-frame run pass with exact
+12,672,000-byte buffers, gap-free approximately 30 fps cadence, and zero
+reported CSID ECC/CRC or VFE violation/overflow status. Two fixed-gain endpoint
+comparisons prove that the 24-bit exposure correction changes decoded raw
+sample values, and a 1280x720 processed Firefox/Google Meet stream succeeds
+through libcamera and PipeWire. Suspend/resume, automatic-exposure convergence,
+the manual privacy-LED lifetime check, repeated post-resume application
+sessions, covered-lens pedestal measurement, and final colour calibration
+remain open.
 
 Amended later on 2026-08-28 after the first v14-ABI runtime investigation
 reached the sensor's final `MODE_SELECT` write but produced no completed
@@ -854,9 +862,68 @@ The D-PHY configuration and programming path is unchanged.
 The observed IRQ-clear table now has a dedicated hard-IRQ writer containing
 only ordered register writes and its bounded 1 us busy waits. The general
 lifecycle writer is explicitly sleepable and is used only from process-context
-enable and disable paths. This consolidation is source-validated but not yet a
-new runtime package milestone; the next package must retain the same raw and
-browser acceptance results.
+enable and disable paths. The package and post-boot result below establish that
+this consolidation retains the raw and browser acceptance results.
+
+### `64999b9fc6e6` package and post-boot regression result
+
+The local ARM64 Docker build completed from exact source HEAD
+`64999b9fc6e60ebccdc3755563cafcc63930cc90`, with no local patches, the
+`binary-indep binary-qcom-x1e` target, and ten jobs. All four installed
+packages report version `7.2.0-jg-0sp11v14`. The running release is
+`7.2.0-jg-0sp11v14-qcom-x1e`, and the loaded modules have the expected v14
+ARM64 vermagic and these source versions:
+
+- `imx681`: `F301258D0B6B33933A0A086`
+- `qcom-camss`: `102974D58A8CD704DFE72C1`
+- `phy-qcom-mipi-csi2`: `C9D02214FEAB2652B78C385`
+
+Extracting those three packaged `.ko.zst` members and comparing them with the
+installed compressed module files produced byte-for-byte matches. The sensor
+detected model `0x0681`; the media graph negotiated
+`SRGGB10_1X10/3840x2640` through CSIPHY2, CSID0, VFE0 RDI0, and packed-RAW10
+`/dev/video0`. The consolidated provider selected its sole X1E profile at
+2,406,000,000 symbols/s.
+
+Ten independent ten-frame start/stop captures passed the exact-size and
+sampled-content gates. A separate continuous 60-frame run dequeued sequences
+0 through 59 without a gap; every buffer was exactly 12,672,000 bytes and the
+inter-frame delta was 33.153--33.468 ms, with a 33.327 ms mean. Across the ten
+cycles, the continuous run, and four control captures, all 15 stop records
+reported zero CSID ECC/CRC errors and zero VFE violation, overflow, and
+image-violation status. An earlier completed Firefox stream reported 1,111,105
+received packets with the same zero-error result.
+
+With the scene unchanged, controls allowed two fixed-gain exposure comparisons:
+
+| Case | Exposure | Gain | Sample mean | Stddev | Entropy | Result |
+|---|---:|---:|---:|---:|---:|---|
+| A | 128 | 0 | 64.225 | 0.751 | 1.582 | Exact transport; deliberately near-black content floor |
+| B | 2400 | 0 | 67.888 | 6.646 | 3.522 | Pass |
+| C | 128 | 768 | 64.797 | 2.086 | 2.929 | Pass |
+| D | 2400 | 768 | 81.697 | 28.744 | 5.560 | Pass |
+
+At gain 0, exposure 128 intentionally starved the image enough to fall below
+the validator's one-code standard-deviation content threshold, while still
+delivering ten exact, changing buffers and clean transport. Increasing exposure
+to 2400 raised the decoded RAW10 sample mean by 5.7 percent at gain 0. At gain
+768, the same change raised it by 26.1 percent and visibly revealed the scene
+in linearly mapped previews. These endpoint comparisons directly resolve the
+earlier less-than-0.02-percent inert-exposure result and behaviorally validate
+`CCI_REG24(0x0229)` on this hardware; they do not establish monotonicity across
+the complete control range.
+
+The unchanged IMX681-aware libcamera package selected
+`simple/imx681.yaml`, exported `Built-in Front Camera`, and supplied an active
+1280x720 RGBA stream to Firefox/Google Meet without a PipeWire graph error.
+The original exposure/gain values and all previously active PipeWire,
+PipeWire-Pulse, and WirePlumber units were restored after raw testing; the
+processed source re-enumerated. Two subsequent 960x540 and 1280x720 processed
+starts also completed in the same boot; their receiver stops reported 959,851
+and 1,282,340 packets respectively, again with zero CSID ECC/CRC and VFE error
+status. The user-visible Meet result and those restarts qualify repeated
+current-boot browser streaming, not the still-pending suspend/resume, manual
+privacy-LED, or post-resume application gates.
 
 ## Consequences
 
@@ -872,12 +939,12 @@ browser acceptance results.
 - Userspace sees only a mode the driver will actually program. Adding further
   modes later requires proper V4L2 state, control-range, and link-frequency
   selection rather than another global module parameter.
-- The simple IPA can drive both standard controls, and reciprocal gain changes
-  real frames. On `6621d73e732c`, however, exposure values are accepted and
-  reported without affecting photons, so AE compensates with gain and cannot
-  yet qualify image quality. Commit `b1754869f458` corrects only that live
-  exposure latch. The default 2708-line control model and longer-exposure
-  policy remain separate timing work after the isolated response test passes.
+- The simple IPA can drive both standard controls, reciprocal gain changes real
+  frames, and the `64999b9fc6e6` runtime matrix proves that the isolated
+  `CCI_REG24(0x0229)` correction restores exposure response. The default
+  2708-line control model and longer-exposure policy remain separate timing
+  work; userspace colour, pedestal, and AE-target calibration are not kernel
+  transport requirements.
 - The privacy LED is managed by the media stack instead of a polling service.
   Incorrect polarity must be fixed in DT after hardware testing, not hidden by
   a permanently running GPIO script.
@@ -895,22 +962,23 @@ browser acceptance results.
   auto-stretched PNG is an inspection aid, not colour calibration or proof that
   the reported CFA order is physically correct; use its linear mode for
   low/high exposure and gain comparisons.
-- The kernel milestone is not the whole webcam integration. Raw capture must
-  pass before the libcamera soft-IPA patch and sensor tuning are installed or
-  PipeWire/browser changes are considered.
+- The kernel milestone is not the whole webcam integration. Raw capture now
+  passes, while the libcamera soft-IPA package, sensor tuning, and browser
+  integration retain their own provenance and calibration gates.
 
 ## Acceptance gates
 
 For `4d190bc96139` and `347eb9702bf1`, gates 1–4 passed and gate 5 failed with
 zero completed buffers and zero CSID packets. For `6621d73e732c`, gates 1–5
-pass. Gate 6 passes its gain-response half but fails its exposure-response half
-and still requires repeated-stream, suspend/resume, simple-IPA convergence, and
-privacy checks. Gate 7 remains unqualified. Commit `b1754869f458` is the
-isolated source correction for the failed exposure half; its package provenance
-gate passes, but it must still be deliberately installed, booted, and retested
-before these gate results advance. Commit `64999b9fc6e6` separately requires a
-raw/browser regression package before the C-PHY consolidation is declared
-runtime-equivalent.
+pass, but its exposure-response half of gate 6 fails. On the packaged and booted
+`64999b9fc6e6` head, gates 1–5 pass again, ten raw start/stop cycles pass, and
+both gain and exposure affect real frames. This declares the exact-profile
+C-PHY consolidation runtime-equivalent for the tested raw path and resolves the
+exposure-control regression. Gate 6 still requires suspend/resume, simple-IPA
+automatic-exposure convergence, and manual privacy-LED lifetime observations.
+Gate 7 passes discovery and one Firefox/Google Meet session plus two subsequent
+processed starts in the same boot; application sessions across suspend/resume
+remain unqualified.
 
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.

@@ -12,9 +12,13 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 Accepted on 2026-08-28 as the userspace integration design for the
 `7.2.0-jg-0sp11v14` camera milestone. The standalone raw transport gate and
 coherent userspace-package installation now pass. PipeWire/browser discovery
-and an initial processed preview also pass. Exposure response, final image
-calibration, repeated streaming, suspend/resume, and privacy remain runtime
-gates.
+and a 1280x720 processed Firefox/Google Meet stream also pass. On packaged
+kernel head `64999b9fc6e6`, two fixed-gain raw endpoint comparisons prove
+positive exposure response, ten raw start/stop cycles pass, and the processed
+source re-enumerates after the camera services restart. Full-range control
+monotonicity, automatic-exposure convergence, final image calibration,
+covered-lens pedestal measurement, repeated application sessions across
+suspend/resume, and privacy remain runtime gates.
 
 Amended on 2026-08-29 for kernel commit `6621d73e732c`, which replaces the CCS
 U8.8 gain path with turbineBMW's hardware-validated standalone IMX681 driver.
@@ -28,11 +32,11 @@ from support commit `92acde621d348d759d9ec4bba2d9d33a2b902a9a` and private build
 The installed core/IPA signature verifies, fresh logs select
 `/usr/share/libcamera/ipa/simple/imx681.yaml`, and the helper reports the
 intended approximately 1x-to-16x real-gain range. A stable-light raw matrix
-shows that gain affects captured data. The remaining darkness is not a reason
-to tune around the current kernel: on `6621d73e732c`, exposure codes 128 and
-2400 are photometrically indistinguishable at either fixed gain because the
-driver writes the wrong sensor latch. Kernel commit `b1754869f458` is the
-isolated correction awaiting package, boot, and response validation.
+shows that gain affects captured data. On `6621d73e732c`, exposure codes 128
+and 2400 were photometrically indistinguishable at either fixed gain because
+the driver wrote the wrong sensor latch. The unchanged userspace package was
+therefore retained while kernel commit `b1754869f458` corrected only that
+latch and consolidated head `64999b9fc6e6` was built, installed, and tested.
 
 On 2026-08-29 WirePlumber exported the sensor as `Built-in Front Camera`, a
 PipeWire `Video/Source` with camera role, and the desktop portal reported a
@@ -45,6 +49,21 @@ user-visible Meet preview was upright, recognizable, and judged good despite
 suboptimal mixed room lighting. This qualifies discovery and an initial
 processed preview, not exposure linearity, repeated sessions, suspend/resume,
 or colour calibration.
+
+After booting the source-qualified `64999b9fc6e6` package, the same userspace
+set selected `simple/imx681.yaml` and supplied Firefox/Google Meet with a
+1280x720 RGBA stream. At fixed gain 768, increasing exposure from 128 to 2400
+raised decoded RAW10 sample mean from 64.797 to 81.697, a 26.1-percent change;
+both captures passed exact-size, changing-content, and transport checks, and
+linearly mapped previews visibly revealed the scene. This qualifies a positive
+two-point exposure response and proves that userspace no longer needs to
+compensate for an inert kernel exposure control; it does not establish
+monotonicity across the complete range. After the raw test restored the user
+services, the source re-enumerated and completed two further 960x540 and
+1280x720 processed starts with clean kernel transport stops. This qualifies
+repeated current-boot processing, but not automatic-exposure convergence, the
+current AE target, covered-lens black pedestal, colour matrix, suspend/resume,
+or privacy LED.
 
 ## Context
 
@@ -201,9 +220,10 @@ machine's paths in a service.
   neither black level nor colour is described as qualified on this unit until
   local dark-frame and chart measurements pass.
 - The installed helper, model-named tuning, package/signature coherence, and
-  gain mapping operate as designed. Userspace tuning must not compensate for
-  the `6621d73e732c` kernel's inert exposure write; retest the unchanged package
-  after booting the isolated `b1754869f458` correction first.
+  gain mapping operate as designed. The unchanged package also passes a
+  processed Firefox/Meet stream and fixed-gain exposure-response test on
+  `64999b9fc6e6`; userspace tuning no longer has to mask the earlier inert
+  kernel exposure write.
 - Longer exposure, LED polarity, and Bayer order remain explicit measurement
   work rather than unverified constants.
 - No PipeWire allocation backport, custom WirePlumber rule, V4L2 loopback, or
@@ -215,14 +235,15 @@ machine's paths in a service.
 
 ## Acceptance gates
 
-Gates 1--3 pass for the installed coherent package set. The gain-response half
-of gate 4 passes, but its exposure-monotonic requirement fails on kernel
-`6621d73e732c`; covered-lens pedestal work remains pending. Gate 5 passes its
-initial Plasma Camera, PipeWire, Firefox, and Chrome discovery/stream-creation
-subset, including an upright usable Meet preview, but repeated sessions and
-suspend/resume remain pending. Gate 6 is not yet qualified. The same package
-set must be retested after the exposure-only kernel correction before tuning
-or release.
+Gates 1--3 pass for the installed coherent package set. On kernel
+`64999b9fc6e6`, gate 4 passes its gain-mapping and two-point exposure-response
+subsets. Automatic-exposure convergence, full-range manual monotonicity, and
+covered-lens pedestal work remain pending, so gate 4 is not yet complete. Gate
+5 passes its initial Plasma Camera, PipeWire, Firefox, and Chrome discovery and
+stream-creation subset, including an upright usable Meet preview, but sessions
+across suspend/resume remain pending. Gate 6 is not yet qualified. Further
+calibration work may proceed without compensating for an inert exposure latch,
+while retaining those remaining gates.
 
 1. The native ARM64 Ubuntu 26.04 Docker builder rejects dirty target inputs,
    including its own script, verifies the exact Ubuntu DSC and payload hashes,
