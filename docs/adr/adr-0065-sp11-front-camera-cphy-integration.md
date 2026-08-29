@@ -697,9 +697,50 @@ the current CSID/VFE RDI data path in place so the first runtime comparison is
 bounded at the sensor/receiver boundary.
 
 The source is pushed on
-`sp11/integration-7.2.x-ooaklee-karsies-wq-cams`; packaging and runtime gates
-remain pending. A build result will not by itself establish that this machine
-accepts the reference transaction stream or emits packets.
+`sp11/integration-7.2.x-ooaklee-karsies-wq-cams`. The package build below
+establishes source and packaging provenance, but does not by itself establish
+that this machine accepts the reference transaction stream or emits packets.
+
+### `6621d73e732c` local matched-stack package build
+
+The canonical native ARM64 Docker build completed locally on 2026-08-29 in
+approximately 48 minutes using `binary-indep binary-qcom-x1e` with ten jobs.
+Its manifest records exact source HEAD
+`6621d73e732c5dc24cdb6c28240e900bcb32c192`, the requested integration branch,
+no local patches, and the direct-root rules runner. Exactly four selected
+packages were exported; each reports source `linux-qcom-x1e` and version
+`7.2.0-jg-0sp11v14`, with the expected `arm64` or `all` architecture.
+
+The standalone sensor, CAMSS, and generic C-PHY modules are present in the
+modules package and report full vermagic
+`7.2.0-jg-0sp11v14-qcom-x1e SMP preempt mod_unload modversions aarch64`.
+Their packaged source versions are:
+
+- `imx681`: `3537F7270BB6A2B0D1FAE0C`
+- `qcom-camss`: `DBD35CBCA4AC946BFB30854`
+- `phy-qcom-mipi-csi2`: `F72877655458B25D6F0FBB5`
+
+Both packaged Denali OLED DTBs decompile with `sony,imx681` at this machine's
+proven I2C address `0x10`, C-PHY bus type, data lane 0, and link frequency
+1,203,000,000 Hz. The module compression streams, Debian package structure,
+package control fields, and DTBs all passed inspection.
+
+The packages, manifest, package list, ten-job build arguments, and checksum
+manifest are retained in the distinct read-only directory
+`build/docker-sp11-qcom-x1e-kernel/artifacts-v14-6621d73e732c/`. Its strict
+`SHA256SUMS` verification passes with these recorded values:
+
+- image: `e98ba12d9582764251b8d2c90c4741890c874ffa2a5fa49e7d9827515dc5b9ab`
+- modules: `c61948691bc9b60b2d48f289dc1c4f52ee38f47820d256e2c6b5039eb640d744`
+- flavour headers: `60356abe076bfc45f2aac9dca78cb107450ac3c2bd280f7968da25a029c67356`
+- common headers: `8981be08cb2270aa11fa5eb168d8388cdae2967c3f55fb8f75dc4d207338d518`
+- build manifest: `a2b549fc03e094c0dd48b85df73ce3194f7bc09efecb242243413c1d59d17593`
+- package list: `08a5dc85c04b51875e7696cf9db220b22ded22b2274212393f197a5538ac8756`
+- build arguments: `13cf9b25abf149feb8fb8f726bb84e32cc4ae989b2521da95eb25efb8fc2b39a`
+
+No package was installed, no live module or camera device was touched, and no
+reboot was performed as part of this build and artifact verification. Runtime
+gates remain pending until the package is deliberately installed and booted.
 
 ## Consequences
 
@@ -745,9 +786,9 @@ accepts the reference transaction stream or emits packets.
 
 For `4d190bc96139` and `347eb9702bf1`, gates 1–4 passed and gate 5 failed with
 zero completed buffers and zero CSID packets. Gates 6–7 remain blocked. For
-`6621d73e732c`, source gate 1 passes through module/DTB compilation but the
-packaged-build portion and runtime gates 2–7 remain pending. It is not yet a
-claim that capture is fixed.
+`6621d73e732c`, gate 1 passes through a canonical package build from the exact
+source commit, with verified modules and DTBs. Runtime gates 2–7 remain
+pending; this is not yet a claim that capture is fixed.
 
 1. Package build completes from the recorded source commit and produces v14
    artifacts with no DT binding or module build errors.
