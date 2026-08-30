@@ -80,7 +80,7 @@ mkdir -p build
   --linux-work-volume sp11-kernel-build-ci \
   --copy-to-payload --reset-source --jobs 8
 
-# Experimental USB4 v20: public PHY groundwork; production USB4 stays disabled
+# Experimental USB4 v20: guarded normal image plus an opt-in top-port test image
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
@@ -93,7 +93,7 @@ mkdir -p build
 
 # The branch is mutable; accept this milestone only at the ADR-recorded head.
 grep -Fx \
-  'Source HEAD: e056649b9b56622fedd806134d4f79dcf251a2f0' \
+  'Source HEAD: 70ddec100fe953712c309067fe2db4d8207facc6' \
   build/docker-sp11-qcom-x1e-kernel-usb4-v20/artifacts/sp11-kernel-build-manifest.txt
 
 # OR: Ubuntu concept kernel

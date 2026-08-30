@@ -16,6 +16,9 @@ Options:
   --expected-kernel-commit SHA    Expected full 40-character kernel source
                                   commit. Recorded as evidence; the running
                                   kernel cannot verify this value itself.
+  --expected-device-tree-model MODEL
+                                  Require an exact live device-tree model
+                                  match before creating the output directory.
   -h, --help                      Show this help.
 
 The output can contain hardware topology and kernel logs. This helper reads an
@@ -32,6 +35,8 @@ out_dir=""
 port_label=""
 phase="attached"
 expected_kernel_commit="not-provided"
+expected_device_tree_model="not-provided"
+device_tree_model_path="/proc/device-tree/model"
 
 while (($#)); do
 	case "$1" in
@@ -53,6 +58,11 @@ while (($#)); do
 	--expected-kernel-commit)
 		(($# >= 2)) || { usage >&2; exit 2; }
 		expected_kernel_commit="$2"
+		shift 2
+		;;
+	--expected-device-tree-model)
+		(($# >= 2)) || { usage >&2; exit 2; }
+		expected_device_tree_model="$2"
 		shift 2
 		;;
 	-h | --help)
@@ -81,6 +91,48 @@ if [[ "$expected_kernel_commit" != "not-provided" &&
 	! "$expected_kernel_commit" =~ ^[0-9A-Fa-f]{40}$ ]]; then
 	printf 'error: --expected-kernel-commit must be a full 40-character hexadecimal commit\n' >&2
 	exit 2
+fi
+if [[ -z "$expected_device_tree_model" || ${#expected_device_tree_model} -gt 512 ||
+	"$expected_device_tree_model" == *$'\n'* ||
+	"$expected_device_tree_model" == *$'\r'* ]]; then
+	printf 'error: --expected-device-tree-model must be a nonempty single-line value of at most 512 characters\n' >&2
+	exit 2
+fi
+read_device_tree_model() {
+	local model=""
+	local model_with_sentinel=""
+	local byte_count="0"
+
+	if [[ -f "$device_tree_model_path" && -r "$device_tree_model_path" ]]; then
+		byte_count="$(head -c 4097 -- "$device_tree_model_path" 2>/dev/null | wc -c)"
+		if ((byte_count > 4096)); then
+			printf 'error: live device-tree model exceeds 4096 bytes\n' >&2
+			return 1
+		fi
+		model_with_sentinel="$(
+			head -c 4096 -- "$device_tree_model_path" 2>/dev/null | tr -d '\0'
+			printf '.'
+		)"
+		model="${model_with_sentinel%.}"
+		if [[ "$model" == *$'\n'* || "$model" == *$'\r'* ]]; then
+			printf 'error: live device-tree model is not a single-line value\n' >&2
+			return 1
+		fi
+	fi
+	if [[ -n "$model" ]]; then
+		printf '%s\n' "$model"
+	else
+		printf 'unavailable\n'
+	fi
+}
+
+live_device_tree_model="$(read_device_tree_model)"
+if [[ "$expected_device_tree_model" != "not-provided" &&
+	"$live_device_tree_model" != "$expected_device_tree_model" ]]; then
+	printf 'error: live device-tree model does not match the required model\n' >&2
+	printf '  required: %s\n' "$expected_device_tree_model" >&2
+	printf '  live:     %s\n' "$live_device_tree_model" >&2
+	exit 1
 fi
 
 hash_tool=""
@@ -363,6 +415,13 @@ fi
 	printf 'Kernel build version: %s\n' "$(uname -v)"
 	printf 'Expected kernel source commit: %s\n' "$expected_kernel_commit"
 	printf 'Expected commit verification: metadata-only; compare with the kernel build manifest\n'
+	printf 'Device tree model: %s\n' "$live_device_tree_model"
+	printf 'Expected device tree model: %s\n' "$expected_device_tree_model"
+	if [[ "$expected_device_tree_model" == "not-provided" ]]; then
+		printf 'Device tree model verification: not requested\n'
+	else
+		printf 'Device tree model verification: exact match\n'
+	fi
 	printf 'Boot ID: %s\n' "$boot_id"
 	printf 'Physical port label: %s\n' "$port_label"
 	printf 'Phase: %s\n' "$phase"

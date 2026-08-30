@@ -73,12 +73,26 @@ assert_contains "$adr" 'does not establish full USB4 support'
 assert_contains "$adr" 'linux_ms_dev_kit-sp11/pull/24'
 assert_contains "$adr" '5b5f1d124b7ad43b9aac076ad65aa27fa3689ce9'
 assert_contains "$adr" 'e056649b9b56622fedd806134d4f79dcf251a2f0'
+assert_contains "$adr" '672638f963d37f55a93544568db41bfc4469df6d'
+assert_contains "$adr" '5321047ea5e2d23d44b0041b69db776c46eb015f'
+assert_contains "$adr" '70ddec100fe953712c309067fe2db4d8207facc6'
+assert_contains "$adr" 'x1e80100-microsoft-denali-oled-usb4-top-experimental.dtb'
+assert_contains "$adr" 'sp11-usb4-top-experimental.efi'
 assert_contains "$guide" 'Direct USB-C DisplayPort Alt Mode'
 assert_contains "$guide" 'USB4-tunnel gate'
+assert_contains "$guide" '70ddec100fe953712c309067fe2db4d8207facc6'
+assert_contains "$guide" '/usr/lib/linux-image-$abi/sp11-usb4-top-experimental.efi'
+assert_contains "$guide" '/boot/vmlinuz-$abi-usb4-top-experimental'
+assert_contains "$guide" 'linux-modules'
+assert_contains "$guide" 'Leave the command line and `initrd` line unchanged'
+assert_contains "$guide" 'Do not edit or add a'
+assert_contains "$guide" 'CM_PROB_USED_BY_DEBUGGER'
 # This is a literal Markdown fragment, not shell command substitution.
 # shellcheck disable=SC2016
 assert_contains "$guide" 'Do not use `devmem`'
 assert_contains "$collector" '--expected-kernel-commit'
+assert_contains "$collector" '--expected-device-tree-model'
+assert_contains "$collector" '/proc/device-tree/model'
 assert_contains "$collector" 'Capture started UTC:'
 assert_contains "$collector" 'Capture completed UTC:'
 assert_contains "$collector" 'Collector source modified UTC:'
@@ -87,6 +101,13 @@ assert_contains "$collector" 'data_role'
 assert_contains "$collector" 'usb4_version'
 assert_contains "$collector" 'link_status'
 assert_contains "$collector" 'SHA256SUMS'
+
+if grep -Fq '/boot/sp11-denali-v20-usb4-top-experimental.dtb' "$guide"; then
+	fail 'guide still uses the ineffective loose-DTB Stubble boot flow'
+fi
+if grep -Fq 'preflight-sp11-kernel-test.sh' "$guide"; then
+	fail 'guide still invokes the distinct-ABI preflight for a same-ABI rebuild'
+fi
 
 if grep -Eq '(^|[[:space:]])(devmem|i2cget|i2cset|i2ctransfer|setpci)([[:space:]]|$)|/dev/mem|/sys/kernel/debug|(^|[[:space:]])tee[[:space:]]+/sys/' "$collector"; then
 	fail 'collector contains a raw hardware-access command'
@@ -111,6 +132,7 @@ fake_bin="$test_root/fake-bin"
 capture_dir="$test_root/capture"
 nonempty_dir="$test_root/nonempty"
 invalid_dir="$test_root/invalid-commit"
+model_mismatch_dir="$test_root/model-mismatch"
 expected_commit="0123456789abcdef0123456789abcdef01234567"
 mkdir -p "$fake_bin" "$nonempty_dir"
 
@@ -130,7 +152,8 @@ printf '%s\n' \
 	'printf "%s\n" "fake kernel log"' >"$fake_bin/journalctl"
 chmod 700 "$fake_bin"/*
 
-PATH="$fake_bin:$PATH" "$collector" \
+PATH="$fake_bin:$PATH" \
+	"$collector" \
 	--out "$capture_dir" \
 	--port-label top \
 	--phase baseline \
@@ -144,6 +167,9 @@ done
 
 assert_contains "$capture_dir/metadata.txt" "Expected kernel source commit: $expected_commit"
 assert_contains "$capture_dir/metadata.txt" 'Expected commit verification: metadata-only'
+assert_contains "$capture_dir/metadata.txt" 'Device tree model:'
+assert_contains "$capture_dir/metadata.txt" 'Expected device tree model: not-provided'
+assert_contains "$capture_dir/metadata.txt" 'Device tree model verification: not requested'
 assert_contains "$capture_dir/metadata.txt" 'Capture started UTC:'
 assert_contains "$capture_dir/metadata.txt" 'Capture completed UTC:'
 assert_contains "$capture_dir/metadata.txt" 'Collector source SHA-256:'
@@ -181,5 +207,15 @@ if "$collector" \
 	fail 'collector accepted a non-full expected kernel commit'
 fi
 [[ ! -e "$invalid_dir" ]] || fail 'invalid commit input created an output directory'
+
+if "$collector" \
+	--out "$model_mismatch_dir" \
+	--port-label top \
+	--expected-device-tree-model 'impossible-test-only-device-tree-model-0123456789abcdef' \
+	>/dev/null 2>&1; then
+	fail 'collector accepted a mismatched live device-tree model'
+fi
+[[ ! -e "$model_mismatch_dir" ]] || \
+	fail 'mismatched device-tree model created an output directory'
 
 printf 'PASS: USB4 integration policy\n'

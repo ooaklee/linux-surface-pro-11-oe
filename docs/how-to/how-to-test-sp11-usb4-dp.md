@@ -2,41 +2,78 @@
 id: how-to-test-sp11-usb4-dp
 title: "Test SP11 USB4 and DisplayPort"
 # prettier-ignore
-description: How-to guide for safely building the Surface Pro 11 v20 USB4 PHY integration, preserving direct DisplayPort fallback, and collecting passive evidence for later USB4-tunnel qualification.
+description: How to build and install the same-version Surface Pro 11 v20 USB4 increment, preserve its guarded production Stubble image, and run one top-port retimer qualification boot.
 ---
 
 # How To: Test SP11 USB4 and DisplayPort
 
-Use this procedure to build the v20 USB4 integration, verify the working
-direct-DisplayPort baseline, and collect comparable top- and bottom-port
-snapshots. The current v20 increment does not enable the production USB4 path.
+This procedure keeps the normal `7.2.0-jg-0sp11v20` boot guarded on both
+PS8830 retimers and adds one explicitly selected top-port experiment. The
+experiment can prove that Enter_USB reaches the retimer. It cannot supply the
+missing Qualcomm host-router consumer, create a USB4 domain, or satisfy the
+USB4-tunnel gate by itself.
 
-## Purpose
+## Safety boundary
 
-Direct USB-C DisplayPort Alt Mode and DisplayPort tunneled through USB4 are
-different tests. A monitor appearing through a direct USB-C cable does not
-prove that a USB4 router or DisplayPort tunnel exists. This guide keeps those
-results separate and establishes the evidence needed for a later USB4-tunnel
-gate.
+- Keep v16 installed and bootable as the independent fallback.
+- Keep the dock disconnected until the guide says to attach it.
+- Use the exact CalDigit TS4 and bundled passive 0.8 m 40 Gb/s cable that
+  passed the matched Windows test.
+- Test only the physical top USB-C port and attach the dock once in the
+  experimental cold-boot cycle.
+- Do not use `--skip-clean` for this same-version build.
+- Do not use `devmem`, `i2cget`, `i2cset`, `i2ctransfer`, raw MMIO, debugfs
+  writes, driver rebinding, or manual power-domain toggles.
+- Secure Boot must be disabled unless the locally built image is signed and
+  trusted independently.
 
-## Prerequisites
+The kernel ABI and Debian version remain
+`7.2.0-jg-0sp11v20-qcom-x1e` and `7.2.0-jg-0sp11v20`. Reinstalling the new
+packages replaces the installed v20 files; it does not create a second v20
+GRUB entry. The source manifest is therefore mandatory evidence, and v16 is
+the only immediate independent fallback.
 
-- Surface Pro 11 X1E80100 with AC power connected.
-- A known-good qcom-x1e kernel retained in GRUB and recovery media nearby.
-- Secure Boot disabled for the experimental package.
-- The USB4 v20 support and kernel branches checked out separately from pen
-  work.
-- A direct USB-C DisplayPort cable or monitor for the regression baseline.
-- A known USB4 dock, display, and certified cable for passive topology
-  snapshots. Record whether the physical top or bottom connector is used.
-- A cold shutdown between any future active USB4 experiments. Do not use
-  driver unbind/rebind as a substitute. This is a conservative X1E safety
-  rule derived from the X1P hard-lock observations in issue 52, not a claim
-  that the two variants share a verified controller register map.
+## Preserve the guarded v20 artifacts
 
-## Build the v20 kernel
+The build helper recreates `artifacts/`. Before starting the same-version
+build, verify and preserve the guarded pen/touch-integrated build at exact
+kernel head `672638f963d37f55a93544568db41bfc4469df6d`.
 
-From the support repository, run:
+Set `work_dir` to the build directory actually used on the machine. The
+current SP11 checkout uses the first path below; the Docker example in the
+README uses the second.
+
+```bash
+work_dir=build/linux-surface-pro-11-oe-usb4-support-usb4-v20
+# work_dir=build/docker-sp11-qcom-x1e-kernel-usb4-v20
+
+current="$work_dir/artifacts"
+guarded="$work_dir/artifacts-672638f-guarded"
+guarded_head=672638f963d37f55a93544568db41bfc4469df6d
+
+grep -Fx "Source HEAD: $guarded_head" \
+  "$current/sp11-kernel-build-manifest.txt"
+(cd "$current" && sha256sum -c SHA256SUMS)
+
+if [ -e "$guarded" ]; then
+  diff -qr "$current" "$guarded"
+else
+  cp -a -- "$current" "$guarded"
+fi
+
+grep -Fx "Source HEAD: $guarded_head" \
+  "$guarded/sp11-kernel-build-manifest.txt"
+(cd "$guarded" && sha256sum -c SHA256SUMS)
+```
+
+Stop if the source head, checksums, or an existing backup comparison differs.
+Do not overwrite an unexplained backup.
+
+## Build exact v20 source
+
+Build the pushed kernel branch from exact qualification head
+`70ddec100fe953712c309067fe2db4d8207facc6`. Use the normal clean path; do not
+pass `--skip-clean` with this unchanged package version.
 
 ```bash
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
@@ -44,145 +81,237 @@ From the support repository, run:
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
   --git-branch sp11/integration-7.2.x-usb4-support \
   --image ubuntu:26.04 \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-usb4-v20 \
+  --platform linux/arm64 \
+  --work-dir "$work_dir" \
   --linux-work-volume sp11-qcom-x1e-kernel-usb4-v20 \
-  --copy-to-payload --reset-source --jobs 8
-```
+  --build-target 'binary-indep binary-qcom-x1e' \
+  --reset-source --jobs 8
 
-The branch name is mutable. Reject the build unless its generated provenance
-manifest resolves to the exact kernel PR head accepted by ADR0068:
-
-```bash
+artifacts="$work_dir/artifacts"
 grep -Fx \
-  'Source HEAD: e056649b9b56622fedd806134d4f79dcf251a2f0' \
-  build/docker-sp11-qcom-x1e-kernel-usb4-v20/artifacts/sp11-kernel-build-manifest.txt
+  'Source HEAD: 70ddec100fe953712c309067fe2db4d8207facc6' \
+  "$artifacts/sp11-kernel-build-manifest.txt"
+(cd "$artifacts" && sha256sum -c SHA256SUMS)
 ```
 
-The four packages must share version `7.2.0-jg-0sp11v20`; the installed image
-ABI is `7.2.0-jg-0sp11v20-qcom-x1e`. Reject mixed-version package sets.
+All four packages must report version `7.2.0-jg-0sp11v20`. Reject a mixed
+bundle.
 
-Before installing, run the existing read-only package preflight with the v20
-ABI and an explicitly selected known-good fallback:
+## Inspect the packaged Stubble images
+
+The kernel image and DTBs are in the large `linux-modules` package, not the
+small `linux-image` package. Extract that package into a temporary directory
+and inspect both EFI images before installing anything.
 
 ```bash
-sudo ./scripts/preflight-sp11-kernel-test.sh \
-  --deb-dir payload/kernel-debs \
-  --target-abi 7.2.0-jg-0sp11v20-qcom-x1e \
-  --fallback-abi YOUR_KNOWN_GOOD_QCOM_X1E_ABI
+abi=7.2.0-jg-0sp11v20-qcom-x1e
+(
+set -euo pipefail
+modules_deb="$artifacts/linux-modules-${abi}_7.2.0-jg-0sp11v20_arm64.deb"
+test -f "$modules_deb"
+
+inspect_dir="$(mktemp -d)"
+trap 'rm -rf -- "$inspect_dir"' EXIT
+dpkg-deb -x "$modules_deb" "$inspect_dir"
+
+normal="$inspect_dir/boot/vmlinuz-$abi"
+experimental="$inspect_dir/usr/lib/linux-image-$abi/sp11-usb4-top-experimental.efi"
+production_dtb="$inspect_dir/usr/lib/firmware/$abi/device-tree/qcom/x1e80100-microsoft-denali-oled.dtb"
+test -f "$normal"
+test -f "$experimental"
+test -f "$production_dtb"
+
+# Nothing experimental may be installed into /boot automatically.
+if find "$inspect_dir/boot" -maxdepth 1 -type f \
+  -name '*usb4*experimental*' -print -quit | grep -q .; then
+  echo 'experimental image leaked into /boot' >&2
+  exit 1
+fi
+
+# The production DTB retains both retimer guards.
+test "$(dtc -q -I dtb -O dts "$production_dtb" | \
+  grep -c 'parade,disable-usb4')" -eq 2
+
+# The normal Stubble image contains the ordinary model and no experiment.
+strings -a "$normal" >"$inspect_dir/normal.strings"
+grep -Fq 'Microsoft Surface Pro 11th Edition (OLED)' \
+  "$inspect_dir/normal.strings"
+if grep -Fq 'top-port USB4 retimer experiment' \
+  "$inspect_dir/normal.strings"; then
+  echo 'experimental DTB leaked into the normal Stubble image' >&2
+  exit 1
+fi
+
+# The alternate image must contain exactly one embedded DTB.
+objdump -h "$experimental" >"$inspect_dir/experimental.sections"
+test "$(awk '$2 == ".dtbauto" { count++ } END { print count + 0 }' \
+  "$inspect_dir/experimental.sections")" -eq 1
+objcopy --dump-section \
+  .dtbauto="$inspect_dir/experimental.dtb" "$experimental"
+test "$(fdtget -t s "$inspect_dir/experimental.dtb" / model)" = \
+  'Microsoft Surface Pro 11th Edition (OLED, top-port USB4 retimer experiment)'
+test "$(dtc -q -I dtb -O dts "$inspect_dir/experimental.dtb" | \
+  grep -c 'parade,disable-usb4')" -eq 1
+)
 ```
 
-Install with the existing kernel helper, reboot, and confirm the ABI:
+The production DTB must have two guards. The alternate image must have one
+`.dtbauto`, the explicit experimental model, and one remaining guard. Stop on
+any mismatch.
+
+## Install the same-version packages
+
+Confirm the fallback exists before replacing v20:
 
 ```bash
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir payload/kernel-debs --install-only
-sudo reboot
+test -f /boot/vmlinuz-7.2.0-jg-0sp11v16-qcom-x1e
+ls -l /boot/sp11-denali-v19-known-good.dtb
+```
+
+Install all four exact artifacts explicitly:
+
+```bash
+sudo dpkg -i \
+  "$artifacts/linux-headers-${abi}_7.2.0-jg-0sp11v20_arm64.deb" \
+  "$artifacts/linux-image-${abi}_7.2.0-jg-0sp11v20_arm64.deb" \
+  "$artifacts/linux-modules-${abi}_7.2.0-jg-0sp11v20_arm64.deb" \
+  "$artifacts/linux-qcom-x1e-headers-7.2.0-jg-0sp11v20_7.2.0-jg-0sp11v20_all.deb"
+
+test -f "/boot/vmlinuz-$abi"
+test -f "/usr/lib/linux-image-$abi/sp11-usb4-top-experimental.efi"
+```
+
+The package post-install and `update-grub` steps select only the guarded
+`/boot/vmlinuz-$abi` image.
+
+## Regress the normal guarded boot
+
+Boot the normal v20 entry once before selecting the experiment. Confirm:
+
+```bash
 uname -r
+tr -d '\0' </proc/device-tree/model; echo
 ```
 
-## Verify the direct-DisplayPort baseline
+The ABI must be v20 and the model must be the ordinary OLED model, without
+`top-port USB4 retimer experiment`. Quickly verify:
 
-Connect the monitor directly, without a USB4 dock. Test both physical ports
-and both cable orientations. Record resolution, refresh rate, hotplug, unplug,
-and one suspend/resume cycle.
+- normal one-, two-, and three-finger touch;
+- pen inking, pressure variation, and the barrel button;
+- a direct USB3 device; and
+- Direct USB-C DisplayPort Alt Mode.
 
-Passing this phase proves that v20 did not regress Direct USB-C DisplayPort Alt
-Mode. It does not prove a USB4 router or DisplayPort tunnel.
+Disconnect all test devices and shut down completely after these regressions.
 
-## Collect passive USB4 snapshots
+## Prepare the one-boot experimental image
 
-With the dock disconnected, collect a baseline for the port under test:
+After package installation has completed its `update-grub`, copy the alternate
+EFI image under a distinct filename:
+
+```bash
+sudo install -m 0600 \
+  "/usr/lib/linux-image-$abi/sp11-usb4-top-experimental.efi" \
+  "/boot/vmlinuz-$abi-usb4-top-experimental"
+```
+
+Do not run `update-grub` while this temporary `/boot` copy exists. Keep the TS4
+disconnected and power the machine off completely.
+
+At the next GRUB menu, highlight the normal v20 entry and press `e`. On its
+`linux` line, change only the kernel image path from:
+
+```text
+/boot/vmlinuz-7.2.0-jg-0sp11v20-qcom-x1e
+```
+
+to:
+
+```text
+/boot/vmlinuz-7.2.0-jg-0sp11v20-qcom-x1e-usb4-top-experimental
+```
+
+Some GRUB configurations omit the `/boot` prefix; preserve the existing style.
+Leave the command line and `initrd` line unchanged. Do not edit or add a
+`devicetree` line. Boot the transient edit with Ctrl-X.
+
+## Verify the live experiment before attachment
+
+With the TS4 still disconnected, require both the ABI and live model:
+
+```bash
+expected_model='Microsoft Surface Pro 11th Edition (OLED, top-port USB4 retimer experiment)'
+test "$(uname -r)" = '7.2.0-jg-0sp11v20-qcom-x1e'
+test "$(tr -d '\0' </proc/device-tree/model)" = "$expected_model"
+```
+
+If either test fails, stop and do not attach the dock.
+
+## Collect the one-attach comparison
+
+Capture the disconnected baseline immediately before the only attach:
 
 ```bash
 ./scripts/collect-sp11-usb4-diagnostics.sh \
   --out "build/usb4-diagnostics/top-baseline-$(date -u +%Y%m%dT%H%M%SZ)" \
   --port-label top --phase baseline \
-  --expected-kernel-commit e056649b9b56622fedd806134d4f79dcf251a2f0
+  --expected-kernel-commit 70ddec100fe953712c309067fe2db4d8207facc6 \
+  --expected-device-tree-model "$expected_model"
 ```
 
-Connect the dock, wait 15 seconds, then collect the attached state:
+Connect the exact TS4 and bundled 40 Gb/s cable once to the physical top port,
+wait 15 seconds, and capture the attached state:
 
 ```bash
 ./scripts/collect-sp11-usb4-diagnostics.sh \
   --out "build/usb4-diagnostics/top-attached-$(date -u +%Y%m%dT%H%M%SZ)" \
   --port-label top --phase attached \
-  --expected-kernel-commit e056649b9b56622fedd806134d4f79dcf251a2f0
+  --expected-kernel-commit 70ddec100fe953712c309067fe2db4d8207facc6 \
+  --expected-device-tree-model "$expected_model"
+
+sudo journalctl -k -b --no-pager | \
+  grep -E 'ps883|qmp-combo|USB4|thunderbolt'
 ```
 
-Repeat from a cold boot for the bottom port. Do not infer a controller port
-number from the physical label; retain the label until a live Type-C event
-correlates it with a router port.
-
-The collector uses standard read-only kernel interfaces and commands. It does
-not access raw MMIO or device registers. The output can still include hardware
-topology and kernel log details, so review and redact it before sharing.
-
-## USB4-tunnel gate
-
-A later experimental DTB may pass the USB4-tunnel gate only when all of these
-are present in one matched attach:
+The useful expected split is:
 
 ```text
-USB4 domain and Qualcomm host router
-downstream dock router
-USB 3 tunnel
-PCIe tunnel where the dock exposes PCIe devices
-DisplayPort tunnel and connected DRM display
-clean detach and reattach
+ps883x: USB4 mode accepted by retimer; host-router state not established
+qmp-combo: USB4/TBT mux request ignored: no active host-router PHY consumer
 ```
 
-`boltctl list`, `/sys/bus/thunderbolt/devices`, `lspci -nnk`, `lsusb -t`, and
-the DRM connector state must agree. A firmware-ready message, a parsed DROM,
-QMP TBT mode, or a retimer TBT notification is not sufficient by itself.
+The first line means the former PS8830 device-tree rejection was bypassed and
+retimer programming completed. The second is the expected next blocker: no
+Linux Qualcomm host-router consumer initialized the USB4 PHY. Charging without
+a USB4 domain remains a valid result for this increment. If a domain or router
+appears unexpectedly, collect it passively; do not rebind or probe registers.
 
-## Expected Output
+Disconnect the dock and power off. On the next boot, use the normal unedited
+v20 entry. Then remove the temporary copy before any future `update-grub`:
 
-For the production v20 DTB, expect:
+```bash
+sudo rm -- "/boot/vmlinuz-$abi-usb4-top-experimental"
+```
 
-- the v20 kernel and Denali DTB to boot;
-- direct DisplayPort Alt Mode to remain functional;
-- both PS8830 nodes to retain the USB4-disable fallback; and
-- no USB4 domain or tunneled DisplayPort claim.
+The packaged source remains available at
+`/usr/lib/linux-image-$abi/sp11-usb4-top-experimental.efi`, so the temporary
+copy is recoverable.
 
-Each collector run writes `metadata.txt`, allowlisted Type-C, Thunderbolt, and
-DRM state, optional `lsusb`, `lspci`, and redacted `boltctl` output, command
-availability and exit status, the current kernel log, and a verified
-`SHA256SUMS` manifest into the selected private output directory. The expected
-kernel commit is metadata; compare it with the package build manifest because
-the running kernel cannot prove its source commit by itself.
+## Interpret against the Windows oracle
 
-## Privacy and Safety
+The reviewed, redacted Windows result proves that this TS4, cable, and top port
+can enumerate the Qualcomm host router, Microsoft root router, TS4 router,
+USB3 and PCIe topology, and a DisplayPort tunnel. A private reviewed device
+graph additionally maps the successful Windows path to `UBF0.PRT1` / `URS1`.
+The bottom Windows run is not a valid negative comparison because `URS0` was
+reserved by KDNET with `CM_PROB_USED_BY_DEBUGGER`.
 
-Do not use `devmem`, `/dev/mem`, raw register tools, debugfs write controls,
-or arbitrary interrupt and clock writes during this procedure. In particular,
-do not copy the X1P controller-window probes from issue 52 onto X1E; their
-addresses are not a verified X1E register map. Follow the conservative safety
-boundary in [ADR0068](../adr/adr-0068-sp11-usb4-dp-integration.md).
+The capture does not provide the host-router MMIO map, interrupts, clocks,
+resets, IOMMU stream IDs, firmware/ring protocol, or decoded PS8830 sideband
+sequence. Do not publish the raw Windows output; use the
+[redacted result](https://github.com/ooaklee/sp11-windows-capture/blob/85161cd5c84f2d7463f74d9ff2a81fcc175ff86c/analysis/usb4-first-attach-20260829/redacted-result.md)
+as the public hardware evidence.
 
-Do not commit or publish Windows driver binaries, extracted controller
-firmware, raw ETL captures, firmware memory, or unredacted diagnostic
-directories. Preserve a known-good GRUB entry and cold-power the device after
-an active experiment. If the device stops producing USB4 events, do not cycle
-the USB4 GDSC or reload an experimental router driver in the same boot.
-
-## Troubleshooting
-
-If direct DisplayPort regresses, boot the known-good kernel and stop USB4
-testing. Save the passive v20 and fallback snapshots for comparison.
-
-If the dock provides USB 2/3 devices but no Thunderbolt domain, that does not
-show partial USB4 success; it may be the ordinary USB fallback path.
-
-If the controller waits for sideband receive connection or link training never
-starts, record the passive state and continue in
-[issue 52](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/52).
-Do not replay the hard-locking probes.
-
-## Related Documents
-
-- [Kernel USB4 PHY integration PR 24](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/24)
-- [ADR0068: SP11 USB4 and DisplayPort Integration](../adr/adr-0068-sp11-usb4-dp-integration.md)
-- [ADR0004: Firmware Extraction Policy](../adr/adr-0004-firmware-extraction-policy.md)
-- [ADR0026: Prebuilt Kernel Release Artifacts](../adr/adr-0026-prebuilt-kernel-release-artifacts.md)
-- [Release Kernel Artifacts](how-to-release-kernel-artifacts.md)
+A later kernel may pass the USB4-tunnel gate only when one matched attach
+shows a Linux USB4 domain and host router, downstream router enumeration,
+USB3/PCIe/DisplayPort tunnels, stable display output, detach recovery, and no
+direct-DP regression. This retimer-only experiment is not that claim.

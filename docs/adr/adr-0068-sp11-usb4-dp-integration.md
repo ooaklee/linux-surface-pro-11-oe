@@ -9,10 +9,12 @@ description: Architecture Decision Record (ADR) for starting the Surface Pro 11 
 
 ## Status
 
-Accepted for the source and static-build portion of the
-`7.2.0-jg-0sp11v20` implementation milestone on 2026-08-30. Runtime USB4
-enablement is not accepted: the production Denali device tree still disables
-USB4 at the PS8830 retimers, and this branch enables no host-router consumer.
+Accepted for the source/static portion and the controlled procedure for an
+explicitly selected top-port retimer qualification boot at the
+`7.2.0-jg-0sp11v20` implementation milestone on 2026-08-30. The same-version
+package rebuild and runtime result remain pending. Full USB4 enablement is not
+accepted: the production Denali device tree still disables USB4 at both PS8830
+retimers, and this branch enables no host-router consumer.
 
 ### Kernel integration record
 
@@ -32,7 +34,12 @@ packaging-only commits:
 | Public Hamoa PHY-to-router clocks | [`8564ca38642c`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/8564ca38642cade24dd02fc2ceb8fc3a22f8a275) |
 | Downstream ownership and rollback hardening; exact validated code head | [`5b5f1d124b7a`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/5b5f1d124b7ad43b9aac076ad65aa27fa3689ce9) |
 | `sp11v20` package boundary | [`bb0e70e6684a`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/bb0e70e6684ac1c41c59eeb6a7b3b5e2539b5d0f) |
-| Guarded-scope clarification; final kernel PR head | [`e056649b9b56`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/e056649b9b56622fedd806134d4f79dcf251a2f0) |
+| Guarded-scope clarification; initial guarded USB4 head | [`e056649b9b56`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/e056649b9b56622fedd806134d4f79dcf251a2f0) |
+| Pen/touch integration merge used by the guarded rebuild | [`672638f963d3`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/672638f963d37f55a93544568db41bfc4469df6d) |
+| Retimer/QMP handoff diagnostics | [`75617434c1e6`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/75617434c1e686e807dd0742799cb29bf0201a90) |
+| Top-port-only experimental DTB | [`a57d6d807dbc`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/a57d6d807dbce79f5877cf61e25febd5cef9bf1b) |
+| Experimental-DTB changelog | [`5321047ea5e2`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/5321047ea5e2d23d44b0041b69db776c46eb015f) |
+| Alternate Stubble-image isolation; current qualification source head | [`70ddec100fe9`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/70ddec100fe953712c309067fe2db4d8207facc6) |
 | Upstream submission | [Qualcomm USB43DP PHY v4](https://patchew.org/linux/20260820-topic-usb4phy-v4-0-aec9d2cb31f6@oss.qualcomm.com/), mbox SHA-256 `cf05fc8da482ab8085cfe3eeb37798b62bc74c5b2a73f8e74a8cc9b0dc93d3e2` |
 
 ## Context
@@ -43,12 +50,26 @@ requires the USB4 host router, retimer sideband connection, link training, and
 USB4 Connection Manager to create a DisplayPort tunnel before DRM can drive the
 monitor.
 
-A private, reviewed same-device Windows capture reports a matched top-port
-attach with USB4, PCIe, and DisplayPort tunnels, but it does not disclose the
-retimer-to-controller sideband sequence needed by Linux. A publishable
-redacted derivative remains pending. This private report informs the later
-test matrix only; it is not committed, linked as public evidence, treated as
-source-code provenance, or counted as Linux runtime validation.
+A reviewed same-device Windows capture and its public
+[redacted result](https://github.com/ooaklee/sp11-windows-capture/blob/85161cd5c84f2d7463f74d9ff2a81fcc175ff86c/analysis/usb4-first-attach-20260829/redacted-result.md)
+establish a useful hardware oracle. The exact CalDigit TS4 and bundled passive
+40 Gb/s cable formed a real USB4 connection through the physical top port,
+with host/root/dock routers plus USB3, PCIe, and DisplayPort tunnels.
+
+A separate review of the private device graph identifies the Qualcomm
+host-router bus as `QCOM0C6D` / `_SB.UBF0`, its successful port as
+`_SB.UBF0.PRT1`, and the tunneled USB controller as `QCOM0C8C` / `_SB.URS1`.
+Those sanitized conclusions are not attributed to the linked public report.
+
+That private review also shows why the bottom-port capture is not a valid
+negative hardware comparison:
+`QCOM0C8B` / `_SB.URS0` was reserved by KDNET with
+`CM_PROB_USED_BY_DEBUGGER`. Its charge-only result must not be used to claim a
+bad bottom port. The capture also contains no host-router MMIO map, interrupts,
+clocks, resets, IOMMU stream IDs, firmware protocol, or decoded PS8830
+sideband sequence. It guides top-port selection and the success oracle; it is
+not source-code provenance or Linux runtime validation. Raw capture output
+remains private and outside this repository.
 
 The Linux 7.2 integration base already contains:
 
@@ -96,9 +117,9 @@ reviewable and could hard-lock the device.
 
 USB4 work starts at `7.2.0-jg-0sp11v20` on
 `sp11/integration-7.2.x-usb4-support`. Versions v15 through v19 remain
-available to the independent pen and touch work. USB4 commits must remain
-independently reviewable and revertible; this branch does not absorb the open
-pen integration branches.
+available as historical pen and touch milestones. The branch now includes the
+validated pen/touch integration merge at `672638f963d3`; the later USB4 commits
+remain independently reviewable and revertible on top of that shared base.
 
 ### First v20 kernel increment
 
@@ -137,6 +158,27 @@ The first active USB4 experiment must use an explicitly named experimental DTB
 that is not selected by the normal boot entry. Its patch must contain no raw
 MMIO diagnostic interface, arbitrary register write, firmware-memory dump,
 debugfs write path, or user-triggered GDSC toggle.
+
+The first such DTB is
+`x1e80100-microsoft-denali-oled-usb4-top-experimental.dtb`. It inherits the
+production OLED tree and deletes `parade,disable-usb4` only from the `i2c7`
+PS8830 mapped to the physical top port. The `i2c3` bottom-port guard remains,
+and the normal DTB retains both guards. The experimental target stays outside
+`dtb-y` and the normal `dtbs-list`. Packaging filters it from the normal
+Stubble auto-selection set, fails closed if that invariant changes, and embeds
+it only in `/usr/lib/linux-image-<ABI>/sp11-usb4-top-experimental.efi`.
+
+The normal `/boot/vmlinuz-*` therefore stays guarded. A tester must copy the
+alternate EFI image to a distinct temporary `/boot` filename and transiently
+edit only the GRUB `linux` path for one cold boot, leaving initrd unchanged.
+Editing a loose GRUB `devicetree` line does not override the FDT embedded by
+Stubble and is not part of this procedure.
+
+This DTB can establish whether Enter_USB reaches and programs the PS8830. It
+cannot create a USB4 domain: QMP deliberately ignores USB4/TBT mux requests
+until a host-router consumer initializes the USB4 PHY, and no such consumer is
+present. The diagnostic messages distinguish these two outcomes without
+faking PHY ownership.
 
 ### Host-router integration boundary
 
@@ -188,10 +230,14 @@ The PHY increment requires:
 - confirmation that both production retimer nodes retain
   `parade,disable-usb4`.
 
-The source/static gates below were run against exact kernel-code head
-[`5b5f1d124b7a`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/5b5f1d124b7ad43b9aac076ad65aa27fa3689ce9).
-The final kernel PR head is its changelog-only descendant
+The original PHY source/static gates below were run against exact kernel-code
+head
+[`5b5f1d124b7a`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/5b5f1d124b7ad43b9aac076ad65aa27fa3689ce9),
+with the initial guarded package completed at
 [`e056649b9b56`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/e056649b9b56622fedd806134d4f79dcf251a2f0).
+The separately reviewable retimer experiment and its alternate Stubble-image
+isolation are validated statically at
+[`70ddec100fe9`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/70ddec100fe953712c309067fe2db4d8207facc6).
 
 | Gate | Result |
 |---|---|
@@ -206,6 +252,14 @@ The final kernel PR head is its changelog-only descendant
 | Required kernel configuration | Pass; existing QMP, USB4, Type-C, PS8830, TBT Alt Mode, and direct-DP options remain enabled |
 | Production fallback | Pass; both Denali PS8830 nodes retain `parade,disable-usb4`, and no production router consumer is added |
 | Full qcom-x1e Debian package build | Pass: `binary-indep binary-qcom-x1e` completed from exact final kernel PR head `e056649b9b56`; all four packages report version `7.2.0-jg-0sp11v20` |
+| Experimental-diff `git diff --check` | Pass at `70ddec100fe9` |
+| Strict `checkpatch.pl` on experimental changes | Pass: 0 errors, 0 warnings, 0 checks |
+| Experimental `W=1` driver build | Pass: `ps883x.ko` and `phy-qcom-qmp-combo.o` with the ARM64 cross toolchain |
+| Experimental DTB isolation | Pass: production OLED, explicitly targeted experimental OLED, and X1P Denali DTBs build; full ARM64 `dtbs` completes; the experimental filename is absent from the normal `dtbs-list` |
+| Compiled guard isolation | Pass: production OLED DTB contains two `parade,disable-usb4` properties; experimental DTB contains only the `i2c3` bottom-port property |
+| Experimental targeted schema validation | Not run locally: `dt-doc-validate` is unavailable. The wrapper adds no property and deletes one optional boolean already covered by the previously validated PS8830 binding |
+| Alternate Stubble construction | Pass in an Ubuntu 26.04 container: ARM64 PE image, exactly one `.dtbauto`, and extracted experimental model/guard count verified |
+| Experimental full qcom-x1e package rebuild | Pending at `70ddec100fe9`; retain version `7.2.0-jg-0sp11v20` and inspect both packaged EFI images because version alone cannot distinguish same-version rebuilds |
 | Linux USB4 domain/router runtime | Not run — production USB4 is disabled |
 | USB3, PCIe, or DisplayPort tunnel runtime | Not run — production USB4 is disabled |
 | Direct DisplayPort regression and automatic runtime-PM qualification | Not run; required before either production guard or runtime-PM policy changes |
@@ -236,6 +290,19 @@ These files remain local build evidence, not published release assets. This
 package result demonstrates pinned-source compilation and packaging only; it
 adds no runtime USB4, tunneled DisplayPort, or monitor-audio claim.
 
+A later same-version guarded rebuild at
+[`672638f963d3`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/672638f963d37f55a93544568db41bfc4469df6d)
+integrated the validated pen/touch branch while retaining both production USB4
+guards. Its manifest SHA-256 is
+`0c27041400692122ac76b26cfc291981525be5e95dea1d025d539b3cb7165b8f`;
+its checksum-manifest SHA-256 is
+`7884167a1b56482e36bbc6034908810c9391ccbe2ea637b2b450ed5e51a0e2e0`.
+That guarded build is the installed pre-experiment baseline, not the new
+top-port experiment. Because all three builds use the same Debian version, the
+source manifest is mandatory evidence and the guarded artifacts must be kept
+under `artifacts-672638f-guarded/` before the experimental rebuild overwrites
+the working `artifacts/` path.
+
 Before removing the fallback from any production DTB, hardware evidence must
 show all of the following:
 
@@ -255,8 +322,8 @@ monitor audio parity.
 
 ## Consequences
 
-- The v20 line can compile and review the public QMP USB4 layer without risking
-  the ongoing pen milestones or activating an incomplete production path.
+- The v20 line can compile and review the public QMP USB4 layer on the validated
+  pen/touch base without activating an incomplete production path.
 - The existing direct DisplayPort Alt Mode configuration remains unchanged
   while USB4-tunneled DisplayPort remains explicitly blocked.
 - The branch records a precise boundary for further upstream work instead of
