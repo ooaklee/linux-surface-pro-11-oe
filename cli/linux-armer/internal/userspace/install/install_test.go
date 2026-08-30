@@ -206,6 +206,181 @@ func TestBundleRejectsSymlinkedArtifact(t *testing.T) {
 	}
 }
 
+// TestBundleRejectsSymlinkedReceipt verifies that strict receipt decoding never
+// follows a replacement manifest symlink, even when its target has valid bytes.
+func TestBundleRejectsSymlinkedReceipt(t *testing.T) {
+	directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+	manifestPath := filepath.Join(directory, bundleManifestName)
+	realManifest := filepath.Join(directory, "saved-receipt.json")
+	if err := os.Rename(manifestPath, realManifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realManifest, manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyBundle(directory, spec); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestPortableBundleSurvivesDirectoryMove verifies that a receipt continues to
+// validate after the complete verified bundle is moved onto different media.
+func TestPortableBundleSurvivesDirectoryMove(t *testing.T) {
+	directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+	destination := filepath.Join(t.TempDir(), "copied-bundle")
+	if err := os.Rename(directory, destination); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := verifyBundle(destination, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedDestination, err := filepath.EvalSymlinks(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.paths["payload"] != filepath.Join(resolvedDestination, "payload") {
+		t.Fatalf("verified payload path = %q", verified.paths["payload"])
+	}
+}
+
+// TestBundleAcceptsSafeLegacyAbsoluteReceipt verifies that receipts written by
+// earlier releases remain usable while they still identify the selected cache.
+func TestBundleAcceptsSafeLegacyAbsoluteReceipt(t *testing.T) {
+	directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+	rewriteBundleReceipt(t, directory, func(receipt *userspacerelease.Bundle) {
+		receipt.Directory = directory
+		for index := range receipt.Files {
+			receipt.Files[index].Path = filepath.Join(directory, receipt.Files[index].Name)
+		}
+	})
+	if _, err := verifyBundle(directory, spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBundleRejectsUnsafePortableReceiptPaths verifies that relative directory
+// traversal and non-flat asset paths cannot escape the selected bundle.
+func TestBundleRejectsUnsafePortableReceiptPaths(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*userspacerelease.Bundle)
+	}{
+		{
+			name: "directory traversal",
+			mutate: func(receipt *userspacerelease.Bundle) {
+				receipt.Directory = "../bundle"
+			},
+		},
+		{
+			name: "file traversal",
+			mutate: func(receipt *userspacerelease.Bundle) {
+				receipt.Files[1].Path = "../payload"
+			},
+		},
+		{
+			name: "non-canonical file",
+			mutate: func(receipt *userspacerelease.Bundle) {
+				receipt.Files[1].Path = "./payload"
+			},
+		},
+		{
+			name: "host absolute file",
+			mutate: func(receipt *userspacerelease.Bundle) {
+				receipt.Files[1].Path = filepath.Join(string(filepath.Separator), "host", "payload")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+			rewriteBundleReceipt(t, directory, test.mutate)
+			if _, err := verifyBundle(directory, spec); err == nil {
+				t.Fatal("expected unsafe portable receipt to fail")
+			}
+		})
+	}
+}
+
+// TestBundleReceiptUsesStrictJSON verifies that unknown, mis-cased, duplicate,
+// and trailing JSON fields fail closed before privileged installation.
+func TestBundleReceiptUsesStrictJSON(t *testing.T) {
+	t.Run("unknown field", func(t *testing.T) {
+		directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+		manifestPath := filepath.Join(directory, bundleManifestName)
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		fields["unexpected"] = true
+		data, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := verifyBundle(directory, spec); err == nil || !strings.Contains(err.Error(), "unknown field") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("mis-cased field", func(t *testing.T) {
+		directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+		manifestPath := filepath.Join(directory, bundleManifestName)
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = []byte(strings.Replace(string(data), `"component"`, `"Component"`, 1))
+		if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := verifyBundle(directory, spec); err == nil || !strings.Contains(err.Error(), "unknown field") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("duplicate field", func(t *testing.T) {
+		directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+		manifestPath := filepath.Join(directory, bundleManifestName)
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = []byte(strings.Replace(string(data), `"component": "test"`, `"component": "other", "component": "test"`, 1))
+		if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := verifyBundle(directory, spec); err == nil || !strings.Contains(err.Error(), "duplicate field") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("trailing value", func(t *testing.T) {
+		directory, spec := makeBundle(t, "test", "test-v1", map[string][]byte{"payload": []byte("payload")})
+		manifestPath := filepath.Join(directory, bundleManifestName)
+		file, err := os.OpenFile(manifestPath, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.WriteString("{}\n"); err != nil {
+			_ = file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := verifyBundle(directory, spec); err == nil || !strings.Contains(err.Error(), "trailing JSON") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
 // TestCameraUsesOneExactAptGetTransaction verifies that all five pinned camera
 // packages are staged as regular files and installed in one bounded transaction.
 func TestCameraUsesOneExactAptGetTransaction(t *testing.T) {
@@ -524,7 +699,7 @@ func makeBundle(t *testing.T, component, tag string, contents map[string][]byte)
 	}
 	allContents["SHA256SUMS"] = checksumContents
 	manifest := userspacerelease.Bundle{
-		Component: component, Repository: userspaceRepository, Release: tag, Directory: directory,
+		Component: component, Repository: userspaceRepository, Release: tag, Directory: ".",
 	}
 	for _, immutable := range files {
 		path := filepath.Join(directory, immutable.name)
@@ -532,7 +707,7 @@ func makeBundle(t *testing.T, component, tag string, contents map[string][]byte)
 			t.Fatal(err)
 		}
 		manifest.Files = append(manifest.Files, userspacerelease.File{
-			Name: immutable.name, Path: path, SHA256: immutable.sha256,
+			Name: immutable.name, Path: immutable.name, SHA256: immutable.sha256,
 			Size: immutable.size, Verified: true,
 		})
 	}
@@ -545,6 +720,30 @@ func makeBundle(t *testing.T, component, tag string, contents map[string][]byte)
 		t.Fatal(err)
 	}
 	return directory, releaseSpec{component: component, tag: tag, files: files}
+}
+
+// rewriteBundleReceipt applies one test mutation and rewrites the receipt with
+// stable indentation so individual validation boundaries can be exercised.
+func rewriteBundleReceipt(t *testing.T, directory string, mutate func(*userspacerelease.Bundle)) {
+	t.Helper()
+	manifestPath := filepath.Join(directory, bundleManifestName)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt userspacerelease.Bundle
+	if err := json.Unmarshal(data, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	mutate(&receipt)
+	data, err = json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // testDigest returns the lowercase SHA-256 encoding used by bundle fixtures.

@@ -2,6 +2,7 @@ package install
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,12 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/artifact"
 	userspacerelease "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/release"
 )
 
 // bundleManifestName is the receipt emitted by the bounded release downloader.
 const bundleManifestName = "linux-armer-userspace-bundle.json"
+
+// maxBundleManifestBytes bounds receipt memory use before strict decoding.
+const maxBundleManifestBytes = 1 << 20
 
 // verifiedBundle contains only paths checked against compiled release policy.
 type verifiedBundle struct {
@@ -40,18 +43,26 @@ func verifyBundle(directory string, spec releaseSpec) (verifiedBundle, error) {
 	if err != nil {
 		return verifiedBundle{}, err
 	}
-	manifestInfo, err := os.Stat(manifestPath)
-	if err != nil {
-		return verifiedBundle{}, err
-	}
-	if manifestInfo.Size() > 1<<20 {
-		return verifiedBundle{}, errors.New("userspace bundle manifest exceeds 1 MiB")
-	}
-	manifestFile, err := os.Open(manifestPath)
+	manifestFile, manifestInfo, err := openRegularNoFollow(manifestPath)
 	if err != nil {
 		return verifiedBundle{}, fmt.Errorf("open userspace bundle manifest: %w", err)
 	}
-	decoder := json.NewDecoder(io.LimitReader(manifestFile, 1<<20))
+	if manifestInfo.Size() > maxBundleManifestBytes {
+		_ = manifestFile.Close()
+		return verifiedBundle{}, errors.New("userspace bundle manifest exceeds 1 MiB")
+	}
+	manifestData, readErr := io.ReadAll(io.LimitReader(manifestFile, maxBundleManifestBytes+1))
+	closeErr := manifestFile.Close()
+	if readErr != nil || closeErr != nil {
+		return verifiedBundle{}, fmt.Errorf("read userspace bundle manifest: %w", errors.Join(readErr, closeErr))
+	}
+	if len(manifestData) > maxBundleManifestBytes {
+		return verifiedBundle{}, errors.New("userspace bundle manifest exceeds 1 MiB")
+	}
+	if err := validateReceiptJSONShape(manifestData); err != nil {
+		return verifiedBundle{}, fmt.Errorf("decode userspace bundle manifest: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(manifestData))
 	decoder.DisallowUnknownFields()
 	var manifest userspacerelease.Bundle
 	decodeErr := decoder.Decode(&manifest)
@@ -61,9 +72,8 @@ func verifyBundle(directory string, spec releaseSpec) (verifiedBundle, error) {
 			decodeErr = errors.New("userspace bundle manifest contains trailing JSON")
 		}
 	}
-	closeErr := manifestFile.Close()
-	if decodeErr != nil || closeErr != nil {
-		return verifiedBundle{}, fmt.Errorf("decode userspace bundle manifest: %w", errors.Join(decodeErr, closeErr))
+	if decodeErr != nil {
+		return verifiedBundle{}, fmt.Errorf("decode userspace bundle manifest: %w", decodeErr)
 	}
 	if manifest.Component != spec.component {
 		return verifiedBundle{}, fmt.Errorf("bundle component is %q, expected %q", manifest.Component, spec.component)
@@ -74,9 +84,9 @@ func verifyBundle(directory string, spec releaseSpec) (verifiedBundle, error) {
 	if manifest.Release != spec.tag {
 		return verifiedBundle{}, fmt.Errorf("bundle release is %q, expected %q", manifest.Release, spec.tag)
 	}
-	manifestDirectory, err := filepath.EvalSymlinks(manifest.Directory)
-	if err != nil || filepath.Clean(manifestDirectory) != directory {
-		return verifiedBundle{}, errors.New("bundle manifest directory does not identify the selected bundle")
+	portable, err := validateReceiptDirectory(directory, manifest.Directory)
+	if err != nil {
+		return verifiedBundle{}, err
 	}
 
 	expected := make(map[string]immutableFile, len(spec.files))
@@ -105,20 +115,15 @@ func verifyBundle(directory string, spec releaseSpec) (verifiedBundle, error) {
 		if err != nil {
 			return verifiedBundle{}, err
 		}
-		recordedPath, err := filepath.EvalSymlinks(recorded.Path)
-		if err != nil || filepath.Clean(recordedPath) != path || filepath.Clean(recorded.Path) != recorded.Path {
-			return verifiedBundle{}, fmt.Errorf("bundle manifest path does not identify %s in the selected bundle", recorded.Name)
+		if err := validateReceiptFilePath(directory, path, recorded, portable); err != nil {
+			return verifiedBundle{}, err
 		}
-		info, err := os.Stat(path)
+		digest, info, err := hashRegularNoFollow(path)
 		if err != nil {
-			return verifiedBundle{}, fmt.Errorf("inspect userspace artifact %s: %w", recorded.Name, err)
+			return verifiedBundle{}, fmt.Errorf("hash userspace artifact %s: %w", recorded.Name, err)
 		}
 		if info.Size() != immutable.size {
 			return verifiedBundle{}, fmt.Errorf("size mismatch for %s: expected %d, got %d", recorded.Name, immutable.size, info.Size())
-		}
-		digest, err := artifact.HashFile(path)
-		if err != nil {
-			return verifiedBundle{}, err
 		}
 		if digest != immutable.sha256 {
 			return verifiedBundle{}, fmt.Errorf("SHA-256 mismatch for %s: expected %s, got %s", recorded.Name, immutable.sha256, digest)
@@ -129,6 +134,154 @@ func verifyBundle(directory string, spec releaseSpec) (verifiedBundle, error) {
 		return verifiedBundle{}, err
 	}
 	return verifiedBundle{directory: directory, paths: paths}, nil
+}
+
+// validateReceiptJSONShape rejects duplicate, mis-cased, and unknown receipt
+// keys before Go's case-insensitive typed JSON decoder sees the document.
+func validateReceiptJSONShape(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return errors.New("userspace bundle manifest must be a JSON object")
+	}
+	allowed := map[string]bool{
+		"component":  false,
+		"repository": false,
+		"release":    false,
+		"directory":  false,
+		"files":      false,
+	}
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return errors.New("userspace bundle manifest contains a non-string object key")
+		}
+		seen, known := allowed[key]
+		if !known {
+			return fmt.Errorf("unknown field %q", key)
+		}
+		if seen {
+			return fmt.Errorf("duplicate field %q", key)
+		}
+		allowed[key] = true
+		if key == "files" {
+			if err := validateReceiptFilesJSON(decoder); err != nil {
+				return err
+			}
+			continue
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	if token, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("userspace bundle manifest contains trailing JSON value %v", token)
+	}
+	return nil
+}
+
+// validateReceiptFilesJSON applies exact and duplicate-key checks to every
+// file record while leaving value type checks to the typed decoder.
+func validateReceiptFilesJSON(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '[' {
+		return errors.New("userspace bundle manifest files must be a JSON array")
+	}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+			return errors.New("userspace bundle manifest file must be a JSON object")
+		}
+		allowed := map[string]bool{
+			"name":     false,
+			"path":     false,
+			"sha256":   false,
+			"size":     false,
+			"verified": false,
+		}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("userspace bundle manifest file contains a non-string object key")
+			}
+			seen, known := allowed[key]
+			if !known {
+				return fmt.Errorf("unknown file field %q", key)
+			}
+			if seen {
+				return fmt.Errorf("duplicate file field %q", key)
+			}
+			allowed[key] = true
+			var value json.RawMessage
+			if err := decoder.Decode(&value); err != nil {
+				return err
+			}
+		}
+		if _, err := decoder.Token(); err != nil {
+			return err
+		}
+	}
+	_, err = decoder.Token()
+	return err
+}
+
+// validateReceiptDirectory identifies the portable receipt form and otherwise
+// accepts only a canonical legacy absolute directory matching the selected bundle.
+func validateReceiptDirectory(directory, recorded string) (bool, error) {
+	if recorded == "." {
+		return true, nil
+	}
+	if !filepath.IsAbs(recorded) || filepath.Clean(recorded) != recorded {
+		return false, errors.New("bundle manifest directory must be '.' or a canonical legacy absolute path")
+	}
+	resolved, err := filepath.EvalSymlinks(recorded)
+	if err != nil || filepath.Clean(resolved) != directory {
+		return false, errors.New("bundle manifest directory does not identify the selected bundle")
+	}
+	return false, nil
+}
+
+// validateReceiptFilePath requires a portable flat filename or, for a legacy
+// receipt, a canonical absolute path to the same regular file in the bundle.
+func validateReceiptFilePath(directory, actual string, recorded userspacerelease.File, portable bool) error {
+	if portable {
+		if recorded.Path != recorded.Name {
+			return fmt.Errorf("portable bundle manifest path for %s must be its flat filename", recorded.Name)
+		}
+		return nil
+	}
+	if !filepath.IsAbs(recorded.Path) || filepath.Clean(recorded.Path) != recorded.Path {
+		return fmt.Errorf("legacy bundle manifest path for %s must be canonical and absolute", recorded.Name)
+	}
+	resolved, err := filepath.EvalSymlinks(recorded.Path)
+	if err != nil || filepath.Clean(resolved) != actual || !withinRoot(directory, resolved) {
+		return fmt.Errorf("bundle manifest path does not identify %s in the selected bundle", recorded.Name)
+	}
+	return nil
 }
 
 // requireRegularBundleFile rejects flat-name violations, links, and special
@@ -150,7 +303,7 @@ func requireRegularBundleFile(directory, name string) (string, error) {
 
 // verifyChecksums requires SHA256SUMS to cover exactly the compiled file set.
 func verifyChecksums(path string, spec releaseSpec) error {
-	file, err := os.Open(path)
+	file, _, err := openRegularNoFollow(path)
 	if err != nil {
 		return fmt.Errorf("open SHA256SUMS: %w", err)
 	}

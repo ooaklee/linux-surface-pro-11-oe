@@ -71,7 +71,8 @@ type Spec struct {
 type File struct {
 	// Name is the release asset's flat filename.
 	Name string `json:"name"`
-	// Path is the absolute local path returned by the artefact resolver.
+	// Path is absolute in a live download result and is the flat asset name in a
+	// portable on-disc receipt.
 	Path string `json:"path"`
 	// SHA256 is the digest computed for the downloaded bytes.
 	SHA256 string `json:"sha256"`
@@ -90,7 +91,8 @@ type Bundle struct {
 	Repository string `json:"repository"`
 	// Release is the exact downloaded tag.
 	Release string `json:"release"`
-	// Directory is the absolute directory holding verified assets and metadata.
+	// Directory is absolute in a live download result and is "." in a portable
+	// on-disc receipt so the bundle can be moved as one directory.
 	Directory string `json:"directory"`
 	// Files contains the checksum manifest followed by verified payload assets.
 	Files []File `json:"files"`
@@ -408,6 +410,10 @@ func githubSHA256(assetItem Asset) (string, error) {
 // writeBundleManifest records the verified bundle through a same-directory
 // temporary file and atomic rename, avoiding partially written metadata.
 func writeBundleManifest(directory string, bundle Bundle) error {
+	receipt, err := portableBundleReceipt(bundle)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(directory, "linux-armer-userspace-bundle.json")
 	file, err := os.CreateTemp(directory, ".linux-armer-userspace-bundle-*.tmp")
 	if err != nil {
@@ -421,7 +427,7 @@ func writeBundleManifest(directory string, bundle Bundle) error {
 	}
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	writeErr := encoder.Encode(bundle)
+	writeErr := encoder.Encode(receipt)
 	closeErr := file.Close()
 	if writeErr != nil || closeErr != nil {
 		_ = os.Remove(temporary)
@@ -432,4 +438,32 @@ func writeBundleManifest(directory string, bundle Bundle) error {
 		return fmt.Errorf("publish userspace bundle manifest: %w", err)
 	}
 	return nil
+}
+
+// portableBundleReceipt converts a verified in-memory download result into a
+// location-independent receipt whose paths are relative to the receipt itself.
+func portableBundleReceipt(bundle Bundle) (Bundle, error) {
+	if !filepath.IsAbs(bundle.Directory) || filepath.Clean(bundle.Directory) != bundle.Directory {
+		return Bundle{}, errors.New("userspace bundle directory must be a canonical absolute path")
+	}
+	receipt := bundle
+	receipt.Directory = "."
+	receipt.Files = make([]File, len(bundle.Files))
+	seen := make(map[string]bool, len(bundle.Files))
+	for index, file := range bundle.Files {
+		if err := validateAssetName(file.Name); err != nil {
+			return Bundle{}, err
+		}
+		if seen[file.Name] {
+			return Bundle{}, fmt.Errorf("duplicate userspace bundle file %q", file.Name)
+		}
+		seen[file.Name] = true
+		expected := filepath.Join(bundle.Directory, file.Name)
+		if !filepath.IsAbs(file.Path) || filepath.Clean(file.Path) != expected {
+			return Bundle{}, fmt.Errorf("userspace bundle path does not identify %s in its directory", file.Name)
+		}
+		receipt.Files[index] = file
+		receipt.Files[index].Path = file.Name
+	}
+	return receipt, nil
 }

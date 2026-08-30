@@ -49,6 +49,42 @@ func TestDownloadRequiresExactAssetSetAndChecksums(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(bundle.Directory, "linux-armer-userspace-bundle.json")); err != nil {
 		t.Fatal(err)
 	}
+	receiptData, err := os.ReadFile(filepath.Join(bundle.Directory, "linux-armer-userspace-bundle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(receiptData)))
+	decoder.DisallowUnknownFields()
+	var receipt Bundle
+	if err := decoder.Decode(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Directory != "." {
+		t.Fatalf("receipt directory = %q, want portable current directory", receipt.Directory)
+	}
+	for _, file := range receipt.Files {
+		if file.Path != file.Name || filepath.IsAbs(file.Path) {
+			t.Fatalf("receipt path for %s is not portable: %q", file.Name, file.Path)
+		}
+	}
+	for _, file := range bundle.Files {
+		if !filepath.IsAbs(file.Path) {
+			t.Fatalf("live result path for %s is not absolute: %q", file.Name, file.Path)
+		}
+	}
+}
+
+// TestPortableBundleReceiptRejectsMismatchedRuntimePaths verifies that receipt
+// publication cannot silently describe a file outside its downloaded bundle.
+func TestPortableBundleReceiptRejectsMismatchedRuntimePaths(t *testing.T) {
+	directory := t.TempDir()
+	_, err := portableBundleReceipt(Bundle{
+		Directory: directory,
+		Files:     []File{{Name: "payload", Path: filepath.Join(t.TempDir(), "payload")}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not identify payload") {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 // TestDownloadRejectsUnexpectedReleaseAsset verifies that an expanded upstream
