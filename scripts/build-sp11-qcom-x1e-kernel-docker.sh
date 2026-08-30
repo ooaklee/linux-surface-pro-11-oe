@@ -528,6 +528,107 @@ find_qcom_kernel_debs() {
     -print | sort -u
 }
 
+write_artifact_sha256sums() {
+  local artifact_dir="$1"
+  local checksum_file="$artifact_dir/SHA256SUMS"
+  local checksum_tmp=""
+  local declared_debs=""
+  local exported_debs=""
+  local deb=""
+  local base=""
+  local required=""
+  local checksum_count=""
+  local -a checksum_names=()
+
+  rm -f "$checksum_file" || return 1
+
+  for required in \
+    "$artifact_dir/sp11-kernel-build-manifest.txt" \
+    "$artifact_dir/sp11-kernel-debs.txt"; do
+    if [ ! -f "$required" ] || [ -L "$required" ]; then
+      echo "Missing required regular artifact: $required" >&2
+      return 1
+    fi
+  done
+
+  declared_debs="$(
+    while IFS= read -r deb || [ -n "$deb" ]; do
+      [ -n "$deb" ] || continue
+      base="${deb##*/}"
+      case "$base" in
+        linux-*.deb) printf '%s\n' "$base" ;;
+        *)
+          echo "Invalid package entry in $artifact_dir/sp11-kernel-debs.txt: $deb" >&2
+          exit 1
+          ;;
+      esac
+    done < "$artifact_dir/sp11-kernel-debs.txt" | LC_ALL=C sort
+  )" || return 1
+
+  if [ -z "$declared_debs" ]; then
+    echo "No packages declared in $artifact_dir/sp11-kernel-debs.txt." >&2
+    return 1
+  fi
+  if [ "$declared_debs" != "$(printf '%s\n' "$declared_debs" | LC_ALL=C sort -u)" ]; then
+    echo "Duplicate package entry in $artifact_dir/sp11-kernel-debs.txt." >&2
+    return 1
+  fi
+
+  exported_debs="$(
+    while IFS= read -r deb; do
+      [ -n "$deb" ] || continue
+      printf '%s\n' "${deb##*/}"
+    done < <(find_qcom_kernel_debs "$artifact_dir") | LC_ALL=C sort
+  )" || return 1
+  if [ "$exported_debs" != "$declared_debs" ]; then
+    echo "Exported qcom-x1e packages do not match sp11-kernel-debs.txt." >&2
+    return 1
+  fi
+
+  while IFS= read -r base; do
+    [ -n "$base" ] || continue
+    checksum_names+=("$base")
+  done <<< "$declared_debs"
+  checksum_names+=(
+    sp11-kernel-build-manifest.txt
+    sp11-kernel-debs.txt
+  )
+
+  checksum_tmp="$(mktemp "$artifact_dir/.SHA256SUMS.XXXXXX")" || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    if ! (cd "$artifact_dir" && sha256sum -- "${checksum_names[@]}") > "$checksum_tmp"; then
+      rm -f "$checksum_tmp"
+      return 1
+    fi
+  elif command -v shasum >/dev/null 2>&1; then
+    if ! (cd "$artifact_dir" && shasum -a 256 -- "${checksum_names[@]}") > "$checksum_tmp"; then
+      rm -f "$checksum_tmp"
+      return 1
+    fi
+  else
+    echo "sha256sum or shasum is required to checksum exported artifacts." >&2
+    rm -f "$checksum_tmp"
+    return 1
+  fi
+
+  checksum_count="$(wc -l < "$checksum_tmp" | tr -d '[:space:]')"
+  if [ "$checksum_count" -ne "${#checksum_names[@]}" ]; then
+    echo "Incomplete checksum manifest for exported artifacts." >&2
+    rm -f "$checksum_tmp"
+    return 1
+  fi
+
+  if ! chmod 0644 "$checksum_tmp"; then
+    rm -f "$checksum_tmp"
+    return 1
+  fi
+
+  if ! mv -f "$checksum_tmp" "$checksum_file"; then
+    rm -f "$checksum_tmp"
+    return 1
+  fi
+}
+
 container_work_dir="${SP11_CONTAINER_WORK_DIR:-/linux-work}"
 if [ "$container_work_dir" != "/work" ]; then
   while IFS= read -r deb; do
@@ -540,6 +641,8 @@ if [ "$container_work_dir" != "/work" ]; then
     "$container_work_dir/sp11-kernel-debs.txt"; do
     [ -f "$manifest" ] && cp -f "$manifest" "$artifact_dir/"
   done
+
+  write_artifact_sha256sums "$artifact_dir"
 fi
 EOF
 chmod +x "$run_script"
