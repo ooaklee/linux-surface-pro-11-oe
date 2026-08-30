@@ -205,10 +205,36 @@ The final kernel PR head is its changelog-only descendant
 | X1E OLED and X1P Denali DTBs | Pass |
 | Required kernel configuration | Pass; existing QMP, USB4, Type-C, PS8830, TBT Alt Mode, and direct-DP options remain enabled |
 | Production fallback | Pass; both Denali PS8830 nodes retain `parade,disable-usb4`, and no production router consumer is added |
-| Full qcom-x1e Debian package build | In progress at final PR head; acceptance and package hashes are pending |
+| Full qcom-x1e Debian package build | Pass: `binary-indep binary-qcom-x1e` completed from exact final kernel PR head `e056649b9b56`; all four packages report version `7.2.0-jg-0sp11v20` |
 | Linux USB4 domain/router runtime | Not run — production USB4 is disabled |
 | USB3, PCIe, or DisplayPort tunnel runtime | Not run — production USB4 is disabled |
 | Direct DisplayPort regression and automatic runtime-PM qualification | Not run; required before either production guard or runtime-PM policy changes |
+
+### Reproducible package evidence
+
+On 2026-08-30, the documented Ubuntu 26.04 container build completed with
+target `binary-indep binary-qcom-x1e`. Its generated provenance manifest
+records source head
+[`e056649b9b56`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/e056649b9b56622fedd806134d4f79dcf251a2f0),
+with no local patches. Package metadata was inspected after export: each
+package reports version `7.2.0-jg-0sp11v20`, the three machine-specific
+packages report architecture `arm64`, and the common header package reports
+architecture `all`.
+
+| Artifact | SHA-256 |
+|---|---|
+| `linux-headers-7.2.0-jg-0sp11v20-qcom-x1e_7.2.0-jg-0sp11v20_arm64.deb` | `6ec9b5872ff2a3ce22a21030f399517c433236867ed1f90df88cfef434b8daba` |
+| `linux-image-7.2.0-jg-0sp11v20-qcom-x1e_7.2.0-jg-0sp11v20_arm64.deb` | `90e36276604a38ada5466015f851f466b62194d50317076f8608157e42d51153` |
+| `linux-modules-7.2.0-jg-0sp11v20-qcom-x1e_7.2.0-jg-0sp11v20_arm64.deb` | `46a545cb44419916a794c575d08c221bb2a8bccba5ce867efe34fe813019ac35` |
+| `linux-qcom-x1e-headers-7.2.0-jg-0sp11v20_7.2.0-jg-0sp11v20_all.deb` | `f949f5649271e18f48b9164d6442cf4b5ec0d1b832f055f285819a52a7177cad` |
+| Generated source/build manifest | `26f5bce2bb66a4c093b47ed9339c5312efa489788b819b7f0aa3c6cc1a6c64ba` |
+| Generated package-list manifest | `8fc74e8f48e3cef6a1cc487ff0c55e073f4244017607c7ae419ecfdd0adec358` |
+
+The checksum manifest was verified after artifact export; its own SHA-256 is
+`6953bfcaa9522f00ac193fb00701982910922b22d71a1dec0077b3e9aa498db4`.
+These files remain local build evidence, not published release assets. This
+package result demonstrates pinned-source compilation and packaging only; it
+adds no runtime USB4, tunneled DisplayPort, or monitor-audio claim.
 
 Before removing the fallback from any production DTB, hardware evidence must
 show all of the following:
