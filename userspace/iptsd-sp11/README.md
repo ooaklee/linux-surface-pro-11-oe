@@ -48,10 +48,14 @@ the OE recipe conflicts with it and the local installer masks its template.
 `/dev/g6ts-heat` and `g6-pen` remain available for controlled diagnostic and
 replay work only.
 
-Hardware validation is still required before merging or describing pen support
-as complete. At minimum validate hover/lift, pressure, continuous strokes,
-tilt, the barrel button, eraser transitions, unchanged direct touch, transport
-recovery, and repeated suspend/resume cycles.
+The X1E/OLED installed-system path passed live Phase 84 validation on
+`7.2.0-jg-0sp11v19-qcom-x1e`: hover/lift, continuous stylus input, pressure
+from 0 through 3309, variation on both tilt axes, and the barrel button worked
+with balanced IRQ/report accounting and no panel resets, transport/protocol
+errors, or daemon restarts. Normal one-, two-, and three-finger touch also
+worked as expected. X1P, eraser transitions, comprehensive touch/gesture
+regression, forced transport recovery, and repeated suspend/resume remain
+release gates.
 
 Unmodified iptsd v3.1.0 advertises `BTN_STYLUS` but not `BTN_STYLUS2`.
 Second/top-button support is therefore outside this integration candidate.

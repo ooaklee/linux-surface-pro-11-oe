@@ -9,12 +9,12 @@ description: Architecture Decision Record (ADR) for exposing the Surface Pro 11 
 
 ## Status
 
-Proposed and build-verified on 2026-08-29 on matching
-`sp11/integration-7.2.x-pen-part-2` branches. ARM64 kernel object builds,
-checkpatch, the pinned userspace build, manifest verification, and offline
-installation pass. Device testing, suspend/resume qualification, packaging of
-the final kernel build, OpenEmbedded recipe parse/build validation, merge, and
-release are pending.
+Accepted for X1E/OLED integration on 2026-08-30 on matching
+`sp11/integration-7.2.x-pen-part-2` branches. ARM64 kernel builds, checkpatch,
+the pinned userspace build, manifest verification, offline installation, final
+v19 kernel packaging, and live pressure, tilt, and barrel-button testing pass.
+X1P hardware, eraser transitions, transport recovery, repeated suspend/resume,
+OpenEmbedded recipe parse/build validation, and release qualification remain.
 
 This is integration in the SP11 kernel fork, not a claim of upstream Linux or
 mainline support.
@@ -57,6 +57,11 @@ the physical report descriptor and product identity are validated.
   the controller has recovered and its descriptor is unchanged.
 - `/dev/g6ts-heat` remains available for bounded diagnostics and replay; it is
   not the production pen input path.
+- The driver defaults to the validated Phase 84 profile: SET_FEATURE `0x05`
+  minimal initialization, one response per level-low IRQ, bounded ready-line
+  quiescing, and cold host-fault recovery. Read-only module parameters retain a
+  load-time fallback without installing a global modprobe configuration that
+  could affect an older fallback kernel.
 
 Userspace will use unmodified upstream `iptsd` v3.1.0 at commit
 `a83bc1232f7096f8b33b50fdbda249cd640de670`, tree
@@ -96,6 +101,32 @@ including its report ID, which exceeds UHID's 4,096-byte report limit.
 driver already provides validated direct touch and recovery. Competing mode
 writes or a second virtual touchscreen would regress that path.
 
+## X1E/OLED Live Acceptance — 2026-08-30
+
+The installed `7.2.0-jg-0sp11v19-qcom-x1e` package from kernel commit
+`ec96c9da79af` was booted with the Phase 84 values later promoted to the driver
+defaults. The support checkout was at `6e7aaeee4bfc`. The system exposed one
+`045e:0c83` HIDRAW bridge, one iptsd process, and one virtual stylus; iptsd
+reported zero restarts.
+
+An 18-second dual-device capture produced 3,903 virtual-stylus events. Pressure
+ranged from 0 through 3309, both tilt axes varied, hover/tool entry and exit
+were observed, and the barrel button was confirmed manually immediately after
+the capture. Normal one-, two-, and three-finger touch was then confirmed to
+work as expected. The native raw-HEAT pen device remained silent as expected
+for the DFT/iptsd production path.
+
+The driver ended at 5,059 interrupts and 5,059 handled interrupts, with 5,058
+single-response cadence IRQs; that one-count difference was already present at
+the post-boot baseline before the capture. All 5,057 subsequent IRQs were
+accounted for by two report `0x07` records plus DFT reports `0x0b=2022`,
+`0x0c=1011`, `0x0d=1011`, and `0x1a=1011`. Panel resets, recovery failures,
+host-fault recoveries, transport errors, protocol errors, drain overflows, and
+kernel taint remained zero.
+
+This accepts the core X1E installed-system pen path for integration. It does
+not claim X1P, eraser, forced transport recovery, or repeated suspend/resume.
+
 ## Consequences
 
 - The kernel change is a compatibility bridge while stylus signal processing
@@ -108,11 +139,11 @@ writes or a second virtual touchscreen would regress that path.
 - Unmodified iptsd v3.1.0 advertises one stylus button (`BTN_STYLUS`). A
   second/top-button event is outside this candidate and remains a known
   userspace limitation.
-- A successful build does not establish pen parity. Before merge, verify
-  dynamic HIDRAW discovery, a single daemon/device owner, hover and immediate
-  lift, edge and corner position, continuous strokes, pressure, tilt, barrel
-  button, eraser transitions, unchanged multitouch and gestures, transport
-  recovery, cold boot, and repeated suspend/resume cycles.
+- X1E live acceptance establishes the core pen path, dynamic HIDRAW discovery,
+  a single daemon/device owner, pressure, two-axis tilt, the barrel button, and
+  normal one-, two-, and three-finger touch. Before release, complete X1P,
+  eraser, edge/corner, comprehensive touch/gesture regression, transport
+  recovery, multiple cold boots, and repeated suspend/resume gates.
 - The live-image builder carries the installer and payload on `SP11DATA`; it
   does not inject iptsd into the running live desktop. Live-session and
   installed-system behavior remain separate test gates.

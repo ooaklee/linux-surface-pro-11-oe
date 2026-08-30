@@ -9,8 +9,9 @@ description: Build, install, inspect, validate, and roll back the Surface Pro 11
 
 This procedure exercises the matching
 `sp11/integration-7.2.x-pen-part-2` kernel and support branches. It is a
-pre-merge hardware test, not a release procedure. Keep a known-good kernel in
-GRUB and do not promote the README status until the validation matrix passes.
+pre-release hardware test, not a release procedure. The X1E/OLED core pen path
+passed on v19; keep a known-good kernel in GRUB while completing the remaining
+SKU, eraser, recovery, and suspend/resume matrix.
 
 ## Build the paired artifacts
 
@@ -111,6 +112,20 @@ hashes, device SKU, and firmware version with every result.
 
 Do not report a button, eraser, tilt, pressure, or suspend capability as working
 unless its transition was observed on this branch.
+
+## Recorded X1E acceptance
+
+On 2026-08-30, kernel `7.2.0-jg-0sp11v19-qcom-x1e` at `ec96c9da79af` and
+support commit `6e7aaeee4bfc` passed the installed-system core matrix on the
+X1E/OLED `045e:0c83` panel. Phase 84 used SET_FEATURE `0x05`-only
+initialization and one response per level-low IRQ. The capture recorded 3,903
+virtual-stylus events, pressure 0 through 3309, variation on both tilt axes,
+all four DFT reports, and exact steady-state IRQ/report accounting. The barrel
+button was confirmed manually after the capture. Kernel taint, panel resets,
+host-fault recoveries, transport/protocol errors, and iptsd restarts stayed at
+zero. Normal one-, two-, and three-finger touch was then confirmed to work as
+expected. X1P, eraser, comprehensive touch/gesture regression, forced recovery,
+and repeated suspend/resume are unclaimed.
 
 ## Rollback
 
