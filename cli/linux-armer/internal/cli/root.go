@@ -15,6 +15,7 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/catalog"
 	kernelinstall "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/install"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/release"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/releaseprep"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/manager"
 	userspacecatalog "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/catalog"
 	userspacemanager "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/manager"
@@ -35,6 +36,7 @@ type application struct {
 	images               *manager.ImageManager
 	releases             *release.Client
 	kernelInstaller      kernelInstallationManager
+	kernelReleasePrep    kernelReleasePreparationManager
 	userspace            *userspacemanager.Manager
 	mediaFactory         removableMediaFactory
 	imageValidator       imageValidationFunc
@@ -55,8 +57,9 @@ func NewRootCommand(input io.Reader, output, errorOutput io.Writer) *cobra.Comma
 	loader := catalog.NewLoader(linuxarmer.CatalogFS(), "supported-isos.json")
 	app := &application{
 		in: input, out: output, errOut: errorOutput, loader: loader,
-		releases:        release.NewClient(nil),
-		kernelInstaller: kernelinstall.New(nil),
+		releases:          release.NewClient(nil),
+		kernelInstaller:   kernelinstall.New(nil),
+		kernelReleasePrep: releaseprep.New(),
 	}
 	app.userspace = userspacemanager.New(
 		userspacecatalog.NewLoader(linuxarmer.UserspaceCatalogFS(), "supported-userspace.json"),

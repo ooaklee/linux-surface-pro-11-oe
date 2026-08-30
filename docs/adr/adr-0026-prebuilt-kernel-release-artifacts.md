@@ -5,6 +5,14 @@ title: "ADR026: Prebuilt Kernel Release Artifacts"
 description: Architecture Decision Record (ADR) for publishing optional prebuilt Surface Pro 11 qcom-x1e kernel packages as release artifacts instead of committing binaries to git.
 ---
 
+> **Current implementation:** This ADR records the original release policy.
+> Native preparation and validation now use `linux-armer kernel release
+> prepare` and `linux-armer kernel release validate`; corresponding source and
+> explicit licence evidence are mandatory, and the v3 out-of-tree touchscreen
+> bundle is retired. See
+> [ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md)
+> and the [current release how-to](../how-to/how-to-release-kernel-artifacts.md).
+
 ## Context
 
 [ADR019](adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md) introduced a

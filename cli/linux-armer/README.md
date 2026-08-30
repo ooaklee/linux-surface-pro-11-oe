@@ -60,6 +60,8 @@ linux-armer catalog validate [path]
 
 linux-armer kernel release list
 linux-armer kernel release download [ref]
+linux-armer kernel release prepare --help
+linux-armer kernel release validate <release-directory>
 linux-armer kernel inspect <directory>
 linux-armer kernel preflight <bundle-directory> --root <path> --fallback-abi <abi>
 linux-armer kernel install <bundle-directory> --root <path> --fallback-abi <abi> --dry-run
@@ -226,6 +228,8 @@ The bundle records its release, repository, ABI, version, package digests, and e
 
 `kernel build` owns a compiled ARM64 Docker build policy and does not require a repository helper script. By default it builds the [`sp11/integration-7.2.x`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2.x) branch of the custom kernel; `--git-url` and `--git-branch` select another HTTPS source and branch or tag. The policy pins the Ubuntu 26.04 ARM64 base image by digest and records the exact fetched revision and tree, its own recipe digest, and an installed-toolchain digest beside the packages. `kernel release download` resolves candidate release assets and verifies the publisher checksum manifest before writing a local bundle manifest.
 
+`kernel release prepare` accepts only that exact closed native build output, one or more corresponding-source archives, explicit licence text, a tag-like release identity, and a fresh output path. Its dry run hashes and validates all inputs without creating a parent or output. A real run revalidates the build, copies through private staging, produces one path-free public manifest and British-English notes, checksums the complete set, validates it, and atomically publishes the new local directory. `kernel release validate` performs the same closed-directory structural checks without contacting a remote service. Neither command publishes, installs, elevates privilege, or makes a hardware-qualified claim. The retired `sp11v3` ABI and separate out-of-tree touchscreen modules are rejected because the maintained kernel carries that stack in-tree.
+
 `kernel preflight` is the read-only installation gate. It inspects the exact Debian package metadata, rejects unexpected packages or mixed ABIs, proves that the explicitly selected fallback ABI is the running and bootable kernel, requires a fresh target ABI, and shows the bounded package, initramfs, and GRUB command sequence. The target root and fallback ABI are always explicit. `--running-abi` is accepted only when checking an alternate-root fixture; the live root always uses direct `uname` evidence.
 
 `kernel install` repeats that preflight immediately before mutation, stages immutable package copies, retains the fallback kernel, backs up GRUB, and verifies the installed kernel image, initramfs, module tree, boot entry, and both Surface Pro 11 device trees. A real install requires effective root privilege and `--yes`; the CLI does not elevate itself, change the default kernel, remove the fallback, reboot, or install historical out-of-tree workarounds. If a mutating command or final verification fails, it attempts a bounded rollback and reports the recovery evidence in its receipt.
@@ -264,6 +268,30 @@ linux-armer kernel build \
   --git-branch sp11/integration-7.2.x \
   --output-dir build/linux-armer/kernel-v19
 ```
+
+After materialising the exact recorded source revision and its licence text,
+review and prepare a local release with unique absent output paths:
+
+```sh
+linux-armer kernel release prepare \
+  --build-dir build/linux-armer/kernel-v19 \
+  --output-dir build/release/sp11-qcom-x1e-v19 \
+  --release-name sp11-qcom-x1e-v19 \
+  --source build/linux-armer/release-source/linux-v19.tar.xz \
+  --licence build/linux-armer/release-source/LICENSE.kernel.txt \
+  --dry-run
+
+linux-armer kernel release prepare \
+  --build-dir build/linux-armer/kernel-v19 \
+  --output-dir build/release/sp11-qcom-x1e-v19 \
+  --release-name sp11-qcom-x1e-v19 \
+  --source build/linux-armer/release-source/linux-v19.tar.xz \
+  --licence build/linux-armer/release-source/LICENSE.kernel.txt
+
+linux-armer kernel release validate build/release/sp11-qcom-x1e-v19
+```
+
+Preparation records the supplied source bytes; the operator remains responsible for proving that the archive corresponds to the manifest's exact revision and tree and that its licence evidence is sufficient for redistribution. See the repository's kernel release how-to for the verified source-materialisation procedure.
 
 ## Image catalogue
 

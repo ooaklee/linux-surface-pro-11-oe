@@ -15,6 +15,7 @@ import (
 	kernelbuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/build"
 	kernelinstall "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/install"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/release"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/releaseprep"
 )
 
 // kernelInstallationManager is the delivery-layer boundary for native kernel
@@ -26,6 +27,15 @@ type kernelInstallationManager interface {
 	Install(context.Context, kernelinstall.Request) (kernelinstall.Receipt, error)
 }
 
+// kernelReleasePreparationManager is the delivery-layer boundary for native,
+// local release preparation and closed-directory validation.
+type kernelReleasePreparationManager interface {
+	// Prepare performs a truthful dry run or one atomic local publication.
+	Prepare(context.Context, releaseprep.Request) (releaseprep.Receipt, error)
+	// Validate proves that one directory satisfies the complete release contract.
+	Validate(context.Context, string) (releaseprep.Manifest, error)
+}
+
 // newKernelCommand groups custom kernel build, release, and inspection workflows.
 func (a *application) newKernelCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -34,7 +44,12 @@ func (a *application) newKernelCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 	}
 	releaseCommand := &cobra.Command{Use: "release", Short: "Use versioned kernel release bundles", Args: cobra.NoArgs}
-	releaseCommand.AddCommand(a.newKernelReleaseListCommand(), a.newKernelReleaseDownloadCommand())
+	releaseCommand.AddCommand(
+		a.newKernelReleaseListCommand(),
+		a.newKernelReleaseDownloadCommand(),
+		a.newKernelReleasePrepareCommand(),
+		a.newKernelReleaseValidateCommand(),
+	)
 	command.AddCommand(
 		releaseCommand,
 		a.newKernelInspectCommand(),
@@ -43,6 +58,116 @@ func (a *application) newKernelCommand() *cobra.Command {
 		a.newKernelBuildCommand(),
 	)
 	return command
+}
+
+// newKernelReleasePrepareCommand creates a local, publication-ready release
+// directory from one exact native build and explicit source/licence evidence.
+func (a *application) newKernelReleasePrepareCommand() *cobra.Command {
+	request := releaseprep.Request{}
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "prepare",
+		Short: "Prepare one closed native kernel release directory",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			receipt, prepareErr := a.kernelReleasePreparerForCommand().Prepare(command.Context(), request)
+			return a.writeKernelReleasePrepareReceipt(receipt, asJSON, prepareErr)
+		},
+	}
+	command.Flags().StringVar(&request.BuildDirectory, "build-dir", "", "exact new directory emitted by linux-armer kernel build")
+	command.Flags().StringVar(&request.OutputDirectory, "output-dir", "", "new local release directory to publish atomically")
+	command.Flags().StringVar(&request.ReleaseName, "release-name", "", "tag-like public release identity")
+	command.Flags().StringArrayVar(&request.SourceAssets, "source", nil, "corresponding-source archive (repeat for additional archives)")
+	command.Flags().StringArrayVar(&request.LicenceAssets, "licence", nil, "explicit licence text file (repeat for additional files)")
+	command.Flags().BoolVar(&request.DryRun, "dry-run", false, "validate and report the complete release contract without writing")
+	command.Flags().BoolVar(&asJSON, "json", false, "write a path-free machine-readable receipt")
+	_ = command.MarkFlagRequired("build-dir")
+	_ = command.MarkFlagRequired("output-dir")
+	_ = command.MarkFlagRequired("release-name")
+	_ = command.MarkFlagRequired("source")
+	_ = command.MarkFlagRequired("licence")
+	return command
+}
+
+// newKernelReleaseValidateCommand creates the read-only closed-directory
+// validator without remote tag or publication side effects.
+func (a *application) newKernelReleaseValidateCommand() *cobra.Command {
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "validate <release-directory>",
+		Short: "Validate one complete local kernel release directory",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			manifest, err := a.kernelReleasePreparerForCommand().Validate(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return a.writeKernelReleaseValidation(manifest, asJSON)
+		},
+	}
+	command.Flags().BoolVar(&asJSON, "json", false, "write the path-free public manifest")
+	return command
+}
+
+// kernelReleasePreparerForCommand returns the injected manager or the native
+// default used by narrowly constructed delivery tests.
+func (a *application) kernelReleasePreparerForCommand() kernelReleasePreparationManager {
+	if a != nil && a.kernelReleasePrep != nil {
+		return a.kernelReleasePrep
+	}
+	return releaseprep.New()
+}
+
+// writeKernelReleasePrepareReceipt emits path-free public output while
+// retaining a structured durability receipt when publication fails late.
+func (a *application) writeKernelReleasePrepareReceipt(receipt releaseprep.Receipt, asJSON bool, prepareErr error) error {
+	if asJSON {
+		return errors.Join(prepareErr, a.writeJSON(receipt))
+	}
+	if prepareErr != nil {
+		return prepareErr
+	}
+	packages, sources, licences := kernelReleaseAssetCounts(receipt.Plan.Manifest.Assets)
+	if receipt.Plan.DryRun {
+		_, err := fmt.Fprintf(a.out,
+			"kernel release dry run passed\nrelease: %s\nABI: %s\nversion: %s\npackages: %d\nsource archives: %d\nlicence files: %d\nhardware-qualified: false\nno changes were made\n",
+			receipt.Plan.Manifest.ReleaseName, receipt.Plan.Manifest.ABI, receipt.Plan.Manifest.Version,
+			packages, sources, licences)
+		return err
+	}
+	_, err := fmt.Fprintf(a.out,
+		"kernel release prepared\nrelease: %s\nABI: %s\nversion: %s\npackages: %d\nsource archives: %d\nlicence files: %d\npublished atomically: %t\ndurable: %t\nhardware-qualified: false\n",
+		receipt.Plan.Manifest.ReleaseName, receipt.Plan.Manifest.ABI, receipt.Plan.Manifest.Version,
+		packages, sources, licences, receipt.Published, receipt.Durable)
+	return err
+}
+
+// writeKernelReleaseValidation emits the public release identity without
+// reporting the caller's local directory path.
+func (a *application) writeKernelReleaseValidation(manifest releaseprep.Manifest, asJSON bool) error {
+	if asJSON {
+		return a.writeJSON(manifest)
+	}
+	packages, sources, licences := kernelReleaseAssetCounts(manifest.Assets)
+	_, err := fmt.Fprintf(a.out,
+		"kernel release valid\nrelease: %s\nABI: %s\nversion: %s\npackages: %d\nsource archives: %d\nlicence files: %d\nhardware-qualified: false\n",
+		manifest.ReleaseName, manifest.ABI, manifest.Version, packages, sources, licences)
+	return err
+}
+
+// kernelReleaseAssetCounts returns concise role totals for human-readable output.
+func kernelReleaseAssetCounts(assets []releaseprep.Asset) (packages, sources, licences int) {
+	for _, asset := range assets {
+		switch asset.Kind {
+		case releaseprep.AssetPackage:
+			packages++
+		case releaseprep.AssetSource:
+			sources++
+		case releaseprep.AssetLicence:
+			licences++
+		}
+	}
+	return packages, sources, licences
 }
 
 // newKernelPreflightCommand creates the read-only delivery command for checking
