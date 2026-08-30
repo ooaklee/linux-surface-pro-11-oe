@@ -250,6 +250,8 @@ type ExecutionReceipt struct {
 	Bundle *BundleReceipt `json:"bundle,omitempty"`
 	// OutputDirectory is the newly published package-set directory.
 	OutputDirectory string `json:"output_directory,omitempty"`
+	// AuthoritySHA256 identifies the final path-free structured bundle receipt.
+	AuthoritySHA256 string `json:"authority_sha256,omitempty"`
 	// Cleanup records bounded forced container removal after a failed run.
 	Cleanup *Command `json:"cleanup,omitempty"`
 	// Interrupted reports cancellation of the caller context.

@@ -3,6 +3,8 @@ package release
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +19,20 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/jsonstrict"
 )
 
-// Validate repeats closed-directory, digest, provenance, package, and IPA proof.
-func (manager *Manager) Validate(ctx context.Context, request ValidationRequest) (receipt ValidationReceipt, resultErr error) {
+// Validate retains the release-validation entry point using static proof only.
+func (manager *Manager) Validate(ctx context.Context, request ValidationRequest) (ValidationReceipt, error) {
+	return manager.ValidateStatic(ctx, request)
+}
+
+// ValidateStatic repeats the closed-directory, digest, provenance, package, and
+// tuning proofs without writing files or executing package payload.
+func (manager *Manager) ValidateStatic(ctx context.Context, request ValidationRequest) (ValidationReceipt, error) {
+	var receipt ValidationReceipt
 	if manager == nil || manager.Runner == nil || manager.validate == nil {
 		return receipt, errors.New("camera release validator is unavailable")
 	}
-	if manager.hostOS != "linux" || manager.hostArchitecture != "arm64" {
-		return receipt, fmt.Errorf("camera release validation requires Linux arm64; this binary reports %s/%s", manager.hostOS, manager.hostArchitecture)
+	if !sha256Expression.MatchString(request.ExpectedAuthoritySHA256) {
+		return receipt, errors.New("an expected camera release authority SHA-256 is required")
 	}
 	root, err := canonicalDirectory(request.RepositoryRoot)
 	if err != nil {
@@ -33,9 +42,13 @@ func (manager *Manager) Validate(ctx context.Context, request ValidationRequest)
 	if err != nil {
 		return receipt, err
 	}
-	manifestData, err := os.ReadFile(filepath.Join(directory, ManifestName))
-	if err != nil || len(manifestData) == 0 || len(manifestData) > 8<<20 {
+	manifestData, err := readBoundedReleaseRegular(filepath.Join(directory, ManifestName), 8<<20)
+	if err != nil {
 		return receipt, errors.New("camera release manifest is missing or outside its size limit")
+	}
+	digest := sha256.Sum256(manifestData)
+	if hex.EncodeToString(digest[:]) != request.ExpectedAuthoritySHA256 {
+		return receipt, errors.New("camera release authority SHA-256 does not match the independent hand-off value")
 	}
 	manifest, err := decodeManifest(manifestData)
 	if err != nil {
@@ -44,40 +57,63 @@ func (manager *Manager) Validate(ctx context.Context, request ValidationRequest)
 	if err := validateManifestContract(directory, manifest); err != nil {
 		return receipt, err
 	}
-	transaction, err := os.MkdirTemp("", ".linux-armer-camera-release-validate-")
+	buildAuthority, err := manifestBuildAuthority(manifest)
 	if err != nil {
 		return receipt, err
 	}
-	if err := os.Chmod(transaction, 0o700); err != nil {
-		_ = os.RemoveAll(transaction)
-		return receipt, err
-	}
-	original, err := os.Lstat(transaction)
+	bundle, err := manager.validate(ctx, manager.Runner, camerabuild.ValidationRequest{
+		RepositoryRoot:          root,
+		Directory:               directory,
+		ExpectedAuthoritySHA256: buildAuthority,
+		AdditionalFiles:         []string{ChecksumName, NotesName, ManifestName},
+	})
 	if err != nil {
-		_ = os.RemoveAll(transaction)
-		return receipt, err
-	}
-	defer func() {
-		current, err := os.Lstat(transaction)
-		if err == nil && current.Mode()&os.ModeSymlink == 0 && os.SameFile(original, current) {
-			resultErr = errors.Join(resultErr, os.RemoveAll(transaction))
-		} else if !errors.Is(err, os.ErrNotExist) {
-			resultErr = errors.Join(resultErr, errors.New("refuse to remove changed camera release validation transaction"))
-		}
-	}()
-	for _, artifact := range manifest.BuildArtifacts {
-		if err := copyRegular(filepath.Join(directory, artifact.Name), filepath.Join(transaction, artifact.Name)); err != nil {
-			return receipt, err
-		}
-	}
-	bundle, err := manager.validate(ctx, manager.Runner, camerabuild.ValidationRequest{RepositoryRoot: root, Directory: transaction})
-	if err != nil {
-		return receipt, fmt.Errorf("repeat native camera bundle proof: %w", err)
+		return receipt, fmt.Errorf("repeat static camera bundle proof: %w", err)
 	}
 	if !reflect.DeepEqual(bundle, manifest.Build) {
 		return receipt, errors.New("camera release manifest embeds a different build receipt")
 	}
 	return ValidationReceipt{Directory: directory, ValidatedAt: managerTime(manager), Manifest: manifest}, nil
+}
+
+// manifestBuildAuthority returns the receipt digest bound by the release manifest.
+func manifestBuildAuthority(manifest Manifest) (string, error) {
+	for _, artifact := range manifest.BuildArtifacts {
+		if artifact.Name == camerabuild.ReceiptName && sha256Expression.MatchString(artifact.SHA256) {
+			return artifact.SHA256, nil
+		}
+	}
+	return "", errors.New("camera release manifest omits its build authority digest")
+}
+
+// readBoundedReleaseRegular reads one stable, non-link release authority file.
+func readBoundedReleaseRegular(path string, maximum int64) ([]byte, error) {
+	before, err := os.Lstat(path)
+	if err != nil || before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() || before.Size() <= 0 || before.Size() > maximum {
+		return nil, fmt.Errorf("camera release authority is not a bounded regular file: %s", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(before, opened) || !os.SameFile(opened, current) {
+		return nil, fmt.Errorf("camera release authority changed while it was opened: %s", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil || int64(len(data)) != opened.Size() {
+		return nil, fmt.Errorf("camera release authority changed while it was read: %s", path)
+	}
+	after, err := os.Lstat(path)
+	if err != nil || after.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, after) || after.Size() != opened.Size() {
+		return nil, fmt.Errorf("camera release authority changed after it was read: %s", path)
+	}
+	return data, nil
 }
 
 // decodeManifest strictly decodes one structured local release record.

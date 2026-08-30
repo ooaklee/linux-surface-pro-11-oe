@@ -1,11 +1,14 @@
 package build
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,9 +35,10 @@ Validation date: 2026-08-29
 
 // fakeCameraRunner simulates Docker and Debian inspection while delegating Git.
 type fakeCameraRunner struct {
-	commands  []platform.Command
-	tuning    []byte
-	cancelRun bool
+	commands      []platform.Command
+	tuning        []byte
+	packageFields map[string]string
+	cancelRun     bool
 }
 
 // Run executes simulated mutation commands or delegates harmless Git commands.
@@ -48,6 +52,31 @@ func (runner *fakeCameraRunner) Run(ctx context.Context, command platform.Comman
 	}
 	if command.Name == "dpkg-deb" && len(command.Args) == 3 && command.Args[0] == "--extract" {
 		return runner.extractProof(command.Args[1], command.Args[2])
+	}
+	if command.Name == "dpkg-deb" && len(command.Args) == 3 && command.Args[0] == "--field" {
+		if command.Stdout == nil {
+			return errors.New("static package field inspection lacks an output stream")
+		}
+		_, err := io.WriteString(command.Stdout, runner.packageField(command.Args[1], command.Args[2])+"\n")
+		return err
+	}
+	if command.Name == "dpkg-deb" && len(command.Args) == 2 && command.Args[0] == "--fsys-tarfile" {
+		if command.Stdout == nil {
+			return errors.New("static package inspection lacks an output stream")
+		}
+		archive := tar.NewWriter(command.Stdout)
+		header := &tar.Header{
+			Name: "./usr/share/libcamera/ipa/simple/imx681.yaml",
+			Mode: 0o644,
+			Size: int64(len(runner.tuning)),
+		}
+		if err := archive.WriteHeader(header); err != nil {
+			return err
+		}
+		if _, err := archive.Write(runner.tuning); err != nil {
+			return err
+		}
+		return archive.Close()
 	}
 	if command.Name == "git" {
 		return platform.ExecRunner{}.Run(ctx, command)
@@ -84,6 +113,9 @@ func (runner *fakeCameraRunner) Capture(ctx context.Context, command platform.Co
 
 // packageField derives fixed package metadata from a selected artefact basename.
 func (runner *fakeCameraRunner) packageField(path, field string) string {
+	if value, ok := runner.packageFields[field]; ok {
+		return value
+	}
 	basename := filepath.Base(path)
 	packageName := ""
 	version := ""
@@ -296,6 +328,13 @@ func TestPlanIsDeterministicAndTruthful(t *testing.T) {
 			t.Fatalf("non-native dry-run was not truthful: %+v", first)
 		}
 	}
+	dryReceipt, err := manager.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dryReceipt.Published || dryReceipt.AuthoritySHA256 != "" {
+		t.Fatalf("dry-run published an authority: %+v", dryReceipt)
+	}
 }
 
 // TestFakeRunnerEndToEndBuild verifies the closed native publication contract.
@@ -309,6 +348,16 @@ func TestFakeRunnerEndToEndBuild(t *testing.T) {
 	}
 	if !receipt.Published || receipt.Bundle == nil || len(receipt.Bundle.Artifacts) != 7 || len(receipt.Bundle.ChangesEntries) != 7 {
 		t.Fatalf("incomplete build receipt: %+v", receipt)
+	}
+	authority, err := os.ReadFile(filepath.Join(receipt.OutputDirectory, ReceiptName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.AuthoritySHA256 != digestBytes(authority) || !baseHashExpression.MatchString(receipt.AuthoritySHA256) {
+		t.Fatalf("build authority digest = %q", receipt.AuthoritySHA256)
+	}
+	if bytes.Contains(authority, []byte("authority_sha256")) {
+		t.Fatal("build authority contains a self-digest")
 	}
 	entries, err := os.ReadDir(receipt.OutputDirectory)
 	if err != nil {
@@ -329,6 +378,124 @@ func TestFakeRunnerEndToEndBuild(t *testing.T) {
 			t.Fatalf("host shell invocation escaped compiled policy: %+v", command)
 		}
 	}
+}
+
+// TestValidateBundleStaticNeverExecutesPayload verifies the read-only proof and
+// independently supplied authority digest on every supported host architecture.
+func TestValidateBundleStaticNeverExecutesPayload(t *testing.T) {
+	root, tuning := makeCameraRepository(t)
+	runner := &fakeCameraRunner{tuning: tuning}
+	receipt, err := newExecutableTestManager(runner).Run(context.Background(), Request{RepositoryRoot: root, MinimumFreeGiB: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.commands = nil
+	validated, err := ValidateBundleStatic(context.Background(), runner, ValidationRequest{
+		RepositoryRoot:          root,
+		Directory:               receipt.OutputDirectory,
+		ExpectedAuthoritySHA256: receipt.AuthoritySHA256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.PackageVersion != receipt.Bundle.PackageVersion {
+		t.Fatalf("static bundle = %+v", validated)
+	}
+	for _, command := range runner.commands {
+		if command.Name == "git" {
+			continue
+		}
+		if command.Name != "dpkg-deb" || len(command.Args) == 0 || (command.Args[0] != "--field" && command.Args[0] != "--fsys-tarfile") {
+			t.Fatalf("static validation executed an unsafe command: %+v", command)
+		}
+	}
+}
+
+// TestValidateBundleStaticRejectsAuthorityAndTuningMismatch verifies both
+// independent hand-off authority and streamed package-data identity.
+func TestValidateBundleStaticRejectsAuthorityAndTuningMismatch(t *testing.T) {
+	root, tuning := makeCameraRepository(t)
+	runner := &fakeCameraRunner{tuning: tuning}
+	receipt, err := newExecutableTestManager(runner).Run(context.Background(), Request{RepositoryRoot: root, MinimumFreeGiB: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ValidationRequest{RepositoryRoot: root, Directory: receipt.OutputDirectory}
+	if _, err := ValidateBundleStatic(context.Background(), runner, request); err == nil {
+		t.Fatal("static validation accepted a missing independent authority digest")
+	}
+	request.ExpectedAuthoritySHA256 = strings.Repeat("0", 64)
+	if _, err := ValidateBundleStatic(context.Background(), runner, request); err == nil {
+		t.Fatal("static validation accepted a mismatched independent authority digest")
+	}
+	request.ExpectedAuthoritySHA256 = receipt.AuthoritySHA256
+	runner.tuning = []byte("version: hostile\n")
+	if _, err := ValidateBundleStatic(context.Background(), runner, request); err == nil || !strings.Contains(err.Error(), "tuning differs") {
+		t.Fatalf("static tuning mismatch error = %v", err)
+	}
+	runner.tuning = tuning
+	runner.packageFields = map[string]string{"Architecture": "amd64"}
+	if _, err := ValidateBundleStatic(context.Background(), runner, request); err == nil || !strings.Contains(err.Error(), "Architecture") {
+		t.Fatalf("static package-architecture error = %v", err)
+	}
+}
+
+// TestStaticTuningTarRejectsAmbiguousMembers verifies no link or duplicate can
+// stand in for the one bounded regular tuning authority.
+func TestStaticTuningTarRejectsAmbiguousMembers(t *testing.T) {
+	tuning := []byte("version: 1\nalgorithms: []\n")
+	digest := digestBytes(tuning)
+	if err := inspectTuningTar(bytes.NewReader(makeTuningTar(t, []tarTestEntry{{name: "./usr/share/libcamera/ipa/simple/imx681.yaml", data: tuning}})), digest); err != nil {
+		t.Fatal(err)
+	}
+	for name, entries := range map[string][]tarTestEntry{
+		"missing":   {{name: "./usr/share/libcamera/ipa/simple/other.yaml", data: tuning}},
+		"duplicate": {{name: "usr/share/libcamera/ipa/simple/imx681.yaml", data: tuning}, {name: "./usr/share/libcamera/ipa/simple/imx681.yaml", data: tuning}},
+		"link":      {{name: "usr/share/libcamera/ipa/simple/imx681.yaml", typeflag: tar.TypeSymlink}},
+		"oversized": {{name: "usr/share/libcamera/ipa/simple/imx681.yaml", data: make([]byte, maximumTuningBytes+1)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := inspectTuningTar(bytes.NewReader(makeTuningTar(t, entries)), digest); err == nil {
+				t.Fatal("ambiguous tuning archive passed")
+			}
+		})
+	}
+}
+
+// tarTestEntry describes one package-payload member for static validation tests.
+type tarTestEntry struct {
+	name     string
+	data     []byte
+	typeflag byte
+}
+
+// makeTuningTar returns one complete in-memory package filesystem tar stream.
+func makeTuningTar(t *testing.T, entries []tarTestEntry) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	archive := tar.NewWriter(&output)
+	for _, entry := range entries {
+		typeflag := entry.typeflag
+		if typeflag == 0 {
+			typeflag = tar.TypeReg
+		}
+		header := &tar.Header{Name: entry.name, Mode: 0o644, Typeflag: typeflag}
+		if typeflag == tar.TypeReg || typeflag == tar.TypeRegA {
+			header.Size = int64(len(entry.data))
+		}
+		if err := archive.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if len(entry.data) != 0 {
+			if _, err := archive.Write(entry.data); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
 }
 
 // TestBuildRejectsMutationLinksAndCollisions verifies hostile output boundaries.

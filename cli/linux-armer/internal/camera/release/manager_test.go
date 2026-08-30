@@ -32,9 +32,10 @@ func (rejectingRunner) Capture(context.Context, platform.Command) ([]byte, error
 
 // releaseFixture contains one path-free bundle and its local directories.
 type releaseFixture struct {
-	root      string
-	artifacts string
-	bundle    camerabuild.BundleReceipt
+	root         string
+	artifacts    string
+	bundle       camerabuild.BundleReceipt
+	authoritySHA string
 }
 
 // makeReleaseFixture creates exactly eight regular build artefacts beneath a repo.
@@ -93,7 +94,8 @@ func makeReleaseFixture(t *testing.T) releaseFixture {
 	if err := os.WriteFile(filepath.Join(artifacts, camerabuild.ReceiptName), append(receipt, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return releaseFixture{root: root, artifacts: artifacts, bundle: bundle}
+	authority := sha256.Sum256(append(receipt, '\n'))
+	return releaseFixture{root: root, artifacts: artifacts, bundle: bundle, authoritySHA: hex.EncodeToString(authority[:])}
 }
 
 // writeFixtureFile creates one artefact and returns matching receipt metadata.
@@ -109,19 +111,18 @@ func writeFixtureFile(t *testing.T, directory, name string, data []byte) camerab
 // fixtureRequest returns the explicit current-generation release pairing.
 func fixtureRequest(fixture releaseFixture) Request {
 	return Request{
-		RepositoryRoot:     fixture.root,
-		ArtifactsDirectory: fixture.artifacts,
-		Tag:                "sp11-imx681-libcamera-v2",
-		KernelTag:          "sp11-qcom-x1e-7.2.0-jg-0sp11v19",
-		KernelABI:          "7.2.0-jg-0sp11v19-qcom-x1e",
+		RepositoryRoot:               fixture.root,
+		ArtifactsDirectory:           fixture.artifacts,
+		Tag:                          "sp11-imx681-libcamera-v2",
+		KernelTag:                    "sp11-qcom-x1e-7.2.0-jg-0sp11v19",
+		KernelABI:                    "7.2.0-jg-0sp11v19-qcom-x1e",
+		ExpectedBuildAuthoritySHA256: fixture.authoritySHA,
 	}
 }
 
 // executableReleaseManager returns a deterministic manager with injected proof.
 func executableReleaseManager(bundle camerabuild.BundleReceipt) *Manager {
 	manager := New(rejectingRunner{})
-	manager.hostOS = "linux"
-	manager.hostArchitecture = "arm64"
 	manager.now = func() time.Time { return time.Date(2026, 8, 30, 15, 0, 0, 0, time.UTC) }
 	manager.validate = func(context.Context, platform.Runner, camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error) {
 		return bundle, nil
@@ -146,6 +147,16 @@ func TestPlanIsDeterministicLocalAndExplicit(t *testing.T) {
 	if !reflect.DeepEqual(first, second) || first.MutatesRemote || !first.Executable {
 		t.Fatalf("unexpected release plan: %+v", first)
 	}
+	if first.ExpectedBuildAuthoritySHA256 != fixture.authoritySHA {
+		t.Fatalf("release plan omitted build authority: %+v", first)
+	}
+	dryReceipt, err := manager.Prepare(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dryReceipt.Published || dryReceipt.AuthoritySHA256 != "" {
+		t.Fatalf("dry-run published an authority: %+v", dryReceipt)
+	}
 	emptyPairing := request
 	emptyPairing.KernelTag = ""
 	if _, err := manager.Plan(context.Background(), emptyPairing); err == nil {
@@ -157,12 +168,29 @@ func TestPlanIsDeterministicLocalAndExplicit(t *testing.T) {
 func TestPrepareCreatesClosedElevenFileRelease(t *testing.T) {
 	fixture := makeReleaseFixture(t)
 	manager := executableReleaseManager(fixture.bundle)
+	var validationRequests []camerabuild.ValidationRequest
+	manager.validate = func(_ context.Context, _ platform.Runner, request camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error) {
+		request.AdditionalFiles = append([]string(nil), request.AdditionalFiles...)
+		validationRequests = append(validationRequests, request)
+		return fixture.bundle, nil
+	}
 	receipt, err := manager.Prepare(context.Background(), fixtureRequest(fixture))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !receipt.Published || receipt.Manifest == nil || receipt.Manifest.RemoteMutation {
 		t.Fatalf("incomplete local release receipt: %+v", receipt)
+	}
+	if len(validationRequests) != 1 || validationRequests[0].ExpectedAuthoritySHA256 != fixture.authoritySHA || len(validationRequests[0].AdditionalFiles) != 0 {
+		t.Fatalf("release preparation build authority hand-off = %+v", validationRequests)
+	}
+	manifestAuthority, err := os.ReadFile(filepath.Join(receipt.Plan.ReleaseDirectory, ManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest := sha256.Sum256(manifestAuthority)
+	if receipt.AuthoritySHA256 != hex.EncodeToString(manifestDigest[:]) {
+		t.Fatalf("release authority digest = %q", receipt.AuthoritySHA256)
 	}
 	entries, err := os.ReadDir(receipt.Plan.ReleaseDirectory)
 	if err != nil {
@@ -192,13 +220,77 @@ func TestPrepareCreatesClosedElevenFileRelease(t *testing.T) {
 	if strings.Contains(string(manifestData), fixture.root) || !strings.Contains(string(manifestData), fixture.bundle.Source.CopyrightFileSHA256) {
 		t.Fatal("structured manifest leaked a local path or omitted copyright evidence")
 	}
-	validated, err := manager.Validate(context.Background(), ValidationRequest{RepositoryRoot: fixture.root, Directory: receipt.Plan.ReleaseDirectory})
+	if strings.Contains(string(manifestData), "authority_sha256") {
+		t.Fatal("release manifest contains a self-digest")
+	}
+	validated, err := manager.Validate(context.Background(), ValidationRequest{
+		RepositoryRoot:          fixture.root,
+		Directory:               receipt.Plan.ReleaseDirectory,
+		ExpectedAuthoritySHA256: receipt.AuthoritySHA256,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if validated.Manifest.Tag != receipt.Manifest.Tag || validated.Directory != receipt.Plan.ReleaseDirectory {
 		t.Fatalf("validation receipt = %+v", validated)
 	}
+	if len(validationRequests) != 2 || validationRequests[1].ExpectedAuthoritySHA256 != fixture.authoritySHA || !reflect.DeepEqual(validationRequests[1].AdditionalFiles, []string{ChecksumName, NotesName, ManifestName}) {
+		t.Fatalf("release validation build authority hand-off = %+v", validationRequests)
+	}
+}
+
+// TestValidateStaticIsReadOnlyAndRequiresAuthority verifies host-independent
+// validation, the enclosing closed set, and the independent manifest hand-off.
+func TestValidateStaticIsReadOnlyAndRequiresAuthority(t *testing.T) {
+	fixture := makeReleaseFixture(t)
+	manager := executableReleaseManager(fixture.bundle)
+	receipt, err := manager.Prepare(context.Background(), fixtureRequest(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotReleaseDirectory(t, receipt.Plan.ReleaseDirectory)
+	validated, err := manager.ValidateStatic(context.Background(), ValidationRequest{
+		RepositoryRoot:          fixture.root,
+		Directory:               receipt.Plan.ReleaseDirectory,
+		ExpectedAuthoritySHA256: receipt.AuthoritySHA256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.Manifest.Tag != receipt.Manifest.Tag {
+		t.Fatalf("static validation receipt = %+v", validated)
+	}
+	after := snapshotReleaseDirectory(t, receipt.Plan.ReleaseDirectory)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("static validation changed release files:\nbefore=%v\nafter=%v", before, after)
+	}
+	request := ValidationRequest{RepositoryRoot: fixture.root, Directory: receipt.Plan.ReleaseDirectory}
+	if _, err := manager.ValidateStatic(context.Background(), request); err == nil {
+		t.Fatal("static release validation accepted a missing manifest authority")
+	}
+	request.ExpectedAuthoritySHA256 = strings.Repeat("0", 64)
+	if _, err := manager.Validate(context.Background(), request); err == nil {
+		t.Fatal("release validation accepted a mismatched manifest authority")
+	}
+}
+
+// snapshotReleaseDirectory records names and digests without changing a fixture.
+func snapshotReleaseDirectory(t *testing.T, directory string) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(data)
+		snapshot[entry.Name()] = hex.EncodeToString(digest[:])
+	}
+	return snapshot
 }
 
 // TestPrepareRejectsLinksAndCollision verifies no prior release is overwritten.
@@ -254,7 +346,7 @@ func TestValidateRejectsGeneratedFileMutation(t *testing.T) {
 	if err := os.WriteFile(notes, []byte("altered notes\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Validate(context.Background(), ValidationRequest{RepositoryRoot: fixture.root, Directory: receipt.Plan.ReleaseDirectory}); err == nil {
+	if _, err := manager.Validate(context.Background(), ValidationRequest{RepositoryRoot: fixture.root, Directory: receipt.Plan.ReleaseDirectory, ExpectedAuthoritySHA256: receipt.AuthoritySHA256}); err == nil {
 		t.Fatal("mutated release notes passed validation")
 	}
 }
@@ -267,6 +359,7 @@ func TestHostileReleaseNamesAndRoutesFail(t *testing.T) {
 		"bidirectional tag": func(request *Request) { request.Tag = "release\u202evil" },
 		"output traversal":  func(request *Request) { request.OutputDirectory = "../release" },
 		"mismatched kernel": func(request *Request) { request.KernelTag = "sp11-qcom-x1e-other" },
+		"missing authority": func(request *Request) { request.ExpectedBuildAuthoritySHA256 = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := fixtureRequest(fixture)

@@ -1,6 +1,7 @@
 package build
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -28,6 +29,8 @@ const (
 	maximumPackageBytes = int64(256 << 20)
 	// maximumChangesEntryBytes bounds explicitly accounted omitted build outputs.
 	maximumChangesEntryBytes = int64(4) << 30
+	// maximumPackageTarBytes bounds streamed, uncompressed package inspection.
+	maximumPackageTarBytes = int64(1) << 30
 )
 
 // metadataNames is the exact private container-to-host provenance exchange.
@@ -50,8 +53,12 @@ var dockerVersionExpression = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+_-]{0,
 type ValidationRequest struct {
 	// RepositoryRoot supplies the current HEAD-authenticated camera inputs.
 	RepositoryRoot string
-	// Directory is the exact eight-file package-set directory.
+	// Directory is the bundle or explicitly closed enclosing directory.
 	Directory string
+	// ExpectedAuthoritySHA256 supplies static validation's independent receipt digest.
+	ExpectedAuthoritySHA256 string
+	// AdditionalFiles names enclosing, caller-authorised regular files.
+	AdditionalFiles []string
 }
 
 // debianRecord contains strict scalar fields and changes checksum entries.
@@ -138,8 +145,23 @@ func validateExchange(ctx context.Context, runner platform.Runner, plan Plan, tr
 	}, nil
 }
 
-// ValidateBundle revalidates a complete published bundle against current HEAD.
+// ValidateBundle revalidates a trusted build output, including executable IPA proof.
 func ValidateBundle(ctx context.Context, runner platform.Runner, request ValidationRequest) (BundleReceipt, error) {
+	if len(request.AdditionalFiles) != 0 {
+		return BundleReceipt{}, errors.New("executable camera bundle validation requires an exact build directory")
+	}
+	return validateBundle(ctx, runner, request, false)
+}
+
+// ValidateBundleStatic revalidates a published bundle without writing files or
+// executing package payload. It authenticates, but does not repeat, the recorded
+// same-build executable proof and requires an independent receipt digest.
+func ValidateBundleStatic(ctx context.Context, runner platform.Runner, request ValidationRequest) (BundleReceipt, error) {
+	return validateBundle(ctx, runner, request, true)
+}
+
+// validateBundle applies the shared receipt, source, and closed-set authority.
+func validateBundle(ctx context.Context, runner platform.Runner, request ValidationRequest, static bool) (BundleReceipt, error) {
 	if runner == nil {
 		runner = platform.ExecRunner{}
 	}
@@ -156,6 +178,10 @@ func ValidateBundle(ctx context.Context, runner platform.Runner, request Validat
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return BundleReceipt{}, fmt.Errorf("camera bundle must be a real directory: %s", directory)
 	}
+	canonical, err := filepath.EvalSymlinks(directory)
+	if err != nil || filepath.Clean(canonical) != directory {
+		return BundleReceipt{}, fmt.Errorf("camera bundle route contains a symbolic link: %s", directory)
+	}
 	inputs, err := authenticateInputs(ctx, runner, root)
 	if err != nil {
 		return BundleReceipt{}, err
@@ -163,6 +189,15 @@ func ValidateBundle(ctx context.Context, runner platform.Runner, request Validat
 	receiptData, err := readBoundedRegular(filepath.Join(directory, ReceiptName), maximumBuildRecordBytes)
 	if err != nil {
 		return BundleReceipt{}, err
+	}
+	if static {
+		if !baseHashExpression.MatchString(request.ExpectedAuthoritySHA256) {
+			return BundleReceipt{}, errors.New("an expected camera build authority SHA-256 is required")
+		}
+		digest := sha256.Sum256(receiptData)
+		if hex.EncodeToString(digest[:]) != request.ExpectedAuthoritySHA256 {
+			return BundleReceipt{}, errors.New("camera build authority SHA-256 does not match the independent hand-off value")
+		}
 	}
 	receipt, err := decodeBundleReceipt(receiptData)
 	if err != nil {
@@ -179,10 +214,25 @@ func ValidateBundle(ctx context.Context, runner platform.Runner, request Validat
 	for _, artifact := range receipt.Artifacts {
 		expectedNames[artifact.Name] = struct{}{}
 	}
+	for _, name := range request.AdditionalFiles {
+		if !safeBasename(name) {
+			return BundleReceipt{}, fmt.Errorf("unsafe additional camera file name: %q", name)
+		}
+		if _, exists := expectedNames[name]; exists {
+			return BundleReceipt{}, fmt.Errorf("additional camera file repeats an authority name: %s", name)
+		}
+		expectedNames[name] = struct{}{}
+	}
 	if err := validateClosedDirectory(directory, expectedNames); err != nil {
 		return BundleReceipt{}, err
 	}
-	validated, changes, err := validateArtifactSet(ctx, runner, directory, receipt.PackageVersion, inputs.inputs[2].SHA256)
+	var validated []Artifact
+	var changes []ChangesEntry
+	if static {
+		validated, changes, err = validateArtifactSetStatic(ctx, runner, directory, receipt.PackageVersion, inputs.inputs[2].SHA256, request.AdditionalFiles)
+	} else {
+		validated, changes, err = validateArtifactSet(ctx, runner, directory, receipt.PackageVersion, inputs.inputs[2].SHA256)
+	}
 	if err != nil {
 		return BundleReceipt{}, err
 	}
@@ -218,6 +268,37 @@ func readMetadataDirectory(directory string) (map[string]string, error) {
 
 // validateArtifactSet verifies exact files, package identity, changes, and IPA proof.
 func validateArtifactSet(ctx context.Context, runner platform.Runner, directory, version, tuningSHA string) ([]Artifact, []ChangesEntry, error) {
+	artifacts, changes, packageFiles, err := validateArtifactRecords(ctx, runner, directory, version, nil, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := verifyIPA(ctx, runner, directory, packageFiles, tuningSHA); err != nil {
+		return nil, nil, err
+	}
+	return artifacts, changes, nil
+}
+
+// validateArtifactSetStatic verifies package records and streams only the
+// tuning data needed for identity, without extracting or executing payload.
+func validateArtifactSetStatic(ctx context.Context, runner platform.Runner, directory, version, tuningSHA string, additional []string) ([]Artifact, []ChangesEntry, error) {
+	artifacts, changes, packageFiles, err := validateArtifactRecords(ctx, runner, directory, version, additional, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := verifyTuningStatic(ctx, runner, filepath.Join(directory, packageFiles[1]), tuningSHA); err != nil {
+		return nil, nil, err
+	}
+	for index, name := range packageFiles {
+		after, err := inspectArtifact(filepath.Join(directory, name), maximumPackageBytes)
+		if err != nil || after != artifacts[index] {
+			return nil, nil, fmt.Errorf("camera package changed during static inspection: %s", name)
+		}
+	}
+	return artifacts, changes, nil
+}
+
+// validateArtifactRecords verifies exact files, package identity, and records.
+func validateArtifactRecords(ctx context.Context, runner platform.Runner, directory, version string, additional []string, static bool) ([]Artifact, []ChangesEntry, []string, error) {
 	expected := make(map[string]struct{}, 7)
 	packageFiles := make([]string, 0, len(runtimePackages))
 	for _, name := range runtimePackages {
@@ -232,8 +313,11 @@ func validateArtifactSet(ctx context.Context, runner platform.Runner, directory,
 	if info, err := os.Lstat(filepath.Join(directory, ReceiptName)); err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() {
 		expected[ReceiptName] = struct{}{}
 	}
+	for _, name := range additional {
+		expected[name] = struct{}{}
+	}
 	if err := validateClosedDirectory(directory, expected); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	artifacts := make([]Artifact, 0, 7)
 	for index, name := range packageFiles {
@@ -248,46 +332,52 @@ func validateArtifactSet(ctx context.Context, runner platform.Runner, directory,
 			{label: "Architecture", want: Architecture},
 		}
 		for _, field := range fields {
-			value, err := captureDirect(ctx, runner, Command{Name: "dpkg-deb", Args: []string{"--field", path, field.label}})
+			var value string
+			var err error
+			if static {
+				value, err = captureBoundedScalar(ctx, runner, platform.Command{Name: "dpkg-deb", Args: []string{"--field", path, field.label}}, 4096)
+			} else {
+				value, err = captureDirect(ctx, runner, Command{Name: "dpkg-deb", Args: []string{"--field", path, field.label}})
+			}
 			if err != nil || value != field.want {
-				return nil, nil, fmt.Errorf("camera package %s has unexpected %s %q", name, field.label, value)
+				return nil, nil, nil, fmt.Errorf("camera package %s has unexpected %s %q", name, field.label, value)
 			}
 		}
 		artifact, err := inspectArtifact(path, maximumPackageBytes)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		artifacts = append(artifacts, artifact)
 	}
 	changesData, err := readBoundedRegular(filepath.Join(directory, changesName), maximumBuildRecordBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	changesRecord, err := parseDebianRecord(changesData, true)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse camera changes record: %w", err)
+		return nil, nil, nil, fmt.Errorf("parse camera changes record: %w", err)
 	}
 	if err := validateRecordIdentity(changesRecord, version, "changes"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	buildinfoData, err := readBoundedRegular(filepath.Join(directory, buildinfoName), maximumBuildRecordBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	buildinfoRecord, err := parseDebianRecord(buildinfoData, false)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse camera buildinfo record: %w", err)
+		return nil, nil, nil, fmt.Errorf("parse camera buildinfo record: %w", err)
 	}
 	if err := validateRecordIdentity(buildinfoRecord, version, "buildinfo"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	changesArtifact, err := inspectArtifact(filepath.Join(directory, changesName), maximumBuildRecordBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	buildinfoArtifact, err := inspectArtifact(filepath.Join(directory, buildinfoName), maximumBuildRecordBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	artifacts = append(artifacts, changesArtifact, buildinfoArtifact)
 	delivered := make(map[string]Artifact, 6)
@@ -300,22 +390,63 @@ func validateArtifactSet(ctx context.Context, runner platform.Runner, directory,
 		selected, ok := delivered[entry.Name]
 		if ok {
 			if selected.SHA256 != entry.SHA256 || selected.Size != entry.Size {
-				return nil, nil, fmt.Errorf("camera changes entry differs from delivered file: %s", entry.Name)
+				return nil, nil, nil, fmt.Errorf("camera changes entry differs from delivered file: %s", entry.Name)
 			}
 			seenDelivered[entry.Name] = true
 		}
 		if _, exists := expected[entry.Name]; exists && !ok {
-			return nil, nil, fmt.Errorf("changes record unexpectedly identifies %s", entry.Name)
+			return nil, nil, nil, fmt.Errorf("changes record unexpectedly identifies %s", entry.Name)
 		}
 		changes = append(changes, ChangesEntry{Artifact: entry, Delivered: ok})
 	}
 	if len(seenDelivered) != len(delivered) {
-		return nil, nil, errors.New("changes record does not bind all five packages and buildinfo")
+		return nil, nil, nil, errors.New("changes record does not bind all five packages and buildinfo")
 	}
-	if err := verifyIPA(ctx, runner, directory, packageFiles, tuningSHA); err != nil {
-		return nil, nil, err
+	return artifacts, changes, packageFiles, nil
+}
+
+// boundedOutput accepts at most one fixed amount of external command output.
+type boundedOutput struct {
+	buffer  bytes.Buffer
+	maximum int
+}
+
+// Write implements io.Writer and fails closed before exceeding the bound.
+func (output *boundedOutput) Write(data []byte) (int, error) {
+	if len(data) > output.maximum-output.buffer.Len() {
+		return 0, errors.New("external command output exceeds its static inspection limit")
 	}
-	return artifacts, changes, nil
+	return output.buffer.Write(data)
+}
+
+// captureBoundedOutput runs one trusted inspection command with bounded output.
+func captureBoundedOutput(ctx context.Context, runner platform.Runner, command platform.Command, maximum int64) ([]byte, error) {
+	if maximum <= 0 || maximum > int64(^uint(0)>>1) {
+		return nil, errors.New("external command output bound is invalid")
+	}
+	stdout := &boundedOutput{maximum: int(maximum)}
+	stderr := &boundedOutput{maximum: 4096}
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := runner.Run(ctx, command); err != nil {
+		if stderr.buffer.Len() != 0 {
+			return nil, fmt.Errorf("%w: %s", err, stderr.buffer.String())
+		}
+		return nil, err
+	}
+	return append([]byte(nil), stdout.buffer.Bytes()...), nil
+}
+
+// captureBoundedScalar rejects NUL and returns one trimmed bounded value.
+func captureBoundedScalar(ctx context.Context, runner platform.Runner, command platform.Command, maximum int64) (string, error) {
+	data, err := captureBoundedOutput(ctx, runner, command, maximum)
+	if err != nil {
+		return "", err
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return "", errors.New("external command returned NUL-bearing output")
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 // verifyIPA extracts the coherent core, IPA, and verifier into a private root.
@@ -371,6 +502,93 @@ func verifyIPA(ctx context.Context, runner platform.Runner, directory string, pa
 	})
 	if err != nil || strings.TrimSpace(string(output)) != "IPA module signature is valid" {
 		return fmt.Errorf("same-build IPA signature verification failed: %w", err)
+	}
+	return nil
+}
+
+// verifyTuningStatic streams the IPA package filesystem archive through the Go
+// tar reader and never writes or executes any package member.
+func verifyTuningStatic(ctx context.Context, runner platform.Runner, packagePath, tuningSHA string) error {
+	commandContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	reader, writer := io.Pipe()
+	completed := make(chan error, 1)
+	stderr := &boundedOutput{maximum: 4096}
+	go func() {
+		runErr := runner.Run(commandContext, platform.Command{
+			Name:   "dpkg-deb",
+			Args:   []string{"--fsys-tarfile", packagePath},
+			Stdout: writer,
+			Stderr: stderr,
+		})
+		if runErr != nil && stderr.buffer.Len() != 0 {
+			runErr = fmt.Errorf("%w: %s", runErr, stderr.buffer.String())
+		}
+		closeErr := writer.CloseWithError(runErr)
+		completed <- errors.Join(runErr, closeErr)
+	}()
+	inspectionErr := inspectTuningTar(reader, tuningSHA)
+	if inspectionErr != nil {
+		cancel()
+		_ = reader.CloseWithError(inspectionErr)
+	} else {
+		_ = reader.Close()
+	}
+	runErr := <-completed
+	if inspectionErr != nil {
+		return inspectionErr
+	}
+	if runErr != nil {
+		return fmt.Errorf("stream camera IPA package payload: %w", runErr)
+	}
+	return nil
+}
+
+// inspectTuningTar checks one unique regular tuning member in a bounded stream.
+func inspectTuningTar(source io.Reader, tuningSHA string) error {
+	const tuningPath = "usr/share/libcamera/ipa/simple/imx681.yaml"
+	limited := &io.LimitedReader{R: source, N: maximumPackageTarBytes + 1}
+	archive := tar.NewReader(limited)
+	found := false
+	for {
+		header, err := archive.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read camera IPA package archive: %w", err)
+		}
+		name := strings.TrimPrefix(header.Name, "./")
+		if name != tuningPath {
+			continue
+		}
+		if found {
+			return errors.New("camera IPA package repeats the IMX681 tuning file")
+		}
+		found = true
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return errors.New("camera IPA package tuning member is not a regular file")
+		}
+		if header.Size <= 0 || header.Size > maximumTuningBytes {
+			return errors.New("camera IPA package tuning size is outside policy")
+		}
+		digest := sha256.New()
+		written, err := io.Copy(digest, archive)
+		if err != nil || written != header.Size {
+			return errors.New("camera IPA package tuning member is incomplete")
+		}
+		if hex.EncodeToString(digest.Sum(nil)) != tuningSHA {
+			return errors.New("packaged IMX681 tuning differs from authenticated support input")
+		}
+	}
+	if _, err := io.Copy(io.Discard, limited); err != nil {
+		return fmt.Errorf("finish camera IPA package archive: %w", err)
+	}
+	if limited.N == 0 {
+		return errors.New("camera IPA package archive exceeds its static inspection limit")
+	}
+	if !found {
+		return errors.New("camera IPA package omits the IMX681 tuning file")
 	}
 	return nil
 }
@@ -633,7 +851,13 @@ func validateReceiptCommit(ctx context.Context, runner platform.Runner, root str
 		return errors.New("camera build receipt has an incomplete input set")
 	}
 	for index, relative := range inputPaths {
-		data, err := runner.Capture(ctx, platform.Command{Name: "git", Args: []string{"-C", root, "show", receipt.SupportCommit + ":" + relative}})
+		maximum := maximumPatchBytes
+		if index == 0 {
+			maximum = maximumBaseBytes
+		} else if index == 2 {
+			maximum = maximumTuningBytes
+		}
+		data, err := captureBoundedOutput(ctx, runner, platform.Command{Name: "git", Args: []string{"-C", root, "show", receipt.SupportCommit + ":" + relative}}, maximum)
 		if err != nil {
 			return fmt.Errorf("read camera build input %s: %w", relative, err)
 		}

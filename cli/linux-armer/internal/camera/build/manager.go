@@ -211,8 +211,13 @@ func (manager *Manager) Run(ctx context.Context, request Request) (receipt Execu
 	if err != nil {
 		return receipt, err
 	}
+	authority, err := inspectArtifact(filepath.Join(published, ReceiptName), maximumBuildRecordBytes)
+	if err != nil {
+		return receipt, fmt.Errorf("inspect published camera build authority: %w", err)
+	}
 	receipt.Bundle = &bundle
 	receipt.OutputDirectory = published
+	receipt.AuthoritySHA256 = authority.SHA256
 	receipt.Published = true
 	return receipt, nil
 }
@@ -251,7 +256,7 @@ func authenticateInputs(ctx context.Context, runner platform.Runner, root string
 		if _, err := captureDirect(ctx, runner, Command{Name: "git", Args: []string{"-C", root, "ls-files", "--error-unmatch", "--", relative}}); err != nil {
 			return preparedInputs{}, fmt.Errorf("camera build input is not tracked: %s", relative)
 		}
-		headBytes, err := runner.Capture(ctx, platform.Command{Name: "git", Args: []string{"-C", root, "show", commit + ":" + relative}})
+		headBytes, err := captureBoundedOutput(ctx, runner, platform.Command{Name: "git", Args: []string{"-C", root, "show", commit + ":" + relative}}, maximum)
 		if err != nil {
 			return preparedInputs{}, fmt.Errorf("read %s from support HEAD: %w", relative, err)
 		}

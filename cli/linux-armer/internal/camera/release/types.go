@@ -37,6 +37,8 @@ type Request struct {
 	KernelTag string
 	// KernelABI records the explicitly paired installed qcom-x1e ABI.
 	KernelABI string
+	// ExpectedBuildAuthoritySHA256 is the independent build-receipt hand-off.
+	ExpectedBuildAuthoritySHA256 string
 	// DryRun returns a truthful plan without validation commands or filesystem writes.
 	DryRun bool
 }
@@ -57,11 +59,13 @@ type Plan struct {
 	KernelTag string `json:"kernel_tag"`
 	// KernelABI is the explicitly paired installed ABI.
 	KernelABI string `json:"kernel_abi"`
-	// DryRun reports that no local mutation or executable proof may occur.
+	// ExpectedBuildAuthoritySHA256 is the required build-receipt hand-off.
+	ExpectedBuildAuthoritySHA256 string `json:"expected_build_authority_sha256"`
+	// DryRun reports that no local mutation or package inspection may occur.
 	DryRun bool `json:"dry_run"`
-	// Executable reports whether this host can repeat the ARM64 IPA proof.
+	// Executable reports whether static release preparation may proceed.
 	Executable bool `json:"executable"`
-	// ExecutionBlocker explains a dry-run which cannot execute on this host.
+	// ExecutionBlocker explains why a static preparation cannot proceed.
 	ExecutionBlocker string `json:"execution_blocker,omitempty"`
 	// MutatesRemote is always false because this domain never publishes.
 	MutatesRemote bool `json:"mutates_remote"`
@@ -127,6 +131,8 @@ type Receipt struct {
 	CompletedAt time.Time `json:"completed_at"`
 	// Manifest is present after complete validation.
 	Manifest *Manifest `json:"manifest,omitempty"`
+	// AuthoritySHA256 identifies the final path-free release manifest.
+	AuthoritySHA256 string `json:"authority_sha256,omitempty"`
 	// Published reports atomic installation of the new local directory.
 	Published bool `json:"published"`
 }
@@ -137,9 +143,11 @@ type ValidationRequest struct {
 	RepositoryRoot string
 	// Directory is the exact eleven-file local release directory.
 	Directory string
+	// ExpectedAuthoritySHA256 is the independent release-manifest hand-off.
+	ExpectedAuthoritySHA256 string
 }
 
-// ValidationReceipt records a successful repeat of every local release proof.
+// ValidationReceipt records a successful repeat of every static release proof.
 type ValidationReceipt struct {
 	// Directory is the canonical validated release directory.
 	Directory string `json:"directory"`
@@ -151,19 +159,15 @@ type ValidationReceipt struct {
 
 // Manager owns local validation, record generation, and atomic publication.
 type Manager struct {
-	// Runner executes package inspection and the same-build verifier only.
+	// Runner executes Git and read-only package inspection only.
 	Runner platform.Runner
 	// now supplies deterministic manifest times in tests.
 	now func() time.Time
-	// hostOS identifies the host operating system for executable proof policy.
-	hostOS string
-	// hostArchitecture identifies the host architecture for executable proof policy.
-	hostArchitecture string
-	// validate repeats the complete build-bundle proof before local publication.
+	// validate repeats the static build-bundle proof before local publication.
 	validate func(context.Context, platform.Runner, camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error)
 }
 
-// New constructs a local release manager with direct execution by default.
+// New constructs a local release manager with direct read-only inspection.
 func New(runner platform.Runner) *Manager {
 	return newManager(runner)
 }

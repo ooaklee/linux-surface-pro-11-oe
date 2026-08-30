@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -23,18 +22,24 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
 
+// maximumReleaseFileBytes bounds every copied or inspected release member.
+const maximumReleaseFileBytes = int64(256 << 20)
+
 // releaseNameExpression accepts portable release and paired-kernel tags.
 var releaseNameExpression = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // kernelABIExpression accepts one explicit qcom-x1e installed ABI.
 var kernelABIExpression = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+_-]{0,191}-qcom-x1e$`)
 
-// newManager supplies production host policy and timestamps.
+// sha256Expression accepts one canonical independent authority digest.
+var sha256Expression = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// newManager supplies production static inspection and timestamps.
 func newManager(runner platform.Runner) *Manager {
 	if runner == nil {
 		runner = platform.ExecRunner{}
 	}
-	return &Manager{Runner: runner, now: time.Now, hostOS: runtime.GOOS, hostArchitecture: runtime.GOARCH, validate: camerabuild.ValidateBundle}
+	return &Manager{Runner: runner, now: time.Now, validate: camerabuild.ValidateBundleStatic}
 }
 
 // managerTime returns a stable UTC timestamp or the current time as fallback.
@@ -77,6 +82,9 @@ func (manager *Manager) prepare(ctx context.Context, request Request) (Plan, err
 	if !kernelABIExpression.MatchString(request.KernelABI) || unsafeText(request.KernelABI) {
 		return Plan{}, errors.New("an explicit paired qcom-x1e kernel ABI is required")
 	}
+	if !sha256Expression.MatchString(request.ExpectedBuildAuthoritySHA256) {
+		return Plan{}, errors.New("an expected camera build authority SHA-256 is required")
+	}
 	kernelVersion := strings.TrimSuffix(request.KernelABI, "-qcom-x1e")
 	if !strings.Contains(request.KernelTag, kernelVersion) {
 		return Plan{}, errors.New("paired kernel tag and ABI do not identify the same version")
@@ -85,23 +93,18 @@ func (manager *Manager) prepare(ctx context.Context, request Request) (Plan, err
 	if containedBy(artifacts, output) || containedBy(output, artifacts) {
 		return Plan{}, errors.New("camera build and release directories must not overlap")
 	}
-	executable := manager.hostOS == "linux" && manager.hostArchitecture == "arm64"
-	blocker := ""
-	if !executable {
-		blocker = fmt.Sprintf("same-build IPA release proof requires Linux arm64; this binary reports %s/%s", manager.hostOS, manager.hostArchitecture)
-	}
 	return Plan{
-		RepositoryRoot:     root,
-		ArtifactsDirectory: artifacts,
-		OutputDirectory:    output,
-		ReleaseDirectory:   releaseDirectory,
-		Tag:                request.Tag,
-		KernelTag:          request.KernelTag,
-		KernelABI:          request.KernelABI,
-		DryRun:             request.DryRun,
-		Executable:         executable,
-		ExecutionBlocker:   blocker,
-		MutatesRemote:      false,
+		RepositoryRoot:               root,
+		ArtifactsDirectory:           artifacts,
+		OutputDirectory:              output,
+		ReleaseDirectory:             releaseDirectory,
+		Tag:                          request.Tag,
+		KernelTag:                    request.KernelTag,
+		KernelABI:                    request.KernelABI,
+		ExpectedBuildAuthoritySHA256: request.ExpectedBuildAuthoritySHA256,
+		DryRun:                       request.DryRun,
+		Executable:                   true,
+		MutatesRemote:                false,
 	}, nil
 }
 
@@ -161,8 +164,9 @@ func (manager *Manager) Prepare(ctx context.Context, request Request) (receipt R
 		return receipt, err
 	}
 	bundle, err := manager.validate(ctx, manager.Runner, camerabuild.ValidationRequest{
-		RepositoryRoot: plan.RepositoryRoot,
-		Directory:      staging,
+		RepositoryRoot:          plan.RepositoryRoot,
+		Directory:               staging,
+		ExpectedAuthoritySHA256: plan.ExpectedBuildAuthoritySHA256,
 	})
 	if err != nil {
 		return receipt, fmt.Errorf("validate private camera build bundle: %w", err)
@@ -231,7 +235,12 @@ func (manager *Manager) Prepare(ctx context.Context, request Request) (receipt R
 	if err := syncDirectory(plan.OutputDirectory); err != nil {
 		return receipt, err
 	}
+	authority, err := inspectFile(filepath.Join(plan.ReleaseDirectory, ManifestName))
+	if err != nil {
+		return receipt, fmt.Errorf("inspect published camera release authority: %w", err)
+	}
 	receipt.Manifest = &manifest
+	receipt.AuthoritySHA256 = authority.SHA256
 	receipt.Published = true
 	return receipt, nil
 }
@@ -371,7 +380,7 @@ func inspectBuildBundle(directory string, bundle camerabuild.BundleReceipt) ([]G
 // copyRegular copies one new non-link artefact without preserving host metadata.
 func copyRegular(source, destination string) error {
 	before, err := os.Lstat(source)
-	if err != nil || before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() {
+	if err != nil || before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() || before.Size() <= 0 || before.Size() > maximumReleaseFileBytes {
 		return fmt.Errorf("camera build artefact is not regular: %s", source)
 	}
 	input, err := os.Open(source)
@@ -391,7 +400,10 @@ func copyRegular(source, destination string) error {
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(output, input)
+	written, copyErr := io.Copy(output, io.LimitReader(input, maximumReleaseFileBytes+1))
+	if copyErr == nil && written != opened.Size() {
+		copyErr = errors.New("camera build artefact changed while it was copied")
+	}
 	syncErr := output.Sync()
 	closeErr := output.Close()
 	if err := errors.Join(copyErr, syncErr, closeErr); err != nil {
@@ -406,16 +418,33 @@ func copyRegular(source, destination string) error {
 
 // inspectFile records the complete digest and length of one regular file.
 func inspectFile(path string) (GeneratedFile, error) {
-	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() <= 0 {
+	before, err := os.Lstat(path)
+	if err != nil || before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() || before.Size() <= 0 || before.Size() > maximumReleaseFileBytes {
 		return GeneratedFile{}, fmt.Errorf("camera release file is invalid: %s", path)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil || int64(len(data)) != info.Size() {
+	file, err := os.Open(path)
+	if err != nil {
+		return GeneratedFile{}, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return GeneratedFile{}, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(before, opened) || !os.SameFile(opened, current) {
+		return GeneratedFile{}, fmt.Errorf("camera release file changed while it was opened: %s", path)
+	}
+	digest := sha256.New()
+	written, err := io.Copy(digest, io.LimitReader(file, maximumReleaseFileBytes+1))
+	if err != nil || written != opened.Size() {
 		return GeneratedFile{}, fmt.Errorf("read complete camera release file %s", path)
 	}
-	digest := sha256.Sum256(data)
-	return GeneratedFile{Name: filepath.Base(path), SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, nil
+	after, err := os.Lstat(path)
+	if err != nil || after.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, after) || after.Size() != opened.Size() {
+		return GeneratedFile{}, fmt.Errorf("camera release file changed after it was read: %s", path)
+	}
+	return GeneratedFile{Name: filepath.Base(path), SHA256: hex.EncodeToString(digest.Sum(nil)), Size: written}, nil
 }
 
 // renderChecksums returns deterministic GNU-compatible entries for eight files.
