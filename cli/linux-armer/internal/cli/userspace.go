@@ -48,6 +48,7 @@ func (a *application) newUserspaceCommand() *cobra.Command {
 		a.newUserspacePullCommand(),
 		a.newUserspaceBuildCommand(),
 		a.newUserspaceInstallCommand(),
+		a.newUserspaceAudioCommand(nil),
 		a.newUserspaceCameraCommand(nil),
 	)
 	return command
