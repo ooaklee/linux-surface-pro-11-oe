@@ -222,7 +222,7 @@ A usable kernel bundle contains, at minimum:
 
 The bundle records its release, repository, ABI, version, package digests, and expected device-tree paths. `linux-armer` derives the ABI and version from package filenames and rejects a bundle if required packages are absent, versions are mixed, or a local file no longer matches its recorded digest. Headers are optional for live-image creation.
 
-`kernel build` delegates to the repository's maintained Docker-based kernel build helper. By default it builds the [`sp11/integration-7.2.x`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2.x) branch of the custom kernel; `--git-url` and `--git-branch` select another source. `kernel release download` resolves candidate release assets and verifies the publisher checksum manifest before writing a local bundle manifest.
+`kernel build` owns a compiled ARM64 Docker build policy and does not require a repository helper script. By default it builds the [`sp11/integration-7.2.x`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2.x) branch of the custom kernel; `--git-url` and `--git-branch` select another HTTPS source and branch or tag. The policy pins the Ubuntu 26.04 ARM64 base image by digest and records the exact fetched revision and tree, its own recipe digest, and an installed-toolchain digest beside the packages. `kernel release download` resolves candidate release assets and verifies the publisher checksum manifest before writing a local bundle manifest.
 
 `kernel preflight` is the read-only installation gate. It inspects the exact Debian package metadata, rejects unexpected packages or mixed ABIs, proves that the explicitly selected fallback ABI is the running and bootable kernel, requires a fresh target ABI, and shows the bounded package, initramfs, and GRUB command sequence. The target root and fallback ABI are always explicit. `--running-abi` is accepted only when checking an alternate-root fixture; the live root always uses direct `uname` evidence.
 
@@ -250,14 +250,17 @@ sudo linux-armer kernel install <kernel-bundle> \
 
 A local bundle without an authoritative `SHA256SUMS` file is rejected unless `--allow-unverified` is supplied explicitly. That switch accepts only the locally measured package bytes; it is not publisher verification and should not be used for an unknown bundle.
 
-The build subcommand requires a complete OE checkout because its audited helper lives under `scripts/`. A standalone release archive can create images, inspect and download bundles, run diagnostics, and manage published userspace bundles, but it cannot reproduce repository-backed source builds. Run a source build from the checkout or pass its absolute location explicitly:
+The build subcommand works from a standalone released CLI as well as an OE checkout. Its private transaction and new output directory must be relative to the selected containment root; the output directory must not already exist. Source data persists in a Docker volume labelled for that exact work boundary, while generated packages cross through a private host transaction. `--reset-source` may clean only that managed volume source tree. The command builds packages but never installs them, elevates privileges, reboots, or publishes a release.
+
+Successful output contains the coherent signed image and modules pair, optional paired headers, `SHA256SUMS`, a normal kernel bundle manifest, and a source-provenance manifest. Review the complete non-mutating plan first:
 
 ```sh
 linux-armer kernel build --dry-run
 linux-armer kernel build \
-  --repository-root <oe-checkout> \
+  --repository-root <build-root> \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11 \
-  --git-branch sp11/integration-7.2.x
+  --git-branch sp11/integration-7.2.x \
+  --output-dir build/linux-armer/kernel-v19
 ```
 
 ## Image catalogue
