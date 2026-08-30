@@ -28,6 +28,8 @@ Notable changes to `linux-armer` are documented here. The project follows [Keep 
 - Adapter-owned live-media discovery metadata with exact Casper initramfs and ISO UUID synchronisation.
 - A manifest-tracked on-media companion containing a static Linux ARM64 CLI, its corresponding source archive, validated catalogues, and optionally the redistribution-eligible IPTSD release.
 - Closed-set companion validation that rehashes every extracted file and rejects absent, extra, malformed, or incorrectly permissioned payloads.
+- Native local release preparation and closed-set validation for split image assets, kernel packages and source evidence, FullIO audio, and coherent camera packages.
+- Native IMX681 route discovery, private packed-RAW10 capture validation, and deterministic PNG inspection rendering.
 
 ### Changed
 

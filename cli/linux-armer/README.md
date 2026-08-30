@@ -71,6 +71,8 @@ linux-armer image create --output <iso>
 linux-armer image validate <iso>
 linux-armer image devices
 linux-armer image write <iso> --device <whole-device> --dry-run
+linux-armer image release prepare <iso> --dry-run
+linux-armer image release validate <release-directory>
 
 linux-armer handoff import <directory>
 linux-armer handoff list
@@ -85,6 +87,12 @@ linux-armer userspace status
 linux-armer userspace pull <component|recommended>
 linux-armer userspace build <iptsd|camera>
 linux-armer userspace install <component|recommended> --from <directory>
+linux-armer userspace audio release prepare --help
+linux-armer userspace audio release validate <release-directory>
+linux-armer userspace camera capture --dry-run
+linux-armer userspace camera render <capture.raw> <preview.png>
+linux-armer userspace camera release prepare --help
+linux-armer userspace camera release validate <release-directory>
 
 linux-armer clean scan
 linux-armer clean plan --output linux-armer-cleanup-plan.json
@@ -189,6 +197,22 @@ The extracted live filesystem stays inside a named Linux Docker volume throughou
 Structural validation is a publication gate, not a substitute for booting the media on a Surface Pro 11. Disable Secure Boot before using the unsigned custom kernel, and treat an actual device boot as the final compatibility gate.
 
 Compressed raw disk images use a different partition and boot model. Catalogue entries such as Fedora's `.raw.xz` image will require a separate adapter rather than being passed through the ISO remasterer.
+
+### Prepare local image release assets
+
+`image release prepare` first validates one completed linux-armer ISO and its existing adjacent `*.iso.manifest.json`, then produces deterministic split zstd parts, checksums, release notes, and a path-free release manifest in a fresh local directory. It preserves that one ISO manifest—including its `companion_bundle` attribute—rather than introducing another image inventory. The command never uploads files or changes a remote release.
+
+```sh
+linux-armer image release prepare linux-armer-ubuntu-sp11.iso \
+  --repository-root <oe-checkout> \
+  --release-name <release-name> \
+  --out-dir build/release/<release-name> \
+  --dry-run
+
+linux-armer image release validate build/release/<release-name>
+```
+
+Remove `--dry-run` only after reviewing the source identity and fresh destination. Validation checks the closed release set and reconstructs the complete ISO identity from the ordered parts without publishing it.
 
 ## Write the validated image to USB
 
@@ -434,7 +458,7 @@ linux-armer userspace build camera
 
 Source builds invoke only compiled, component-specific adapters with bounded arguments. Catalogue content is never interpreted as a shell command. The current camera package build requires a native ARM64 Linux host; users on other hosts can still pull and verify the published experimental package set.
 
-Both userspace source-build adapters require the complete OE checkout and its maintained scripts; pass `--repository-root <oe-checkout>` when it cannot be detected from the current directory. Pull, status, doctor, and verified installation workflows do not have that checkout requirement.
+Both userspace source-build adapters use compiled Go policy and do not invoke repository scripts. They require the complete OE checkout because the native builders authenticate their tracked component inputs; pass `--repository-root <oe-checkout>` when it cannot be detected from the current directory. Pull, status, doctor, and verified installation workflows do not have that checkout requirement.
 
 Review an install before granting elevated access. A real install requires both effective root privileges and `--yes`; the CLI does not elevate itself. `--root` may select an alternate target filesystem where the component supports it.
 
@@ -447,6 +471,42 @@ sudo linux-armer userspace install camera --from <verified-camera-release> --yes
 ```
 
 The installer verifies release contents again before mutation and uses compiled component rules for destination paths and transactions. Installing support never invokes legacy clean-up implicitly. Use the separate `clean` commands to inspect and remove only recognised obsolete workarounds with backups and receipts.
+
+### Prepare local userspace releases
+
+Release commands prepare and validate closed local directories; they never create a Git tag, upload an artefact, or change a remote service. FullIO audio preparation accepts only the reviewed v19c source bytes and an explicit paired kernel tag and ABI. Camera preparation accepts only one validated native camera build, its authenticated inputs, and an explicit paired kernel tag and ABI.
+
+```sh
+linux-armer userspace audio release prepare \
+  --source-root <SP11X1e-audio-checkout> \
+  --repository-root <oe-checkout> \
+  --tag sp11-audio-v19c \
+  --kernel-tag <kernel-release-tag> \
+  --kernel-abi <kernel-abi> \
+  --dry-run
+
+linux-armer userspace camera release prepare \
+  --from <native-camera-build> \
+  --repository-root <oe-checkout> \
+  --tag <camera-release-tag> \
+  --kernel-tag <kernel-release-tag> \
+  --kernel-abi <kernel-abi> \
+  --dry-run
+```
+
+Remove `--dry-run` only after reviewing the complete plan, then run the corresponding `release validate` command against the newly prepared directory. The resulting manifests make provenance and kernel pairing explicit without claiming hardware qualification.
+
+### Inspect the experimental camera
+
+`userspace camera capture` discovers the exact supported IMX681 media route, can validate it without changing the graph, and otherwise captures complete private 3840×2640 packed-RAW10 frames behind bounded transport, content, temporal, and kernel-error gates. It does not claim that the privacy LED or a cold-boot lifecycle passed; those remain manual hardware gates.
+
+```sh
+linux-armer userspace camera capture --dry-run
+linux-armer userspace camera capture --output capture.raw --frames 10
+linux-armer userspace camera render capture.raw preview.png
+```
+
+Capture output and rendered previews may contain sensitive imagery. New files are private on Unix hosts; keep them out of source control, releases, issue attachments, and diagnostics unless their contents have been reviewed deliberately.
 
 ## Reversible clean-up
 
