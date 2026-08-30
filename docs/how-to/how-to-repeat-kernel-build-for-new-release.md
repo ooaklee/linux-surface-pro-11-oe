@@ -1,390 +1,94 @@
 ---
 id: how-to-repeat-kernel-build-for-new-release
-title: "Repeat Patched Kernel Build for a New qcom-x1e Release"
+title: "Repeat the Kernel Build for a New Release"
 # prettier-ignore
-description: How-to guide for rebuilding the Surface Pro 11 Wi-Fi rfkill patched qcom-x1e kernel when a new Ubuntu kernel release ships.
+description: Build, inspect and qualify a new reviewed Surface Pro 11 kernel revision through linux-armer.
 ---
 
-# How To: Repeat Patched Kernel Build for a New qcom-x1e Release
+# How To: Repeat the Kernel Build for a New Release
 
-Use this procedure when Ubuntu ships a new `qcom-x1e` kernel release (e.g.
-`7.0.0-40-qcom-x1e`) and you need to produce a matching patched build with the
-same Surface Pro 11 Wi-Fi rfkill fixes.
+Last reviewed: 2026-08-30
 
-## Purpose
+Use this procedure after the maintained kernel branch or an intentionally
+reviewed source branch advances. A new build is a new provenance event: never
+rename an old package set or add new packages to its output directory.
 
-The Ubuntu Snapdragon X concept kernel tracks upstream `qcom-x1e-7.0`. Each
-release bumps the ABI (e.g. `7.0.0-32` → `7.0.0-40`). The Surface Pro 11
-Wi-Fi rfkill patches in `patches/ubuntu-qcom-x1e-7.0/` must be applied to the
-matching source tree. This procedure captures the steps to go from "new kernel
-is apt-upgraded on the Surface" to "bootable patched kernel with Wi-Fi working".
+## Select and review the source
 
-Two build paths are covered:
+Record the repository and reviewed branch or ref. Prefer a signed or otherwise
+independently reviewed immutable revision for a release candidate.
 
-- **Docker (recommended)**: Collect source metadata on the Surface, build on a
-  stronger ARM64 machine with Docker.
-- **On-device (fallback)**: Build directly on the Surface after `apt upgrade`
-  lands the new kernel.
-
-## Prerequisites
-
-- Surface Pro 11 booted into installed Ubuntu with the new unpatched qcom-x1e
-  kernel (e.g. `7.0.0-40-qcom-x1e`).
-- `apt update && apt upgrade` completed, `uname -r` confirms the new kernel.
-- The `linux-surface-pro-11-oe` repository checkout is up to date.
-- 40 GB free disk where the build runs.
-- Docker (for the off-device path) with `linux/arm64` container support.
-
-## Procedure
-
-### 0. Rebase the checkout
-
-```bash
-cd linux-surface-pro-11-oe
-git pull --rebase origin main
+```sh
+linux-armer doctor --workspace .
+linux-armer kernel build \
+  --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
+  --git-branch <reviewed-ref> \
+  --work-dir build/linux-armer/kernel-work-<generation> \
+  --output-dir build/linux-armer/kernel-<generation> \
+  --dry-run
 ```
 
-Check that `patches/ubuntu-qcom-x1e-7.0/` still contains the two rfkill patches.
-If Ubuntu has significantly changed the kernel tree, the patches may need
-refreshing (see Troubleshooting).
+The dry run reports the container policy without invoking Docker or creating a
+release. Review the source change separately; the CLI does not assert that an
+arbitrary ref is safe.
 
-### 1. Collect source metadata on the Surface
+## Build into fresh output
 
-Boot the installed Surface with the new kernel, then export the matching source
-metadata:
+Repeat the same command without `--dry-run`. Use `--jobs <count>` if the build
+host needs a lower concurrency limit. If a cached source is genuinely invalid
+or intentionally changing lineage, add `--reset-source`; this resets only the
+CLI-owned build volume.
 
-```bash
-./scripts/collect-sp11-kernel-source-metadata.sh \
-  --out /tmp/sp11-kernel-source.env
+Do not use `--skip-clean` for a release candidate unless you can account for
+every retained build product. The published bundle must come from the current
+invocation.
+
+## Inspect and prepare the release
+
+```sh
+linux-armer kernel inspect build/linux-armer/kernel-<generation>
 ```
 
-This writes:
+The directory must be one closed, ABI-bound runtime set. Retain the exact
+corresponding source closure and explicit licence inputs, then use:
 
-```text
-SP11_KERNEL_RELEASE='7.0.0-40-qcom-x1e'
-SP11_SOURCE_PACKAGE='linux-qcom-x1e'
-SP11_SOURCE_VERSION='7.0.0-40.40'
-SP11_BUILD_TARGET='binary-qcom-x1e'
+```sh
+linux-armer kernel release prepare --help
+linux-armer kernel release validate <prepared-release-directory>
 ```
 
-The exact source package can change between Ubuntu kernel streams. Treat the
-block above as an example and use whatever `collect-sp11-kernel-source-metadata.sh`
-prints.
+Follow [Prepare Kernel Release Artefacts](how-to-release-kernel-artifacts.md)
+for all required preparation inputs and release-note constraints.
 
-Transfer `sp11-kernel-source.env` to the repository root on the build host:
+## Build and validate test media
 
-```bash
-scp surface:/tmp/sp11-kernel-source.env ./sp11-kernel-source.env
+```sh
+linux-armer image create \
+  --source <ubuntu-concept-iso> \
+  --source-sha256 <sha256> \
+  --kernel-dir build/linux-armer/kernel-<generation> \
+  --output build/linux-armer/linux-armer-<generation>.iso
+linux-armer image validate build/linux-armer/linux-armer-<generation>.iso
+linux-armer image write build/linux-armer/linux-armer-<generation>.iso \
+  --device <whole-device> \
+  --dry-run
 ```
 
-Replace `surface` with the SSH host name or address for the Surface. Skip this
-transfer for on-device builds; `build-sp11-qcom-x1e-kernel.sh` derives the
-metadata locally.
+Repeat `image write` only after reviewing its exact device-bound confirmation.
 
-### 2. Build the patched kernel
+## Qualify and retain recovery
 
-**Option A: Docker (preferred)**
+Keep the previous ABI installed and visible in GRUB. On the candidate kernel:
 
-On the build host:
-
-```bash
-cd linux-surface-pro-11-oe
-
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --metadata sp11-kernel-source.env \
-  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
-  --work-dir build/docker-sp11-qcom-x1e-kernel \
-  --copy-to-payload
+```sh
+linux-armer doctor userspace
+linux-armer doctor hardware wifi bluetooth audio
 ```
 
-This clones the matching source package from apt inside an ARM64 container,
-applies the rfkill patches, builds the full kernel, and copies the resulting
-`.deb` files into `payload/kernel-debs/`.
-
-If the container cannot reach the apt source repository, provide the matching
-`.sources` file from the Surface:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --metadata sp11-kernel-source.env \
-  --apt-sources /path/to/qcom-x1e.sources \
-  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
-  --work-dir build/docker-sp11-qcom-x1e-kernel \
-  --copy-to-payload
-```
-
-For a bring-up-only build without matching source repositories, use the git
-fallback (builds from the public `qcom-x1e-7.0` branch, note ABI may not match):
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
-  --work-dir build/docker-sp11-qcom-x1e-kernel \
-  --copy-to-payload
-```
-
-To build from Johan G.'s 7.1.1 qcom-x1e tree, use the published tag from
-`jglathe/linux_ms_dev_kit`. The tag is named like a branch in GitHub URLs, but
-it is a git tag, so keep `--reset-source` when switching an existing work
-directory between refs:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.1.1-jg-0 \
-  --image ubuntu:26.04 \
-  --patch-dir patches/jglathe-qcom-x1e-7.1.1 \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.1 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 5 \
-  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.1-build-$(date +%Y%m%d-%H%M%S).log
-```
-
-If the build needs patches from more than one directory (e.g. touchscreen QSPI
-driver patches alongside the build-compatibility patches), use `--patch-dirs`
-with a space-separated list:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
-  --image ubuntu:26.04 \
-  --patch-dirs "patches/sp11-touchscreen patches/jglathe-qcom-x1e-7.1.3" \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 4 \
-  2>&1 | tee build/sp11-qcom-x1e-kernel-jg-7.1.3-ts-build-$(date +%Y%m%d-%H%M%S).log
-```
-
-`--patch-dirs` applies patches from each directory in the listed order. If both
-`--patch-dir` and `--patch-dirs` are passed, `--patch-dirs` takes precedence.
-If neither option is passed, no local patches are applied.
-
-The `binary-indep` target is required for this tree because the ABI-specific
-headers package depends on `linux-qcom-x1e-headers-<abi>` (e.g.
-`linux-qcom-x1e-headers-7.1.3-jg-1`).
-
-**Option B: On-device (fallback)**
-
-On the Surface directly:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --install-deps \
-  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
-  --work-dir "$HOME/sp11-qcom-x1e-kernel-build"
-```
-
-The helper derives the source package and version from the running kernel
-packages. Pass `--source-version candidate` only if you want to build the apt
-candidate instead.
-
-On-device builds do not copy generated packages into `payload/kernel-debs/`.
-Install from the on-device work directory in step 4, or copy the generated
-`.deb` files to `payload/kernel-debs/` yourself before rebuilding the USB
-image.
-
-### 3. Rebuild and write the live USB image
-
-For the Docker path, rebuild the USB image so `payload/kernel-debs/` is
-available on the `SP11DATA` partition:
-
-```bash
-./scripts/build-sp11-live-usb-image.sh \
-  --iso path/to/ubuntu-x1e.iso \
-  --grub-mode direct \
-  --work-dir build/work-direct-boot \
-  --out build/sp11-ubuntu-live-direct.img \
-  --validate
-
-./scripts/write-image-to-macos-disk.sh build/sp11-ubuntu-live-direct.img /dev/diskX
-```
-
-Replace `/dev/diskX` with the verified removable USB disk.
-
-For the on-device path, this USB rebuild is optional unless you want a recovery
-USB carrying the new packages. The build artifacts already live under
-`$HOME/sp11-qcom-x1e-kernel-build` on the Surface.
-
-### 4. Install the patched packages on the Surface
-
-Boot installed Ubuntu, mount `SP11DATA`:
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
-cd "$SP11DATA/support"
-```
-
-For the Docker path, install the packages copied through the USB payload:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir "$SP11DATA/payload/kernel-debs" \
-  --install-only
-```
-
-For the on-device path, install from the local build work directory instead:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir "$HOME/sp11-qcom-x1e-kernel-build" \
-  --install-only
-```
-
-The helper refuses to install if no older qcom-x1e kernel exists as GRUB
-fallback. Keep the previous kernel installed.
-
-### 5. Reboot and validate
-
-```bash
-sudo reboot
-```
-
-After reboot into the patched kernel:
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-test -n "$SP11DEV" || { echo "SP11DATA partition not found; run lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS."; exit 1; }
-
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
-cd "$SP11DATA/support"
-sudo ./scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock
-```
-
-Passing validation means:
-- `DT has disable-rfkill`
-- Wi-Fi `phy0` no longer reports `Hard blocked: yes`
-- `uname -r` matches the patched ABI
-
-## Expected Output
-
-A bootable qcom-x1e kernel with ath12k `disable-rfkill` support matching the
-Ubuntu kernel release running on the Surface.
-
-Generated artifacts under `payload/kernel-debs/`:
-
-```text
-linux-headers-<abi>_<version>_arm64.deb
-linux-image-<abi>_<version>_arm64.deb
-linux-modules-<abi>_<version>_arm64.deb
-```
-
-The jglathe tree (7.1.1+) also produces:
-
-```text
-linux-qcom-x1e-headers-<abi>_<version>_all.deb
-```
-
-## What Changes Between Releases
-
-| Item | Changes? | Notes |
-|------|----------|-------|
-| Kernel ABI | Yes | `7.0.0-32` → `7.0.0-40`, derived from `uname -r` |
-| Source package | Possibly | Example: `linux-qcom-x1e`; check `dpkg -s linux-modules-$(uname -r)` |
-| Source version | Yes | `7.0.0-32.32` → `7.0.0-40.40` |
-| Build target | No | Always `binary-qcom-x1e` |
-| Patches | No change | `patches/ubuntu-qcom-x1e-7.0/*.patch` — unless Ubuntu tree diverges |
-| rfkill fix | No change | Same `disable-rfkill` property on Denali WCN7850 node |
-| jglathe annotations patch | Possibly | New `jg/ubuntu-qcom-x1e-<base>-jg-<n>` tags can shift `CONFIG_*` symbols vs. the prior tag; regenerate with `scripts/regenerate-qcom-x1e-annotations.sh` |
-
-The `collect-sp11-kernel-source-metadata.sh` script captures everything that
-changes automatically.
-
-## Privacy and Safety
-
-- Do not commit generated `.deb` files, source trees, or kernel artifacts.
-- Keep the previous qcom-x1e kernel installed as a GRUB fallback.
-- Keep the direct live USB nearby for recovery.
-- `build/`, `payload/kernel-debs/`, and `*.deb` are `.gitignore`d.
-
-## Troubleshooting
-
-**Patches don't apply.** The Ubuntu qcom-x1e source tree has diverged. Inspect
-the prepared source directory printed by the build helper (`Using source tree:
-...`), refresh the patches against that tree, and rerun the build. For example,
-with the git fallback source layout:
-
-```bash
-cd source/git-qcom-x1e-7.0
-# Manually rework the two patches to match the new tree
-git diff HEAD > ../../patches/ubuntu-qcom-x1e-7.0/0001-...patch
-git diff HEAD -- arch/arm64/boot/dts/qcom/ \
-  > ../../patches/ubuntu-qcom-x1e-7.0/0002-...patch
-```
-
-Then rerun the build.
-
-**`check-config` fails with `N config options have been changed` (jglathe tree).**
-A new `jg/ubuntu-qcom-x1e-<base>-jg-<n>` tag shifted `CONFIG_*` symbols relative
-to the annotations patch carried in `patches/jglathe-qcom-x1e-<base>/`. The
-failure lists each symbol with the form `changed from <annotation> to <.config>`
-(or `undefined` if the patch deleted an annotation line that `olddefconfig`
-still emits). Regenerate the patch with the helper, then rerun the build
-unchanged:
-
-```bash
-./scripts/regenerate-qcom-x1e-annotations.sh \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch "jg/ubuntu-qcom-x1e-<base>-jg-<n>" \
-  --reset-source
-```
-
-The helper writes a fresh
-`0001-debian-qcom-x1e-update-annotations-for-<base>-jg-<n>.patch` into the
-patch directory, removes the stale annotations patch for an older tag, and
-leaves the other patches alone. It installs the complete source build
-dependency set and runs Kconfig with the same compiler and Rust probes as the
-real package build. Confirm the replacement patch exists before rerunning the
-original build command. See
-`patches/jglathe-qcom-x1e-<base>/README.md` for the underlying recipe and the
-manual fallback.
-
-**Docker build fails with libfakeroot errors.** The container already runs as
-root. The wrapper passes `--no-fakeroot`. Make sure you're using the default
-container path.
-
-**Case-sensitivity warnings.** Use the default `/linux-work` Docker volume path.
-Do not force `--container-work-dir /work` on case-insensitive filesystems (e.g.
-macOS APFS).
-
-**Out of disk space.** Remove stale build volumes and directories:
-
-```bash
-rm -rf build/docker-sp11-qcom-x1e-kernel
-docker volume rm sp11-qcom-x1e-kernel-build
-```
-
-Then retry. A full kernel build needs ~30 GiB.
-
-**apt source fails.** Enable matching `deb-src` entries for the repositories
-that provide the qcom-x1e kernel packages, then run `sudo apt update`. Or use
-`--source git` for a bring-up fallback build from the public branch.
-
-## Related Documents
-
-- [How To: Build a Patched qcom-x1e Kernel](how-to-build-patched-qcom-x1e-kernel.md)
-- [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](../adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
-- [ADR020: Dockerized ARM64 Kernel Build](../adr/adr-0020-dockerized-arm64-kernel-build.md)
-- [Surface Pro 11 Wi-Fi rfkill test after qcom-x1e upgrade](../installed-wifi-rfkill-upgrade-test-20260613.md)
+Exercise cold boot, display, storage, networking, Bluetooth, speakers,
+microphone, pen, touch, camera and suspend/resume. Record failures against the
+exact source revision and ABI. Static validation proves package coherence, not
+physical hardware qualification.
+
+If the new build fails, boot the retained fallback and follow
+[Reinstall a Patched Kernel from USB](how-to-reinstall-patched-kernel-from-usb.md).

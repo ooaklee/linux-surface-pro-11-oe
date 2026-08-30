@@ -1,708 +1,254 @@
-# Ubuntu on Surface Pro 11 (Snapdragon X Elite)
+# Linux on Microsoft Surface Pro 11
 
-![KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
+This repository develops `linux-armer`, an ARM64 command-line companion for
+building, validating, writing and maintaining experimental Surface Pro 11
+Linux media. The supported path is the compiled CLI: repository scripts are
+not part of the current operator workflow.
 
-This repository is an experimental Ubuntu bring-up kit for the Microsoft
-Surface Pro 11 with Snapdragon X Elite (X1E80100). It uses the Surface Laptop
-7 Ubuntu work as a reference, and ports the Surface Pro 11-specific pieces from
-Dale Whinham’s Arch Linux work and, most importantly, [Jens Glathe](https://github.com/jglathe)'s continual kernel work: [join the community](https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/2027).
+> [!WARNING]
+> The generated media, custom kernels and hardware support remain
+> experimental. Back up important data, keep a known-good boot entry and a
+> separate recovery device, and disable Secure Boot before booting an unsigned
+> custom kernel.
 
-The current verified target is:
+The first implemented image adapter is
+`ubuntu-concept-resolute-x1e`. Other ARM64 images can appear in the catalogue
+without being buildable; `catalog show` reports an entry's actual support
+level.
 
-| Item | Value |
-| --- | --- |
-| Device | Microsoft Surface Pro, 11th Edition |
-| SKU | `Surface_Pro_11th_Edition_2076` |
-| CPU | `Snapdragon(R) X 12-core X1E80100 @ 3.40 GHz` |
-| Firmware/UEFI | `175.222.235`, dated 2026-02-23 |
-| Internal disk | Samsung `MZ9L4512HBLU-00BMV-SAMSUNG`, 476.9 GiB NVMe |
-| Windows source checked | Windows 11 Home Insider Preview build `29585` |
+## Build the CLI
 
-> Warning: this is not an official Ubuntu, Microsoft, or linux-surface release.
-> Keep Windows installed, keep a recovery USB nearby, and expect regressions.
+The build host needs Go 1.26 or newer. Image and kernel builds also need a
+running Docker daemon with Linux ARM64 container support.
 
-> **Current workflow:** use the Go-based [`linux-armer` CLI](cli/linux-armer/README.md)
-> for new Ubuntu Concept media, kernel bundles, installed-system hand-off,
-> userspace diagnosis, and reversible legacy clean-up. The older script-driven
-> bring-up notes remain below as historical engineering evidence; several of
-> their audio, out-of-tree touchscreen, and post-install workarounds are retired
-> and must not be applied to current kernels.
+```sh
+go -C cli/linux-armer build -o bin/linux-armer ./cmd/linux-armer
+./cli/linux-armer/bin/linux-armer doctor
+```
 
-## Prerequisites
+Run `linux-armer` in an interactive terminal to open the wizard, or use the
+same services through explicit subcommands. `linux-armer <command> --help`
+shows the options implemented by that command. The examples below use
+`linux-armer` for a binary installed on `PATH`; substitute
+`./cli/linux-armer/bin/linux-armer` when running directly from the checkout.
 
-- Surface Pro 11 with Snapdragon X Elite (`X1E80100`) — not Surface Laptop 7/Romulus or Intel Surface devices
-- Windows backup + BitLocker/Device Encryption recovery key (suspend or decrypt before partition work)
-- Secure Boot disabled in Surface UEFI
-- Windows recovery USB or another restore path
-- USB-C flash drive, 16 GB+ (`linux-armer image write` erases the entire selected disk)
-- macOS build host with Docker Desktop, `git`, `diskutil`, sudo (20 GB free)
-- Temporary networking for post-install firmware (Wi-Fi doesn't work in the live session — use USB-C Ethernet, phone tethering, or a mounted Windows partition)
-- External USB keyboard recommended for installer recovery
+## End-to-end workflow
 
-## Current Status
+### 1. Inspect the source-image catalogue
 
-The Surface Pro 11 needs a custom device tree and firmware handling — a stock
-ARM64 Ubuntu ISO is not enough. See the
-[dwhinham/linux-surface-pro-11 "What's working"](https://github.com/dwhinham/linux-surface-pro-11#whats-working)
-list for the upstream Arch status.
+```sh
+linux-armer catalog validate
+linux-armer catalog list
+linux-armer catalog show ubuntu-concept-resolute-x1e
+```
 
-| Feature | Status | Notes |
-| --- | --- | --- |
-| NVMe | ✅ Working | Installed Ubuntu boots from `/dev/nvme0n1p5` with separate `/boot` and `/boot/efi` partitions after support setup. |
-| Graphics | ✅ Working | Direct boot reaches the Ubuntu desktop. 3D acceleration for X1E SoCs only; X1P support is on its way from upstream. |
-| Backlight | ✅ Working | Night Light and screen brightness controls work. X1E/OLED uses `/sys/class/backlight/dp_aux_backlight`; X1P/LCD uses the upstream `x1p64100-microsoft-denali.dtb` PWM-backlight path. |
-| USB3 | ⚠️ Partially | USB-C ports are working, but the Surface Dock connector is presumably not. |
-| USB4/Thunderbolt | ❌ Not working | No external display output when using the [official USB4 dock](https://learn.microsoft.com/en-us/surface/surface-usb4-dock). |
-| USB-C display output | ✅ Working | Working as of 6.15-rc6 (for DP alt mode). |
-| USB-C boot | ✅ Working with `--grub-mode direct` | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified live-USB path. |
-| Wi-Fi | ✅ Working | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Uses a [kernel hack to disable rfkill](https://github.com/dwhinham/kernel-surface-pro-11/commit/fcc769be9eaa9823d55e98a28402104621fa6784). Continue validating normal reboots, suspend/resume, and package upgrades. |
-| Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
-| Audio — speakers | ✅ Supported from `sp11v12`; tested through `sp11v19` | Install the audited, checksum-pinned `audio-fullio-v19c` topology and UCM set with `linux-armer userspace pull audio` and `linux-armer userspace install audio`, then verify the exact files, compatible kernel, required boot argument, and known legacy conflicts with `linux-armer doctor userspace --feature audio`. The doctor is static, so complete the guide's low-volume left/right speaker gate before relying on physical routing. See [Bring Up Current Surface Pro 11 Audio](docs/how-to/how-to-bring-up-audio.md). |
-| Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
-| Touchscreen | ✅ Working on installed v6 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, now carried **in-tree** on the 7.2-rc6 build (`7.2-rc6-jg-0sp11v6`) as the phase55 `mshw0485_touch`, `spi-geni-qcom`, and `gpi` drivers — no out-of-tree module install. Multi-touch, pinch/zoom, and three-finger gestures work, and sound is verified on the same build. Supersedes the v3 geocausa OOT-module approach. See [ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
-| Pen | ✅ Supported on X1P/LCD and X1E/OLED; live-validated on X1E/OLED v19 | The matching pen-part-2 kernel and pinned upstream iptsd integration cover both `045e:0c80` and `045e:0c83`, with iptsd touch output disabled. Live X1E testing passed hover/lift, continuous input, pressure, both tilt axes, the barrel button, and normal one-, two-, and three-finger touch with balanced Phase 84 IRQ/report accounting and no transport errors, resets, or daemon restarts. Separate X1P hardware validation, eraser, recovery, repeated suspend/resume, and comprehensive touch/gesture regression qualification remain. Unmodified iptsd v3.1.0 does not expose a second stylus button. See [ADR0067](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md). |
-| Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
-| Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
+Catalogue-only entries are useful references, but `image create` accepts only
+an entry with an implemented adapter.
 
-## Current CLI quick start
+### 2. Obtain a kernel bundle
 
-Build `linux-armer` from the complete checkout, verify the host, and create a
-structurally validated Ubuntu Concept ISO:
+Build the maintained custom kernel in the CLI-owned ARM64 container workflow:
 
-```bash
-cd cli/linux-armer
-go build -o bin/linux-armer ./cmd/linux-armer
-./bin/linux-armer doctor
-./bin/linux-armer image create --output linux-armer-ubuntu-sp11.iso
-./bin/linux-armer image validate linux-armer-ubuntu-sp11.iso
-./bin/linux-armer image devices
-./bin/linux-armer image write linux-armer-ubuntu-sp11.iso \
-  --device /dev/diskX \
+```sh
+linux-armer kernel build --dry-run
+linux-armer kernel build \
+  --output-dir build/linux-armer/kernel-current
+linux-armer kernel inspect build/linux-armer/kernel-current
+```
+
+Use `--git-url` and `--git-branch` only when intentionally testing another
+kernel source. `--reset-source` resets the source tree in the CLI-owned work
+volume; it does not modify a host checkout.
+
+Alternatively, download a published, checksum-verified kernel release:
+
+```sh
+linux-armer kernel release list
+linux-armer kernel release download <release-tag> \
+  --output-dir build/linux-armer/kernel-bundle
+linux-armer kernel inspect build/linux-armer/kernel-bundle
+```
+
+See [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
+and [Prepare Kernel Release Artefacts](docs/how-to/how-to-release-kernel-artifacts.md)
+for the detailed build and release paths.
+
+### 3. Create the live image
+
+Use a local upstream image and record its independently obtained SHA-256 when
+possible:
+
+```sh
+linux-armer image create \
+  --source resolute-desktop-arm64+x1e-20260326.iso \
+  --source-sha256 <sha256> \
+  --kernel-dir build/linux-armer/kernel-bundle \
+  --output build/linux-armer/linux-armer-ubuntu-sp11.iso
+```
+
+Omit `--source` to let the catalogue download the pinned source, or replace
+`--kernel-dir` with `--kernel-release <release-tag>`. Add `--dry-run` to review
+the plan without remastering.
+
+To carry the companion CLI, maintained source and an eligible offline IPTSD
+release on the medium:
+
+```sh
+linux-armer image create \
+  --source resolute-desktop-arm64+x1e-20260326.iso \
+  --source-sha256 <sha256> \
+  --kernel-release <release-tag> \
+  --companion-source-dir cli/linux-armer \
+  --companion-userspace iptsd \
+  --output build/linux-armer/linux-armer-ubuntu-sp11.iso
+```
+
+The image contains one logical inventory. Its on-media copy is
+`/sp11/linux-armer-manifest.json`, and the generated ISO has the matching
+sidecar representation. `companion_bundle` is an attribute of that existing
+ISO manifest, including when no companion is requested. It is never a separate
+companion manifest. Portable userspace receipts verify their own component
+files but do not create another ISO inventory.
+
+### 4. Validate and write the USB
+
+```sh
+linux-armer image validate build/linux-armer/linux-armer-ubuntu-sp11.iso
+linux-armer image devices
+linux-armer image write build/linux-armer/linux-armer-ubuntu-sp11.iso \
+  --device <whole-device> \
   --dry-run
 ```
 
-Review the whole removable-device path and exact image-bound confirmation from
-the dry run, then perform the write with elevated privilege:
+Repeat `image write` without `--dry-run` and enter the exact confirmation it
+prints. The writer rejects unsafe targets and succeeds only after a full
+SHA-256 read-back and safe ejection.
 
-```bash
-sudo ./bin/linux-armer image write linux-armer-ubuntu-sp11.iso \
-  --device /dev/diskX \
-  --confirm 'ERASE /dev/diskX DEVICE <opaque-fingerprint> AND WRITE SHA256 <full-sha256>'
-```
+### 5. Install while retaining a fallback
 
-The writer refuses internal, non-removable, non-USB, system-backed, read-only,
-undersized, changed, or still-mounted targets. Completion requires a flushed
-write, a full SHA-256 read-back, a final identity inspection, and safe ejection.
-
-See the [CLI guide](cli/linux-armer/README.md) for pinned source images, local
-or released kernel bundles, the userspace doctor, clean-up plans and restore,
-and the exact hardware-validation boundary.
-
-## Historical script workflow
-
-> **Do not use this section as the current installation path.** It documents
-> earlier bring-up iterations and can install workarounds that the maintained
-> kernel and `linux-armer clean` now classify as obsolete.
-
-The custom live-USB builder creates a small ARM64 GRUB boot shim, stores the
-Ubuntu Snapdragon X concept ISO on a Linux data partition, and injects the
-Surface Pro 11 device tree at boot. This avoids remastering the Ubuntu ISO.
-
-### 1. Build the patched kernel (Docker, on macOS)
-
-```bash
-cd /path/to/linux-surface-pro-11-oe
-mkdir -p build
-
-# Pen part 2 integration branch (build and validate for release)
-# This git-mode command is usable after the paired branch is published.
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
-  --git-branch sp11/integration-7.2.x-pen-part-2 \
-  --image ubuntu:26.04 \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel \
-  --linux-work-volume sp11-kernel-build-ci \
-  --copy-to-payload --reset-source --jobs 8
-
-# OR: Ubuntu concept kernel
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git --work-dir build/docker-sp11-qcom-x1e-kernel \
-  --patch-dir patches/ubuntu-qcom-x1e-7.0 \
-  --copy-to-payload --reset-source --jobs 4
-
-# OR: SP11 v2 — Johan G.'s 7.1.3 tree with the 2.4 MHz DMIC default
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.1.3-jg-1 \
-  --image ubuntu:26.04 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.1.3 patches/sp11-qcom-x1e-7.1.3-v2" \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.1.3-sp11-v2 \
-  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.1.3-sp11-v2 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 4
-
-# OR: SP11 7.2-rc5 v2 — JG 7.2-rc5 baseline with the 2.4 MHz DMIC default
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --image ubuntu:26.04 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v2" \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v2 \
-  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v2 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 8
-
-# OR: SP11 7.2-rc5 v3 — JG 7.2-rc5 baseline with touchscreen + 2.4 MHz DMIC
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2-rc5-jg-0 \
-  --image ubuntu:26.04 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \
-  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v3 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 8
-
-# OR: SP11 7.2-rc5 v4 — in-tree phase55 touchscreen (no OOT modules)
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
-  --git-branch sp11/qcom-x1e-7.2-rc5-touchscreen-intree \
-  --image ubuntu:26.04 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v4" \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v4 \
-  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v4 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 8
-```
-
-Until the paired branches are published, build the local kernel checkout only
-from a case-sensitive Linux filesystem or Docker volume; the remote git-mode
-command above cannot see unpushed changes.
-
-The release examples use the immutable
-`jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag. The moving
-`jg/ubuntu-qcom-x1e-7.2rc` branch resolved to the same source commit when this
-baseline was validated, but should not be used as release provenance.
-
-The v3 build enables the MSHW0485 OLED touchscreen in the device tree, but the
-runtime QSPI support ships as an exact-ABI out-of-tree module bundle. After the
-v3 kernel and headers are installed, the pinned build helper selects the v3
-headers (even when an older kernel is still running), builds all three modules,
-and delegates installation, initramfs regeneration, and verification to the
-guarded installer:
-
-```bash
-./scripts/build-sp11-touchscreen-modules.sh --install
-```
-
-The validated controller profile leaves the experimental
-`sp11_windows_se_init` parameter off. Do not add it merely because a boot logs
-`Invalid proto 9`; that signature means the stock controller was loaded. Run
-`sudo ./scripts/troubleshoot-sp11-touchscreen.sh` to classify the boot first.
-See [ADR-0050](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
-for the clean-install retrospective and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
-for the kernel decision.
-
-The v4 build moves the touchscreen support fully in-tree: the fork branch
-`sp11/qcom-x1e-7.2-rc5-touchscreen-intree` carries the phase55 `mshw0485_touch`
-driver, the QSPI-capable `spi-geni-qcom`/`gpi` controllers, and the Denali
-touchscreen/QSPI device-tree nodes. Only the SP11 v4 naming patch
-(`patches/sp11-qcom-x1e-7.2-rc5-v4`) is applied on top, so no
-`build-sp11-touchscreen-modules.sh` step is required. See
-[ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md).
-
-`--patch-dirs` accepts a space-separated list; patches from each directory are
-applied in order. The `binary-indep` target is required because the ABI-specific
-headers package depends on `linux-qcom-x1e-headers-<abi>` (e.g.
-`linux-qcom-x1e-headers-7.1.3-jg-1sp11v2`).
-
-If a new `jg/ubuntu-qcom-x1e-7.1.3-jg-<n>` tag fails `check-config` with
-`N config options have been changed`, regenerate the annotations patch before
-rerunning the build:
-
-```bash
-./scripts/regenerate-qcom-x1e-annotations.sh \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch "jg/ubuntu-qcom-x1e-7.1.3-jg-<n>" \
-  --reset-source
-```
-
-The helper installs the source package's complete build dependencies, uses the
-same compiler and Rust probes as the package build, removes the stale
-annotations patch for the previous tag, and writes the replacement into
-`patches/jglathe-qcom-x1e-7.1.3/`. Verify the new filename, then rerun the
-original build command unchanged.
-
-See the [patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
-for the full on-device build path and fallback-kernel safety model.
-
-Build the matching pinned ARM64 iptsd payload before creating a pen test image:
-
-```bash
-./scripts/build-sp11-iptsd-docker.sh --copy-to-payload
-```
-
-The builder verifies the exact upstream source and emits binaries, hashes,
-licences, and corresponding source under `payload/iptsd-sp11`. See
-[Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md).
-
-### 2. Build the USB image
-
-```bash
-./scripts/build-sp11-live-usb-image.sh \
-  --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
-  --grub-mode direct \
-  --work-dir build/work-direct-boot \
-  --out build/sp11-ubuntu-live-direct.img \
-  --validate
-```
-
-If auto DTB extraction fails, provide the X1E/OLED DTB explicitly via `--dtb`
-or the best-effort X1P/LCD DTB via `--dtb-x1p`. An explicit DTB can come from a
-kernel package with SP11 support or from a local build of
-`dwhinham/kernel-surface-pro-11`. Do not substitute the Surface Laptop 7/Romulus
-DTB. X1P/LCD live boot uses `--grub-mode menu` to select its dedicated entry.
-
-To build a live USB with KDE Plasma available by default, add `--desktop kde`.
-See [ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
-
-### 3. Write the USB
-
-```bash
-diskutil list
-diskutil info /dev/diskX  # verify it's the removable USB disk
-./scripts/write-image-to-macos-disk.sh build/sp11-ubuntu-live-direct.img /dev/diskX
-```
-
-The script refuses to write unless the disk is external, removable, and USB.
-
-### 4. Boot and install
-
-1. Disable Secure Boot in Surface UEFI.
-2. Boot from the USB.
-3. Install Ubuntu carefully (shrink Windows, create `/`, `/boot`, `/boot/efi`).
-4. At the end of the installer, choose **continue testing** and run the
-   installed-system preparer before rebooting:
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-[ -z "$SP11DATA" ] && { sudo mkdir -p /mnt/sp11data; sudo mount "$SP11DEV" /mnt/sp11data; SP11DATA=/mnt/sp11data; }
-cd "$SP11DATA/support"
-sudo ./scripts/prepare-sp11-installed-system.sh --target /target
-sudo reboot
-```
-
-### 5. Post-install: firmware + kernel + bring-up
-
-After the first installed boot, mount `SP11DATA` and run the finish script
-(downloads firmware, installs support helpers, reboots):
-
-```bash
-SP11DEV="$(blkid -L SP11DATA)"
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n 1)"
-[ -z "$SP11DATA" ] && { sudo mkdir -p /mnt/sp11data; sudo mount "$SP11DEV" /mnt/sp11data; SP11DATA=/mnt/sp11data; }
-cd "$SP11DATA/support"
-sudo ./scripts/finish-sp11-installed-system.sh --download --reboot
-```
-
-If networking is unavailable, mount the Windows partition and use Windows
-firmware instead: `--windows-root "$WINROOT"` (see the script `--help`).
-See [Install Surface Pro 11 Firmware](docs/how-to/how-to-install-sp11-firmware.md)
-for the source options, aDSP safety policy, and validation checks.
-
-Then install the patched kernel payload from the USB. For an `sp11v3` payload,
-keep `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` beside the `.deb`
-files; the same command installs the exact-ABI module set and verifies the
-rebuilt initramfs:
-
-```bash
-cd "$SP11DATA/support"
-./scripts/build-sp11-qcom-x1e-kernel.sh --work-dir "$SP11DATA/payload/kernel-debs" --install-only
-sudo reboot
-```
-
-Keep the previous qcom-x1e kernel as a GRUB fallback until the patched kernel
-has booted and Wi-Fi rfkill state has been validated.
-
-The installer refuses an `sp11v3` kernel with a missing or mismatched module
-bundle before invoking `apt`. `--skip-touchscreen-modules` is available for a
-deliberate kernel-development install, but touch will remain unavailable until
-`install-sp11-touchscreen.sh` completes.
-
-For a direct local installation instead of the USB payload flow, place all four
-matching `.deb` packages in one directory and run the same helper against that
-directory. An `sp11v3` directory must also contain the release's matching
-`gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files. For example, with
-the verified release assets downloaded to `$HOME/Downloads`:
-
-```bash
-cd /path/to/linux-surface-pro-11-oe
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir "$HOME/Downloads" \
-  --install-only
-sudo reboot
-```
-
-The current v6 bundle contains matching image, modules, flavour-header, and
-common-header packages for `7.2-rc5-jg-0sp11v6` with the in-tree phase55
-touchscreen and the wsa884x PA recovery — no separate module files are needed
-([ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)).
-The v3 bundle added the three out-of-tree touchscreen modules, and the older
-`7.1.3-jg-1sp11v2` package set remains a kernel-only rollback option. After
-reboot, verify the running kernel and authoritative DMIC clock:
-
-```bash
-uname -r
-od -An -tu4 -N4 --endian=big \
-  /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
-```
-
-Expected values are `7.2-rc5-jg-0sp11v6-qcom-x1e` (or `7.2-rc5-jg-0sp11v3-qcom-x1e`, or
-`7.1.3-jg-1sp11v2-qcom-x1e` after selecting the rollback kernel) and `2400000`.
-
-## Post-Install Bring-Up
-
-### Touchscreen
-
-After rebooting the v3 kernel, run the read-only diagnostic:
-
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/troubleshoot-sp11-touchscreen.sh
-```
-
-Success requires the v3 device tree, all three loaded module source versions
-to match their selected `updates/` files, and the `Microsoft Surface G6 Touch`
-input device. `Invalid proto 9` indicates a stale stock SPI controller in the
-boot path; `CH START completion timeout` points to a stale or mismatched GPI
-DMA module. The diagnostic reports the corresponding repair command.
-
-The guarded installer now **repairs** the stale-initramfs case instead of only
-detecting it: it diverts (or removes) the stock in-tree
-`kernel/drivers/{dma/qcom/gpi,spi/spi-geni-qcom}.ko*` before `depmod`, adds a
-persistent initramfs-tools/dracut guard, and verifies neither module is
-built-in. See
-[ADR-0053](docs/adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md). An
-r1 install that already stopped with `initramfs also contains a
-stock/duplicate` can be recovered manually:
-
-```bash
-REL=7.2-rc5-jg-0sp11v3-qcom-x1e
-sudo rm -f /lib/modules/$REL/kernel/drivers/dma/qcom/gpi.ko*
-sudo rm -f /lib/modules/$REL/kernel/drivers/spi/spi-geni-qcom.ko*
-sudo depmod -a $REL
-sudo update-initramfs -u -k $REL
-```
-
-The captured Windows controller initialisation is intentionally not the
-default. If the diagnostic proves that the correct modules are loaded and the
-Linux-integrated path still fails on a cold boot, reinstall explicitly with
-`--windows-se-init` as an A/B recovery test and retain the known-good kernel
-fallback.
-
-### Pen
-
-Pen part 2 requires the matching kernel and userspace branches. If
-`payload/iptsd-sp11` was included on `SP11DATA`, the installed-system support
-flow installs it automatically. To make a missing payload fatal, run:
-
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/install-sp11-support.sh --installed-system --require-iptsd
-```
-
-The installer verifies the payload, disables the legacy `g6-pen.service`,
-masks the generic `iptsd@.service`, and lets udev start one dynamic
-`sp11-iptsd@` instance for the matching HIDRAW node. The SP11 udev rule
-replaces any earlier generic iptsd request for that node. It deliberately
-disables iptsd's virtual touchscreen so the kernel's direct touch device
-remains the only touch provider. Do not hard-code a `hidrawN` number; it
-changes across recovery and resume.
-
-This installs support into the target system, not the running live desktop.
-Follow the complete discovery, functional, suspend/resume, and rollback matrix
-in [Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md)
-before merging either branch.
-
-### Wi-Fi
-
-The WCN7850 needs a patched kernel with rfkill disabled. The `board.bin`
-fallback is enough for the adapter to probe; the remaining blocker is the
-rfkill kernel/DTB path. See the
-[patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
-for the full diagnostic and build path.
-
-### Bluetooth
-
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/troubleshoot-sp11-bluetooth.sh
-```
-
-If the diagnostic reports a `00:00:00:00:*` address, get the real Bluetooth MAC
-from Windows (see [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md))
-and configure it:
-
-```bash
-BT_MAC="<your-bluetooth-mac>"
-sudo ./scripts/sp11-bluetooth-mac.sh --write-config "$BT_MAC"
-gcc -Wall -Wextra -O2 -o tools/sp11-bt-set-addr tools/sp11-bt-set-addr.c
-sudo ./scripts/sp11-bluetooth-mac.sh --install-systemd
-sudo udevadm trigger --subsystem-match=bluetooth
-sudo reboot
-```
-
-The installed unit runs before `bluetooth.service`, avoiding the cold-boot
-D-state hang. See [ADR-0032](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md).
-
-### Audio
-
-The maintained path uses the checksum-pinned `audio-fullio-v19c` userspace
-release, supported from the `sp11v12` kernel generation and tested through
-`sp11v19`. Do not install the retired CRD topology, WSA routing or boot-race
-services, or a manual PipeWire speaker sink alongside it.
-
-Inspect the current state, pull the audited release, preview the transaction,
-then install it explicitly. A non-zero doctor result is expected when support
-is missing or a recognised legacy conflict is present; the check makes no
-changes.
+Keep the running, known-good ABI installed. Inspect the downloaded bundle,
+then preflight the target before changing it:
 
 ```sh
-linux-armer doctor userspace --feature audio
-linux-armer userspace pull audio --cache-dir ./linux-armer-userspace
-
-AUDIO_RELEASE=./linux-armer-userspace/audio-fullio-v19c/sp11-audio-v19c
-linux-armer userspace install audio --from "$AUDIO_RELEASE" --dry-run
-sudo linux-armer userspace install audio --from "$AUDIO_RELEASE" --yes
-sudo reboot
-linux-armer doctor userspace --feature audio
+linux-armer kernel inspect kernel-bundle
+linux-armer kernel preflight kernel-bundle \
+  --root / \
+  --fallback-abi <known-good-abi>
+linux-armer kernel install kernel-bundle \
+  --root / \
+  --fallback-abi <known-good-abi> \
+  --dry-run
 ```
 
-The installer accepts only the audited asset set and verifies its checksums
-before installing the coherent topology and UCM files. The release is marked
-redistribution-restricted because it contains protected vendor-derived bytes.
-The current image flow supplies the required
-`soundwire_qcom.sp11_feedback_active_offset2_zero=1` boot argument.
+Review the plan, then repeat `kernel install` with elevated privileges and
+`--yes`. For an installed system mounted below a live environment, replace `/`
+with that absolute mount point. The full recovery procedure is in
+[Reinstall a Patched Kernel from USB](docs/how-to/how-to-reinstall-patched-kernel-from-usb.md).
 
-The doctor is a static check and cannot prove audible routing. Complete the
-low-volume speaker and microphone gates in
-[Bring Up Current Surface Pro 11 Audio](docs/how-to/how-to-bring-up-audio.md).
-Systems carrying earlier audio workarounds must instead follow
-[Migrate Legacy SP11 Audio to FullIO v19c](docs/how-to/how-to-migrate-to-native-audio.md),
-including its reviewed, reversible clean-up workflow and rollback limitations.
-See the [linux-armer userspace companion](cli/linux-armer/README.md#userspace-companion)
-for the complete audited userspace contract.
+### 6. Manage userspace support
 
-## KDE Plasma (Kubuntu-like Experience)
-
-Kubuntu has no official ARM64 ISO. Two paths to a KDE Plasma desktop:
-
-**Option 1 (recommended): Post-install swap**
-
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/sp11-install-kde-desktop.sh
-# Once confirmed, optionally remove GNOME:
-sudo ./scripts/sp11-install-kde-desktop.sh --purge-gnome -y
+```sh
+linux-armer userspace catalog validate
+linux-armer userspace list
+linux-armer userspace status
+linux-armer userspace pull recommended --cache-dir build/linux-armer/userspace
+linux-armer userspace install recommended \
+  --from build/linux-armer/userspace \
+  --dry-run
 ```
 
-**Option 2 (experimental): Live USB with KDE**
+Repeat the install with elevated privileges and `--yes` after reviewing it.
+IPTSD and camera components also have maintained native builds. Camera supports
+a non-mutating plan; the IPTSD build executes when invoked:
 
-```bash
-./scripts/build-sp11-live-usb-image.sh \
-  --iso https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso \
-  --desktop kde --grub-mode direct \
-  --out build/sp11-ubuntu-live-direct-kde.img --validate
+```sh
+linux-armer userspace build iptsd \
+  --output-dir build/linux-armer/iptsd
+linux-armer userspace build camera \
+  --output-dir build/linux-armer/camera \
+  --dry-run
 ```
 
-Both paths are desktop-layer changes only — they do not touch the SP11 kernel,
-DTB, firmware, audio, or Bluetooth bring-up. See
-[ADR-0039](docs/adr/adr-0039-kde-plasma-desktop-option.md).
+Audio, pen and camera have different support grades. Inspect
+`userspace show <component>` before changing a system.
 
-## Test Notes
+### 7. Diagnose the host and device
 
-- [2026-06-13 direct live USB test](docs/live-usb-test-20260613.md)
-- [2026-06-13 installed NVMe boot test](docs/installed-nvme-boot-test-20260613.md)
-- [2026-06-13 installed Wi-Fi rfkill test](docs/installed-wifi-rfkill-test-20260613.md)
-- [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
-- [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
-- [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
-- [2026-06-14 Wi-Fi clean flow test](docs/installed-wifi-clean-flow-test-20260614.md)
-- [2026-06-14 Bluetooth public address test](docs/installed-bluetooth-public-address-test-20260614.md)
+```sh
+linux-armer doctor
+linux-armer doctor userspace
+linux-armer doctor hardware wifi bluetooth audio
+```
 
-### Visual Evidence
+Use `--root <absolute-path>` with the userspace or hardware doctor to inspect a
+mounted target. Diagnostic commands do not change the system. Review their
+output before sharing it because host diagnostics can include environment
+paths; device diagnostics deliberately omit private device identities.
 
-- [Wi-Fi networks visible in GNOME](assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
-- [Browser speed test after Wi-Fi connection](assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
-- [Bluetooth settings with a paired speaker](assets/bluetooth/2026-06-14-sp11-bluetooth-search-connect-redacted.png)
+### 8. Import private Windows material
 
-## How-To Guides
-
-- [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
-- [Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md)
-- [Bring Up Current Surface Pro 11 Audio](docs/how-to/how-to-bring-up-audio.md)
-- [Migrate Legacy SP11 Audio to FullIO v19c](docs/how-to/how-to-migrate-to-native-audio.md)
-- [Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md)
-- [Run the Legacy G6 Diagnostic Pen Processor](docs/how-to/how-to-run-g6-pen-processor.md)
-- [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
-- [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
-- [Inspect and Manage Audited Userspace Support](cli/linux-armer/README.md#userspace-companion)
-- [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
-- [Touchscreen Clean-Install and Release Retrospective](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
-- [Troubleshoot Docker Overlay Mount Failures on Linux Build Hosts](docs/how-to/how-to-troubleshoot-linux-docker-overlay.md)
-- [Troubleshoot Docker `exec format error` on x86_64 Linux Build Hosts](docs/how-to/how-to-troubleshoot-docker-exec-format-error.md)
-- [Troubleshoot Kernel Git Clone `fetch-pack` Failures](docs/how-to/how-to-troubleshoot-kernel-git-clone-failures.md)
-
-## Decision Records
-
-The major bring-up decisions are recorded in `docs/adr/`:
-
-- [ADR001: Target Repo and Scope](docs/adr/adr-0001-target-repo-and-scope.md)
-- [ADR002: Boot Shim Image Strategy](docs/adr/adr-0002-boot-shim-image-strategy.md)
-- [ADR003: Denali DTB and GRUB Injection](docs/adr/adr-0003-denali-dtb-and-grub-injection.md)
-- [ADR004: Firmware Extraction Policy](docs/adr/adr-0004-firmware-extraction-policy.md)
-- [ADR005: Wi-Fi Board Fixup](docs/adr/adr-0005-wifi-board-fixup.md)
-- [ADR006: Build and Write Guardrails](docs/adr/adr-0006-build-and-write-guardrails.md)
-- [ADR007: Auto DTB Extraction and Debug Entries](docs/adr/adr-0007-auto-dtb-extraction-and-debug-entries.md)
-- [ADR008: Ubuntu Denali DTB Variants](docs/adr/adr-0008-ubuntu-denali-dtb-variants.md)
-- [ADR009: Default Casper ISO Scan Boot](docs/adr/adr-0009-default-casper-iso-scan-boot.md)
-- [ADR010: Image Validation Workflow](docs/adr/adr-0010-image-validation-workflow.md)
-- [ADR011: GRUB EFI Console Input](docs/adr/adr-0011-grub-efi-console-input.md)
-- [ADR012: GRUB Module Tree](docs/adr/adr-0012-grub-module-tree.md)
-- [ADR013: Standalone GRUB External Keyboard Test](docs/adr/adr-0013-standalone-grub-external-keyboard-test.md)
-- [ADR014: Direct GRUB Autoboot Diagnostic](docs/adr/adr-0014-direct-grub-autoboot-diagnostic.md)
-- [ADR015: Direct Live Desktop and Install Gate](docs/adr/adr-0015-direct-live-desktop-and-install-gate.md)
-- [ADR016: USB Data Mount and Installed-System Helpers](docs/adr/adr-0016-usb-data-mount-and-installed-system-helpers.md)
-- [ADR017: GRUB DTB Path for Separate Boot](docs/adr/adr-0017-grub-dtb-path-for-separate-boot.md)
-- [ADR018: Wi-Fi rfkill Bring-Up Gate](docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md)
-- [ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill](docs/adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
-- [ADR020: Dockerized ARM64 Kernel Build](docs/adr/adr-0020-dockerized-arm64-kernel-build.md)
-- [ADR021: Git Fallback Kernel Build Toolchain](docs/adr/adr-0021-git-fallback-kernel-build-toolchain.md)
-- [ADR022: Docker Kernel Build Without fakeroot](docs/adr/adr-0022-docker-kernel-build-without-fakeroot.md)
-- [ADR023: Docker Kernel Build Case-Sensitive Work Volume](docs/adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
-- [ADR024: Bluetooth, Audio, and Board-Data Bring-Up Gates](docs/adr/adr-0024-bluetooth-audio-and-board-data-gates.md)
-- [ADR025: rfkill-Capable DTB Selection](docs/adr/adr-0025-rfkill-capable-dtb-selection.md)
-- [ADR026: Prebuilt Kernel Release Artifacts](docs/adr/adr-0026-prebuilt-kernel-release-artifacts.md)
-- [ADR027: Bluetooth Public Address](docs/adr/adr-0027-bluetooth-public-address.md)
-- [ADR028: Bounded Bluetooth Management Hook](docs/adr/adr-0028-bounded-bluetooth-management-hook.md)
-- [ADR029: Bluetooth Cold-Boot Service Retry Profile](docs/adr/adr-0029-bluetooth-cold-boot-service-retry-profile.md)
-- [ADR030: Bluetooth btmgmt Batch Sequence](docs/adr/adr-0030-bluetooth-btmgmt-batch-sequence.md)
-- [ADR031: Bluetooth Indexed Public Address and No Pre-Apply Restart](docs/adr/adr-0031-bluetooth-indexed-public-address.md)
-- [ADR032: Raw mgmt-Socket Bluetooth Cold-Boot Solution](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-boot.md)
-- [ADR0033: Surface Pro 11 Audio Topology Gap](docs/adr/adr-0033-audio-topology-gap.md)
-- [ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cache](docs/adr/adr-0034-wsa2-regcache-right-speaker.md)
-- [ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load](docs/adr/adr-0035-audio-boot-race-alsactl.md)
-- [ADR0036: Right Speaker Audio via PipeWire audio.position Reorder](docs/adr/adr-0036-right-speaker-audio-position-reorder.md)
-- [ADR0037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1](docs/adr/adr-0037-jglathe-qcom-7-1-1-stubble-paths.md)
-- [ADR0038: Split Compressed Live Image Release Assets](docs/adr/adr-0038-split-compressed-live-image-release-assets.md)
-- [ADR0039: KDE Plasma Desktop Option](docs/adr/adr-0039-kde-plasma-desktop-option.md)
-- [ADR0040: Multi-Directory Patch Sources (--patch-dirs)](docs/adr/adr-0040-multi-patch-dirs.md)
-- [ADR0041: Surface Pro 11 Touchscreen Kernel Patch Set](docs/adr/adr-0041-sp11-touchscreen-patches.md)
-- [ADR0042: Touchscreen — Kernel Integration Troubleshooting and Remaining Blockers](docs/adr/adr-0042-sp11-touchscreen-troubleshooting.md)
-- [ADR0043: Reproducible JG 7.1.3-jg-1 Kernel Builds](docs/adr/adr-0043-jglathe-qcom-7-1-3-jg-1-build-reproducibility.md)
-- [ADR0044: Surface Pro 11 UCM Uses One WSA Macro and Two Microphone Channels](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
-- [ADR0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel](docs/adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
-- [ADR0046: Default the Surface Pro 11 DMIC Clock to 2.4 MHz](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md)
-- [ADR0047: JG 7.2-rc5-jg-0 Kernel Build](docs/adr/adr-0047-jglathe-qcom-7-2-rc5-jg-0-build.md)
-- [ADR0048: JG 7.2-rc5-jg-0sp11v2 Kernel Build](docs/adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
-- [ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Build](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
-- [ADR0050: Touchscreen Clean-Install and Release Flow](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
-- [ADR0051: Remove Broken or Incorrect Releases and Tags](docs/adr/adr-0051-release-and-tag-cleanup.md)
-- [ADR0052: Build from the SP11 Integration Kernel Fork](docs/adr/adr-0052-sp11-integration-fork-build.md)
-- [ADR0053: Repair Stale Stock-Module Initramfs During Touchscreen Install](docs/adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md)
-- [ADR0054: JG 7.2-rc5-jg-0sp11v4 In-Tree Touchscreen Build](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md)
-- [ADR0055: Log-dB Speaker Volume Taper](docs/adr/adr-0055-audio-volume-taper-log-db.md)
-- [ADR0056: SP11 7.2-rc5-jg-0sp11v6 Integration Fork Build](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)
-- [ADR0057: SP11 7.2-rc6-jg-0sp11v6 rc-Branch Integration Build](docs/adr/adr-0057-sp11-7-2-rc6-jg-0sp11v6-rc-branch-build.md)
-- [ADR0058: SP11 7.2.0-jg-0sp11v7 Non-rc Integration Line](docs/adr/adr-0058-sp11-7-2-0-jg-0sp11v7-non-rc-integration-line.md)
-- [ADR0059: Evidence-Gated G6 HEAT Userspace Pen Processor](docs/adr/adr-0059-evidence-gated-g6-heat-userspace-pen-processor.md)
-- [ADR0060: Pen Integration Status: Hover Validated, Tap-to-Click Deferred](docs/adr/adr-0060-pen-integration-status.md)
-- [ADR0061: SP11 Platform Profile Framework on Non-ACPI Systems](docs/adr/adr-0061-sp11-platform-profile-framework-non-acpi.md)
-- [ADR0062: SP11 7.2.0-jg-0sp11v9 Golden-v32 Audio Kernel Line](docs/adr/adr-0062-sp11-7-2-0-jg-0sp11v9-golden-v32-audio-line.md)
-- [ADR0063: SP11 Feedback-Port Offset2 Boot Param](docs/adr/adr-0063-sp11-v10-feedback-port-offset2-parity.md)
-- [ADR0064: Dedicated SP11 Audio Release Strategy](docs/adr/adr-0064-sp11-audio-release-strategy.md)
-- [ADR0065: SP11 Front Camera C-PHY Integration](docs/adr/adr-0065-sp11-front-camera-cphy-integration.md)
-- [ADR0066: SP11 IMX681 libcamera Simple IPA Integration](docs/adr/adr-0066-sp11-imx681-libcamera-simple-ipa.md)
-- [ADR0067: SP11 Kernel HIDRAW Bridge and Pinned iptsd Pen Integration](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md)
-
-## Windows Firmware
-
-The verified Windows install contains these key firmware inputs:
-
-- `qcdxkmsuc8380.mbn`
-- `adsp_dtbs.elf`
-- `qcadsp8380.mbn`
-- `cdsp_dtbs.elf`
-- `qccdsp8380.mbn`
-
-The `scripts/sp11-grab-fw.sh` helper installs these files either by downloading
-the latest WOA-Project Qualcomm reference driver set (`--download`) or by
-copying the newest matching files from a mounted Windows root
-(`--windows-root`). The installed-system finish script invokes this helper.
-See [Install Surface Pro 11 Firmware](docs/how-to/how-to-install-sp11-firmware.md)
-for the complete eleven-file mapping, including `qcdxkmsucpurwa.mbn` and the
-aDSP/cDSP JSON payloads, plus the full procedure and validation steps.
-
-Firmware installation is a one-time step: the files persist under
-`/lib/firmware`. Kernel package installation normally rebuilds the new
-kernel's initramfs automatically, while firmware needed after the root
-filesystem is mounted remains available from `/lib/firmware`. Do not rerun the
-firmware helper for each kernel installation or upgrade.
-
-## Useful Commands on Windows
-
-Collect the Bluetooth MAC address from Windows (run PowerShell as Admin from
-a checkout of this repository):
+Some device-bound platform firmware and the Bluetooth public address must come
+from the same Surface. On Windows, run the canonical collector from a private
+checkout:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\collect-sp11-windows-bluetooth-address.ps1
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\cli\linux-armer\tools\collect-sp11-windows-handoff.ps1 `
+  -OutputDirectory E:\sp11-handoff
 ```
 
-## Sources
+The collector never exports Windows Wi-Fi firmware. Treat its output as
+private, device-bound and proprietary; do not publish it or add it to an image
+or release. Move it privately to Linux, then validate and import it:
 
-This project is a synthesis of community bring-up work. The links below are
-kept as source credit and as an audit trail for future decisions.
+```sh
+linux-armer handoff import /path/to/sp11-handoff
+linux-armer handoff list
+linux-armer handoff apply <id> \
+  --target-root / \
+  --feature firmware \
+  --feature bluetooth \
+  --adsp-policy enabled \
+  --dry-run
+```
 
-Base projects and install flow:
+Use `--adsp-policy disabled` for a live USB target and `enabled` for the
+installed NVMe system. Repeat the apply with the exact confirmation after
+review. `handoff restore` reverses a recorded application, and `handoff purge`
+removes a reviewed private import from the store.
 
-- Surface Laptop 7 Ubuntu notes by Bryce Hoehn: <https://github.com/bryce-hoehn/linux-surface-laptop-7>
-- Surface Pro 11 Arch notes by Dan Whinham: <https://github.com/dwhinham/linux-surface-pro-11>
-- linux-surface project and Surface Pro 11 support discussion: <https://github.com/linux-surface/linux-surface> and <https://github.com/linux-surface/linux-surface/issues/1962>
-- linux-surface iptsd userspace processor: <https://github.com/linux-surface/iptsd>
-- turbineBMW Surface Pro 11 Linux integration, used as attributed pen lifecycle and hardware-reference evidence: <https://github.com/turbineBMW/surface-pro-11-linux>
-- Ubuntu Snapdragon X concept images and discussion: <https://people.canonical.com/~platform/images/ubuntu-concept/> and <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800>
-- Fedora Snapdragon WoA install notes: <https://fedoraproject.org/wiki/Snapdragon_WoA_Laptop_Install>
-- Debian ThinkPad X13s installation notes, useful for WoA boot and firmware patterns: <https://wiki.debian.org/InstallingDebianOn/Thinkpad/X13s>
-- WOA-Project Qualcomm reference drivers: <https://github.com/WOA-Project/Qualcomm-Reference-Drivers>
+### 9. Detect and recover from recognised legacy changes
 
-Surface Pro 11 kernel and Wi-Fi rfkill:
+Never remove old workarounds by guessing paths. Build an exact plan from the
+CLI's bounded allow-list:
 
-- Surface Pro 11 kernel patches by Dan Whinham: [ath12k `disable-rfkill` support](https://github.com/dwhinham/kernel-surface-pro-11/commit/e0c52309e8380b33239b16a85fbedb5da7d12675) and [Denali DTB `disable-rfkill`](https://github.com/dwhinham/kernel-surface-pro-11/commit/906865c001c9a01d1e2271da4db926d519a95cd8)
-- Ubuntu Discourse notes by `hot21shot` confirming Surface Pro 11 Bluetooth, Wi-Fi, and graphics progress: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1728>
-- Ubuntu Discourse Wi-Fi rfkill and Bluetooth MAC notes by `hot21shot`: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1731>
-- Ubuntu Discourse Wi-Fi hard-block report by `haider5c`: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1754>
-- Surface Pro 11/12 Hamoa and Purwa discussion by Joerg Glathe and contributors: <https://github.com/jglathe/linux_ms_dev_kit/discussions/57>
+```sh
+linux-armer clean scan --root /
+linux-armer clean plan --root / \
+  --output linux-armer-cleanup-plan.json
+sudo linux-armer clean apply --root / \
+  --plan linux-armer-cleanup-plan.json \
+  --yes
+```
 
-Firmware, Bluetooth, and audio follow-up:
+Keep the durable receipt. If needed, validate and restore the captured entries:
 
-- Ubuntu Discourse firmware, board-data, and audio direction by `tobhe`: <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/1689>
-- Zenbook A14 Snapdragon X1 board-data repacking notes by Alex Vinarskis: <https://github.com/alexVinarskis/linux-x1e80100-zenbook-a14#repack-board-2bin>
-- Qualcomm board-data encoder reference from QCA Swiss Army Knife: <https://github.com/qca/qca-swiss-army-knife/blob/master/tools/scripts/ath11k/ath11k-bdencoder>
-- Linux MSM AudioReach topology project: <https://github.com/linux-msm/audioreach-topology>
-- ALSA UCM x1e80100 example for TUXEDO Elite 14: <https://github.com/alsa-project/alsa-ucm-conf/commit/154c602e89fb0da142eac57142569766be606148>
-- BlueZ invalid Bluetooth address workaround discussion: <https://github.com/bluez/bluez/issues/107>
+```sh
+sudo linux-armer clean restore \
+  /var/lib/linux-armer/backups/<transaction>/receipt.json \
+  --root / \
+  --yes
+```
+
+## Current guidance
+
+- [CLI reference and safety model](cli/linux-armer/README.md)
+- [Supported image catalogue](cli/linux-armer/supported-isos.json)
+- [How-to guides](docs/how-to/)
+- [Architecture decisions](docs/adr/)
+- [Kernel release preparation](docs/how-to/how-to-release-kernel-artifacts.md)
+- [Kernel recovery from USB](docs/how-to/how-to-reinstall-patched-kernel-from-usb.md)
+
+Documents and reports with explicit historical dates remain evidence of the
+experiments they describe. Use this README and the current how-to guides for
+operator actions.
