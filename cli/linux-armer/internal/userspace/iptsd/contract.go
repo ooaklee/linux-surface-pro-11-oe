@@ -64,7 +64,7 @@ type fileSpec struct {
 var integrationFiles = []fileSpec{
 	{path: "LICENSE.integration", sha256: "f8126478d63d42239b27e3364ac188d56b5abb0716c021271c1265c556ceed65", size: 1067},
 	{path: "PAYLOAD.sha256", sha256: payloadManifestDigest, size: payloadManifestSize},
-	{path: "README.md", sha256: "69a92f448f64f3d16b59770869bb7a5411470dd153770765fce97f68c41bd687", size: 3204},
+	{path: "README.md", sha256: "81276a49753bc6c2f548c5593d752d2f9ef02b7201232f86962012f91e0eb626", size: 3575},
 	{path: "SOURCE.env", sha256: "1ff7395738b95a0ef4ffd780a9b6415733e7003040ae0b56b4b984c3bcd25278", size: 336},
 	{path: "config/surface-pro-11-0c80.conf", sha256: "e629f67248df412d69952accc874b848e3e45ad3d8b31cbec4626f85c12c8c34", size: 98},
 	{path: "config/surface-pro-11-0c83.conf", sha256: "358953d2171b36879043dc46084cc9344ea2c28cc718ff75690acd479214bf59", size: 98},
