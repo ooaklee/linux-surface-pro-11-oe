@@ -14,6 +14,7 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/catalog"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/cleanup"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/plan"
+	userspacestatus "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/status"
 )
 
 // TestRootNoArgumentsOnNonTerminalPrintsHelp verifies that a non-interactive
@@ -610,6 +611,100 @@ func TestCleanRestoreUsesVerifiedReceipt(t *testing.T) {
 	if data, err := os.ReadFile(legacyPath); err != nil || string(data) != "mshw0485_touch\n" {
 		t.Fatalf("restored legacy file = %q, error %v", data, err)
 	}
+}
+
+// TestCleanUserHomeMustMatchPlanAndReceipt verifies per-user mutation is bound
+// to the same explicit target-visible home at planning, apply, and restore.
+func TestCleanUserHomeMustMatchPlanAndReceipt(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	home := filepath.Join(root, "home", "alice")
+	legacyPath := filepath.Join(home, ".config/pipewire/pipewire.conf.d/50-sp11-speakers.conf")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "# Surface Pro 11 manual speaker sink.\nfactory.name = api.alsa.pcm.sink\nnode.name = \"alsa_output.sp11_speakers\"\nchannelmix.mix-matrix = \"fixture\"\n"
+	if err := os.WriteFile(legacyPath, []byte(content), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(t.TempDir(), "cleanup-plan.json")
+	if _, _, err := executeCLI(t, "clean", "plan", "--root", root, "--user-home", "/home/alice", "--output", planPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeCLI(t, "clean", "apply", "--root", root, "--plan", planPath, "--yes"); err == nil || !strings.Contains(err.Error(), "plan user home") {
+		t.Fatalf("clean apply without matching --user-home error = %v", err)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("mismatched apply changed per-user target: %v", err)
+	}
+	output, _, err := executeCLI(t, "clean", "apply", "--root", root, "--user-home", "/home/alice", "--plan", planPath, "--yes", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt cleanup.Receipt
+	if err := json.Unmarshal([]byte(output), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.UserHome != "/home/alice" {
+		t.Fatalf("receipt user home = %q", receipt.UserHome)
+	}
+	receiptPath := filepath.Join(receipt.Backup, "receipt.json")
+	if _, _, err := executeCLI(t, "clean", "restore", receiptPath, "--root", root, "--yes"); err == nil || !strings.Contains(err.Error(), "receipt user home") {
+		t.Fatalf("clean restore without matching --user-home error = %v", err)
+	}
+	if _, _, err := executeCLI(t, "clean", "restore", receiptPath, "--root", root, "--user-home", "/home/alice", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := os.ReadFile(legacyPath); err != nil || string(restored) != content {
+		t.Fatalf("restored per-user content = %q, %v", restored, err)
+	}
+}
+
+// TestUserspaceAndDoctorAcceptTheSameExplicitUserHome verifies both delivery
+// surfaces report one selected per-user legacy path with identical semantics.
+func TestUserspaceAndDoctorAcceptTheSameExplicitUserHome(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, "home/alice/.config/wireplumber/wireplumber.conf.d/51-sp11-no-duplicate-output.conf")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	userspaceOutput, _, userspaceErr := executeCLI(t, "userspace", "status", "--root", root, "--user-home", "/home/alice", "--feature", "audio", "--json")
+	doctorOutput, _, doctorErr := executeCLI(t, "doctor", "userspace", "--root", root, "--user-home", "/home/alice", "--feature", "audio", "--json")
+	if userspaceErr == nil || doctorErr == nil {
+		t.Fatalf("selected legacy audio should fail readiness: userspace=%v doctor=%v", userspaceErr, doctorErr)
+	}
+	var userspaceReport userspacestatus.Report
+	var doctorReport userspacestatus.Report
+	if err := json.Unmarshal([]byte(userspaceOutput), &userspaceReport); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(doctorOutput), &doctorReport); err != nil {
+		t.Fatal(err)
+	}
+	if userspaceReport.UserHome != "/home/alice" || doctorReport.UserHome != userspaceReport.UserHome {
+		t.Fatalf("user-home delivery mismatch: userspace=%q doctor=%q", userspaceReport.UserHome, doctorReport.UserHome)
+	}
+	wantUserspace := findCLIStatusCheck(t, userspaceReport, "audio-user-legacy-conflicts")
+	wantDoctor := findCLIStatusCheck(t, doctorReport, "audio-user-legacy-conflicts")
+	if !reflect.DeepEqual(wantUserspace, wantDoctor) || wantUserspace.State != userspacestatus.StateFail {
+		t.Fatalf("user-home checks differ: userspace=%#v doctor=%#v", wantUserspace, wantDoctor)
+	}
+}
+
+// findCLIStatusCheck returns a userspace diagnostic by stable ID.
+func findCLIStatusCheck(t *testing.T, report userspacestatus.Report, id string) userspacestatus.Check {
+	t.Helper()
+	for _, check := range report.Checks {
+		if check.ID == id {
+			return check
+		}
+	}
+	t.Fatalf("check %q absent from %#v", id, report.Checks)
+	return userspacestatus.Check{}
 }
 
 // executeCLI runs an isolated root command and returns captured standard output,

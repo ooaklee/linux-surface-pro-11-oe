@@ -63,6 +63,7 @@ func (a *application) newUserspaceStatusCommand() *cobra.Command {
 // `userspace status` and `doctor userspace`.
 func (a *application) newUserspaceStatusDeliveryCommand(use, short string) *cobra.Command {
 	var root string
+	var userHome string
 	var kernelABI string
 	var featureNames []string
 	var asJSON bool
@@ -80,7 +81,7 @@ func (a *application) newUserspaceStatusDeliveryCommand(use, short string) *cobr
 				features = append(features, feature)
 			}
 			report, err := a.userspace.StatusWithCatalog(a.userspaceCatalogPath, userspacestatus.Options{
-				Root: root, KernelABI: kernelABI, Features: features,
+				Root: root, UserHome: userHome, KernelABI: kernelABI, Features: features,
 			})
 			if err != nil {
 				return err
@@ -106,6 +107,7 @@ func (a *application) newUserspaceStatusDeliveryCommand(use, short string) *cobr
 		},
 	}
 	command.Flags().StringVar(&root, "root", "/", "target filesystem root to inspect")
+	command.Flags().StringVar(&userHome, "user-home", "", "explicit target-visible absolute Linux user home; never inferred")
 	command.Flags().StringVar(&kernelABI, "kernel", "", "installed Surface qcom-x1e kernel ABI to inspect")
 	command.Flags().StringSliceVar(&featureNames, "feature", nil, "limit checks to a feature (repeatable or comma-separated)")
 	command.Flags().BoolVar(&asJSON, "json", false, "write machine-readable JSON")
@@ -313,7 +315,7 @@ func (a *application) writeUserspaceBuildResult(result userspacebuild.Result) er
 		return err
 	}
 	if camera.Published && camera.Bundle != nil {
-		_, err := fmt.Fprintf(a.out, "built and validated coherent camera packages\nversion: %s\noutput: %s\nreceipt: %s\n", camera.Bundle.PackageVersion, camera.OutputDirectory, camerabuild.ReceiptName)
+		_, err := fmt.Fprintf(a.out, "built and validated coherent camera packages\nversion: %s\noutput: %s\nreceipt: %s\nauthority SHA-256: %s\n", camera.Bundle.PackageVersion, camera.OutputDirectory, camerabuild.ReceiptName, camera.AuthoritySHA256)
 		return err
 	}
 	_, err := fmt.Fprintln(a.out, "camera build did not publish a package set")
@@ -324,14 +326,16 @@ func (a *application) writeUserspaceBuildResult(result userspacebuild.Result) er
 // workflows, with an explicit confirmation gate for every mutation.
 func (a *application) newUserspaceInstallCommand() *cobra.Command {
 	var from string
+	var repositoryRoot string
+	var cameraAuthoritySHA256 string
 	var root string
 	var dryRun bool
 	var confirmed bool
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "install <audio|iptsd|camera|recommended>",
-		Short: "Install a checksum-verified userspace release",
-		Long: "Install a checksum-verified userspace release through compiled policy. " +
+		Short: "Install an authenticated userspace input",
+		Long: "Install an authenticated userspace input through compiled policy. " +
 			"The recommended set contains audio and IPTSD; experimental camera support must be selected explicitly.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -342,11 +346,13 @@ func (a *application) newUserspaceInstallCommand() *cobra.Command {
 				return fmt.Errorf("userspace installation changes the target filesystem; review --dry-run first, then pass --yes")
 			}
 			results, err := a.userspace.Install(command.Context(), userspacemanager.InstallRequest{
-				CatalogPath: a.userspaceCatalogPath,
-				Selector:    args[0],
-				From:        from,
-				Root:        root,
-				DryRun:      dryRun,
+				CatalogPath:           a.userspaceCatalogPath,
+				Selector:              args[0],
+				From:                  from,
+				RepositoryRoot:        repositoryRoot,
+				CameraAuthoritySHA256: cameraAuthoritySHA256,
+				Root:                  root,
+				DryRun:                dryRun,
 			})
 			report := makeUserspaceInstallReport(results, dryRun)
 			if err != nil {
@@ -364,7 +370,9 @@ func (a *application) newUserspaceInstallCommand() *cobra.Command {
 			return err
 		},
 	}
-	command.Flags().StringVar(&from, "from", "", "exact verified release directory (userspace cache root for recommended)")
+	command.Flags().StringVar(&from, "from", "", "exact authenticated input directory (userspace cache root for recommended)")
+	command.Flags().StringVar(&repositoryRoot, "repository-root", "", "current OE Git root required for native camera build or release input")
+	command.Flags().StringVar(&cameraAuthoritySHA256, "camera-authority-sha256", "", "trusted authority digest printed by native camera build or release preparation")
 	command.Flags().StringVar(&root, "root", "/", "target filesystem root")
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "verify immutable inputs and show the plan without changing the target")
 	command.Flags().BoolVar(&confirmed, "yes", false, "confirm target filesystem changes")

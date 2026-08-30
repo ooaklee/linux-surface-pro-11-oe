@@ -13,6 +13,7 @@ import (
 // firmware, audio, and IPTSD fixture produces an entirely passing report.
 func TestInspectReadyRequiredSupport(t *testing.T) {
 	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "home", "fixture"))
 	abi := "7.2.0-jg-0sp11v19-qcom-x1e"
 	mkdir(t, filepath.Join(root, "lib/modules", abi))
 
@@ -44,6 +45,7 @@ func TestInspectReadyRequiredSupport(t *testing.T) {
 	}
 	report, err := inspector.Inspect(Options{
 		Root:     root,
+		UserHome: "/home/fixture",
 		Features: []Feature{FeatureKernel, FeatureFirmware, FeatureAudio, FeatureIPTSD},
 	})
 	if err != nil {
@@ -597,21 +599,17 @@ func TestAbsoluteSymlinkIsResolvedInsideTargetRoot(t *testing.T) {
 	}
 }
 
-// TestBluetoothAddressConfigurationIsNeverReadOrReported verifies that static
-// diagnostics recognise the hook without leaking device-specific address data.
-func TestBluetoothAddressConfigurationIsNeverReadOrReported(t *testing.T) {
+// TestLegacyBluetoothAddressConfigurationIsNeverReadOrReported verifies static
+// coexistence reporting never leaks device-specific address data.
+func TestLegacyBluetoothAddressConfigurationIsNeverReadOrReported(t *testing.T) {
 	root := t.TempDir()
 	secret := "12:34:56:78:9A:BC"
-	for _, requirement := range bluetoothHookFiles {
+	for _, logical := range legacyBluetoothPaths {
 		content := "fixture"
-		if requirement.Path == "etc/default/sp11-bluetooth-mac" {
+		if logical == "etc/default/sp11-bluetooth-mac" {
 			content = `SP11_BLUETOOTH_MAC="` + secret + `"`
 		}
-		mode := os.FileMode(0o644)
-		if requirement.Executable {
-			mode = 0o755
-		}
-		writeFile(t, root, requirement.Path, mode, content)
+		writeFile(t, root, logical, 0o644, content)
 	}
 	report, err := Inspect(Options{Root: root, Features: []Feature{FeatureBluetooth}})
 	if err != nil {
@@ -624,8 +622,11 @@ func TestBluetoothAddressConfigurationIsNeverReadOrReported(t *testing.T) {
 	if strings.Contains(string(encoded), secret) {
 		t.Fatalf("report leaked Bluetooth address: %s", encoded)
 	}
-	if check := findCheck(t, report, "bluetooth-public-address-hook"); check.State != StatePass {
-		t.Fatalf("hook check = %#v", check)
+	if check := findCheck(t, report, "bluetooth-native-handoff-integration"); check.State != StateSkip {
+		t.Fatalf("native hand-off check = %#v", check)
+	}
+	if check := findCheck(t, report, "bluetooth-legacy-coexistence"); check.State != StateFail {
+		t.Fatalf("legacy coexistence check = %#v", check)
 	}
 }
 

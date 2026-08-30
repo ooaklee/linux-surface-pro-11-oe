@@ -74,13 +74,14 @@ var bluetoothBlueZFiles = [][]fileRequirement{
 	},
 }
 
-// bluetoothHookFiles describes the complete optional, bounded public-address
-// integration without reading or recording the private address value.
-var bluetoothHookFiles = []fileRequirement{
-	{Path: "etc/default/sp11-bluetooth-mac"},
-	{Path: "usr/local/sbin/sp11-bt-set-addr", Executable: true},
-	{Path: "etc/systemd/system/sp11-bluetooth-mac@.service"},
-	{Path: "etc/udev/rules.d/99-surface-pro-11-bluetooth-mac.rules"},
+// legacyBluetoothPaths list the exact retired public-address configuration,
+// helpers, unit, and udev rule without reading the private address value.
+var legacyBluetoothPaths = []string{
+	"etc/default/sp11-bluetooth-mac",
+	"usr/local/sbin/sp11-bluetooth-mac",
+	"usr/local/sbin/sp11-bt-set-addr",
+	"etc/systemd/system/sp11-bluetooth-mac@.service",
+	"etc/udev/rules.d/99-surface-pro-11-bluetooth-mac.rules",
 }
 
 // audioV19cFiles pins the complete FullIO v19c topology and UCM asset identities
@@ -101,8 +102,21 @@ var legacyAudioPaths = []string{
 	"usr/local/sbin/sp11-enable-wsa-routing.sh",
 	"usr/local/sbin/sp11-fix-audio-boot-race",
 	"etc/pipewire/pipewire.conf.d/50-sp11-speakers.conf",
+	"etc/systemd/user/sp11-pipewire-restart.service",
+	"etc/systemd/user/default.target.wants/sp11-pipewire-restart.service",
+	"etc/systemd/system/alsa-restore.service",
+	"etc/systemd/system/alsa-state.service",
 	"usr/share/alsa/ucm2/Qualcomm/x1e80100/Surface11-HiFi.conf",
 	"usr/share/alsa/ucm2/Qualcomm/x1e80100/MICROSOFT-Surface-Pro-11.conf",
+}
+
+// legacyUserAudioPaths list exact paths relative to an explicitly selected
+// target user home; no account or home-directory discovery is performed.
+var legacyUserAudioPaths = []string{
+	".config/pipewire/pipewire.conf.d/50-sp11-speakers.conf",
+	".config/wireplumber/wireplumber.conf.d/51-sp11-no-duplicate-output.conf",
+	".config/systemd/user/sp11-pipewire-restart.service",
+	".config/systemd/user/default.target.wants/sp11-pipewire-restart.service",
 }
 
 // iptsdV1Files pins the supported daemon, checker, configuration, and integration

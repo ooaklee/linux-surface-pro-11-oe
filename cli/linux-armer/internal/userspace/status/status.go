@@ -62,7 +62,11 @@ func (inspector *Inspector) Inspect(options Options) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	report := Report{Root: fs.root, Ready: true}
+	userHome, err := resolveExplicitUserHome(fs, options.UserHome)
+	if err != nil {
+		return Report{}, err
+	}
+	report := Report{Root: fs.root, UserHome: userHome.logical, Ready: true}
 	add := func(check Check) {
 		report.Checks = append(report.Checks, check)
 		if check.Required && check.State == StateFail {
@@ -155,17 +159,17 @@ func (inspector *Inspector) Inspect(options Options) (Report, error) {
 		bluezFiles.Remediation = "install BlueZ and its bluetooth.service unit"
 		add(policies.decorate(bluezFiles, bluetoothComponent))
 
-		hook, checkErr := inspector.checkFileSet(fs, "bluetooth-public-address-hook", FeatureBluetooth, false, bluetoothHookFiles, true)
+		nativeIntegration, checkErr := inspectNativeBluetoothIntegration(fs, required)
 		if checkErr != nil {
 			return Report{}, checkErr
 		}
-		if hook.State == StateSkip {
-			hook.Detail = "no optional Bluetooth public-address hook is installed"
-		} else if hook.State == StatePass {
-			hook.Detail = "public-address configuration and bounded pre-BlueZ hook are installed; address value was not read"
+		add(policies.decorate(nativeIntegration, bluetoothComponent))
+
+		legacyIntegration, checkErr := inspectLegacyBluetoothIntegration(fs, required, nativeIntegration.State != StateSkip)
+		if checkErr != nil {
+			return Report{}, checkErr
 		}
-		hook.Remediation = "configure the public address from a trusted source without placing the address in command output"
-		add(policies.decorate(hook, bluetoothComponent))
+		add(policies.decorate(legacyIntegration, bluetoothComponent))
 	}
 
 	if features[FeatureAudio] {
@@ -190,6 +194,13 @@ func (inspector *Inspector) Inspect(options Options) (Report, error) {
 		}
 		legacy.Remediation = "review linux-armer clean plan and remove recognised legacy audio workarounds through its reversible cleanup flow"
 		add(policies.decorate(legacy, audioComponent))
+
+		userLegacy, checkErr := inspectUserAudioConflicts(fs, userHome, required)
+		if checkErr != nil {
+			return Report{}, checkErr
+		}
+		userLegacy.Remediation = "pass the same explicit --user-home to linux-armer clean plan, then review its reversible per-user cleanup"
+		add(policies.decorate(userLegacy, audioComponent))
 	}
 
 	if features[FeatureIPTSD] {
@@ -568,6 +579,32 @@ func inspectConflicts(fs *rootedFS, id string, feature Feature, required bool, p
 		return Check{ID: id, Feature: feature, State: StatePass, Required: required, Detail: "no known legacy conflicts were detected"}, nil
 	}
 	return Check{ID: id, Feature: feature, State: optionalState(required), Required: required, Detail: "legacy conflicts detected: " + strings.Join(sortedKeys(found), ", ")}, nil
+}
+
+// inspectUserAudioConflicts checks exact per-user legacy files only beneath the
+// explicitly selected target-visible home and never enumerates accounts or
+// guesses a home from the process environment.
+func inspectUserAudioConflicts(fs *rootedFS, userHome resolvedUserHome, required bool) (Check, error) {
+	check := Check{ID: "audio-user-legacy-conflicts", Feature: FeatureAudio, Required: required}
+	if userHome.logical == "" {
+		check.State = StateSkip
+		check.Detail = "per-user legacy audio paths were not inspected because no explicit --user-home was selected"
+		return check, nil
+	}
+	paths := make([]string, 0, len(legacyUserAudioPaths))
+	for _, relative := range legacyUserAudioPaths {
+		paths = append(paths, filepath.Join(userHome.relative, filepath.FromSlash(relative)))
+	}
+	result, err := inspectConflicts(fs, check.ID, FeatureAudio, required, paths)
+	if err != nil {
+		return Check{}, err
+	}
+	if result.State == StatePass {
+		result.Detail = "no known per-user legacy audio conflicts were detected beneath " + userHome.logical
+	} else {
+		result.Detail = "per-user legacy audio conflicts detected beneath " + userHome.logical + ": " + strings.TrimPrefix(result.Detail, "legacy conflicts detected: ")
+	}
+	return result, nil
 }
 
 // inspectMask confirms that the generic IPTSD systemd unit is masked by an exact

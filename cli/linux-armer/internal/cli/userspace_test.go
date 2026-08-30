@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	linuxarmer "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer"
+	camerabuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/build"
+	userspacebuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/build"
 	userspacecatalog "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/catalog"
 	userspaceinstall "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/install"
 	userspacemanager "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/manager"
@@ -96,6 +98,53 @@ func TestUserspaceInstallRecommendedDryRunEmitsStructuredReport(t *testing.T) {
 	}
 	if len(report.NextSteps) != 1 || !strings.Contains(report.NextSteps[0], "--yes") {
 		t.Fatalf("next steps = %#v", report.NextSteps)
+	}
+}
+
+// TestUserspaceInstallCameraForwardsRepositoryAuthority verifies that native
+// camera provenance reaches the installer without affecting other selectors.
+func TestUserspaceInstallCameraForwardsRepositoryAuthority(t *testing.T) {
+	installer := &cliFakeInstaller{}
+	app, _ := newUserspaceInstallTestApplication(installer)
+	command := app.newUserspaceInstallCommand()
+	authority := strings.Repeat("a", 64)
+	command.SetArgs([]string{
+		"camera", "--from", t.TempDir(), "--repository-root", "/fixture/oe",
+		"--camera-authority-sha256", authority,
+		"--dry-run",
+	})
+	command.SilenceUsage = true
+	command.SilenceErrors = true
+
+	if err := command.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(installer.calls) != 1 || installer.calls[0].RepositoryRoot != "/fixture/oe" ||
+		installer.calls[0].CameraAuthoritySHA256 != authority {
+		t.Fatalf("installer calls = %#v", installer.calls)
+	}
+}
+
+// TestUserspaceCameraBuildPrintsIndependentAuthority verifies human delivery
+// exposes the digest which must accompany later release or installation work.
+func TestUserspaceCameraBuildPrintsIndependentAuthority(t *testing.T) {
+	authority := strings.Repeat("b", 64)
+	var output bytes.Buffer
+	app := &application{out: &output}
+	result := userspacebuild.Result{
+		Component: userspacebuild.ComponentCamera,
+		Camera: &camerabuild.ExecutionReceipt{
+			Published:       true,
+			OutputDirectory: "/fixture/camera/build",
+			AuthoritySHA256: authority,
+			Bundle:          &camerabuild.BundleReceipt{PackageVersion: "0.7.0-fixture"},
+		},
+	}
+	if err := app.writeUserspaceBuildResult(result); err != nil {
+		t.Fatal(err)
+	}
+	if text := output.String(); !strings.Contains(text, "authority SHA-256: "+authority) || !strings.Contains(text, camerabuild.ReceiptName) {
+		t.Fatalf("camera build output = %s", text)
 	}
 }
 

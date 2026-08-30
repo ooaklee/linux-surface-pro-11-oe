@@ -21,6 +21,15 @@ type rootedFS struct {
 	root string
 }
 
+// resolvedUserHome retains both the target-visible path used in reports and
+// its root-relative form used by the contained filesystem resolver.
+type resolvedUserHome struct {
+	// logical is the canonical absolute Linux path visible inside the target.
+	logical string
+	// relative is the same path without its leading separator.
+	relative string
+}
+
 // newRootedFS validates and canonicalises the selected target root before any
 // diagnostic path is resolved beneath it.
 func newRootedFS(root string) (*rootedFS, error) {
@@ -43,6 +52,42 @@ func newRootedFS(root string) (*rootedFS, error) {
 		return nil, fmt.Errorf("userspace root %q is not a directory", resolved)
 	}
 	return &rootedFS{root: filepath.Clean(resolved)}, nil
+}
+
+// resolveExplicitUserHome validates one opt-in target-visible Linux home.
+// Empty input deliberately selects no home; environment and account discovery
+// are never consulted.
+func resolveExplicitUserHome(fs *rootedFS, input string) (resolvedUserHome, error) {
+	if input == "" {
+		return resolvedUserHome{}, nil
+	}
+	if fs == nil {
+		return resolvedUserHome{}, errors.New("userspace target root is unavailable")
+	}
+	if strings.TrimSpace(input) != input || strings.Contains(input, "\\") || !filepath.IsAbs(input) {
+		return resolvedUserHome{}, fmt.Errorf("userspace user home must be an explicit absolute Linux path: %q", input)
+	}
+	clean := filepath.Clean(input)
+	if clean != input || clean == string(filepath.Separator) {
+		return resolvedUserHome{}, fmt.Errorf("userspace user home must be canonical and cannot be /: %q", input)
+	}
+	relative := strings.TrimPrefix(clean, string(filepath.Separator))
+	resolved, err := fs.resolve(relative, false)
+	if err != nil {
+		return resolvedUserHome{}, fmt.Errorf("resolve userspace user home %q: %w", clean, err)
+	}
+	expected := filepath.Join(fs.root, relative)
+	if resolved != expected {
+		return resolvedUserHome{}, fmt.Errorf("userspace user home is not canonical within the selected root: %q", clean)
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return resolvedUserHome{}, fmt.Errorf("inspect userspace user home %q: %w", clean, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return resolvedUserHome{}, fmt.Errorf("userspace user home must be a real directory: %q", clean)
+	}
+	return resolvedUserHome{logical: filepath.ToSlash(clean), relative: filepath.ToSlash(relative)}, nil
 }
 
 // cleanRelative normalises a logical target-root path and rejects empty-root or

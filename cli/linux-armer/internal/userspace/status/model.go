@@ -146,6 +146,9 @@ type Check struct {
 type Options struct {
 	// Root is the target filesystem root. It defaults to "/".
 	Root string
+	// UserHome is one explicit canonical target-visible Linux home inspected for
+	// per-user legacy support. It is never inferred from the host environment.
+	UserHome string
 	// KernelABI selects one installed qcom-x1e ABI. When empty, the newest
 	// candidate is selected deterministically.
 	KernelABI string
@@ -160,6 +163,8 @@ type Options struct {
 type Report struct {
 	// Root is the resolved target filesystem that was inspected.
 	Root string `json:"root"`
+	// UserHome is the explicit target-visible user home included in the report.
+	UserHome string `json:"user_home,omitempty"`
 	// KernelABI is the explicit or deterministically selected Surface kernel ABI.
 	KernelABI string `json:"kernel_abi,omitempty"`
 	// Ready is false when any required check fails.

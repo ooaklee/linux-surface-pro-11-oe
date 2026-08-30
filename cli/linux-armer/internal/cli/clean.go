@@ -26,13 +26,14 @@ func (a *application) newCleanCommand() *cobra.Command {
 // or changing the selected target root.
 func (a *application) newCleanScanCommand() *cobra.Command {
 	var root string
+	var userHome string
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "scan",
 		Short: "Detect obsolete workarounds without changing the target system",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			report, err := cleanup.Scan(root)
+			report, err := cleanup.ScanWithOptions(cleanup.ScanOptions{Root: root, UserHome: userHome})
 			if err != nil {
 				return err
 			}
@@ -55,6 +56,7 @@ func (a *application) newCleanScanCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&root, "root", "/", "target Linux root filesystem")
+	command.Flags().StringVar(&userHome, "user-home", "", "explicit target-visible absolute Linux user home; never inferred")
 	command.Flags().BoolVar(&asJSON, "json", false, "write machine-readable JSON")
 	return command
 }
@@ -63,13 +65,14 @@ func (a *application) newCleanScanCommand() *cobra.Command {
 // revalidate later without silently adding newly discovered targets.
 func (a *application) newCleanPlanCommand() *cobra.Command {
 	var root string
+	var userHome string
 	var output string
 	command := &cobra.Command{
 		Use:   "plan",
 		Short: "Write a reviewed JSON plan without changing the target system",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			report, err := cleanup.Scan(root)
+			report, err := cleanup.ScanWithOptions(cleanup.ScanOptions{Root: root, UserHome: userHome})
 			if err != nil {
 				return err
 			}
@@ -84,6 +87,7 @@ func (a *application) newCleanPlanCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&root, "root", "/", "target Linux root filesystem")
+	command.Flags().StringVar(&userHome, "user-home", "", "explicit target-visible absolute Linux user home; never inferred")
 	command.Flags().StringVarP(&output, "output", "o", "linux-armer-cleanup-plan.json", "new plan path, or - for standard output")
 	return command
 }
@@ -92,6 +96,7 @@ func (a *application) newCleanPlanCommand() *cobra.Command {
 // removing only entries from the compiled clean-up allow-list.
 func (a *application) newCleanApplyCommand() *cobra.Command {
 	var root string
+	var userHome string
 	var planPath string
 	var yes bool
 	var asJSON bool
@@ -114,6 +119,13 @@ func (a *application) newCleanApplyCommand() *cobra.Command {
 			if report.Root != resolvedRoot {
 				return fmt.Errorf("cleanup plan root is %s, but --root resolves to %s", report.Root, resolvedRoot)
 			}
+			resolvedUserHome, err := cleanup.ResolveUserHome(resolvedRoot, userHome)
+			if err != nil {
+				return err
+			}
+			if report.UserHome != resolvedUserHome {
+				return fmt.Errorf("cleanup plan user home is %q, but --user-home resolves to %q", report.UserHome, resolvedUserHome)
+			}
 			receipt, err := cleanup.Apply(report, yes)
 			if err != nil {
 				return err
@@ -131,6 +143,7 @@ func (a *application) newCleanApplyCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&root, "root", "/", "target Linux root filesystem")
+	command.Flags().StringVar(&userHome, "user-home", "", "explicit target-visible absolute Linux user home; never inferred")
 	command.Flags().StringVar(&planPath, "plan", "", "reviewed plan produced by clean plan")
 	command.Flags().BoolVar(&yes, "yes", false, "confirm backup and removal of recognised files")
 	command.Flags().BoolVar(&asJSON, "json", false, "write machine-readable JSON")
@@ -141,6 +154,7 @@ func (a *application) newCleanApplyCommand() *cobra.Command {
 // completed receipt while refusing to overwrite changed local content.
 func (a *application) newCleanRestoreCommand() *cobra.Command {
 	var root string
+	var userHome string
 	var yes bool
 	var asJSON bool
 	command := &cobra.Command{
@@ -159,6 +173,13 @@ func (a *application) newCleanRestoreCommand() *cobra.Command {
 			if receipt.Root != resolvedRoot {
 				return fmt.Errorf("cleanup receipt root is %s, but --root resolves to %s", receipt.Root, resolvedRoot)
 			}
+			resolvedUserHome, err := cleanup.ResolveUserHome(resolvedRoot, userHome)
+			if err != nil {
+				return err
+			}
+			if receipt.UserHome != resolvedUserHome {
+				return fmt.Errorf("cleanup receipt user home is %q, but --user-home resolves to %q", receipt.UserHome, resolvedUserHome)
+			}
 			report, err := cleanup.Restore(receipt, args[0], yes)
 			if asJSON {
 				if writeErr := a.writeJSON(report); writeErr != nil {
@@ -175,6 +196,7 @@ func (a *application) newCleanRestoreCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&root, "root", "/", "target Linux root filesystem")
+	command.Flags().StringVar(&userHome, "user-home", "", "explicit target-visible absolute Linux user home; never inferred")
 	command.Flags().BoolVar(&yes, "yes", false, "confirm restoration of receipt entries")
 	command.Flags().BoolVar(&asJSON, "json", false, "write machine-readable JSON")
 	return command

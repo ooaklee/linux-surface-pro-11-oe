@@ -35,11 +35,13 @@ func (manager *fakeCameraReleaseManager) Validate(_ context.Context, request cam
 
 // TestCameraReleasePrepareMapsExplicitPairingAndJSON verifies delivery mapping.
 func TestCameraReleasePrepareMapsExplicitPairingAndJSON(t *testing.T) {
+	buildAuthority := strings.Repeat("b", 64)
 	manager := &fakeCameraReleaseManager{prepareReceipt: camerarelease.Receipt{
 		Plan: camerarelease.Plan{
 			RepositoryRoot: "/fixture/repo", ArtifactsDirectory: "/fixture/build",
 			Tag: "camera-v2", KernelTag: "kernel-sp11v19", KernelABI: "kernel-sp11v19-qcom-x1e",
-			DryRun: true, Executable: false, ExecutionBlocker: "fixture blocker",
+			ExpectedBuildAuthoritySHA256: buildAuthority,
+			DryRun:                       true, Executable: false, ExecutionBlocker: "fixture blocker",
 		},
 	}}
 	var output bytes.Buffer
@@ -48,7 +50,8 @@ func TestCameraReleasePrepareMapsExplicitPairingAndJSON(t *testing.T) {
 	command.SetArgs([]string{
 		"--repository-root", "/fixture/repo", "--from", "/fixture/build",
 		"--tag", "camera-v2", "--kernel-tag", "kernel-sp11v19",
-		"--kernel-abi", "kernel-sp11v19-qcom-x1e", "--dry-run", "--json",
+		"--kernel-abi", "kernel-sp11v19-qcom-x1e",
+		"--build-authority-sha256", buildAuthority, "--dry-run", "--json",
 	})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
@@ -57,7 +60,7 @@ func TestCameraReleasePrepareMapsExplicitPairingAndJSON(t *testing.T) {
 		t.Fatalf("prepare requests = %d", len(manager.prepareRequests))
 	}
 	request := manager.prepareRequests[0]
-	if request.RepositoryRoot != "/fixture/repo" || request.ArtifactsDirectory != "/fixture/build" || request.Tag != "camera-v2" || !request.DryRun {
+	if request.RepositoryRoot != "/fixture/repo" || request.ArtifactsDirectory != "/fixture/build" || request.Tag != "camera-v2" || request.ExpectedBuildAuthoritySHA256 != buildAuthority || !request.DryRun {
 		t.Fatalf("prepare request = %+v", request)
 	}
 	var receipt camerarelease.Receipt
@@ -69,8 +72,39 @@ func TestCameraReleasePrepareMapsExplicitPairingAndJSON(t *testing.T) {
 	}
 }
 
+// TestCameraReleasePreparePrintsIndependentAuthority verifies the successful
+// human result exposes the digest required by validation and installation.
+func TestCameraReleasePreparePrintsIndependentAuthority(t *testing.T) {
+	buildAuthority := strings.Repeat("b", 64)
+	releaseAuthority := strings.Repeat("a", 64)
+	manager := &fakeCameraReleaseManager{prepareReceipt: camerarelease.Receipt{
+		Plan: camerarelease.Plan{
+			ReleaseDirectory:             "/fixture/release/camera-v2",
+			ExpectedBuildAuthoritySHA256: buildAuthority,
+		},
+		Manifest:        &camerarelease.Manifest{Tag: "camera-v2"},
+		AuthoritySHA256: releaseAuthority,
+		Published:       true,
+	}}
+	var output bytes.Buffer
+	app := &application{out: &output}
+	command := app.newUserspaceCameraReleasePrepareCommand(manager)
+	command.SetArgs([]string{
+		"--from", "/fixture/build", "--tag", "camera-v2",
+		"--kernel-tag", "kernel-7.2.0", "--kernel-abi", "7.2.0-qcom-x1e",
+		"--build-authority-sha256", buildAuthority,
+	})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if text := output.String(); !strings.Contains(text, "authority SHA-256: "+releaseAuthority) || !strings.Contains(text, camerarelease.ManifestName) {
+		t.Fatalf("camera release preparation output = %s", text)
+	}
+}
+
 // TestCameraReleaseValidateDeliversHumanResult verifies the validation command.
 func TestCameraReleaseValidateDeliversHumanResult(t *testing.T) {
+	releaseAuthority := strings.Repeat("a", 64)
 	manager := &fakeCameraReleaseManager{validateReceipt: camerarelease.ValidationReceipt{
 		Directory:   "/fixture/release/camera-v2",
 		ValidatedAt: time.Date(2026, 8, 30, 16, 0, 0, 0, time.UTC),
@@ -79,14 +113,14 @@ func TestCameraReleaseValidateDeliversHumanResult(t *testing.T) {
 	var output bytes.Buffer
 	app := &application{out: &output}
 	command := app.newUserspaceCameraReleaseValidateCommand(manager)
-	command.SetArgs([]string{"/fixture/release/camera-v2", "--repository-root", "/fixture/repo"})
+	command.SetArgs([]string{"/fixture/release/camera-v2", "--repository-root", "/fixture/repo", "--authority-sha256", releaseAuthority})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if len(manager.validateRequests) != 1 || manager.validateRequests[0].Directory != "/fixture/release/camera-v2" || manager.validateRequests[0].RepositoryRoot != "/fixture/repo" {
+	if len(manager.validateRequests) != 1 || manager.validateRequests[0].Directory != "/fixture/release/camera-v2" || manager.validateRequests[0].RepositoryRoot != "/fixture/repo" || manager.validateRequests[0].ExpectedAuthoritySHA256 != releaseAuthority {
 		t.Fatalf("validate requests = %+v", manager.validateRequests)
 	}
-	if text := output.String(); !strings.Contains(text, "camera release valid") || !strings.Contains(text, "remote mutation: false") {
+	if text := output.String(); !strings.Contains(text, "camera release valid") || !strings.Contains(text, "authority SHA-256: "+releaseAuthority) || !strings.Contains(text, "remote mutation: false") {
 		t.Fatalf("validation output = %s", text)
 	}
 }
@@ -99,11 +133,24 @@ func TestCameraReleaseDeliveryRejectsMissingInputsAndDomainErrors(t *testing.T) 
 	if err := missing.Execute(); err == nil || !strings.Contains(err.Error(), "--from") {
 		t.Fatalf("missing-input error = %v", err)
 	}
+	missingBuildAuthority := app.newUserspaceCameraReleasePrepareCommand(manager)
+	missingBuildAuthority.SetArgs([]string{
+		"--from", "/fixture/build", "--tag", "camera-v2",
+		"--kernel-tag", "kernel-sp11v19", "--kernel-abi", "kernel-sp11v19-qcom-x1e",
+	})
+	if err := missingBuildAuthority.Execute(); err == nil || !strings.Contains(err.Error(), "--build-authority-sha256") {
+		t.Fatalf("missing-build-authority error = %v", err)
+	}
 	manager.err = errors.New("fixture validation failure")
 	validate := app.newUserspaceCameraReleaseValidateCommand(manager)
-	validate.SetArgs([]string{"/fixture/release"})
+	validate.SetArgs([]string{"/fixture/release", "--authority-sha256", strings.Repeat("a", 64)})
 	if err := validate.Execute(); err == nil || !strings.Contains(err.Error(), "fixture validation failure") {
 		t.Fatalf("domain error = %v", err)
+	}
+	missingReleaseAuthority := app.newUserspaceCameraReleaseValidateCommand(manager)
+	missingReleaseAuthority.SetArgs([]string{"/fixture/release"})
+	if err := missingReleaseAuthority.Execute(); err == nil || !strings.Contains(err.Error(), "--authority-sha256") {
+		t.Fatalf("missing-release-authority error = %v", err)
 	}
 }
 
