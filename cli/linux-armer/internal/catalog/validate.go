@@ -3,28 +3,38 @@ package catalog
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"time"
 )
 
 var (
+	// stableIDPattern defines IDs that remain convenient in JSON and shells.
 	stableIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
-	hexPattern      = regexp.MustCompile(`^[[:xdigit:]]+$`)
+	// hexPattern recognises a non-empty hexadecimal checksum value.
+	hexPattern = regexp.MustCompile(`^[[:xdigit:]]+$`)
+	// portableFilenamePattern accepts reviewable release filenames without path
+	// separators, whitespace, shell metacharacters, or control characters.
+	portableFilenamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
 )
 
-// Issue is one actionable catalog validation problem.
+// Issue is one actionable catalogue validation problem.
 type Issue struct {
-	Field   string
+	// Field is the JSON-style path to the invalid value.
+	Field string
+	// Message explains how the value violates the catalogue contract.
 	Message string
 }
 
-// ValidationError reports every semantic problem found in a decoded catalog.
+// ValidationError reports every semantic problem found in a decoded catalogue.
 // Issues are ordered by document position and validation rule.
 type ValidationError struct {
+	// Issues contains all detected problems in deterministic document order.
 	Issues []Issue
 }
 
+// Error formats all validation issues into one actionable diagnostic.
 func (e *ValidationError) Error() string {
 	if e == nil || len(e.Issues) == 0 {
 		return "catalog validation failed"
@@ -53,6 +63,9 @@ func NormalizeArchitecture(value string) (Architecture, error) {
 	}
 }
 
+// validate applies cross-field and per-entry semantic rules after JSON
+// decoding, accumulating every problem so maintainers can fix a catalogue in one
+// pass.
 func validate(raw document, entries []Entry) error {
 	var issues []Issue
 	add := func(field, format string, values ...any) {
@@ -86,6 +99,7 @@ func validate(raw document, entries []Entry) error {
 		requireText(add, prefix+".name", entry.Name)
 		requireText(add, prefix+".distribution", entry.Distribution)
 		requireText(add, prefix+".release", entry.Release)
+		validateFilename(add, prefix+".filename", entry.Filename, entry.ArtifactKind)
 
 		if _, err := NormalizeArchitecture(rawEntry.Architecture); err != nil {
 			add(prefix+".architecture", "%v; got %q", err, rawEntry.Architecture)
@@ -100,7 +114,9 @@ func validate(raw document, entries []Entry) error {
 		artifactURL := validateHTTPSURL(add, prefix+".url", entry.URL)
 		validateHTTPSURL(add, prefix+".homepage", entry.Homepage)
 		if artifactURL != nil {
-			validateArtifactExtension(add, prefix+".url", entry.ArtifactKind, artifactURL.Path)
+			if got := path.Base(artifactURL.Path); got != entry.Filename {
+				add(prefix+".url", "final path segment %q must equal filename %q", got, entry.Filename)
+			}
 		}
 
 		switch entry.Adapter {
@@ -151,12 +167,15 @@ func validate(raw document, entries []Entry) error {
 	return nil
 }
 
+// requireText records an issue when a required text field is blank.
 func requireText(add func(string, string, ...any), field, value string) {
 	if strings.TrimSpace(value) == "" {
 		add(field, "must not be empty")
 	}
 }
 
+// validateHTTPSURL checks that a URL is absolute, credential-free HTTPS and
+// returns the parsed value for additional format-specific validation.
 func validateHTTPSURL(add func(string, string, ...any), field, value string) *url.URL {
 	if strings.TrimSpace(value) == "" {
 		add(field, "must not be empty")
@@ -184,20 +203,32 @@ func validateHTTPSURL(add func(string, string, ...any), field, value string) *ur
 	return parsed
 }
 
-func validateArtifactExtension(add func(string, string, ...any), field string, kind ArtifactKind, path string) {
-	lowerPath := strings.ToLower(path)
+// validateFilename ensures the explicit upstream name is portable and agrees
+// with the declared artefact format.
+func validateFilename(add func(string, string, ...any), field, filename string, kind ArtifactKind) {
+	if strings.TrimSpace(filename) == "" {
+		add(field, "must not be empty")
+		return
+	}
+	if !portableFilenamePattern.MatchString(filename) {
+		add(field, "must be a portable filename containing no path separators or whitespace")
+		return
+	}
+	lowerFilename := strings.ToLower(filename)
 	switch kind {
 	case ArtifactKindISO:
-		if !strings.HasSuffix(lowerPath, ".iso") {
+		if !strings.HasSuffix(lowerFilename, ".iso") {
 			add(field, "must end in .iso when artifact_kind is %q", ArtifactKindISO)
 		}
 	case ArtifactKindRawXZ:
-		if !strings.HasSuffix(lowerPath, ".raw.xz") {
+		if !strings.HasSuffix(lowerFilename, ".raw.xz") {
 			add(field, "must end in .raw.xz when artifact_kind is %q", ArtifactKindRawXZ)
 		}
 	}
 }
 
+// validateChecksum checks the supported digest algorithms, exact digest
+// lengths, and hexadecimal encoding.
 func validateChecksum(add func(string, string, ...any), field string, checksum *Checksum) {
 	if checksum == nil {
 		return

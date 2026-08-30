@@ -10,21 +10,30 @@ import (
 	"strings"
 )
 
+// SchemaVersion identifies the plan and execution-journal contract understood by
+// this version of linux-armer.
 const SchemaVersion = 1
 
 // Step is one idempotent unit in an operation plan.
 type Step struct {
-	ID          string            `json:"id"`
-	Kind        string            `json:"kind"`
-	Description string            `json:"description"`
-	Inputs      map[string]string `json:"inputs,omitempty"`
+	// ID is the stable operation-local key used by execution journals.
+	ID string `json:"id"`
+	// Kind groups steps by the class of work they perform.
+	Kind string `json:"kind"`
+	// Description explains the intended outcome to an operator.
+	Description string `json:"description"`
+	// Inputs records non-secret values needed to understand the planned action.
+	Inputs map[string]string `json:"inputs,omitempty"`
 }
 
-// Plan is an immutable, serializable description of an operation.
+// Plan is an immutable, serialisable description of an operation.
 type Plan struct {
-	SchemaVersion int    `json:"schema_version"`
-	Operation     string `json:"operation"`
-	Steps         []Step `json:"steps"`
+	// SchemaVersion selects the serialisation and validation contract.
+	SchemaVersion int `json:"schema_version"`
+	// Operation is the stable name of the workflow being planned.
+	Operation string `json:"operation"`
+	// Steps is the execution order; IDs must be unique within the operation.
+	Steps []Step `json:"steps"`
 }
 
 // New validates and copies the supplied steps.
@@ -97,6 +106,8 @@ func (p Plan) Kinds() []string {
 	return kinds
 }
 
+// cloneStep copies a step and its mutable input map so a Plan cannot be changed
+// indirectly through data retained by its caller.
 func cloneStep(step Step) Step {
 	clone := step
 	if step.Inputs != nil {

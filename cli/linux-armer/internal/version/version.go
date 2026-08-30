@@ -4,9 +4,12 @@ package version
 import "runtime/debug"
 
 var (
+	// Version is the semantic release version injected at link time.
 	Version = "dev"
-	Commit  = "unknown"
-	Date    = "unknown"
+	// Commit is the source revision injected at link time.
+	Commit = "unknown"
+	// Date is the build timestamp injected at link time.
+	Date = "unknown"
 )
 
 // Info returns build metadata, using Go module metadata for local builds when

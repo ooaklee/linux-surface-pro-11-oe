@@ -12,6 +12,7 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/version"
 )
 
+// newWizardCommand starts the guided Bubble Tea image workflow explicitly.
 func (a *application) newWizardCommand() *cobra.Command {
 	request := manager.CreateImageRequest{}
 	command := &cobra.Command{
@@ -32,6 +33,7 @@ func (a *application) newWizardCommand() *cobra.Command {
 	return command
 }
 
+// runWizard collects a request interactively and returns cleanly when the user cancels.
 func (a *application) runWizard(ctx context.Context) error {
 	return a.runWizardWithRequest(ctx, manager.CreateImageRequest{
 		CatalogPath: a.catalogPath,
@@ -39,6 +41,8 @@ func (a *application) runWizard(ctx context.Context) error {
 	})
 }
 
+// runWizardWithRequest renders the wizard, then executes its confirmed request
+// through the same manager used by non-interactive commands.
 func (a *application) runWizardWithRequest(ctx context.Context, request manager.CreateImageRequest) error {
 	if !isTerminalReader(a.in) {
 		return errors.New("the wizard requires an interactive terminal; use image create for scripts")
@@ -47,7 +51,7 @@ func (a *application) runWizardWithRequest(ctx context.Context, request manager.
 	if err != nil {
 		return err
 	}
-	selection, selected, err := tui.Run(mediaCatalog.List(), request.Output, a.in, a.out)
+	selection, selected, err := tui.Run(mediaCatalog.List(), request.Output, describeWizardKernel(request), a.in, a.out)
 	if err != nil {
 		return err
 	}
@@ -64,4 +68,16 @@ func (a *application) runWizardWithRequest(ctx context.Context, request manager.
 	_, err = fmt.Fprintf(a.out, "\nimage created and validated\npath: %s\nSHA-256: %s\nkernel ABI: %s\nmanifest: %s\n\nSecure Boot must be disabled.\n",
 		result.Image.OutputISO, result.Image.SHA256, result.KernelBundle.ABI, result.Image.ManifestPath)
 	return err
+}
+
+// describeWizardKernel states which kernel input the wizard will resolve while
+// making clear that validation happens only after the operator confirms.
+func describeWizardKernel(request manager.CreateImageRequest) string {
+	if request.KernelDirectory != "" {
+		return fmt.Sprintf("local bundle %s (validated before building)", request.KernelDirectory)
+	}
+	if request.KernelRelease == "" || request.KernelRelease == "latest" {
+		return "latest linux-armer release (verified before building)"
+	}
+	return fmt.Sprintf("release %s (verified before building)", request.KernelRelease)
 }

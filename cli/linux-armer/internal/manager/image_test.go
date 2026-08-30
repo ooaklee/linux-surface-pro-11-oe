@@ -18,6 +18,8 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/release"
 )
 
+// TestImageManagerPlanDefaultsAndDeterminism verifies default source and kernel
+// inputs produce the same ordered, serialisable execution plan on every call.
 func TestImageManagerPlanDefaultsAndDeterminism(t *testing.T) {
 	t.Parallel()
 
@@ -70,6 +72,8 @@ func TestImageManagerPlanDefaultsAndDeterminism(t *testing.T) {
 	}
 }
 
+// TestImageManagerPlanUsesExplicitLocalInputs verifies user-provided source,
+// kernel directory, catalogue identifier, and output replace all plan defaults.
 func TestImageManagerPlanUsesExplicitLocalInputs(t *testing.T) {
 	t.Parallel()
 
@@ -89,6 +93,8 @@ func TestImageManagerPlanUsesExplicitLocalInputs(t *testing.T) {
 	}
 }
 
+// TestImageManagerPlanRequiresOutput verifies image planning rejects blank output
+// paths before constructing any execution steps.
 func TestImageManagerPlanRequiresOutput(t *testing.T) {
 	t.Parallel()
 
@@ -100,6 +106,8 @@ func TestImageManagerPlanRequiresOutput(t *testing.T) {
 	}
 }
 
+// TestImageManagerCreateRejectsCatalogOnlyEntryBeforeExecution verifies an image
+// listed for discovery alone cannot reach download or remaster execution.
 func TestImageManagerCreateRejectsCatalogOnlyEntryBeforeExecution(t *testing.T) {
 	t.Parallel()
 
@@ -114,6 +122,8 @@ func TestImageManagerCreateRejectsCatalogOnlyEntryBeforeExecution(t *testing.T) 
 	}
 }
 
+// TestImageManagerCreateRejectsUnknownCatalogEntryBeforeExecution verifies an
+// unknown catalogue selector fails before any external image-building work begins.
 func TestImageManagerCreateRejectsUnknownCatalogEntryBeforeExecution(t *testing.T) {
 	t.Parallel()
 
@@ -128,6 +138,8 @@ func TestImageManagerCreateRejectsUnknownCatalogEntryBeforeExecution(t *testing.
 	}
 }
 
+// TestImageManagerCreateChecksDependenciesBeforeExternalWork verifies an
+// incompletely wired manager reports its missing dependencies without side effects.
 func TestImageManagerCreateChecksDependenciesBeforeExternalWork(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +149,8 @@ func TestImageManagerCreateChecksDependenciesBeforeExternalWork(t *testing.T) {
 	}
 }
 
+// TestImageManagerResolveLocalSource verifies a local ISO is accepted with a
+// case-insensitive matching digest and rejected when its checksum differs.
 func TestImageManagerResolveLocalSource(t *testing.T) {
 	t.Parallel()
 
@@ -170,6 +184,8 @@ func TestImageManagerResolveLocalSource(t *testing.T) {
 	}
 }
 
+// TestImageManagerResolveLocalKernelBundle verifies the image manager discovers
+// and hashes a complete Surface runtime package pair from an explicit directory.
 func TestImageManagerResolveLocalKernelBundle(t *testing.T) {
 	t.Parallel()
 
@@ -202,6 +218,8 @@ func TestImageManagerResolveLocalKernelBundle(t *testing.T) {
 	}
 }
 
+// TestSafePathComponent verifies release references become bounded cache path
+// components and traversal-like or empty inputs fall back to a safe default.
 func TestSafePathComponent(t *testing.T) {
 	t.Parallel()
 

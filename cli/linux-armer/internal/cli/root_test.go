@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +16,8 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/plan"
 )
 
+// TestRootNoArgumentsOnNonTerminalPrintsHelp verifies that a non-interactive
+// invocation with no arguments prints useful command help and exits cleanly.
 func TestRootNoArgumentsOnNonTerminalPrintsHelp(t *testing.T) {
 	t.Parallel()
 
@@ -33,6 +36,7 @@ func TestRootNoArgumentsOnNonTerminalPrintsHelp(t *testing.T) {
 		"catalog",
 		"image",
 		"kernel",
+		"userspace",
 		"wizard",
 	} {
 		if !strings.Contains(output, text) {
@@ -41,6 +45,103 @@ func TestRootNoArgumentsOnNonTerminalPrintsHelp(t *testing.T) {
 	}
 }
 
+// TestUserspaceCatalogDelivery verifies that userspace catalogue commands expose
+// the complete catalogue consistently in human-readable and JSON forms.
+func TestUserspaceCatalogDelivery(t *testing.T) {
+	t.Parallel()
+
+	t.Run("list is complete and exposes bounded actions", func(t *testing.T) {
+		t.Parallel()
+		output, errorOutput, err := executeCLI(t, "userspace", "list")
+		if err != nil {
+			t.Fatalf("userspace list error = %v", err)
+		}
+		if errorOutput != "" {
+			t.Fatalf("stderr = %q", errorOutput)
+		}
+		for _, text := range []string{
+			"ID", "LEVEL", "CAPABILITY", "ACTIONS",
+			"audio-fullio-v19c", "status,pull,install",
+			"iptsd-v1", "status,pull,build,install",
+			"oot-touchscreen", "obsolete",
+		} {
+			if !strings.Contains(output, text) {
+				t.Errorf("userspace list does not contain %q:\n%s", text, output)
+			}
+		}
+	})
+
+	t.Run("JSON is machine readable", func(t *testing.T) {
+		t.Parallel()
+		output, _, err := executeCLI(t, "userspace", "list", "--json")
+		if err != nil {
+			t.Fatalf("userspace list --json error = %v", err)
+		}
+		var components []map[string]any
+		if err := json.Unmarshal([]byte(output), &components); err != nil {
+			t.Fatalf("userspace JSON cannot be decoded: %v\n%s", err, output)
+		}
+		if len(components) != 9 {
+			t.Fatalf("userspace components = %d, want 9", len(components))
+		}
+	})
+
+	t.Run("catalog validation uses dedicated strict loader", func(t *testing.T) {
+		t.Parallel()
+		output, _, err := executeCLI(t, "userspace", "catalog", "validate")
+		if err != nil {
+			t.Fatalf("userspace catalog validate error = %v", err)
+		}
+		if output != "userspace catalog valid: schema 2, 9 components\n" {
+			t.Fatalf("output = %q", output)
+		}
+	})
+
+	t.Run("aliases resolve for show", func(t *testing.T) {
+		t.Parallel()
+		output, _, err := executeCLI(t, "userspace", "show", "audio")
+		if err != nil {
+			t.Fatalf("userspace show audio error = %v", err)
+		}
+		if !strings.Contains(output, "FullIO v19c Audio") || !strings.Contains(output, "actions: status,pull,install") {
+			t.Fatalf("unexpected userspace show output:\n%s", output)
+		}
+	})
+}
+
+// TestDoctorUserspaceSharesStatusReport verifies that the doctor alias returns
+// exactly the same structured assessment as userspace status.
+func TestDoctorUserspaceSharesStatusReport(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	statusOutput, _, statusErr := executeCLI(t,
+		"userspace", "status", "--root", root, "--feature", "power", "--json")
+	if statusErr == nil {
+		t.Fatal("userspace status unexpectedly accepted missing explicitly selected power support")
+	}
+	doctorOutput, _, doctorErr := executeCLI(t,
+		"doctor", "userspace", "--root", root, "--feature", "power", "--json")
+	if doctorErr == nil {
+		t.Fatal("doctor userspace unexpectedly accepted missing explicitly selected power support")
+	}
+	if statusErr.Error() != doctorErr.Error() {
+		t.Fatalf("shared errors differ: status %q, doctor %q", statusErr, doctorErr)
+	}
+	if statusOutput != doctorOutput {
+		t.Fatalf("shared reports differ:\nstatus: %s\ndoctor: %s", statusOutput, doctorOutput)
+	}
+	var report struct {
+		Ready bool `json:"ready"`
+	}
+	if err := json.Unmarshal([]byte(statusOutput), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Ready {
+		t.Fatalf("explicitly selected power support should block readiness when absent: %s", statusOutput)
+	}
+}
+
+// TestRootExplicitHelp verifies that the explicit help flag renders root usage.
 func TestRootExplicitHelp(t *testing.T) {
 	t.Parallel()
 
@@ -53,6 +154,8 @@ func TestRootExplicitHelp(t *testing.T) {
 	}
 }
 
+// TestCatalogListDelivery verifies deterministic image catalogue ordering and
+// equivalent machine-readable list output.
 func TestCatalogListDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -112,6 +215,8 @@ func TestCatalogListDelivery(t *testing.T) {
 	})
 }
 
+// TestCatalogShowDelivery verifies detailed catalogue display, JSON output, and
+// the error returned for an unknown image identifier.
 func TestCatalogShowDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -123,11 +228,12 @@ func TestCatalogShowDelivery(t *testing.T) {
 			t.Fatalf("catalog show error = %v", err)
 		}
 		for _, text := range []string{
-			"Ubuntu Concept Resolute Desktop for X1E",
+			"Ubuntu Concept Resolute Desktop for X1E (2026-03-26)",
+			"Filename: resolute-desktop-arm64+x1e-20260326.iso",
 			"Architecture: arm64",
 			"Support: implemented",
 			"Adapter: ubuntu-casper",
-			"The concept-image URL is mutable",
+			"Canonical does not publish a checksum",
 			"Notes:",
 		} {
 			if !strings.Contains(output, text) {
@@ -162,6 +268,8 @@ func TestCatalogShowDelivery(t *testing.T) {
 	})
 }
 
+// TestCatalogValidateDelivery verifies embedded and override catalogue validation
+// in both human-readable and structured output modes.
 func TestCatalogValidateDelivery(t *testing.T) {
 	t.Parallel()
 
@@ -172,7 +280,7 @@ func TestCatalogValidateDelivery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("catalog validate error = %v", err)
 		}
-		if output != "catalog valid: schema 1, 6 entries\n" {
+		if output != "catalog valid: schema 2, 6 entries\n" {
 			t.Fatalf("catalog validate output = %q", output)
 		}
 	})
@@ -193,7 +301,7 @@ func TestCatalogValidateDelivery(t *testing.T) {
 		if err := json.Unmarshal([]byte(output), &result); err != nil {
 			t.Fatalf("catalog validate JSON cannot be decoded: %v\n%s", err, output)
 		}
-		if !result.Valid || result.SchemaVersion != 1 || result.Entries != 6 || result.Description == "" {
+		if !result.Valid || result.SchemaVersion != 2 || result.Entries != 6 || result.Description == "" {
 			t.Fatalf("catalog validate result = %#v", result)
 		}
 	})
@@ -217,6 +325,8 @@ func TestCatalogValidateDelivery(t *testing.T) {
 	})
 }
 
+// TestImageCreateDryRunIsDeterministic verifies that planning an image build is
+// repeatable and describes the complete ordered remaster workflow.
 func TestImageCreateDryRunIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -271,6 +381,8 @@ func TestImageCreateDryRunIsDeterministic(t *testing.T) {
 	}
 }
 
+// TestCleanApplyRequiresExplicitConfirmation verifies that clean-up cannot move
+// a recognised workaround or create backups without affirmative consent.
 func TestCleanApplyRequiresExplicitConfirmation(t *testing.T) {
 	t.Parallel()
 
@@ -283,8 +395,12 @@ func TestCleanApplyRequiresExplicitConfirmation(t *testing.T) {
 	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o644); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
+	planPath := filepath.Join(t.TempDir(), "cleanup-plan.json")
+	if _, _, err := executeCLI(t, "clean", "plan", "--root", root, "--output", planPath); err != nil {
+		t.Fatalf("clean plan error = %v", err)
+	}
 
-	_, _, err := executeCLI(t, "clean", "apply", "--root", root)
+	_, _, err := executeCLI(t, "clean", "apply", "--root", root, "--plan", planPath)
 	if err == nil || !strings.Contains(err.Error(), "requires --yes") {
 		t.Fatalf("clean apply without confirmation error = %v", err)
 	}
@@ -300,6 +416,8 @@ func TestCleanApplyRequiresExplicitConfirmation(t *testing.T) {
 	}
 }
 
+// TestCleanApplyWithConfirmationReturnsReceipt verifies that confirmed clean-up
+// preserves the workaround in a backup and reports the exact change as JSON.
 func TestCleanApplyWithConfirmationReturnsReceipt(t *testing.T) {
 	t.Parallel()
 
@@ -311,8 +429,12 @@ func TestCleanApplyWithConfirmationReturnsReceipt(t *testing.T) {
 	if err := os.WriteFile(legacyPath, []byte("mshw0485_touch\n"), 0o644); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
+	planPath := filepath.Join(t.TempDir(), "cleanup-plan.json")
+	if _, _, err := executeCLI(t, "clean", "plan", "--root", root, "--output", planPath); err != nil {
+		t.Fatalf("clean plan error = %v", err)
+	}
 
-	output, _, err := executeCLI(t, "clean", "apply", "--root", root, "--yes", "--json")
+	output, _, err := executeCLI(t, "clean", "apply", "--root", root, "--plan", planPath, "--yes", "--json")
 	if err != nil {
 		t.Fatalf("clean apply --yes error = %v", err)
 	}
@@ -329,13 +451,96 @@ func TestCleanApplyWithConfirmationReturnsReceipt(t *testing.T) {
 		t.Fatalf("clean receipt = %#v", receipt)
 	}
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
-		t.Fatalf("recognized workaround still exists after --yes: %v", err)
+		t.Fatalf("recognised workaround still exists after --yes: %v", err)
 	}
 	if _, err := os.Stat(receipt.Changes[0].BackupPath); err != nil {
 		t.Fatalf("cleanup backup is missing: %v", err)
 	}
 }
 
+// TestCleanApplyUsesOnlyReviewedFindings verifies a workaround created after
+// planning is preserved until it appears in a separately reviewed plan.
+func TestCleanApplyUsesOnlyReviewedFindings(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	planned := filepath.Join(root, "etc", "modprobe.d", "sp11-touchscreen.conf")
+	if err := os.MkdirAll(filepath.Dir(planned), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planned, []byte("mshw0485_touch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(t.TempDir(), "cleanup-plan.json")
+	if _, _, err := executeCLI(t, "clean", "plan", "--root", root, "--output", planPath); err != nil {
+		t.Fatalf("clean plan error = %v", err)
+	}
+	createdAfterReview := filepath.Join(root, "etc", "modules-load.d", "sp11-touchscreen.conf")
+	if err := os.MkdirAll(filepath.Dir(createdAfterReview), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(createdAfterReview, []byte("mshw0485_touch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeCLI(t, "clean", "apply", "--root", root, "--plan", planPath, "--yes"); err != nil {
+		t.Fatalf("clean apply error = %v", err)
+	}
+	if _, err := os.Stat(planned); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("planned workaround remains: %v", err)
+	}
+	if _, err := os.Stat(createdAfterReview); err != nil {
+		t.Fatalf("new unreviewed workaround was changed: %v", err)
+	}
+}
+
+// TestCleanRestoreUsesVerifiedReceipt verifies the delivery layer requires an
+// explicit receipt and confirmation before recreating a removed workaround.
+func TestCleanRestoreUsesVerifiedReceipt(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, "etc", "modprobe.d", "sp11-touchscreen.conf")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("mshw0485_touch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(t.TempDir(), "cleanup-plan.json")
+	if _, _, err := executeCLI(t, "clean", "plan", "--root", root, "--output", planPath); err != nil {
+		t.Fatalf("clean plan error = %v", err)
+	}
+	applyOutput, _, err := executeCLI(t, "clean", "apply", "--root", root, "--plan", planPath, "--yes", "--json")
+	if err != nil {
+		t.Fatalf("clean apply error = %v", err)
+	}
+	var receipt cleanup.Receipt
+	if err := json.Unmarshal([]byte(applyOutput), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(receipt.Backup, "receipt.json")
+	if _, _, err := executeCLI(t, "clean", "restore", receiptPath, "--root", root); err == nil || !strings.Contains(err.Error(), "requires --yes") {
+		t.Fatalf("clean restore without confirmation error = %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore changed target without confirmation: %v", err)
+	}
+	restoreOutput, _, err := executeCLI(t, "clean", "restore", receiptPath, "--root", root, "--yes", "--json")
+	if err != nil {
+		t.Fatalf("clean restore error = %v", err)
+	}
+	var restored cleanup.RestoreReport
+	if err := json.Unmarshal([]byte(restoreOutput), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Restored) != 1 || restored.Restored[0] != receipt.Changes[0].Original {
+		t.Fatalf("restore report = %#v, want restored legacy path", restored)
+	}
+	if data, err := os.ReadFile(legacyPath); err != nil || string(data) != "mshw0485_touch\n" {
+		t.Fatalf("restored legacy file = %q, error %v", data, err)
+	}
+}
+
+// executeCLI runs an isolated root command and returns captured standard output,
+// standard error, and the command result for delivery-level assertions.
 func executeCLI(t *testing.T, arguments ...string) (string, string, error) {
 	t.Helper()
 

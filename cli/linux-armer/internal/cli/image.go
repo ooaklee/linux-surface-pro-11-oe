@@ -11,6 +11,7 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/version"
 )
 
+// newImageCommand groups image creation and independent structural validation.
 func (a *application) newImageCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "image",
@@ -21,6 +22,8 @@ func (a *application) newImageCommand() *cobra.Command {
 	return command
 }
 
+// newImageCreateCommand collects immutable source and kernel inputs before
+// handing the complete workflow to the image manager.
 func (a *application) newImageCreateCommand() *cobra.Command {
 	request := manager.CreateImageRequest{}
 	var dryRun bool
@@ -53,8 +56,8 @@ func (a *application) newImageCreateCommand() *cobra.Command {
 			return err
 		},
 	}
-	command.Flags().StringVar(&request.CatalogID, "catalog-id", manager.DefaultCatalogID, "source image catalog ID")
-	command.Flags().StringVar(&request.Source, "source", "", "source ISO path or HTTPS URL (defaults to the catalog URL)")
+	command.Flags().StringVar(&request.CatalogID, "catalog-id", manager.DefaultCatalogID, "source image catalogue ID")
+	command.Flags().StringVar(&request.Source, "source", "", "source ISO path or HTTPS URL (defaults to the catalogue URL)")
 	command.Flags().StringVar(&request.SourceSHA256, "source-sha256", "", "expected SHA-256 for the source ISO")
 	command.Flags().BoolVar(&request.RefreshSource, "refresh-source", false, "replace the cached copy of a remote mutable source")
 	command.Flags().StringVar(&request.KernelDirectory, "kernel-dir", "", "directory containing a local image/modules .deb pair")
@@ -69,6 +72,7 @@ func (a *application) newImageCreateCommand() *cobra.Command {
 	return command
 }
 
+// newImageValidateCommand rechecks a generated image without modifying it.
 func (a *application) newImageValidateCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{

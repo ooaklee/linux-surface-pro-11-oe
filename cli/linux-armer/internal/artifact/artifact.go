@@ -15,22 +15,38 @@ import (
 	"strings"
 )
 
+// Source identifies an artefact and, when available, the digest that must
+// match before the artefact can be used.
 type Source struct {
-	Location       string
+	// Location is either a local path, a file URL, or an HTTPS download URL.
+	Location string
+	// ExpectedSHA256 pins the artefact to a lowercase or uppercase SHA-256
+	// digest. An empty value permits acquisition but leaves it unverified.
 	ExpectedSHA256 string
 }
 
+// Result records the local artefact produced by an acquisition and the
+// integrity information observed while publishing it.
 type Result struct {
-	Path     string
-	SHA256   string
-	Size     int64
+	// Path is the final, atomically published local filename.
+	Path string
+	// SHA256 is the computed lowercase digest of the complete file.
+	SHA256 string
+	// Size is the artefact length in bytes.
+	Size int64
+	// Verified reports whether SHA256 matched a caller-supplied expected digest.
 	Verified bool
 }
 
+// Resolver acquires immutable artefacts through a configurable HTTP client.
 type Resolver struct {
+	// Client performs HTTPS downloads and controls redirects, timeouts, and
+	// transport policy.
 	Client *http.Client
 }
 
+// NewResolver returns a resolver backed by client, or by the process-wide
+// default HTTP client when client is nil.
 func NewResolver(client *http.Client) *Resolver {
 	if client == nil {
 		client = http.DefaultClient
@@ -87,6 +103,8 @@ func (r *Resolver) Acquire(ctx context.Context, source Source, destination strin
 	return result, nil
 }
 
+// copy streams one supported source location into destination without
+// publishing a partially written artefact.
 func (r *Resolver) copy(ctx context.Context, location string, destination io.Writer) error {
 	parsed, err := url.Parse(location)
 	if err != nil {
@@ -134,8 +152,10 @@ func (r *Resolver) copy(ctx context.Context, location string, destination io.Wri
 	return nil
 }
 
+// inspectExisting hashes a regular file and optionally checks it against an
+// expected lowercase SHA-256 digest.
 func inspectExisting(path, expected string) (Result, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return Result{}, err
 	}
@@ -152,6 +172,7 @@ func inspectExisting(path, expected string) (Result, error) {
 	return Result{Path: path, SHA256: digest, Size: info.Size(), Verified: expected != ""}, nil
 }
 
+// HashFile returns the lowercase SHA-256 digest of the file at path.
 func HashFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {

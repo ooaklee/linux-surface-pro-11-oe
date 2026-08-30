@@ -12,45 +12,77 @@ import (
 	"strings"
 )
 
+// BundleSchemaVersion identifies the kernel-bundle manifest format emitted by
+// this version of the CLI.
 const BundleSchemaVersion = 1
 
+// PackageRole identifies how a Debian package contributes to a kernel bundle.
 type PackageRole string
 
 const (
-	RoleImage         PackageRole = "image"
-	RoleModules       PackageRole = "modules"
-	RoleHeaders       PackageRole = "headers"
+	// RoleImage identifies the bootable kernel image package.
+	RoleImage PackageRole = "image"
+	// RoleModules identifies the matching kernel modules package.
+	RoleModules PackageRole = "modules"
+	// RoleHeaders identifies ABI-specific development headers.
+	RoleHeaders PackageRole = "headers"
+	// RoleCommonHeaders identifies architecture-independent common headers.
 	RoleCommonHeaders PackageRole = "common-headers"
 )
 
+// Package describes one immutable Debian package included in a kernel bundle.
 type Package struct {
-	Role     PackageRole `json:"role"`
-	Name     string      `json:"name"`
-	Path     string      `json:"path,omitempty"`
-	URL      string      `json:"url,omitempty"`
-	SHA256   string      `json:"sha256"`
-	Size     int64       `json:"size_bytes,omitempty"`
-	Verified bool        `json:"verified"`
+	// Role states how the package is used during installation or development.
+	Role PackageRole `json:"role"`
+	// Name is the Debian package filename from which ABI and version are derived.
+	Name string `json:"name"`
+	// Path is the local package location when the bytes have been acquired.
+	Path string `json:"path,omitempty"`
+	// URL is the original remote package location when applicable.
+	URL string `json:"url,omitempty"`
+	// SHA256 is the lowercase digest of the complete package.
+	SHA256 string `json:"sha256"`
+	// Size is the package length in bytes.
+	Size int64 `json:"size_bytes,omitempty"`
+	// Verified reports whether SHA256 matched an authoritative manifest.
+	Verified bool `json:"verified"`
 }
 
+// DeviceTree identifies one supported Surface Pro 11 hardware variant and the
+// DTB path expected inside the modules package.
 type DeviceTree struct {
+	// Device is the stable, human-readable hardware variant identifier.
 	Device string `json:"device"`
-	Path   string `json:"path"`
+	// Path is relative to the kernel's device-tree installation directory.
+	Path string `json:"path"`
 }
 
+// Bundle is a validated, version-bound set of kernel packages and device trees.
 type Bundle struct {
-	SchemaVersion int          `json:"schema_version"`
-	Release       string       `json:"release"`
-	Repository    string       `json:"repository,omitempty"`
-	ABI           string       `json:"abi"`
-	Version       string       `json:"version"`
-	Architecture  string       `json:"architecture"`
-	Packages      []Package    `json:"packages"`
-	DeviceTrees   []DeviceTree `json:"device_trees"`
+	// SchemaVersion identifies the serialised bundle contract.
+	SchemaVersion int `json:"schema_version"`
+	// Release is the upstream release tag or a local ABI-derived identifier.
+	Release string `json:"release"`
+	// Repository identifies the release source when the bundle was downloaded.
+	Repository string `json:"repository,omitempty"`
+	// ABI is the exact Surface kernel ABI shared by image and modules packages.
+	ABI string `json:"abi"`
+	// Version is the Debian package version shared by every package.
+	Version string `json:"version"`
+	// Architecture is the target Debian architecture.
+	Architecture string `json:"architecture"`
+	// Packages contains the immutable inputs sorted by filename.
+	Packages []Package `json:"packages"`
+	// DeviceTrees lists the DTBs that must accompany the kernel.
+	DeviceTrees []DeviceTree `json:"device_trees"`
 }
 
+// packagePatterns maps supported Debian package filename forms to their bundle
+// roles and captures the ABI and package version.
 var packagePatterns = []struct {
-	role    PackageRole
+	// role is assigned when pattern matches a filename.
+	role PackageRole
+	// pattern captures ABI and Debian version from an exact package basename.
 	pattern *regexp.Regexp
 }{
 	{RoleModules, regexp.MustCompile(`^linux-modules-(.+)_([^_]+)_arm64\.deb$`)},
@@ -124,6 +156,8 @@ func NewBundle(release, repository string, packages []Package) (Bundle, error) {
 	return bundle, nil
 }
 
+// ParsePackageName derives the role, ABI, and Debian version from a supported
+// kernel package filename. Common headers intentionally return an empty ABI.
 func ParsePackageName(name string) (PackageRole, string, string, error) {
 	base := filepath.Base(name)
 	for _, candidate := range packagePatterns {
@@ -141,6 +175,7 @@ func ParsePackageName(name string) (PackageRole, string, string, error) {
 	return "", "", "", fmt.Errorf("unsupported kernel package filename %q", base)
 }
 
+// Package returns the first package with role from an already validated bundle.
 func (b Bundle) Package(role PackageRole) (Package, bool) {
 	for _, pkg := range b.Packages {
 		if pkg.Role == role {
@@ -150,6 +185,7 @@ func (b Bundle) Package(role PackageRole) (Package, bool) {
 	return Package{}, false
 }
 
+// WriteJSON writes a stable, indented bundle manifest without HTML escaping.
 func (b Bundle) WriteJSON(w io.Writer) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")

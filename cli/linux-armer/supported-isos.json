@@ -1,23 +1,28 @@
 {
-  "schema_version": 1,
-  "description": "Curated ARM64 installation media that linux-armer can present to Surface Pro 11 users. An entry marked catalog-only is discoverable but does not yet have an image adapter.",
+  "schema_version": 2,
+  "description": "Curated ARM64 installation media for Surface Pro 11. Entries marked catalog-only are discoverable but do not yet have an image adapter.",
   "entries": [
     {
       "id": "debian-13-6-0-dvd-1",
       "name": "Debian 13.6.0 DVD 1",
       "distribution": "Debian",
       "release": "13.6.0",
+      "filename": "debian-13.6.0-arm64-DVD-1.iso",
       "architecture": "arm64",
       "artifact_kind": "iso",
-      "url": "https://cdimage.debian.org/debian-cd/current/arm64/iso-dvd/debian-13.6.0-arm64-DVD-1.iso",
-      "homepage": "https://cdimage.debian.org/debian-cd/current/arm64/iso-dvd/",
+      "url": "https://cdimage.debian.org/debian-cd/13.6.0/arm64/iso-dvd/debian-13.6.0-arm64-DVD-1.iso",
+      "homepage": "https://cdimage.debian.org/debian-cd/13.6.0/arm64/iso-dvd/",
       "adapter": "none",
       "support_level": "catalog-only",
       "experimental": true,
-      "mutable": true,
+      "mutable": false,
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "0e170d9ff0c53f7b59c8d35793b8ce308ceffd519f8370b949995634e22f5b09"
+      },
       "compatibility_notes": [
         "No linux-armer image adapter is implemented yet.",
-        "The current release directory is mutable; re-check the filename and checksum before use."
+        "The versioned release URL and publisher checksum pin the upstream bytes."
       ],
       "last_verified": "2026-08-30"
     },
@@ -26,6 +31,7 @@
       "name": "elementary OS 8.1 ARM64",
       "distribution": "elementary OS",
       "release": "8.1 (2026-02-19)",
+      "filename": "elementaryos-8.1-stable-arm64.20260219.iso",
       "architecture": "arm64",
       "artifact_kind": "iso",
       "url": "https://ams3.dl.elementary.io/download/MTc4ODA3NzI1Mg==/elementaryos-8.1-stable-arm64.20260219.iso",
@@ -36,7 +42,7 @@
       "mutable": false,
       "compatibility_notes": [
         "No linux-armer image adapter is implemented yet.",
-        "The download URL is release-specific but should still be verified against the publisher before use."
+        "The publisher generates a new epoch-tokenised URL on each page request; this stored URL was live on 2026-08-30."
       ],
       "last_verified": "2026-08-30"
     },
@@ -45,7 +51,8 @@
       "name": "Fedora Workstation 44 Raw Disk Image",
       "distribution": "Fedora",
       "release": "44 (1.7)",
-      "architecture": "aarch64",
+      "filename": "Fedora-Workstation-Disk-44-1.7.aarch64.raw.xz",
+      "architecture": "arm64",
       "artifact_kind": "raw-xz",
       "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/images/Fedora-Workstation-Disk-44-1.7.aarch64.raw.xz",
       "homepage": "https://fedoraproject.org/workstation/download/",
@@ -53,6 +60,10 @@
       "support_level": "catalog-only",
       "experimental": true,
       "mutable": false,
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "0361c13141e6f57e24d6ee5227066c33a45f7f92a95f41d0bbd343e4fd05da18"
+      },
       "compatibility_notes": [
         "No linux-armer image adapter is implemented yet.",
         "This is a compressed raw disk image, not an ISO, and requires a raw-image-specific workflow."
@@ -64,7 +75,8 @@
       "name": "Fedora Workstation Live 44",
       "distribution": "Fedora",
       "release": "44 (1.7)",
-      "architecture": "aarch64",
+      "filename": "Fedora-Workstation-Live-44-1.7.aarch64.iso",
+      "architecture": "arm64",
       "artifact_kind": "iso",
       "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-Live-44-1.7.aarch64.iso",
       "homepage": "https://fedoraproject.org/workstation/download/",
@@ -72,6 +84,10 @@
       "support_level": "catalog-only",
       "experimental": true,
       "mutable": false,
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "162ba3c552a2d241c7c63ec26777af0255ee1b5a135adc0be986ceed999933ef"
+      },
       "compatibility_notes": [
         "No linux-armer image adapter is implemented yet.",
         "Surface Pro 11 boot and device-tree integration have not yet been automated for this image."
@@ -83,6 +99,7 @@
       "name": "Pop!_OS 24.04 ARM64 Generic 3",
       "distribution": "Pop!_OS",
       "release": "24.04 (generic 3)",
+      "filename": "pop-os_24.04_arm64_generic_3.iso",
       "architecture": "arm64",
       "artifact_kind": "iso",
       "url": "https://iso.pop-os.org/24.04/arm64/generic/3/pop-os_24.04_arm64_generic_3.iso",
@@ -91,6 +108,10 @@
       "support_level": "catalog-only",
       "experimental": true,
       "mutable": false,
+      "checksum": {
+        "algorithm": "sha256",
+        "value": "7b4cce0e92dc5c903464e7e7c33760c4417f1400165e9ecfcd064fbceb68ef22"
+      },
       "compatibility_notes": [
         "No linux-armer image adapter is implemented yet.",
         "Surface Pro 11 boot and device-tree integration have not yet been automated for this image."
@@ -99,20 +120,21 @@
     },
     {
       "id": "ubuntu-concept-resolute-x1e",
-      "name": "Ubuntu Concept Resolute Desktop for X1E",
+      "name": "Ubuntu Concept Resolute Desktop for X1E (2026-03-26)",
       "distribution": "Ubuntu",
-      "release": "Resolute concept image",
+      "release": "Resolute concept image (2026-03-26)",
+      "filename": "resolute-desktop-arm64+x1e-20260326.iso",
       "architecture": "arm64",
       "artifact_kind": "iso",
-      "url": "https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso",
+      "url": "https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e-20260326.iso",
       "homepage": "https://people.canonical.com/~platform/images/ubuntu-concept/",
       "adapter": "ubuntu-casper",
       "support_level": "implemented",
       "experimental": true,
-      "mutable": true,
+      "mutable": false,
       "compatibility_notes": [
         "This is the first image supported by the linux-armer image creation workflow.",
-        "The concept-image URL is mutable; pin or record a checksum for reproducible builds."
+        "Canonical does not publish a checksum alongside this snapshot; use --source-sha256 to pin independently verified bytes."
       ],
       "last_verified": "2026-08-30"
     }

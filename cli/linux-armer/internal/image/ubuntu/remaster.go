@@ -22,32 +22,61 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
 
+// AdapterID is the stable manifest and catalogue identifier for the Ubuntu
+// Casper remaster implementation.
 const AdapterID = "ubuntu-casper"
 
+// Request contains all verified inputs and output policy for one Ubuntu image
+// remaster operation.
 type Request struct {
-	SourceISO     string
-	SourceSHA256  string
-	OutputISO     string
-	Bundle        kernel.Bundle
-	ToolVersion   string
+	// SourceISO is the local ARM64 Ubuntu ISO to remaster.
+	SourceISO string
+	// SourceSHA256 optionally pins SourceISO to an expected digest.
+	SourceSHA256 string
+	// OutputISO is the destination published only after validation succeeds.
+	OutputISO string
+	// Bundle is the complete, version-bound kernel and device-tree payload.
+	Bundle kernel.Bundle
+	// ToolVersion is written into the embedded provenance manifest.
+	ToolVersion string
+	// WorkspaceRoot optionally selects the parent for host-side temporary files.
 	WorkspaceRoot string
+	// KeepWorkspace retains diagnostic host and Docker workspaces after a failure
+	// or successful build instead of cleaning them automatically.
 	KeepWorkspace bool
 }
 
+// Result identifies every durable artefact produced by a successful remaster
+// and any diagnostic workspace explicitly retained by the caller.
 type Result struct {
-	OutputISO     string
-	ManifestPath  string
-	JournalPath   string
-	SHA256        string
-	Size          int64
+	// OutputISO is the absolute path of the atomically published image.
+	OutputISO string
+	// ManifestPath is the sidecar provenance manifest path.
+	ManifestPath string
+	// JournalPath is the durable operation checkpoint journal path.
+	JournalPath string
+	// SHA256 is the digest of the published image.
+	SHA256 string
+	// Size is the published image length in bytes.
+	Size int64
+	// WorkspacePath is populated only when host diagnostics were retained.
 	WorkspacePath string
+	// WorkspaceVolume is populated only when the case-sensitive Docker work
+	// volume was retained for diagnostics.
+	WorkspaceVolume string
 }
 
+// Remasterer coordinates host artefact handling with isolated Linux image
+// tooling. Callers may inject Docker and output dependencies for testing.
 type Remasterer struct {
+	// Docker provides the isolated, case-sensitive execution environment.
 	Docker *platform.Docker
-	Out    io.Writer
+	// Out receives concise progress messages and may safely be io.Discard.
+	Out io.Writer
 }
 
+// NewRemasterer creates an Ubuntu remaster adapter, supplying safe default
+// dependencies when Docker or the progress writer is nil.
 func NewRemasterer(docker *platform.Docker, out io.Writer) *Remasterer {
 	if docker == nil {
 		docker = platform.NewDocker(nil)
@@ -58,6 +87,8 @@ func NewRemasterer(docker *platform.Docker, out io.Writer) *Remasterer {
 	return &Remasterer{Docker: docker, Out: out}
 }
 
+// BuildPlan validates the minimum request identity and returns the ordered,
+// serialisable steps that Create will execute.
 func BuildPlan(request Request) (plan.Plan, error) {
 	if request.SourceISO == "" || request.OutputISO == "" {
 		return plan.Plan{}, errors.New("source and output ISO paths are required")
@@ -70,18 +101,21 @@ func BuildPlan(request Request) (plan.Plan, error) {
 		{ID: "verify-kernel", Kind: "verify", Description: "Verify the version-bound kernel bundle", Inputs: map[string]string{"release": request.Bundle.Release, "abi": request.Bundle.ABI}},
 		{ID: "prepare-tools", Kind: "prepare", Description: "Prepare the isolated ARM64 image-tooling container", Inputs: map[string]string{"adapter": AdapterID}},
 		{ID: "extract-live-root", Kind: "extract", Description: "Validate and extract the Ubuntu Casper layered filesystems"},
-		{ID: "install-kernel", Kind: "kernel", Description: "Install the custom kernel and modules into the live root", Inputs: map[string]string{"abi": request.Bundle.ABI}},
+		{ID: "install-kernel", Kind: "kernel", Description: "Register the custom kernel and modules in the live and installed-system root", Inputs: map[string]string{"abi": request.Bundle.ABI}},
 		{ID: "assemble-initramfs-root", Kind: "filesystem", Description: "Apply the standard and live layers to a temporary initramfs build root"},
 		{ID: "build-initramfs", Kind: "initramfs", Description: "Generate an initramfs for the exact custom kernel ABI"},
 		{ID: "pair-device-trees", Kind: "device-tree", Description: "Extract X1E and X1P Surface Pro 11 DTBs from the same kernel package"},
 		{ID: "repack-live-root", Kind: "filesystem", Description: "Repack the modified Casper filesystem"},
 		{ID: "replay-hybrid-boot", Kind: "boot", Description: "Replay the source ISO hybrid boot layout and install direct GRUB in both boot paths"},
-		{ID: "validate-output", Kind: "verify", Description: "Validate ISO, GPT, ESP, kernel, initramfs, modules, and DTB agreement"},
+		{ID: "validate-output", Kind: "verify", Description: "Validate live-media and installed-system kernel, initramfs, GRUB, and DTB agreement"},
 		{ID: "publish-output", Kind: "publish", Description: "Atomically publish the completed remastered ISO", Inputs: map[string]string{"path": request.OutputISO}},
 	}...)
 }
 
-func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error) {
+// Create remasters, structurally validates, and atomically publishes an Ubuntu
+// hybrid ISO. Temporary Linux filesystem work occurs in a case-sensitive Docker
+// volume, and no final output is published unless every validation check passes.
+func (r *Remasterer) Create(ctx context.Context, request Request) (result Result, returnErr error) {
 	operationPlan, err := BuildPlan(request)
 	if err != nil {
 		return Result{}, err
@@ -145,6 +179,9 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 	if err := stageBundle(request.Bundle, workspace); err != nil {
 		return Result{}, err
 	}
+	if err := stageInstalledSupportFiles(workspace, request.Bundle.ABI); err != nil {
+		return Result{}, err
+	}
 	if err := checkpoint("verify-kernel", packageDigests(request.Bundle)); err != nil {
 		return Result{}, err
 	}
@@ -154,6 +191,32 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 	if err != nil {
 		return Result{}, err
 	}
+	workVolume, err := r.Docker.CreateWorkVolume(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	removeWorkVolume := func() error {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return r.Docker.RemoveWorkVolume(cleanupContext, workVolume)
+	}
+	defer func() {
+		if returnErr == nil || workVolume == "" {
+			return
+		}
+		if request.KeepWorkspace {
+			returnErr = fmt.Errorf("%w (diagnostic Docker volume retained: %s)", returnErr, workVolume)
+			return
+		}
+		if cleanupErr := removeWorkVolume(); cleanupErr != nil {
+			returnErr = errors.Join(returnErr,
+				fmt.Errorf("temporary Docker volume retained after cleanup failure: %s: %w", workVolume, cleanupErr))
+			return
+		}
+		removedVolume := workVolume
+		workVolume = ""
+		returnErr = fmt.Errorf("%w (temporary Docker volume removed: %s)", returnErr, removedVolume)
+	}()
 	if err := checkpoint("prepare-tools", nil); err != nil {
 		return Result{}, err
 	}
@@ -174,8 +237,8 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 	if err := validateSourceLayout(workspace); err != nil {
 		return Result{}, err
 	}
-	if err := r.Docker.RunInWorkspace(ctx, toolsImage, workspace,
-		"unsquashfs", "-no-xattrs", "-no-progress", "-d", "/work/rootfs", "/work/minimal.squashfs"); err != nil {
+	if err := extractCasperFilesystem(ctx, r.Docker, toolsImage, workspace, workVolume,
+		"/work/minimal.squashfs", "/linux-work/rootfs"); err != nil {
 		return Result{}, fmt.Errorf("extract Casper filesystem: %w", err)
 	}
 	// Extraction runs as root in the container. These metadata files are then
@@ -188,26 +251,24 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 		return Result{}, err
 	}
 
-	logf(r.Out, "Installing custom kernel %s into the live filesystem", request.Bundle.ABI)
-	for _, pkg := range request.Bundle.Packages {
-		if pkg.Role != kernel.RoleImage && pkg.Role != kernel.RoleModules {
-			continue
-		}
-		if err := r.Docker.RunInWorkspace(ctx, toolsImage, workspace,
-			"dpkg-deb", "--extract", "/work/kernel/"+pkg.Name, "/work/rootfs"); err != nil {
-			return Result{}, fmt.Errorf("extract %s: %w", pkg.Name, err)
-		}
+	logf(r.Out, "Registering custom kernel %s in the live filesystem", request.Bundle.ABI)
+	if err := installKernelPackages(ctx, r.Docker, toolsImage, workspace, workVolume, request.Bundle); err != nil {
+		return Result{}, err
 	}
-	if err := r.Docker.RunInWorkspace(ctx, toolsImage, workspace,
-		"depmod", "-a", "-b", "/work/rootfs", request.Bundle.ABI); err != nil {
+	if err := r.Docker.RunInWorkspaceVolume(ctx, toolsImage, workspace, workVolume,
+		"depmod", "-a", "-b", "/linux-work/rootfs", request.Bundle.ABI); err != nil {
 		return Result{}, fmt.Errorf("index custom kernel modules: %w", err)
+	}
+	logf(r.Out, "Installing deterministic X1E/X1P support for the installed system")
+	if err := installInstalledSystemSupport(ctx, r.Docker, toolsImage, workspace, workVolume, request.Bundle); err != nil {
+		return Result{}, err
 	}
 	if err := checkpoint("install-kernel", nil); err != nil {
 		return Result{}, err
 	}
 
 	logf(r.Out, "Assembling the layered Casper root used to generate the live initramfs")
-	if err := assembleInitramfsRoot(ctx, r.Docker, toolsImage, workspace, request.Bundle.ABI); err != nil {
+	if err := assembleInitramfsRoot(ctx, r.Docker, toolsImage, workspace, workVolume, request.Bundle.ABI); err != nil {
 		return Result{}, err
 	}
 	if err := checkpoint("assemble-initramfs-root", nil); err != nil {
@@ -215,14 +276,11 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 	}
 
 	logf(r.Out, "Generating initramfs for %s", request.Bundle.ABI)
-	if err := r.Docker.RunInWorkspace(ctx, toolsImage, workspace,
-		"chroot", "/work/initramfs-root", "mkinitramfs", "-o", "/boot/initrd.img-"+request.Bundle.ABI, request.Bundle.ABI); err != nil {
+	if err := r.Docker.RunInWorkspaceVolume(ctx, toolsImage, workspace, workVolume,
+		"chroot", "/linux-work/initramfs-root", "mkinitramfs", "-o", "/boot/initrd.img-"+request.Bundle.ABI, request.Bundle.ABI); err != nil {
 		return Result{}, fmt.Errorf("generate custom initramfs: %w", err)
 	}
-	if err := makeBootArtifactsReadable(ctx, r.Docker, toolsImage, workspace, request.Bundle); err != nil {
-		return Result{}, err
-	}
-	if err := stageBootArtifacts(request.Bundle, workspace); err != nil {
+	if err := copyBootArtifactsToWorkspace(ctx, r.Docker, toolsImage, workspace, workVolume, request.Bundle); err != nil {
 		return Result{}, err
 	}
 	if err := checkpoint("build-initramfs", nil); err != nil {
@@ -238,15 +296,15 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 		"unsquashfs", "-s", "/work/minimal.squashfs"); captureErr == nil && strings.Contains(strings.ToLower(string(details)), "zstd") {
 		compression = "zstd"
 	}
-	mksquashArgs := []string{"mksquashfs", "/work/rootfs", "/work/remastered.squashfs", "-noappend", "-no-progress", "-comp", compression}
+	mksquashArgs := []string{"mksquashfs", "/linux-work/rootfs", "/linux-work/remastered.squashfs", "-noappend", "-no-progress", "-comp", compression}
 	if compression == "zstd" {
 		mksquashArgs = append(mksquashArgs, "-Xcompression-level", "19")
 	}
-	if err := r.Docker.RunInWorkspace(ctx, toolsImage, workspace, mksquashArgs...); err != nil {
+	if err := r.Docker.RunInWorkspaceVolume(ctx, toolsImage, workspace, workVolume, mksquashArgs...); err != nil {
 		return Result{}, fmt.Errorf("repack Casper filesystem: %w", err)
 	}
-	rootSizeOutput, err := r.Docker.CaptureInWorkspace(ctx, toolsImage, workspace,
-		"du", "-sx", "--block-size=1", "/work/rootfs")
+	rootSizeOutput, err := r.Docker.CaptureInWorkspaceVolume(ctx, toolsImage, workspace, workVolume,
+		"du", "-sx", "--block-size=1", "/linux-work/rootfs")
 	if err != nil {
 		return Result{}, fmt.Errorf("measure remastered filesystem: %w", err)
 	}
@@ -255,6 +313,14 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 		return Result{}, errors.New("measure remastered filesystem: du returned no size")
 	}
 	rootSize := rootSizeFields[0]
+	if err := r.Docker.RunInWorkspaceVolume(ctx, toolsImage, workspace, workVolume,
+		"cp", "/linux-work/remastered.squashfs", "/work/remastered.squashfs"); err != nil {
+		return Result{}, fmt.Errorf("copy remastered Casper filesystem to host workspace: %w", err)
+	}
+	if err := r.Docker.RunInWorkspace(ctx, toolsImage, workspace,
+		"chmod", "a+r", "/work/remastered.squashfs"); err != nil {
+		return Result{}, fmt.Errorf("make remastered Casper filesystem readable: %w", err)
+	}
 	if err := os.WriteFile(filepath.Join(workspace, "minimal.size"), []byte(rootSize+"\n"), 0o644); err != nil {
 		return Result{}, err
 	}
@@ -328,12 +394,26 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (Result, error
 	if err := checkpoint("publish-output", map[string]string{"output.iso": outputDigest}); err != nil {
 		return Result{}, err
 	}
+	resultWorkspace := ""
+	resultVolume := ""
+	if request.KeepWorkspace {
+		resultWorkspace = workspace
+		resultVolume = workVolume
+		logf(r.Out, "Preserving diagnostic workspace %s and Docker volume %s", workspace, workVolume)
+	} else {
+		if err := removeWorkVolume(); err != nil {
+			return Result{}, fmt.Errorf("remove completed build workspace volume: %w", err)
+		}
+		workVolume = ""
+	}
 	return Result{
 		OutputISO: outputAbsolute, ManifestPath: manifestPath, JournalPath: journalPath,
-		SHA256: outputDigest, Size: outputSize, WorkspacePath: workspace,
+		SHA256: outputDigest, Size: outputSize, WorkspacePath: resultWorkspace, WorkspaceVolume: resultVolume,
 	}, nil
 }
 
+// validateBundlePaths proves that package inputs and device-tree paths are safe,
+// regular, digest-matched files before any of them enters a container command.
 func validateBundlePaths(bundle kernel.Bundle) error {
 	if !safeKernelABI(bundle.ABI) {
 		return fmt.Errorf("kernel bundle ABI %q is not a safe path component", bundle.ABI)
@@ -393,6 +473,8 @@ func validateBundlePaths(bundle kernel.Bundle) error {
 	return nil
 }
 
+// safeKernelABI reports whether an ABI can be embedded in filesystem paths and
+// shell arguments without separators or control characters.
 func safeKernelABI(abi string) bool {
 	if abi == "" || len(abi) > 255 {
 		return false
@@ -407,6 +489,8 @@ func safeKernelABI(abi string) bool {
 	return true
 }
 
+// validateSourceLayout rejects Ubuntu media whose layered Casper declaration or
+// required filesystem members do not match the adapter's supported contract.
 func validateSourceLayout(workspace string) error {
 	configuration, err := os.ReadFile(filepath.Join(workspace, "install-sources.yaml"))
 	if err != nil {
@@ -439,13 +523,31 @@ func validateSourceLayout(workspace string) error {
 	return nil
 }
 
-func assembleInitramfsRoot(ctx context.Context, docker *platform.Docker, image, workspace, abi string) error {
-	if err := docker.RunInWorkspace(ctx, image, workspace,
-		"mkdir", "-p", "/work/initramfs-root", "/work/layers"); err != nil {
+// extractCasperFilesystem expands one SquashFS into the case-sensitive Docker
+// volume while excluding overlay whiteouts and Docker-incompatible trusted xattrs.
+func extractCasperFilesystem(ctx context.Context, docker *platform.Docker, image, workspace, volume, source, destination string) error {
+	const script = `source=$1
+destination=$2
+whiteouts=$(mktemp)
+unsquashfs -lln "$source" | awk '$1 ~ /^c/ && $3 == "0," && $4 == "0" { marker="squashfs-root/"; start=index($0, marker); if (start > 0) print substr($0, start + length(marker)) }' > "$whiteouts"
+unsquashfs -no-progress -xattrs-exclude '^trusted\.' -exclude-file "$whiteouts" -d "$destination" "$source"
+`
+	if err := docker.RunInWorkspaceVolume(ctx, image, workspace, volume,
+		"bash", "-ceu", script, "linux-armer-extract", source, destination); err != nil {
+		return err
+	}
+	return nil
+}
+
+// assembleInitramfsRoot overlays Ubuntu's standard and live layers onto the
+// modified base root and verifies the exact tools needed to generate an initramfs.
+func assembleInitramfsRoot(ctx context.Context, docker *platform.Docker, image, workspace, volume, abi string) error {
+	if err := docker.RunInWorkspaceVolume(ctx, image, workspace, volume,
+		"mkdir", "-p", "/linux-work/initramfs-root", "/linux-work/layers"); err != nil {
 		return fmt.Errorf("prepare layered initramfs root: %w", err)
 	}
-	if err := docker.RunInWorkspace(ctx, image, workspace,
-		"cp", "-a", "--reflink=auto", "/work/rootfs/.", "/work/initramfs-root/"); err != nil {
+	if err := docker.RunInWorkspaceVolume(ctx, image, workspace, volume,
+		"cp", "-a", "--reflink=auto", "/linux-work/rootfs/.", "/linux-work/initramfs-root/"); err != nil {
 		return fmt.Errorf("copy modified Casper base into initramfs root: %w", err)
 	}
 	for _, layer := range []struct {
@@ -455,12 +557,9 @@ func assembleInitramfsRoot(ctx context.Context, docker *platform.Docker, image, 
 		{name: "standard", file: "minimal.standard.squashfs"},
 		{name: "live", file: "minimal.standard.live.squashfs"},
 	} {
-		layerRoot := "/work/layers/" + layer.name
-		if err := docker.RunInWorkspace(ctx, image, workspace,
-			"unsquashfs", "-no-xattrs", "-no-progress", "-d", layerRoot, "/work/"+layer.file); err != nil {
-			return fmt.Errorf("extract Casper %s layer: %w", layer.name, err)
-		}
-		if err := applyCasperLayer(ctx, docker, image, workspace, layerRoot, "/work/initramfs-root"); err != nil {
+		layerRoot := "/linux-work/layers/" + layer.name
+		if err := applyCasperLayer(ctx, docker, image, workspace, volume,
+			"/work/"+layer.file, layerRoot, "/linux-work/initramfs-root"); err != nil {
 			return fmt.Errorf("apply Casper %s layer: %w", layer.name, err)
 		}
 	}
@@ -468,40 +567,47 @@ func assembleInitramfsRoot(ctx context.Context, docker *platform.Docker, image, 
 		mode string
 		path string
 	}{
-		{mode: "-x", path: "/work/initramfs-root/usr/sbin/mkinitramfs"},
-		{mode: "-f", path: "/work/initramfs-root/usr/share/initramfs-tools/hooks/casper"},
-		{mode: "-f", path: "/work/initramfs-root/usr/share/initramfs-tools/scripts/casper"},
-		{mode: "-s", path: "/work/initramfs-root/usr/lib/modules/" + abi + "/modules.dep"},
+		{mode: "-x", path: "/linux-work/initramfs-root/usr/sbin/mkinitramfs"},
+		{mode: "-f", path: "/linux-work/initramfs-root/usr/share/initramfs-tools/hooks/casper"},
+		{mode: "-f", path: "/linux-work/initramfs-root/usr/share/initramfs-tools/scripts/casper"},
+		{mode: "-s", path: "/linux-work/initramfs-root/usr/lib/modules/" + abi + "/modules.dep"},
 	} {
-		if err := docker.RunInWorkspace(ctx, image, workspace, "test", required.mode, required.path); err != nil {
+		if err := docker.RunInWorkspaceVolume(ctx, image, workspace, volume, "test", required.mode, required.path); err != nil {
 			return fmt.Errorf("assembled initramfs root is missing required member %s: %w", required.path, err)
 		}
 	}
 	return nil
 }
 
-func applyCasperLayer(ctx context.Context, docker *platform.Docker, image, workspace, layerRoot, targetRoot string) error {
+// applyCasperLayer applies one overlay-style SquashFS layer to a target root,
+// honouring safe whiteout deletions before copying the remaining Linux metadata.
+func applyCasperLayer(ctx context.Context, docker *platform.Docker, image, workspace, volume, source, layerRoot, targetRoot string) error {
 	// Ubuntu's layered squashfs uses overlayfs-style character devices with
-	// major/minor 0:0 as whiteouts. Resolve them before copying each upper layer
-	// so the chroot matches the live overlay rather than exposing device nodes.
-	const script = `layer=$1
-target=$2
-while IFS= read -r -d '' whiteout; do
-  if [ "$(stat -c '%t:%T' "$layer/$whiteout")" != "0:0" ]; then
-    continue
-  fi
-  rm -rf -- "$target/$whiteout"
-  rm -f -- "$layer/$whiteout"
-done < <(find "$layer" -xdev -type c -printf '%P\0')
+	// major/minor 0:0 as whiteouts. Exclude those special inodes during
+	// extraction, apply their deletions, then copy the remaining Linux layer.
+	const script = `source=$1
+layer=$2
+target=$3
+whiteouts=$(mktemp)
+unsquashfs -lln "$source" | awk '$1 ~ /^c/ && $3 == "0," && $4 == "0" { marker="squashfs-root/"; start=index($0, marker); if (start > 0) print substr($0, start + length(marker)) }' > "$whiteouts"
+unsquashfs -no-progress -xattrs-exclude '^trusted\.' -exclude-file "$whiteouts" -d "$layer" "$source"
+while IFS= read -r whiteout; do
+	case "$whiteout" in
+		""|/*|../*|*/../*) exit 64 ;;
+	esac
+	rm -rf -- "$target/$whiteout"
+done < "$whiteouts"
 cp -a --reflink=auto "$layer/." "$target/"
 `
-	if err := docker.RunInWorkspace(ctx, image, workspace,
-		"bash", "-ceu", script, "linux-armer-layer", layerRoot, targetRoot); err != nil {
+	if err := docker.RunInWorkspaceVolume(ctx, image, workspace, volume,
+		"bash", "-ceu", script, "linux-armer-layer", source, layerRoot, targetRoot); err != nil {
 		return err
 	}
 	return nil
 }
 
+// stageBundle copies or hard-links every local kernel package into the bounded
+// host workspace passed to the image-tooling container.
 func stageBundle(bundle kernel.Bundle, workspace string) error {
 	directory := filepath.Join(workspace, "kernel")
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -518,45 +624,37 @@ func stageBundle(bundle kernel.Bundle, workspace string) error {
 	return nil
 }
 
-func stageBootArtifacts(bundle kernel.Bundle, workspace string) error {
-	root := filepath.Join(workspace, "rootfs")
-	kernelSource := filepath.Join(root, "boot", "vmlinuz-"+bundle.ABI)
-	initrdSource := filepath.Join(workspace, "initramfs-root", "boot", "initrd.img-"+bundle.ABI)
-	if err := stageFile(kernelSource, filepath.Join(workspace, "casper-vmlinuz")); err != nil {
-		return fmt.Errorf("stage custom kernel: %w", err)
-	}
-	if err := stageFile(initrdSource, filepath.Join(workspace, "casper-initrd")); err != nil {
-		return fmt.Errorf("stage custom initramfs: %w", err)
-	}
-	dtbRoot := filepath.Join(workspace, "sp11", "dtb")
-	if err := os.MkdirAll(dtbRoot, 0o755); err != nil {
-		return err
+// copyBootArtifactsToWorkspace exports the generated kernel, initramfs, and
+// paired device trees from the Linux volume to files used by ISO reconstruction.
+func copyBootArtifactsToWorkspace(ctx context.Context, docker *platform.Docker, image, workspace, volume string, bundle kernel.Bundle) error {
+	const script = `while [ "$#" -gt 0 ]; do
+source=$1
+destination=$2
+shift 2
+mkdir -p "$(dirname "$destination")"
+cp "$source" "$destination"
+chmod a+r "$destination"
+done
+`
+	arguments := []string{
+		"bash", "-ceu", script, "linux-armer-copy-boot",
+		"/linux-work/rootfs/boot/vmlinuz-" + bundle.ABI, "/work/casper-vmlinuz",
+		"/linux-work/initramfs-root/boot/initrd.img-" + bundle.ABI, "/work/casper-initrd",
 	}
 	for _, dtb := range bundle.DeviceTrees {
-		source := filepath.Join(root, "usr", "lib", "firmware", bundle.ABI, "device-tree", filepath.FromSlash(dtb.Path))
-		destination := filepath.Join(dtbRoot, filepath.Base(dtb.Path))
-		if err := stageFile(source, destination); err != nil {
-			return fmt.Errorf("stage %s device tree: %w", dtb.Device, err)
-		}
+		arguments = append(arguments,
+			"/linux-work/rootfs/usr/lib/firmware/"+bundle.ABI+"/device-tree/"+dtb.Path,
+			"/work/sp11/dtb/"+filepath.Base(dtb.Path),
+		)
+	}
+	if err := docker.RunInWorkspaceVolume(ctx, image, workspace, volume, arguments...); err != nil {
+		return fmt.Errorf("copy custom kernel, initramfs, and device trees to host workspace: %w", err)
 	}
 	return nil
 }
 
-func makeBootArtifactsReadable(ctx context.Context, docker *platform.Docker, image, workspace string, bundle kernel.Bundle) error {
-	paths := []string{
-		"/work/rootfs/boot/vmlinuz-" + bundle.ABI,
-		"/work/initramfs-root/boot/initrd.img-" + bundle.ABI,
-	}
-	for _, dtb := range bundle.DeviceTrees {
-		paths = append(paths, "/work/rootfs/usr/lib/firmware/"+bundle.ABI+"/device-tree/"+dtb.Path)
-	}
-	arguments := append([]string{"chmod", "a+r"}, paths...)
-	if err := docker.RunInWorkspace(ctx, image, workspace, arguments...); err != nil {
-		return fmt.Errorf("make custom boot artifacts readable to the host process: %w", err)
-	}
-	return nil
-}
-
+// buildEmbeddedManifest hashes the staged boot payload and combines it with
+// source and kernel provenance for inclusion in the completed image.
 func buildEmbeddedManifest(request Request, workspace, sourceDigest string) (imagecontract.Manifest, error) {
 	sourceInfo, err := os.Stat(filepath.Join(workspace, "source.iso"))
 	if err != nil {
@@ -587,18 +685,39 @@ func buildEmbeddedManifest(request Request, workspace, sourceDigest string) (ima
 		SourceImage: imagecontract.ArtifactRecord{
 			Path: "source.iso", SHA256: sourceDigest, Size: sourceInfo.Size(),
 		},
-		KernelBundle: request.Bundle,
+		KernelBundle: portableKernelBundle(request.Bundle),
 		BootArtifacts: imagecontract.BootArtifactRecord{
 			Kernel: kernelRecord, Initrd: initrdRecord, DTBs: dtbs,
 		},
 		BootArguments: []string{
 			"clk_ignore_unused", "pd_ignore_unused", "arm64.nopauth", "systemd.tpm2_wait=0",
+			"soundwire_qcom.sp11_feedback_active_offset2_zero=1",
 			"modprobe.blacklist=qcom_q6v5_pas",
 		},
 		SecureBoot: "unsupported; disable Secure Boot for the unsigned custom kernel and direct GRUB",
 	}, nil
 }
 
+// portableKernelBundle removes host filesystem paths before publishing kernel
+// provenance. Runtime packages point at their location on the ISO, while
+// build-only packages carry no path because they are not copied onto the media.
+func portableKernelBundle(bundle kernel.Bundle) kernel.Bundle {
+	portable := bundle
+	portable.Packages = append([]kernel.Package(nil), bundle.Packages...)
+	portable.DeviceTrees = append([]kernel.DeviceTree(nil), bundle.DeviceTrees...)
+	for index := range portable.Packages {
+		pkg := &portable.Packages[index]
+		if pkg.Role == kernel.RoleImage || pkg.Role == kernel.RoleModules {
+			pkg.Path = "sp11/kernel/" + pkg.Name
+		} else {
+			pkg.Path = ""
+		}
+	}
+	return portable
+}
+
+// writeSupportFiles stages reinstallable kernel packages, provenance, operator
+// notes, disk identity, and the device-specific GRUB configuration under the ISO tree.
 func writeSupportFiles(workspace string, manifest imagecontract.Manifest, abi string) error {
 	sp11 := filepath.Join(workspace, "sp11")
 	if err := os.MkdirAll(filepath.Join(sp11, "kernel"), 0o755); err != nil {
@@ -626,6 +745,8 @@ func writeSupportFiles(workspace string, manifest imagecontract.Manifest, abi st
 	return os.WriteFile(filepath.Join(workspace, "disk-info"), []byte(diskInfo), 0o644)
 }
 
+// updatePackageManifest replaces or appends the custom kernel package versions
+// while preserving Ubuntu's optional two-line manifest diff header.
 func updatePackageManifest(path string, bundle kernel.Bundle) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -662,6 +783,8 @@ func updatePackageManifest(path string, bundle kernel.Bundle) error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
 
+// updateMD5Manifest recalculates Ubuntu's compatibility checksum list for every
+// ISO member changed or added by the remaster operation.
 func updateMD5Manifest(workspace string) error {
 	path := filepath.Join(workspace, "md5sum.txt")
 	file, err := os.Open(path)
@@ -735,6 +858,8 @@ func updateMD5Manifest(workspace string) error {
 	return os.Rename(path+".new", path)
 }
 
+// replaceAppendedESPBootloader installs direct GRUB in the replayed EFI system
+// partition after removing the redundant binary needed to make space safely.
 func replaceAppendedESPBootloader(ctx context.Context, docker *platform.Docker, image, workspace, outputName string) error {
 	report, err := docker.CaptureInWorkspace(ctx, image, workspace,
 		"xorriso", "-indev", "/work/"+outputName, "-report_system_area", "plain")
@@ -759,6 +884,8 @@ func replaceAppendedESPBootloader(ctx context.Context, docker *platform.Docker, 
 	return nil
 }
 
+// stageFile places one regular file at a destination, preferring a hard link and
+// falling back to a copy while removing partial copies on failure.
 func stageFile(source, destination string) error {
 	sourceAbsolute, err := filepath.Abs(source)
 	if err != nil {
@@ -807,6 +934,8 @@ func stageFile(source, destination string) error {
 	return nil
 }
 
+// samePath reports whether two paths name the same filesystem object, including
+// distinct hard-link or symlink spellings that resolve to the same file.
 func samePath(first, second string) bool {
 	if filepath.Clean(first) == filepath.Clean(second) {
 		return true
@@ -816,6 +945,8 @@ func samePath(first, second string) bool {
 	return firstErr == nil && secondErr == nil && os.SameFile(firstInfo, secondInfo)
 }
 
+// publishFile stages a completed artefact next to its destination and renames it
+// into place so readers never observe a partially copied image.
 func publishFile(source, destination string) error {
 	temporary := destination + ".partial"
 	_ = os.Remove(temporary)
@@ -828,6 +959,8 @@ func publishFile(source, destination string) error {
 	return nil
 }
 
+// writeManifest writes indented JSON to a sibling temporary file and atomically
+// replaces the requested manifest only after encoding and closing succeed.
 func writeManifest(path string, manifest imagecontract.Manifest) error {
 	file, err := os.OpenFile(path+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -842,6 +975,8 @@ func writeManifest(path string, manifest imagecontract.Manifest) error {
 	return os.Rename(path+".tmp", path)
 }
 
+// artifactRecord hashes a local file and returns its size under the portable
+// logical path used by the embedded manifest.
 func artifactRecord(path, logicalPath string) (imagecontract.ArtifactRecord, error) {
 	digest, err := artifact.HashFile(path)
 	if err != nil {
@@ -854,6 +989,8 @@ func artifactRecord(path, logicalPath string) (imagecontract.ArtifactRecord, err
 	return imagecontract.ArtifactRecord{Path: logicalPath, SHA256: digest, Size: info.Size()}, nil
 }
 
+// packageDigests converts the bundle's verified package metadata into journal
+// evidence keyed by package filename.
 func packageDigests(bundle kernel.Bundle) map[string]string {
 	digests := make(map[string]string, len(bundle.Packages))
 	for _, pkg := range bundle.Packages {
@@ -862,6 +999,8 @@ func packageDigests(bundle kernel.Bundle) map[string]string {
 	return digests
 }
 
+// md5File computes the legacy digest required by Ubuntu's md5sum.txt format; it
+// is not used as a security boundary.
 func md5File(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -875,6 +1014,8 @@ func md5File(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// logf emits one consistently prefixed progress line and deliberately ignores
+// writer failures so logging cannot invalidate an otherwise sound image build.
 func logf(w io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(w, "linux-armer: "+format+"\n", args...)
 }

@@ -11,11 +11,17 @@ import (
 	"testing"
 )
 
+// These fixtures describe one internally consistent Surface kernel package pair
+// used throughout local bundle discovery tests.
 const (
-	testLocalABI     = "7.2.0-jg-0sp11v19-qcom-x1e"
+	// testLocalABI is the Surface-specific ABI encoded in both fixture filenames.
+	testLocalABI = "7.2.0-jg-0sp11v19-qcom-x1e"
+	// testLocalVersion is the matching Debian package version for the fixture ABI.
 	testLocalVersion = "7.2.0-jg-0sp11v19"
 )
 
+// TestDiscoverLocalBundleWithoutChecksumManifest verifies local discovery picks
+// only the Surface runtime pair, calculates metadata, and marks it unverified.
 func TestDiscoverLocalBundleWithoutChecksumManifest(t *testing.T) {
 	t.Parallel()
 
@@ -80,6 +86,8 @@ func TestDiscoverLocalBundleWithoutChecksumManifest(t *testing.T) {
 	}
 }
 
+// TestDiscoverLocalBundleVerifiesChecksumManifest verifies both selected runtime
+// packages become verified when SHA256SUMS contains matching digests.
 func TestDiscoverLocalBundleVerifiesChecksumManifest(t *testing.T) {
 	t.Parallel()
 
@@ -110,6 +118,8 @@ func TestDiscoverLocalBundleVerifiesChecksumManifest(t *testing.T) {
 	}
 }
 
+// TestDiscoverLocalBundleRejectsPackageSelectionProblems exercises missing,
+// ambiguous, mismatched, generic, and non-file runtime package candidates.
 func TestDiscoverLocalBundleRejectsPackageSelectionProblems(t *testing.T) {
 	t.Parallel()
 
@@ -197,6 +207,8 @@ func TestDiscoverLocalBundleRejectsPackageSelectionProblems(t *testing.T) {
 	}
 }
 
+// TestDiscoverLocalBundleRejectsSymbolicLinkPackage verifies local discovery
+// will not trust a runtime package whose path can be redirected after inspection.
 func TestDiscoverLocalBundleRejectsSymbolicLinkPackage(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -216,6 +228,8 @@ func TestDiscoverLocalBundleRejectsSymbolicLinkPackage(t *testing.T) {
 	assertLocalErrorContains(t, err, imageName, "symbolic link")
 }
 
+// TestDiscoverLocalBundleChecksumManifestValidation verifies malformed, unsafe,
+// incomplete, duplicated, and mismatching SHA256SUMS entries are rejected.
 func TestDiscoverLocalBundleChecksumManifestValidation(t *testing.T) {
 	t.Parallel()
 
@@ -305,6 +319,8 @@ func TestDiscoverLocalBundleChecksumManifestValidation(t *testing.T) {
 	}
 }
 
+// TestDiscoverLocalBundleRejectsInvalidChecksumManifestFile verifies SHA256SUMS
+// must itself be a regular file rather than a directory or symbolic link.
 func TestDiscoverLocalBundleRejectsInvalidChecksumManifestFile(t *testing.T) {
 	t.Parallel()
 
@@ -338,6 +354,8 @@ func TestDiscoverLocalBundleRejectsInvalidChecksumManifestFile(t *testing.T) {
 	})
 }
 
+// TestDiscoverLocalBundleDirectoryErrors verifies empty, missing, and regular-file
+// inputs produce clear errors before package discovery begins.
 func TestDiscoverLocalBundleDirectoryErrors(t *testing.T) {
 	t.Parallel()
 
@@ -363,6 +381,8 @@ func TestDiscoverLocalBundleDirectoryErrors(t *testing.T) {
 	})
 }
 
+// writeLocalPair creates the matching image and modules fixtures required for a
+// valid locally discovered kernel bundle.
 func writeLocalPair(t *testing.T, directory, abi, version string) (string, string) {
 	t.Helper()
 
@@ -371,6 +391,8 @@ func writeLocalPair(t *testing.T, directory, abi, version string) (string, strin
 	return imageName, modulesName
 }
 
+// writeLocalRuntimePackage creates one role-specific Debian package fixture and
+// returns the generated package filename.
 func writeLocalRuntimePackage(t *testing.T, directory string, role PackageRole, abi, version, content string) string {
 	t.Helper()
 
@@ -383,11 +405,15 @@ func writeLocalRuntimePackage(t *testing.T, directory string, role PackageRole, 
 	return name
 }
 
+// localPackageNames returns the image and modules filenames for a test ABI and
+// Debian package version.
 func localPackageNames(abi, version string) (string, string) {
 	return "linux-image-" + abi + "_" + version + "_arm64.deb",
 		"linux-modules-" + abi + "_" + version + "_arm64.deb"
 }
 
+// writeLocalFile writes a private regular-file fixture and fails the current test
+// immediately if the filesystem setup cannot be completed.
 func writeLocalFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -395,11 +421,14 @@ func writeLocalFile(t *testing.T, path, content string) {
 	}
 }
 
+// localDigest returns the lowercase SHA-256 used in checksum expectations.
 func localDigest(content string) string {
 	digest := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(digest[:])
 }
 
+// assertLocalErrorContains requires a local discovery failure to include every
+// supplied fragment so its diagnostic remains actionable.
 func assertLocalErrorContains(t *testing.T, err error, values ...string) {
 	t.Helper()
 	if err == nil {

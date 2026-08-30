@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// TestNewRejectsDuplicateStepIDs verifies a plan cannot contain ambiguous steps
+// with the same stable identifier.
 func TestNewRejectsDuplicateStepIDs(t *testing.T) {
 	t.Parallel()
 	_, err := New("image.create",
@@ -17,6 +19,8 @@ func TestNewRejectsDuplicateStepIDs(t *testing.T) {
 	}
 }
 
+// TestWriteJSONIsDeterministic verifies repeated serialisation of a plan with
+// map-backed inputs produces byte-for-byte identical JSON.
 func TestWriteJSONIsDeterministic(t *testing.T) {
 	t.Parallel()
 	p, err := New("image.create", Step{

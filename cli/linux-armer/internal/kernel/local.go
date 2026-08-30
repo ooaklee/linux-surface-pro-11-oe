@@ -14,16 +14,28 @@ import (
 )
 
 const (
+	// localChecksumManifest is the optional authoritative digest file accepted
+	// beside local packages.
 	localChecksumManifest = "SHA256SUMS"
-	localReleasePrefix    = "local:"
-	surfaceABISuffix      = "-qcom-x1e"
+	// localReleasePrefix distinguishes locally discovered bundles from release
+	// tags in serialised output.
+	localReleasePrefix = "local:"
+	// surfaceABISuffix limits discovery to the Surface-specific kernel flavour.
+	surfaceABISuffix = "-qcom-x1e"
 )
 
+// localCandidate is metadata derived from one safe, regular Debian package
+// found directly inside the selected directory.
 type localCandidate struct {
-	name    string
-	path    string
-	role    PackageRole
-	abi     string
+	// name is the package basename used in manifests and diagnostics.
+	name string
+	// path is the absolute local package path.
+	path string
+	// role distinguishes the required image and modules packages.
+	role PackageRole
+	// abi is the exact Surface kernel ABI encoded in the filename.
+	abi string
+	// version is the Debian package version encoded in the filename.
 	version string
 }
 
@@ -140,6 +152,8 @@ func DiscoverLocalBundle(directory string) (Bundle, error) {
 	return bundle, nil
 }
 
+// inspectLocalCandidate accepts only regular, top-level Surface image or
+// modules packages and ignores unrelated directory entries.
 func inspectLocalCandidate(directory string, entry os.DirEntry) (localCandidate, bool, error) {
 	name := entry.Name()
 	if name == localChecksumManifest || !strings.HasSuffix(name, ".deb") {
@@ -170,11 +184,15 @@ func inspectLocalCandidate(directory string, entry os.DirEntry) (localCandidate,
 	}, true, nil
 }
 
+// isSurfaceABI reports whether abi has a non-empty version followed by the
+// Surface-specific flavour suffix.
 func isSurfaceABI(abi string) bool {
 	prefix := strings.TrimSuffix(abi, surfaceABISuffix)
 	return prefix != abi && prefix != ""
 }
 
+// selectLocalCandidate requires exactly one package for a runtime role, making
+// ambiguous directories fail closed.
 func selectLocalCandidate(role PackageRole, candidates []localCandidate) (localCandidate, error) {
 	label := string(role)
 	if len(candidates) == 0 {
@@ -192,6 +210,8 @@ func selectLocalCandidate(role PackageRole, candidates []localCandidate) (localC
 	return localCandidate{}, fmt.Errorf("ambiguous Surface Pro 11 linux-%s packages: %s", label, strings.Join(names, ", "))
 }
 
+// loadLocalChecksums loads the optional regular-file manifest without following
+// a symlink. The boolean reports whether a manifest was present.
 func loadLocalChecksums(directory string) (map[string]string, bool, error) {
 	manifestPath := filepath.Join(directory, localChecksumManifest)
 	info, err := os.Lstat(manifestPath)
@@ -215,6 +235,8 @@ func loadLocalChecksums(directory string) (map[string]string, bool, error) {
 	return checksums, true, nil
 }
 
+// parseLocalChecksums decodes a non-empty SHA256SUMS file, rejecting malformed,
+// duplicate, or path-bearing filenames.
 func parseLocalChecksums(path string) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -261,6 +283,7 @@ func parseLocalChecksums(path string) (map[string]string, error) {
 	return checksums, nil
 }
 
+// safeLocalChecksumName accepts only a single non-special filename component.
 func safeLocalChecksumName(name string) bool {
 	return name != "" &&
 		name != "." &&
@@ -269,6 +292,8 @@ func safeLocalChecksumName(name string) bool {
 		!strings.ContainsAny(name, `/\`)
 }
 
+// hashLocalPackage verifies that path is a regular file and returns its digest
+// and byte length.
 func hashLocalPackage(path string) (string, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {

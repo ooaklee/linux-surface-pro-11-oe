@@ -9,6 +9,7 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/catalog"
 )
 
+// newCatalogCommand groups read-only operations for the supported image catalogue.
 func (a *application) newCatalogCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "catalog",
@@ -19,6 +20,7 @@ func (a *application) newCatalogCommand() *cobra.Command {
 	return command
 }
 
+// newCatalogListCommand renders every image entry in stable catalogue order.
 func (a *application) newCatalogListCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
@@ -46,11 +48,12 @@ func (a *application) newCatalogListCommand() *cobra.Command {
 	return command
 }
 
+// newCatalogShowCommand explains one image's format, support level, and caveats.
 func (a *application) newCatalogShowCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "show <id>",
-		Short: "Show one catalog entry",
+		Short: "Show one catalogue entry",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			mediaCatalog, err := a.loadCatalog()
@@ -64,8 +67,8 @@ func (a *application) newCatalogShowCommand() *cobra.Command {
 			if asJSON {
 				return a.writeJSON(entry)
 			}
-			_, err = fmt.Fprintf(a.out, "%s\n\nID: %s\nDistribution: %s\nRelease: %s\nArchitecture: %s\nFormat: %s\nSupport: %s\nAdapter: %s\nDownload: %s\nWebsite: %s\nLast verified: %s\n",
-				entry.Name, entry.ID, entry.Distribution, entry.Release, entry.Architecture, entry.ArtifactKind,
+			_, err = fmt.Fprintf(a.out, "%s\n\nID: %s\nDistribution: %s\nRelease: %s\nFilename: %s\nArchitecture: %s\nFormat: %s\nSupport: %s\nAdapter: %s\nDownload: %s\nWebsite: %s\nLast verified: %s\n",
+				entry.Name, entry.ID, entry.Distribution, entry.Release, entry.Filename, entry.Architecture, entry.ArtifactKind,
 				entry.SupportLevel, entry.Adapter, entry.URL, entry.Homepage, entry.LastVerified)
 			if err != nil {
 				return err
@@ -83,11 +86,13 @@ func (a *application) newCatalogShowCommand() *cobra.Command {
 	return command
 }
 
+// newCatalogValidateCommand applies strict schema and semantic validation to
+// either the shipped catalogue or a user-selected candidate file.
 func (a *application) newCatalogValidateCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "validate [path]",
-		Short: "Strictly validate a supported image catalog",
+		Short: "Strictly validate a supported image catalogue",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			var (

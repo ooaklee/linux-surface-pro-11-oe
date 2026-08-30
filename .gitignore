@@ -1,4 +1,4 @@
-build/
+/build/
 
 # Temporary scripts (local fixes, one-off helpers).
 scripts/tmp/

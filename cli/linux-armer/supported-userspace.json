@@ -1,0 +1,228 @@
+{
+  "schema_version": 2,
+  "description": "Audited Surface Pro 11 userspace and firmware components. Support actions describe bounded linux-armer capabilities; they are data flags, not executable instructions.",
+  "components": [
+    {
+      "id": "audio-fullio-v19c",
+      "name": "FullIO v19c Audio Topology and UCM",
+      "level": "supported",
+      "capability": "audio",
+      "redistribution": "restricted",
+      "support_actions": {
+        "status": true,
+        "pull": true,
+        "build": false,
+        "install": true
+      },
+      "release": {
+        "url": "https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-v19c",
+        "tag": "sp11-audio-v19c",
+        "asset_allowlist": [
+          "MICROSOFT-Surface-Pro-11in.conf",
+          "RELEASE-NOTES.md",
+          "SHA256SUMS",
+          "SP11-HiFi.conf",
+          "X1E80100-Microsoft-Surface-Pro-11-tplg.bin",
+          "x1e80100.conf"
+        ]
+      },
+      "compatibility_evidence": "exact_pair",
+      "kernel_compatibility": {
+        "minimum_sp11_generation": 12,
+        "tested_through_sp11_generation": 19,
+        "summary": "FullIO audio requires the interfaces introduced by the sp11v12 kernel generation and remains validated through sp11v19."
+      },
+      "notes": [
+        "The topology and UCM set is validated with the geocausa v12 kernel generation and must remain a coherent release.",
+        "The topology contains protected vendor-derived bytes and remains behind an explicit redistribution boundary."
+      ],
+      "remediation": "Install the complete hash-verified release with its paired kernel generation, and replace the complete set if any member differs."
+    },
+    {
+      "id": "bluetooth",
+      "name": "WCN7850 Bluetooth Public Address Integration",
+      "level": "supported",
+      "capability": "bluetooth",
+      "redistribution": "allowed",
+      "support_actions": {
+        "status": true,
+        "pull": false,
+        "build": false,
+        "install": false
+      },
+      "compatibility_evidence": "source_integrated_prior_validation",
+      "notes": [
+        "The bounded raw management-socket helper applies the Windows-sourced public controller address before BlueZ initialises.",
+        "Cold-boot initialisation and pairing passed on the audited X1E device; audio and suspend coverage remains incomplete."
+      ],
+      "remediation": "Confirm the controller address from the same device, rebuild the bounded helper when its source changes, reinstall its lifecycle integration, and cold boot."
+    },
+    {
+      "id": "firmware",
+      "name": "Surface Pro 11 Platform Firmware",
+      "level": "required",
+      "capability": "firmware",
+      "redistribution": "restricted",
+      "support_actions": {
+        "status": true,
+        "pull": false,
+        "build": false,
+        "install": false
+      },
+      "compatibility_evidence": "source_integrated_prior_validation",
+      "notes": [
+        "Qualcomm platform, GPU, audio DSP, camera, and wireless firmware is required before the related devices can initialise.",
+        "Windows-derived firmware remains outside distributable linux-armer artefacts unless redistribution rights are confirmed."
+      ],
+      "remediation": "Acquire firmware from an authorised source, verify that it belongs to the target device, and rerun component status checks."
+    },
+    {
+      "id": "g6-pen",
+      "name": "G6 HEAT Pen Processor",
+      "level": "diagnostic-only",
+      "capability": "pen",
+      "redistribution": "allowed",
+      "support_actions": {
+        "status": true,
+        "pull": false,
+        "build": false,
+        "install": false
+      },
+      "compatibility_evidence": "source_integrated_prior_validation",
+      "notes": [
+        "The evidence-gated HEAT processor is retained for controlled capture and deterministic replay only.",
+        "Production pen input is superseded by the pinned iptsd integration, and both processors must never run concurrently."
+      ],
+      "remediation": "Keep the diagnostic service disabled outside controlled capture or replay work, and use the supported iptsd integration for production pen input."
+    },
+    {
+      "id": "imx681-libcamera-v1",
+      "name": "IMX681 libcamera Simple IPA Package Set",
+      "level": "experimental",
+      "capability": "camera",
+      "redistribution": "allowed",
+      "support_actions": {
+        "status": true,
+        "pull": true,
+        "build": true,
+        "install": true
+      },
+      "release": {
+        "url": "https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-imx681-libcamera-v1",
+        "tag": "sp11-imx681-libcamera-v1",
+        "asset_allowlist": [
+          "gstreamer1.0-libcamera_0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43_arm64.deb",
+          "libcamera-ipa_0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43_arm64.deb",
+          "libcamera-tools_0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43_arm64.deb",
+          "libcamera-v4l2_0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43_arm64.deb",
+          "libcamera0.7_0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43_arm64.deb",
+          "libcamera_0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43_arm64.buildinfo",
+          "libcamera_0.7.0-1ubuntu2+sp11.1.20260829040923655984892.cf8d1a113b7f11ccfea732c24299cd43_arm64.changes",
+          "SHA256SUMS",
+          "sp11-imx681-libcamera-build-manifest.txt"
+        ]
+      },
+      "compatibility_evidence": "exact_pair",
+      "kernel_compatibility": {
+        "minimum_sp11_generation": 14,
+        "tested_through_sp11_generation": 19,
+        "summary": "IMX681 camera support requires the interfaces introduced by the sp11v14 kernel generation and remains experimentally assessed through sp11v19."
+      },
+      "notes": [
+        "The five runtime packages, same-build IPA signature, provenance records, and checksum manifest form one exact set paired with the v14 camera kernel generation.",
+        "Processed browser video passed, while automatic exposure, final calibration, privacy behaviour, and suspend resilience remain experimental gates."
+      ],
+      "remediation": "Install every allowlisted runtime package from one verified release with its paired kernel, and reject mixed package generations."
+    },
+    {
+      "id": "iptsd-v1",
+      "name": "Pinned iptsd v3.1.0 SP11 Integration",
+      "level": "supported",
+      "capability": "pen",
+      "redistribution": "source-required",
+      "support_actions": {
+        "status": true,
+        "pull": true,
+        "build": true,
+        "install": true
+      },
+      "release": {
+        "url": "https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-iptsd-v1",
+        "tag": "sp11-iptsd-v1",
+        "asset_allowlist": [
+          "SHA256SUMS",
+          "sp11-iptsd-3.1.0-sp11.1-arm64.tar.xz",
+          "sp11-iptsd-release-manifest.txt"
+        ]
+      },
+      "compatibility_evidence": "exact_pair",
+      "kernel_compatibility": {
+        "minimum_sp11_generation": 19,
+        "tested_through_sp11_generation": 19,
+        "summary": "The pinned IPTSD integration requires the Surface HIDRAW bridge delivered by the sp11v19 kernel generation."
+      },
+      "notes": [
+        "Unmodified upstream iptsd v3.1.0 is pinned with complete corresponding source and an SP11-specific lifecycle integration.",
+        "X1E Phase 84 pen validation passed with the v19 kernel generation; separate X1P and broader lifecycle qualification remain."
+      ],
+      "remediation": "Rebuild the pinned payload with complete corresponding sources, validate its checksum manifest, disable conflicting pen processors, and reinstall the matched lifecycle set."
+    },
+    {
+      "id": "oot-touchscreen",
+      "name": "Out-of-Tree Touchscreen Modules",
+      "level": "obsolete",
+      "capability": "touchscreen",
+      "redistribution": "not-applicable",
+      "support_actions": {
+        "status": true,
+        "pull": false,
+        "build": false,
+        "install": false
+      },
+      "compatibility_evidence": "source_integrated_prior_validation",
+      "notes": [
+        "The geocausa out-of-tree module workflow was superseded by the hardware-verified in-tree touchscreen stack.",
+        "Retaining stale modules can create ABI disagreement and initramfs contamination after a kernel upgrade."
+      ],
+      "remediation": "Use reversible clean-up only for its recognised fixed configuration hooks. Manually review reported exact-ABI module overrides, release markers, package diversions, and initramfs contamination before using current in-tree touchscreen support."
+    },
+    {
+      "id": "power-profiles",
+      "name": "Surface Platform Power Profiles",
+      "level": "supported",
+      "capability": "power",
+      "redistribution": "not-applicable",
+      "support_actions": {
+        "status": true,
+        "pull": false,
+        "build": false,
+        "install": false
+      },
+      "compatibility_evidence": "source_integrated_prior_validation",
+      "notes": [
+        "The non-ACPI platform-profile framework fix is integrated in the kernel and works with the distribution power-profiles daemon unchanged.",
+        "Low-power, balanced, balanced-performance, and performance switching passed on the audited X1E device."
+      ],
+      "remediation": "Boot a kernel containing the non-ACPI platform-profile integration and verify that the distribution daemon binds the platform profile driver."
+    },
+    {
+      "id": "wifi",
+      "name": "WCN7850 Wi-Fi Integration",
+      "level": "supported",
+      "capability": "networking",
+      "redistribution": "allowed",
+      "support_actions": {
+        "status": true,
+        "pull": false,
+        "build": false,
+        "install": false
+      },
+      "compatibility_evidence": "source_integrated_prior_validation",
+      "notes": [
+        "WCN7850 uses the in-kernel ath12k driver, validated firmware and board data, and Denali device-tree rfkill handling.",
+        "Scanning, association, traffic, and reconnect passed; repeated suspend and broader upgrade coverage remains."
+      ],
+      "remediation": "Install validated firmware and board data, boot an integrated kernel, and cold boot before reassessing radio state."
+    }
+  ]
+}

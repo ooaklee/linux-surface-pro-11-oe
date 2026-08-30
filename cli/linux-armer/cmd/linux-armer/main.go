@@ -10,6 +10,8 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/cli"
 )
 
+// main connects process I/O and cancellation signals to the reusable Cobra
+// command tree, then translates command failures into a non-zero exit status.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

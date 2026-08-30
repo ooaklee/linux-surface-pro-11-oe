@@ -15,30 +15,46 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
 
+// Status is the severity assigned to one diagnostic check.
 type Status string
 
 const (
+	// StatusPass means the checked capability is available.
 	StatusPass Status = "pass"
+	// StatusWarn means the condition is noteworthy but does not block a build.
 	StatusWarn Status = "warn"
+	// StatusFail means the checked capability does not meet its requirement.
 	StatusFail Status = "fail"
 )
 
+// Check is one human-readable host diagnostic and its readiness impact.
 type Check struct {
-	Name     string `json:"name"`
-	Status   Status `json:"status"`
-	Details  string `json:"details"`
-	Required bool   `json:"required"`
+	// Name is the stable diagnostic identifier used in text and JSON output.
+	Name string `json:"name"`
+	// Status is the observed result severity.
+	Status Status `json:"status"`
+	// Details explains the observation or suggests a corrective action.
+	Details string `json:"details"`
+	// Required marks failures that make the overall report not ready.
+	Required bool `json:"required"`
 }
 
+// Report combines diagnostic checks into an overall workflow-readiness result.
 type Report struct {
-	Ready  bool    `json:"ready"`
+	// Ready is false when any required check fails.
+	Ready bool `json:"ready"`
+	// Checks retains results in the order users should review them.
 	Checks []Check `json:"checks"`
 }
 
+// Doctor evaluates the host through an injectable external-command boundary.
 type Doctor struct {
+	// Runner executes capability probes such as querying the Docker daemon.
 	Runner platform.Runner
 }
 
+// New constructs a host doctor, using direct process execution when runner is
+// nil.
 func New(runner platform.Runner) *Doctor {
 	if runner == nil {
 		runner = platform.ExecRunner{}
@@ -46,6 +62,8 @@ func New(runner platform.Runner) *Doctor {
 	return &Doctor{Runner: runner}
 }
 
+// Run checks the container runtime, workspace, free space, and privilege mode
+// needed for image workflows without changing the host.
 func (d *Doctor) Run(ctx context.Context, workspace string) Report {
 	if workspace == "" {
 		workspace = "."
@@ -93,6 +111,8 @@ func (d *Doctor) Run(ctx context.Context, workspace string) Report {
 	return report
 }
 
+// availableBytes reports the filesystem space available to an unprivileged
+// process at path.
 func availableBytes(path string) (uint64, error) {
 	var stats syscall.Statfs_t
 	if err := syscall.Statfs(path, &stats); err != nil {
@@ -101,6 +121,7 @@ func availableBytes(path string) (uint64, error) {
 	return stats.Bavail * uint64(stats.Bsize), nil
 }
 
+// filepathAbs resolves path and requires it to identify an existing directory.
 func filepathAbs(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -116,6 +137,7 @@ func filepathAbs(path string) (string, error) {
 	return absolute, nil
 }
 
+// formatBytes renders a byte count as a concise binary-gigabyte value.
 func formatBytes(value uint64) string {
 	return strconv.FormatFloat(float64(value)/(1024*1024*1024), 'f', 1, 64) + " GiB"
 }

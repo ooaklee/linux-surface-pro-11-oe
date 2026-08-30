@@ -2,6 +2,8 @@ package ubuntu
 
 import "fmt"
 
+// grubConfig renders the direct-GRUB menu for both supported Surface Pro 11
+// device-tree variants while binding every entry to the supplied kernel ABI.
 func grubConfig(abi string) string {
 	return fmt.Sprintf(`set timeout=30
 set default=0
@@ -29,7 +31,7 @@ if [ $? = 0 ]; then
   if [ $lockdown != "y" ]; then
     cutmem 0x8800000000 0x8fffffffff
   fi
-  set cmdline="clk_ignore_unused pd_ignore_unused arm64.nopauth systemd.tpm2_wait=0"
+  set cmdline="clk_ignore_unused pd_ignore_unused arm64.nopauth systemd.tpm2_wait=0 soundwire_qcom.sp11_feedback_active_offset2_zero=1"
 fi
 
 menuentry "Ubuntu for Surface Pro 11 X1E/OLED (%s)" {

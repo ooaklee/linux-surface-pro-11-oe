@@ -12,6 +12,7 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/release"
 )
 
+// newKernelCommand groups custom kernel build, release, and inspection workflows.
 func (a *application) newKernelCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "kernel",
@@ -24,13 +25,15 @@ func (a *application) newKernelCommand() *cobra.Command {
 	return command
 }
 
+// newKernelReleaseListCommand shows releases containing a candidate runtime
+// pair whose integrity is checked only when it is downloaded.
 func (a *application) newKernelReleaseListCommand() *cobra.Command {
 	var repository string
 	var limit int
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "list",
-		Short: "List complete runtime kernel releases",
+		Short: "List candidate runtime kernel releases",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			releases, err := a.releases.List(command.Context(), repository, limit)
@@ -55,6 +58,7 @@ func (a *application) newKernelReleaseListCommand() *cobra.Command {
 	return command
 }
 
+// newKernelReleaseDownloadCommand acquires and verifies one ABI-bound package set.
 func (a *application) newKernelReleaseDownloadCommand() *cobra.Command {
 	var repository string
 	var outputDirectory string
@@ -87,6 +91,7 @@ func (a *application) newKernelReleaseDownloadCommand() *cobra.Command {
 	return command
 }
 
+// newKernelInspectCommand proves that local packages form one coherent Surface ABI.
 func (a *application) newKernelInspectCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
@@ -109,6 +114,7 @@ func (a *application) newKernelInspectCommand() *cobra.Command {
 	return command
 }
 
+// newKernelBuildCommand delegates compilation to the repository's pinned Docker workflow.
 func (a *application) newKernelBuildCommand() *cobra.Command {
 	request := kernelbuild.Request{}
 	command := &cobra.Command{

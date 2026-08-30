@@ -20,31 +20,56 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 )
 
+// DefaultRepository is the release source used when callers do not select a
+// different owner and repository.
 const DefaultRepository = "ooaklee/linux-surface-pro-11-oe"
 
+// Asset is the subset of GitHub release-asset metadata needed for verified
+// acquisition.
 type Asset struct {
-	Name        string `json:"name"`
+	// Name is the exact published asset filename.
+	Name string `json:"name"`
+	// DownloadURL is GitHub's browser download location for the asset.
 	DownloadURL string `json:"browser_download_url"`
-	Digest      string `json:"digest"`
-	Size        int64  `json:"size"`
+	// Digest is GitHub's optional algorithm-prefixed content digest.
+	Digest string `json:"digest"`
+	// Size is GitHub's reported asset length in bytes.
+	Size int64 `json:"size"`
 }
 
+// Release is the subset of GitHub release metadata used to select a candidate
+// runtime kernel bundle before its checksums are downloaded and verified.
 type Release struct {
-	TagName     string    `json:"tag_name"`
-	Name        string    `json:"name"`
+	// TagName is the immutable release reference used in bundle manifests.
+	TagName string `json:"tag_name"`
+	// Name is the publisher's human-readable release title.
+	Name string `json:"name"`
+	// PublishedAt records when GitHub published the release.
 	PublishedAt time.Time `json:"published_at"`
-	Draft       bool      `json:"draft"`
-	Prerelease  bool      `json:"prerelease"`
-	Assets      []Asset   `json:"assets"`
+	// Draft excludes unpublished releases from selection.
+	Draft bool `json:"draft"`
+	// Prerelease reports the publisher's release-channel classification.
+	Prerelease bool `json:"prerelease"`
+	// Assets contains the files attached to the release.
+	Assets []Asset `json:"assets"`
 }
 
+// Client queries GitHub releases and resolves their assets through an
+// integrity-checking artefact resolver.
 type Client struct {
-	HTTP       *http.Client
+	// HTTP performs API requests.
+	HTTP *http.Client
+	// APIBaseURL permits tests or compatible GitHub endpoints to replace the
+	// public API base.
 	APIBaseURL string
-	Token      string
-	Artifacts  *artifact.Resolver
+	// Token is an optional bearer token used for authenticated API requests.
+	Token string
+	// Artifacts downloads and atomically publishes release assets.
+	Artifacts *artifact.Resolver
 }
 
+// NewClient returns a release client with the public GitHub API and the token
+// from GITHUB_TOKEN, using the default HTTP client when httpClient is nil.
 func NewClient(httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -57,6 +82,8 @@ func NewClient(httpClient *http.Client) *Client {
 	}
 }
 
+// List returns non-draft releases that contain both runtime packages. Invalid
+// limits fall back to a bounded default page size.
 func (c *Client) List(ctx context.Context, repository string, limit int) ([]Release, error) {
 	if repository == "" {
 		repository = DefaultRepository
@@ -79,6 +106,9 @@ func (c *Client) List(ctx context.Context, repository string, limit int) ([]Rele
 	return filtered, nil
 }
 
+// Resolve selects the latest release or an exact tag and requires it to contain
+// a candidate image-and-modules runtime pair. DownloadBundle performs the
+// integrity checks needed to call the resulting bundle verified.
 func (c *Client) Resolve(ctx context.Context, repository, ref string) (Release, error) {
 	if repository == "" {
 		repository = DefaultRepository
@@ -96,11 +126,14 @@ func (c *Client) Resolve(ctx context.Context, repository, ref string) (Release, 
 		return Release{}, fmt.Errorf("release %s is still a draft", selected.TagName)
 	}
 	if !hasRuntimePackages(selected) {
-		return Release{}, fmt.Errorf("release %s is not a complete runtime kernel release", selected.TagName)
+		return Release{}, fmt.Errorf("release %s has no candidate image-and-modules runtime pair", selected.TagName)
 	}
 	return selected, nil
 }
 
+// DownloadBundle acquires an exact release, verifies every selected package
+// against SHA256SUMS and any GitHub digest, then atomically publishes a bundle
+// manifest. Headers are omitted unless includeHeaders is true.
 func (c *Client) DownloadBundle(ctx context.Context, repository, ref, directory string, includeHeaders bool) (kernel.Bundle, error) {
 	selected, err := c.Resolve(ctx, repository, ref)
 	if err != nil {
@@ -175,6 +208,8 @@ func (c *Client) DownloadBundle(ctx context.Context, repository, ref, directory 
 	return bundle, nil
 }
 
+// getJSON performs one authenticated GitHub API request and decodes its success
+// body into destination.
 func (c *Client) getJSON(ctx context.Context, endpoint string, destination any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -200,6 +235,8 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, destination any) 
 	return nil
 }
 
+// hasRuntimePackages reports whether a release contains recognisable image and
+// modules packages, regardless of optional headers.
 func hasRuntimePackages(item Release) bool {
 	hasImage, hasModules := false, false
 	for _, asset := range item.Assets {
@@ -213,6 +250,7 @@ func hasRuntimePackages(item Release) bool {
 	return hasImage && hasModules
 }
 
+// findAsset returns the first release asset whose name satisfies predicate.
 func findAsset(item Release, predicate func(string) bool) (Asset, bool) {
 	for _, asset := range item.Assets {
 		if predicate(asset.Name) {
@@ -222,10 +260,14 @@ func findAsset(item Release, predicate func(string) bool) (Asset, bool) {
 	return Asset{}, false
 }
 
+// assetSHA256 normalises GitHub's optional sha256-prefixed digest for direct
+// comparison with SHA256SUMS.
 func assetSHA256(asset Asset) string {
 	return strings.TrimPrefix(strings.ToLower(asset.Digest), "sha256:")
 }
 
+// parseChecksums loads a non-empty SHA256SUMS manifest and rejects malformed,
+// duplicate, or path-bearing entries.
 func parseChecksums(path string) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -260,6 +302,8 @@ func parseChecksums(path string) (map[string]string, error) {
 	return result, nil
 }
 
+// SortByPublished orders releases in place from newest to oldest publication
+// time.
 func SortByPublished(releases []Release) {
 	sort.Slice(releases, func(i, j int) bool { return releases[i].PublishedAt.After(releases[j].PublishedAt) })
 }

@@ -12,15 +12,18 @@ import (
 	"testing/fstest"
 )
 
+// validCatalogJSON is a complete two-entry fixture used to exercise catalogue
+// decoding, normalisation, validation, and defensive-copy behaviour.
 const validCatalogJSON = `{
-  "schema_version": 1,
-  "description": "Test catalog",
+  "schema_version": 2,
+  "description": "Test catalogue",
   "entries": [
     {
       "id": "zulu-image",
       "name": "Zulu Image",
       "distribution": "Ubuntu",
       "release": "Test",
+      "filename": "zulu.iso",
       "architecture": "aarch64",
       "artifact_kind": "iso",
       "url": "https://downloads.example.test/zulu.iso",
@@ -41,6 +44,7 @@ const validCatalogJSON = `{
       "name": "Alpha Image",
       "distribution": "Fedora",
       "release": "Test",
+      "filename": "alpha.raw.xz",
       "architecture": "arm64",
       "artifact_kind": "raw-xz",
       "url": "https://downloads.example.test/alpha.raw.xz",
@@ -55,6 +59,8 @@ const validCatalogJSON = `{
   ]
 }`
 
+// TestLoadNormalizesAndProvidesDeterministicDefensiveHelpers verifies that a
+// valid catalogue is normalised, sorted, and exposed without leaking mutable data.
 func TestLoadNormalizesAndProvidesDeterministicDefensiveHelpers(t *testing.T) {
 	t.Parallel()
 
@@ -66,8 +72,8 @@ func TestLoadNormalizesAndProvidesDeterministicDefensiveHelpers(t *testing.T) {
 	if loaded.SchemaVersion != CurrentSchemaVersion {
 		t.Fatalf("SchemaVersion = %d, want %d", loaded.SchemaVersion, CurrentSchemaVersion)
 	}
-	if loaded.Description != "Test catalog" {
-		t.Fatalf("Description = %q, want %q", loaded.Description, "Test catalog")
+	if loaded.Description != "Test catalogue" {
+		t.Fatalf("Description = %q, want %q", loaded.Description, "Test catalogue")
 	}
 	if loaded.Len() != 2 {
 		t.Fatalf("Len() = %d, want 2", loaded.Len())
@@ -109,6 +115,8 @@ func TestLoadNormalizesAndProvidesDeterministicDefensiveHelpers(t *testing.T) {
 	}
 }
 
+// TestNilCatalogHelpers verifies that read-only helpers treat a nil catalogue as
+// an empty collection instead of panicking.
 func TestNilCatalogHelpers(t *testing.T) {
 	t.Parallel()
 
@@ -124,6 +132,8 @@ func TestNilCatalogHelpers(t *testing.T) {
 	}
 }
 
+// TestNormalizeArchitecture verifies accepted ARM64 spellings and rejects
+// unsupported or empty architecture values.
 func TestNormalizeArchitecture(t *testing.T) {
 	t.Parallel()
 
@@ -155,6 +165,8 @@ func TestNormalizeArchitecture(t *testing.T) {
 	}
 }
 
+// TestSemanticValidationRules exercises each catalogue field constraint and
+// confirms validation errors identify the offending field and corrective rule.
 func TestSemanticValidationRules(t *testing.T) {
 	t.Parallel()
 
@@ -167,10 +179,10 @@ func TestSemanticValidationRules(t *testing.T) {
 		{
 			name: "schema version",
 			mutate: func(document map[string]any) {
-				document["schema_version"] = float64(2)
+				document["schema_version"] = float64(3)
 			},
 			wantField: "schema_version",
-			wantText:  "must be 1",
+			wantText:  "must be 2",
 		},
 		{
 			name: "description",
@@ -230,6 +242,22 @@ func TestSemanticValidationRules(t *testing.T) {
 			wantText:  "must not be empty",
 		},
 		{
+			name: "filename required",
+			mutate: func(document map[string]any) {
+				delete(firstEntry(document), "filename")
+			},
+			wantField: "entries[0].filename",
+			wantText:  "must not be empty",
+		},
+		{
+			name: "portable filename",
+			mutate: func(document map[string]any) {
+				firstEntry(document)["filename"] = "nested/zulu.iso"
+			},
+			wantField: "entries[0].filename",
+			wantText:  "no path separators",
+		},
+		{
 			name: "architecture",
 			mutate: func(document map[string]any) {
 				firstEntry(document)["architecture"] = "x86_64"
@@ -278,11 +306,21 @@ func TestSemanticValidationRules(t *testing.T) {
 			wantText:  "must not include a fragment",
 		},
 		{
-			name: "ISO extension",
+			name: "URL filename agreement",
 			mutate: func(document map[string]any) {
-				firstEntry(document)["url"] = "https://downloads.example.test/zulu.raw.xz"
+				firstEntry(document)["url"] = "https://downloads.example.test/renamed.iso"
 			},
 			wantField: "entries[0].url",
+			wantText:  "must equal filename \"zulu.iso\"",
+		},
+		{
+			name: "ISO extension",
+			mutate: func(document map[string]any) {
+				entry := firstEntry(document)
+				entry["filename"] = "zulu.raw.xz"
+				entry["url"] = "https://downloads.example.test/zulu.raw.xz"
+			},
+			wantField: "entries[0].filename",
 			wantText:  "must end in .iso",
 		},
 		{
@@ -290,9 +328,10 @@ func TestSemanticValidationRules(t *testing.T) {
 			mutate: func(document map[string]any) {
 				entry := firstEntry(document)
 				entry["artifact_kind"] = "raw-xz"
+				entry["filename"] = "zulu.iso"
 				entry["url"] = "https://downloads.example.test/zulu.iso"
 			},
-			wantField: "entries[0].url",
+			wantField: "entries[0].filename",
 			wantText:  "must end in .raw.xz",
 		},
 		{
@@ -420,6 +459,8 @@ func TestSemanticValidationRules(t *testing.T) {
 	}
 }
 
+// TestValidationAggregatesIssues verifies that validation reports every
+// independent problem in one actionable error instead of stopping at the first.
 func TestValidationAggregatesIssues(t *testing.T) {
 	t.Parallel()
 
@@ -458,6 +499,8 @@ func TestValidationAggregatesIssues(t *testing.T) {
 	}
 }
 
+// TestDecodeFailures verifies malformed, ambiguous, unknown-field, and nil
+// inputs are rejected with useful decoding errors.
 func TestDecodeFailures(t *testing.T) {
 	t.Parallel()
 
@@ -468,7 +511,7 @@ func TestDecodeFailures(t *testing.T) {
 	}{
 		{name: "empty", input: "", want: "EOF"},
 		{name: "malformed", input: `{`, want: "unexpected EOF"},
-		{name: "unknown field", input: strings.Replace(validCatalogJSON, `"description": "Test catalog",`, `"description": "Test catalog", "unexpected": true,`, 1), want: "unknown field \"unexpected\""},
+		{name: "unknown field", input: strings.Replace(validCatalogJSON, `"description": "Test catalogue",`, `"description": "Test catalogue", "unexpected": true,`, 1), want: "unknown field \"unexpected\""},
 		{name: "multiple documents", input: validCatalogJSON + `{}`, want: "multiple JSON values"},
 	}
 
@@ -488,6 +531,8 @@ func TestDecodeFailures(t *testing.T) {
 	}
 }
 
+// TestLoaderEmbeddedAndOverride verifies that the loader uses its embedded
+// catalogue by default and gives an explicit file override precedence.
 func TestLoaderEmbeddedAndOverride(t *testing.T) {
 	t.Parallel()
 
@@ -527,6 +572,8 @@ func TestLoaderEmbeddedAndOverride(t *testing.T) {
 	}
 }
 
+// TestLoadFSAndLoaderErrorsIncludeSource verifies invalid filesystem and path
+// inputs retain enough source context to diagnose catalogue-loading failures.
 func TestLoadFSAndLoaderErrorsIncludeSource(t *testing.T) {
 	t.Parallel()
 
@@ -597,6 +644,8 @@ func TestLoadFSAndLoaderErrorsIncludeSource(t *testing.T) {
 	}
 }
 
+// TestShippedCatalogContract protects the supported-image inventory, exact
+// download URLs, normalised architecture, and intentionally implemented subset.
 func TestShippedCatalogContract(t *testing.T) {
 	t.Parallel()
 
@@ -611,12 +660,28 @@ func TestShippedCatalogContract(t *testing.T) {
 	}
 
 	wantURLs := map[string]string{
-		"debian-13-6-0-dvd-1":          "https://cdimage.debian.org/debian-cd/current/arm64/iso-dvd/debian-13.6.0-arm64-DVD-1.iso",
+		"debian-13-6-0-dvd-1":          "https://cdimage.debian.org/debian-cd/13.6.0/arm64/iso-dvd/debian-13.6.0-arm64-DVD-1.iso",
 		"elementary-os-8-1-20260219":   "https://ams3.dl.elementary.io/download/MTc4ODA3NzI1Mg==/elementaryos-8.1-stable-arm64.20260219.iso",
 		"fedora-workstation-44-raw":    "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/images/Fedora-Workstation-Disk-44-1.7.aarch64.raw.xz",
 		"fedora-workstation-live-44":   "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-Live-44-1.7.aarch64.iso",
 		"pop-os-24-04-arm64-generic-3": "https://iso.pop-os.org/24.04/arm64/generic/3/pop-os_24.04_arm64_generic_3.iso",
-		"ubuntu-concept-resolute-x1e":  "https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso",
+		"ubuntu-concept-resolute-x1e":  "https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e-20260326.iso",
+	}
+	wantFilenames := map[string]string{
+		"debian-13-6-0-dvd-1":          "debian-13.6.0-arm64-DVD-1.iso",
+		"elementary-os-8-1-20260219":   "elementaryos-8.1-stable-arm64.20260219.iso",
+		"fedora-workstation-44-raw":    "Fedora-Workstation-Disk-44-1.7.aarch64.raw.xz",
+		"fedora-workstation-live-44":   "Fedora-Workstation-Live-44-1.7.aarch64.iso",
+		"pop-os-24-04-arm64-generic-3": "pop-os_24.04_arm64_generic_3.iso",
+		"ubuntu-concept-resolute-x1e":  "resolute-desktop-arm64+x1e-20260326.iso",
+	}
+	wantChecksums := map[string]string{
+		"debian-13-6-0-dvd-1":          "0e170d9ff0c53f7b59c8d35793b8ce308ceffd519f8370b949995634e22f5b09",
+		"elementary-os-8-1-20260219":   "",
+		"fedora-workstation-44-raw":    "0361c13141e6f57e24d6ee5227066c33a45f7f92a95f41d0bbd343e4fd05da18",
+		"fedora-workstation-live-44":   "162ba3c552a2d241c7c63ec26777af0255ee1b5a135adc0be986ceed999933ef",
+		"pop-os-24-04-arm64-generic-3": "7b4cce0e92dc5c903464e7e7c33760c4417f1400165e9ecfcd064fbceb68ef22",
+		"ubuntu-concept-resolute-x1e":  "",
 	}
 	if loaded.Len() != len(wantURLs) {
 		t.Fatalf("shipped catalog Len() = %d, want %d", loaded.Len(), len(wantURLs))
@@ -631,6 +696,19 @@ func TestShippedCatalogContract(t *testing.T) {
 		}
 		if entry.URL != wantURL {
 			t.Errorf("entry %q URL = %q, want %q", entry.ID, entry.URL, wantURL)
+		}
+		if entry.Filename != wantFilenames[entry.ID] {
+			t.Errorf("entry %q filename = %q, want %q", entry.ID, entry.Filename, wantFilenames[entry.ID])
+		}
+		wantChecksum := wantChecksums[entry.ID]
+		if wantChecksum == "" && entry.Checksum != nil {
+			t.Errorf("entry %q checksum = %#v, want none", entry.ID, entry.Checksum)
+		}
+		if wantChecksum != "" && (entry.Checksum == nil || entry.Checksum.Algorithm != "sha256" || entry.Checksum.Value != wantChecksum) {
+			t.Errorf("entry %q checksum = %#v, want SHA-256 %q", entry.ID, entry.Checksum, wantChecksum)
+		}
+		if entry.Mutable {
+			t.Errorf("entry %q is unexpectedly marked mutable", entry.ID)
 		}
 		if entry.Architecture != ArchitectureARM64 {
 			t.Errorf("entry %q architecture = %q, want normalized %q", entry.ID, entry.Architecture, ArchitectureARM64)
@@ -654,6 +732,8 @@ func TestShippedCatalogContract(t *testing.T) {
 	}
 }
 
+// decodeDocument converts a JSON fixture into a mutable document so an
+// individual validation test can alter one field without hand-writing JSON.
 func decodeDocument(t *testing.T, value string) map[string]any {
 	t.Helper()
 
@@ -665,10 +745,13 @@ func decodeDocument(t *testing.T, value string) map[string]any {
 	return document
 }
 
+// firstEntry returns the first mutable entry from a decoded catalogue fixture.
 func firstEntry(document map[string]any) map[string]any {
 	return document["entries"].([]any)[0].(map[string]any)
 }
 
+// hasIssue reports whether a validation result contains the expected field and
+// explanatory message fragment.
 func hasIssue(validationError *ValidationError, field, text string) bool {
 	for _, issue := range validationError.Issues {
 		if issue.Field == field && strings.Contains(issue.Message, text) {

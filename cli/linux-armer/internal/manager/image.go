@@ -19,37 +19,67 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/plan"
 )
 
+// DefaultCatalogID selects the first source image whose adapter is implemented
+// when a caller does not explicitly choose a catalogue entry.
 const DefaultCatalogID = "ubuntu-concept-resolute-x1e"
 
+// CreateImageRequest describes source, kernel, cache, workspace, and publication
+// choices for the complete image-creation workflow.
 type CreateImageRequest struct {
-	CatalogPath      string
-	CatalogID        string
-	Source           string
-	SourceSHA256     string
-	RefreshSource    bool
-	KernelDirectory  string
+	// CatalogPath optionally overrides the embedded supported-image catalogue.
+	CatalogPath string
+	// CatalogID selects the source image metadata and distribution adapter.
+	CatalogID string
+	// Source optionally overrides the catalogue download URL with a URL or local file.
+	Source string
+	// SourceSHA256 pins the selected source bytes when supplied.
+	SourceSHA256 string
+	// RefreshSource discards a cached download before resolving the source again.
+	RefreshSource bool
+	// KernelDirectory selects an already downloaded, locally verifiable bundle.
+	KernelDirectory string
+	// KernelRepository identifies the GitHub repository used for release bundles.
 	KernelRepository string
-	KernelRelease    string
-	CacheDirectory   string
-	WorkspaceRoot    string
-	Output           string
-	KeepWorkspace    bool
-	ToolVersion      string
+	// KernelRelease selects an exact tag or the repository's latest release.
+	KernelRelease string
+	// CacheDirectory optionally overrides the per-user artefact cache.
+	CacheDirectory string
+	// WorkspaceRoot optionally controls where temporary host workspaces are created.
+	WorkspaceRoot string
+	// Output is the destination ISO path published after validation.
+	Output string
+	// KeepWorkspace retains diagnostic build state instead of cleaning it.
+	KeepWorkspace bool
+	// ToolVersion is embedded in image provenance.
+	ToolVersion string
 }
 
+// CreateImageResult returns the resolved catalogue and kernel inputs together with
+// the remaster adapter's published artefacts.
 type CreateImageResult struct {
+	// CatalogEntry is the validated distribution source metadata used by the build.
 	CatalogEntry catalog.Entry
+	// KernelBundle is the exact digest-verified bundle installed into the image.
 	KernelBundle kernel.Bundle
-	Image        ubuntu.Result
+	// Image contains the ISO, manifest, journal, digest, and optional diagnostics.
+	Image ubuntu.Result
 }
 
+// ImageManager orchestrates otherwise independent catalogue, download, release,
+// and remaster packages into one end-to-end image workflow.
 type ImageManager struct {
-	Catalogs  catalog.Loader
+	// Catalogs loads either the embedded or explicitly supplied source catalogue.
+	Catalogs catalog.Loader
+	// Artifacts downloads and verifies source media.
 	Artifacts *artifact.Resolver
-	Releases  *release.Client
-	Remaster  *ubuntu.Remasterer
+	// Releases resolves candidate release assets and verifies them before use.
+	Releases *release.Client
+	// Remaster performs the distribution-specific image transformation.
+	Remaster *ubuntu.Remasterer
 }
 
+// NewImageManager constructs an image workflow with production resolvers and a
+// caller-provided catalogue loader and progress writer.
 func NewImageManager(loader catalog.Loader, out io.Writer) *ImageManager {
 	return &ImageManager{
 		Catalogs:  loader,
@@ -86,6 +116,8 @@ func (m *ImageManager) Plan(request CreateImageRequest) (plan.Plan, error) {
 	})
 }
 
+// Create resolves and verifies every external input, invokes the supported
+// distribution adapter, and returns only after the image is validated and published.
 func (m *ImageManager) Create(ctx context.Context, request CreateImageRequest) (CreateImageResult, error) {
 	request = imageDefaults(request)
 	if _, err := m.Plan(request); err != nil {
@@ -137,6 +169,8 @@ func (m *ImageManager) Create(ctx context.Context, request CreateImageRequest) (
 	return CreateImageResult{CatalogEntry: entry, KernelBundle: bundle, Image: result}, nil
 }
 
+// resolveBundle chooses a caller-supplied local bundle or downloads an exact
+// release into the cache, applying the kernel package's integrity contract either way.
 func (m *ImageManager) resolveBundle(ctx context.Context, request CreateImageRequest, cacheDirectory string) (kernel.Bundle, error) {
 	if request.KernelDirectory != "" {
 		return kernel.DiscoverLocalBundle(request.KernelDirectory)
@@ -149,6 +183,8 @@ func (m *ImageManager) resolveBundle(ctx context.Context, request CreateImageReq
 	return bundle, nil
 }
 
+// resolveSource obtains the catalogue or override image, verifies any available
+// SHA-256 pin, and returns an absolute local path plus its measured digest.
 func (m *ImageManager) resolveSource(ctx context.Context, request CreateImageRequest, entry catalog.Entry, cacheDirectory string) (string, string, error) {
 	location := request.Source
 	if location == "" {
@@ -202,6 +238,8 @@ func (m *ImageManager) resolveSource(ctx context.Context, request CreateImageReq
 	return absolute, digest, nil
 }
 
+// imageDefaults fills only optional catalogue and release selectors, leaving all
+// caller paths and integrity pins unchanged.
 func imageDefaults(request CreateImageRequest) CreateImageRequest {
 	if request.CatalogID == "" {
 		request.CatalogID = DefaultCatalogID
@@ -215,6 +253,8 @@ func imageDefaults(request CreateImageRequest) CreateImageRequest {
 	return request
 }
 
+// resolveCacheDirectory returns an absolute caller override or the standard
+// per-user linux-armer cache without creating it.
 func resolveCacheDirectory(configured string) (string, error) {
 	if configured != "" {
 		return filepath.Abs(configured)
@@ -226,6 +266,8 @@ func resolveCacheDirectory(configured string) (string, error) {
 	return filepath.Join(base, "linux-armer"), nil
 }
 
+// safePathComponent turns an untrusted release selector into a single bounded
+// cache-directory name with no path traversal semantics.
 func safePathComponent(value string) string {
 	replacer := strings.NewReplacer("/", "-", "\\", "-", "..", "-")
 	value = strings.Trim(replacer.Replace(value), "- .")

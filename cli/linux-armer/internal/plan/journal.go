@@ -10,28 +10,44 @@ import (
 
 // Journal records verified execution results without mutating the plan.
 type Journal struct {
-	SchemaVersion int           `json:"schema_version"`
-	Operation     string        `json:"operation"`
-	Records       []StepRecord  `json:"records"`
-	Output        *OutputRecord `json:"output,omitempty"`
+	// SchemaVersion selects the journal serialisation contract.
+	SchemaVersion int `json:"schema_version"`
+	// Operation associates the evidence with the plan that produced it.
+	Operation string `json:"operation"`
+	// Records contains successful checkpoints in completion order.
+	Records []StepRecord `json:"records"`
+	// Output identifies the final published artefact when one exists.
+	Output *OutputRecord `json:"output,omitempty"`
 }
 
+// StepRecord captures when one planned step completed and the verified digests
+// available at that resource-clean boundary.
 type StepRecord struct {
-	StepID      string            `json:"step_id"`
-	CompletedAt time.Time         `json:"completed_at"`
-	Digests     map[string]string `json:"digests,omitempty"`
+	// StepID references the stable ID in the operation plan.
+	StepID string `json:"step_id"`
+	// CompletedAt records checkpoint completion in UTC.
+	CompletedAt time.Time `json:"completed_at"`
+	// Digests binds named intermediate artefacts to the bytes that were verified.
+	Digests map[string]string `json:"digests,omitempty"`
 }
 
+// OutputRecord identifies the final artefact published by an operation.
 type OutputRecord struct {
-	Path   string `json:"path"`
+	// Path is the destination recorded by the workflow.
+	Path string `json:"path"`
+	// SHA256 identifies the complete published bytes.
 	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size_bytes"`
+	// Size is the artefact length in bytes.
+	Size int64 `json:"size_bytes"`
 }
 
+// NewJournal starts an empty journal for an operation using the current schema.
 func NewJournal(operation string) *Journal {
 	return &Journal{SchemaVersion: SchemaVersion, Operation: operation, Records: []StepRecord{}}
 }
 
+// Complete appends a successful step checkpoint with a UTC timestamp. Callers
+// persist that evidence explicitly with Save after reaching a clean boundary.
 func (j *Journal) Complete(stepID string, digests map[string]string) {
 	j.Records = append(j.Records, StepRecord{
 		StepID:      stepID,

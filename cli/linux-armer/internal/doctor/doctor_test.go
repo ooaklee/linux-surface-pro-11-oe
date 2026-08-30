@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// TestFilepathAbsReturnsRequestedWorkspace verifies an existing directory is
+// returned as the same normalised absolute workspace path.
 func TestFilepathAbsReturnsRequestedWorkspace(t *testing.T) {
 	workspace := t.TempDir()
 	nested := filepath.Join(workspace, "nested")
@@ -27,6 +29,8 @@ func TestFilepathAbsReturnsRequestedWorkspace(t *testing.T) {
 	}
 }
 
+// TestFilepathAbsRejectsFile verifies a regular file cannot be accepted where
+// diagnostic commands require a workspace directory.
 func TestFilepathAbsRejectsFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workspace.txt")
 	if err := os.WriteFile(path, []byte("not a directory"), 0o644); err != nil {

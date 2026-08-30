@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestNewBundleRequiresMatchingRuntimePackages verifies image and modules
+// packages from different kernel builds cannot form a bootable bundle.
 func TestNewBundleRequiresMatchingRuntimePackages(t *testing.T) {
 	t.Parallel()
 	packages := []Package{
@@ -17,6 +19,8 @@ func TestNewBundleRequiresMatchingRuntimePackages(t *testing.T) {
 	}
 }
 
+// TestNewBundleRejectsGenericARM64Kernel verifies an ordinary ARM64 kernel is
+// not mistaken for a Surface Pro 11 kernel merely because its package roles match.
 func TestNewBundleRejectsGenericARM64Kernel(t *testing.T) {
 	packages := []Package{
 		{Role: RoleImage, Name: "linux-image-7.2.0-generic_7.2.0_arm64.deb", SHA256: "image"},
@@ -27,6 +31,8 @@ func TestNewBundleRejectsGenericARM64Kernel(t *testing.T) {
 	}
 }
 
+// TestNewBundleParsesReleasePackageSet verifies a matching published package
+// pair yields the Surface-specific ABI expected by the image builder.
 func TestNewBundleParsesReleasePackageSet(t *testing.T) {
 	t.Parallel()
 	packages := []Package{

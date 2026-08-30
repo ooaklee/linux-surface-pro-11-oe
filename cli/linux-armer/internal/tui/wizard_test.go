@@ -10,6 +10,8 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/catalog"
 )
 
+// TestModelNavigation verifies arrow and Vim-style keys move within catalogue
+// bounds without issuing Bubble Tea commands.
 func TestModelNavigation(t *testing.T) {
 	entries := testEntries()
 	tests := []struct {
@@ -43,6 +45,8 @@ func TestModelNavigation(t *testing.T) {
 	}
 }
 
+// TestModelCatalogOnlyEntryShowsMessage verifies selecting an unsupported entry
+// keeps the wizard in selection mode and explains why it cannot be built.
 func TestModelCatalogOnlyEntryShowsMessage(t *testing.T) {
 	entries := testEntries()
 	initial := model{entries: entries, output: "image.raw"}
@@ -78,13 +82,16 @@ func TestModelCatalogOnlyEntryShowsMessage(t *testing.T) {
 	}
 }
 
+// TestModelImplementedEntryOpensConfirmation verifies selecting an implemented
+// image opens a complete safety-focused summary before any build is accepted.
 func TestModelImplementedEntryOpensConfirmation(t *testing.T) {
 	entries := testEntries()
 	initial := model{
-		entries: entries,
-		cursor:  1,
-		output:  "/tmp/linux-armer.img",
-		message: "old warning",
+		entries:      entries,
+		cursor:       1,
+		output:       "/tmp/linux-armer.img",
+		kernelSource: "release sp11-v19 (verified before building)",
+		message:      "old warning",
 	}
 
 	updated, cmd := updateModel(t, initial, specialKey(tea.KeyEnter))
@@ -108,7 +115,7 @@ func TestModelImplementedEntryOpensConfirmation(t *testing.T) {
 	for _, text := range []string{
 		"Ready to create an experimental image:",
 		"Ubuntu Concept",
-		"kernel: latest complete linux-armer release",
+		"kernel: release sp11-v19 (verified before building)",
 		"output: /tmp/linux-armer.img",
 		"Secure Boot must be disabled.",
 		"enter/b build · esc back · q quit",
@@ -122,6 +129,8 @@ func TestModelImplementedEntryOpensConfirmation(t *testing.T) {
 	}
 }
 
+// TestModelConfirmationBackKeys verifies escape and backspace return to image
+// selection while preserving the current cursor and clearing stale messages.
 func TestModelConfirmationBackKeys(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -162,6 +171,8 @@ func TestModelConfirmationBackKeys(t *testing.T) {
 	}
 }
 
+// TestModelConfirmationBuildKeysSelectAndQuit verifies both confirmation keys
+// mark the current image selected and exit the interactive program.
 func TestModelConfirmationBuildKeysSelectAndQuit(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -185,6 +196,8 @@ func TestModelConfirmationBuildKeysSelectAndQuit(t *testing.T) {
 	}
 }
 
+// TestModelQuitKeys verifies ordinary quit and interrupt keys leave without a
+// selection from either the catalogue or confirmation screen.
 func TestModelQuitKeys(t *testing.T) {
 	keys := []struct {
 		name string
@@ -215,6 +228,8 @@ func TestModelQuitKeys(t *testing.T) {
 	}
 }
 
+// TestModelWindowSize verifies terminal resize messages update the width used to
+// render subsequent wizard views.
 func TestModelWindowSize(t *testing.T) {
 	initial := model{entries: testEntries(), width: 20}
 
@@ -227,8 +242,10 @@ func TestModelWindowSize(t *testing.T) {
 	}
 }
 
+// TestRunRejectsEmptyCatalog verifies the wizard fails clearly before starting
+// Bubble Tea when no supported image choices are available.
 func TestRunRejectsEmptyCatalog(t *testing.T) {
-	selection, selected, err := Run(nil, "image.raw", strings.NewReader(""), io.Discard)
+	selection, selected, err := Run(nil, "image.raw", "latest release", strings.NewReader(""), io.Discard)
 	if err == nil {
 		t.Fatal("Run() error = nil, want empty catalog error")
 	}
@@ -243,6 +260,8 @@ func TestRunRejectsEmptyCatalog(t *testing.T) {
 	}
 }
 
+// testEntries returns a stable mix of catalogue-only and implemented choices for
+// exercising selection behaviour.
 func testEntries() []catalog.Entry {
 	return []catalog.Entry{
 		{ID: "catalog-one", Name: "Catalog One", SupportLevel: catalog.SupportLevelCatalogOnly},
@@ -251,14 +270,19 @@ func testEntries() []catalog.Entry {
 	}
 }
 
+// textKey constructs a printable Bubble Tea key message for Vim-style controls.
 func textKey(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code, Text: string(code)})
 }
 
+// specialKey constructs a non-text Bubble Tea key message such as an arrow or
+// escape key.
 func specialKey(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code})
 }
 
+// updateModel applies one message and requires the wizard to return its concrete
+// model type so tests can inspect the resulting state.
 func updateModel(t *testing.T, initial model, message tea.Msg) (model, tea.Cmd) {
 	t.Helper()
 
@@ -270,6 +294,8 @@ func updateModel(t *testing.T, initial model, message tea.Msg) (model, tea.Cmd) 
 	return updated, cmd
 }
 
+// assertQuitCommand requires a non-nil command that emits Bubble Tea's canonical
+// quit message when executed.
 func assertQuitCommand(t *testing.T, cmd tea.Cmd) {
 	t.Helper()
 

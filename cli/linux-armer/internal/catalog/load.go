@@ -10,44 +10,72 @@ import (
 	"os"
 )
 
+// document mirrors the top-level JSON shape before architecture normalisation
+// and semantic validation.
 type document struct {
-	SchemaVersion int             `json:"schema_version"`
-	Description   string          `json:"description"`
-	Entries       []documentEntry `json:"entries"`
+	// SchemaVersion selects the catalogue document contract.
+	SchemaVersion int `json:"schema_version"`
+	// Description gives maintainers a concise explanation of the catalogue.
+	Description string `json:"description"`
+	// Entries contains the installation artefacts in human-maintained order.
+	Entries []documentEntry `json:"entries"`
 }
 
+// documentEntry preserves fields whose presence or spelling must be checked
+// before constructing a public Entry.
 type documentEntry struct {
-	ID                 string       `json:"id"`
-	Name               string       `json:"name"`
-	Distribution       string       `json:"distribution"`
-	Release            string       `json:"release"`
-	Architecture       string       `json:"architecture"`
-	ArtifactKind       ArtifactKind `json:"artifact_kind"`
-	URL                string       `json:"url"`
-	Homepage           string       `json:"homepage"`
-	Adapter            Adapter      `json:"adapter"`
-	SupportLevel       SupportLevel `json:"support_level"`
-	Experimental       *bool        `json:"experimental"`
-	Mutable            *bool        `json:"mutable"`
-	Checksum           *Checksum    `json:"checksum,omitempty"`
-	CompatibilityNotes []string     `json:"compatibility_notes"`
-	LastVerified       string       `json:"last_verified"`
+	// ID is the stable command-line key.
+	ID string `json:"id"`
+	// Name is the artefact's human-readable name.
+	Name string `json:"name"`
+	// Distribution identifies the upstream operating-system family.
+	Distribution string `json:"distribution"`
+	// Release identifies the upstream version or channel.
+	Release string `json:"release"`
+	// Filename is the exact upstream artefact name expected at the URL.
+	Filename string `json:"filename"`
+	// Architecture retains the author's spelling until it can be normalised.
+	Architecture string `json:"architecture"`
+	// ArtifactKind describes the upstream file format.
+	ArtifactKind ArtifactKind `json:"artifact_kind"`
+	// URL is the upstream artefact location.
+	URL string `json:"url"`
+	// Homepage is the upstream information page.
+	Homepage string `json:"homepage"`
+	// Adapter selects the remastering implementation.
+	Adapter Adapter `json:"adapter"`
+	// SupportLevel records whether remastering is implemented.
+	SupportLevel SupportLevel `json:"support_level"`
+	// Experimental is a pointer so validation can distinguish false from a
+	// missing required boolean.
+	Experimental *bool `json:"experimental"`
+	// Mutable is a pointer so validation can distinguish false from a missing
+	// required boolean.
+	Mutable *bool `json:"mutable"`
+	// Checksum optionally pins the upstream bytes.
+	Checksum *Checksum `json:"checksum,omitempty"`
+	// CompatibilityNotes explain device-specific constraints.
+	CompatibilityNotes []string `json:"compatibility_notes"`
+	// LastVerified records when maintainers last checked the entry.
+	LastVerified string `json:"last_verified"`
 }
 
 // Loader chooses an on-disk override when one is provided, otherwise it loads
-// the catalog bundled in Embedded. This keeps override policy in one place for
+// the catalogue bundled in Embedded. This keeps override policy in one place for
 // both command-line and interactive callers.
 type Loader struct {
-	Embedded     fs.FS
+	// Embedded is the read-only filesystem shipped in the executable.
+	Embedded fs.FS
+	// EmbeddedPath is the catalogue filename within Embedded.
 	EmbeddedPath string
 }
 
-// NewLoader constructs a Loader for a bundled catalog.
+// NewLoader constructs a Loader for a bundled catalogue.
 func NewLoader(embedded fs.FS, embeddedPath string) Loader {
 	return Loader{Embedded: embedded, EmbeddedPath: embeddedPath}
 }
 
-// Load reads overridePath when non-empty, or the configured embedded catalog.
+// Load reads overridePath when non-empty, or the configured embedded catalogue.
 func (l Loader) Load(overridePath string) (*Catalog, error) {
 	if overridePath != "" {
 		return LoadFile(overridePath)
@@ -62,7 +90,7 @@ func (l Loader) Load(overridePath string) (*Catalog, error) {
 	return LoadFS(l.Embedded, l.EmbeddedPath)
 }
 
-// Load decodes and validates a catalog from reader.
+// Load decodes and validates a catalogue from reader.
 func Load(reader io.Reader) (*Catalog, error) {
 	if reader == nil {
 		return nil, errors.New("decode catalog: reader is nil")
@@ -87,7 +115,7 @@ func Load(reader io.Reader) (*Catalog, error) {
 	return build(raw)
 }
 
-// LoadBytes decodes and validates a catalog from data.
+// LoadBytes decodes and validates a catalogue from data.
 func LoadBytes(data []byte) (*Catalog, error) {
 	return Load(bytes.NewReader(data))
 }
@@ -115,7 +143,7 @@ func LoadFS(filesystem fs.FS, path string) (*Catalog, error) {
 	return catalog, nil
 }
 
-// LoadFile decodes and validates a catalog override from the host filesystem.
+// LoadFile decodes and validates a catalogue override from the host filesystem.
 func LoadFile(path string) (*Catalog, error) {
 	if path == "" {
 		return nil, errors.New("load catalog file: path is empty")
@@ -135,6 +163,8 @@ func LoadFile(path string) (*Catalog, error) {
 	return catalog, nil
 }
 
+// build normalises a decoded document, validates it as a whole, and creates
+// the immutable indexes exposed by Catalog.
 func build(raw document) (*Catalog, error) {
 	entries := make([]Entry, len(raw.Entries))
 	for i, rawEntry := range raw.Entries {
@@ -144,6 +174,7 @@ func build(raw document) (*Catalog, error) {
 			Name:               rawEntry.Name,
 			Distribution:       rawEntry.Distribution,
 			Release:            rawEntry.Release,
+			Filename:           rawEntry.Filename,
 			Architecture:       architecture,
 			ArtifactKind:       rawEntry.ArtifactKind,
 			URL:                rawEntry.URL,
