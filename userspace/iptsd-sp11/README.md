@@ -11,11 +11,11 @@ The pinned source is upstream `iptsd` v3.1.0 at commit
 machine-readable identity. `scripts/build-sp11-iptsd-docker.sh` verifies both
 identifiers before building the two required ARM64 binaries.
 
-The two device presets match the X1P/LCD (`045e:0c80`) and X1E/OLED
-(`045e:0c83`) variants. They disable `iptsd` touchscreen synthesis, preventing
-a duplicate touch device, while leaving stylus processing enabled. Panel size
-and orientation continue to come from the metadata feature report rather than
-hard-coded configuration.
+The integration supports the X1P/LCD (`045e:0c80`) and X1E/OLED (`045e:0c83`)
+variants through two device presets. They disable `iptsd` touchscreen
+synthesis, preventing a duplicate touch device, while leaving stylus
+processing enabled. Panel size and orientation continue to come from the
+metadata feature report rather than hard-coded configuration.
 
 The udev, systemd, and sleep lifecycle is adapted from the MIT-licensed
 `turbineBMW/surface-pro-11-linux` integration at commit
@@ -53,9 +53,9 @@ The X1E/OLED installed-system path passed live Phase 84 validation on
 from 0 through 3309, variation on both tilt axes, and the barrel button worked
 with balanced IRQ/report accounting and no panel resets, transport/protocol
 errors, or daemon restarts. Normal one-, two-, and three-finger touch also
-worked as expected. X1P, eraser transitions, comprehensive touch/gesture
-regression, forced transport recovery, and repeated suspend/resume remain
-release gates.
+worked as expected. Separate X1P hardware validation, eraser transitions,
+comprehensive touch/gesture regression, forced transport recovery, and repeated
+suspend/resume remain release gates.
 
 Unmodified iptsd v3.1.0 advertises `BTN_STYLUS` but not `BTN_STYLUS2`.
 Second/top-button support is therefore outside this integration candidate.

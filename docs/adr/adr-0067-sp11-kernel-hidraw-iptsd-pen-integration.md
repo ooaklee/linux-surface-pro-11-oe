@@ -9,12 +9,14 @@ description: Architecture Decision Record (ADR) for exposing the Surface Pro 11 
 
 ## Status
 
-Accepted for X1E/OLED integration on 2026-08-30 on matching
+Accepted for X1P/LCD and X1E/OLED integration on 2026-08-30 on matching
 `sp11/integration-7.2.x-pen-part-2` branches. ARM64 kernel builds, checkpatch,
-the pinned userspace build, manifest verification, offline installation, final
-v19 kernel packaging, and live pressure, tilt, and barrel-button testing pass.
-X1P hardware, eraser transitions, transport recovery, repeated suspend/resume,
-OpenEmbedded recipe parse/build validation, and release qualification remain.
+the pinned userspace build, manifest verification, offline installation, and
+final v19 kernel packaging pass. Live hardware acceptance currently covers
+X1E/OLED pressure, tilt, barrel-button, and normal multitouch behavior.
+Separate X1P hardware validation, eraser transitions, transport recovery,
+repeated suspend/resume, OpenEmbedded recipe parse/build validation, and
+release qualification remain.
 
 This is integration in the SP11 kernel fork, not a claim of upstream Linux or
 mainline support.
@@ -41,7 +43,8 @@ without testing it on the target kernel.
 ## Decision
 
 The SP11 kernel driver will create a secondary, private-group HID device after
-the physical report descriptor and product identity are validated.
+the physical report descriptor and either supported product identity—X1P/LCD
+`045e:0c80` or X1E/OLED `045e:0c83`—is validated.
 
 - The secondary device starts with `HID_CONNECT_HIDRAW` only. The existing
   kernel path remains the sole direct touchscreen input provider.
@@ -124,8 +127,10 @@ accounted for by two report `0x07` records plus DFT reports `0x0b=2022`,
 host-fault recoveries, transport errors, protocol errors, drain overflows, and
 kernel taint remained zero.
 
-This accepts the core X1E installed-system pen path for integration. It does
-not claim X1P, eraser, forced transport recovery, or repeated suspend/resume.
+This accepts the shared X1P/LCD and X1E/OLED pen integration. The live evidence
+above qualifies X1E/OLED; the enabled X1P/LCD path awaits a separate device
+run. Eraser, forced transport recovery, and repeated suspend/resume remain
+unqualified.
 
 ## Consequences
 
@@ -141,9 +146,10 @@ not claim X1P, eraser, forced transport recovery, or repeated suspend/resume.
   userspace limitation.
 - X1E live acceptance establishes the core pen path, dynamic HIDRAW discovery,
   a single daemon/device owner, pressure, two-axis tilt, the barrel button, and
-  normal one-, two-, and three-finger touch. Before release, complete X1P,
-  eraser, edge/corner, comprehensive touch/gesture regression, transport
-  recovery, multiple cold boots, and repeated suspend/resume gates.
+  normal one-, two-, and three-finger touch. Before release, complete separate
+  X1P hardware qualification, eraser, edge/corner, comprehensive touch/gesture
+  regression, transport recovery, multiple cold boots, and repeated
+  suspend/resume gates.
 - The live-image builder carries the installer and payload on `SP11DATA`; it
   does not inject iptsd into the running live desktop. Live-session and
   installed-system behavior remain separate test gates.
