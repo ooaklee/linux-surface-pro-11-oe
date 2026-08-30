@@ -35,9 +35,18 @@ the only immediate independent fallback.
 
 ## Preserve the guarded v20 artifacts
 
-The build helper recreates `artifacts/`. Before starting the same-version
-build, verify and preserve the guarded pen/touch-integrated build at exact
-kernel head `672638f963d37f55a93544568db41bfc4469df6d`.
+**Qualification-run note (2026-08-30):** The operator intentionally cleared
+the prior local build tree and untracked payload assets before starting this
+clean rebuild. No `artifacts-672638f-guarded/` rollback archive is claimed for
+this run, so skip the archive-copy commands below. The currently installed
+guarded v20 remains the pre-install baseline, and installed v16 remains the
+independent rollback. Reinstalling the same v20 ABI replaces the installed
+guarded v20, after which v16 is the independent rollback.
+
+For a future same-version rebuild where the prior artifacts still exist, the
+build helper recreates `artifacts/`. Before starting, verify and preserve the
+guarded pen/touch-integrated build at exact kernel head
+`672638f963d37f55a93544568db41bfc4469df6d`.
 
 Set `work_dir` to the build directory actually used on the machine. The
 current SP11 checkout uses the first path below; the Docker example in the
@@ -91,9 +100,12 @@ artifacts="$work_dir/artifacts"
 grep -Fx \
   'Source HEAD: 70ddec100fe953712c309067fe2db4d8207facc6' \
   "$artifacts/sp11-kernel-build-manifest.txt"
-(cd "$artifacts" && sha256sum -c SHA256SUMS)
+(cd "$artifacts" && sha256sum --check --strict SHA256SUMS)
 ```
 
+The Docker helper writes `SHA256SUMS` atomically after comparing the package
+list manifest with the exported package set. A missing checksum manifest or a
+set mismatch is an export failure, not a reason to install without the gate.
 All four packages must report version `7.2.0-jg-0sp11v20`. Reject a mixed
 bundle.
 
@@ -164,8 +176,11 @@ any mismatch.
 Confirm the fallback exists before replacing v20:
 
 ```bash
-test -f /boot/vmlinuz-7.2.0-jg-0sp11v16-qcom-x1e
-ls -l /boot/sp11-denali-v19-known-good.dtb
+fallback_abi=7.2.0-jg-0sp11v16-qcom-x1e
+test -f "/boot/vmlinuz-$fallback_abi"
+test -f "/boot/initrd.img-$fallback_abi"
+test -d "/usr/lib/modules/$fallback_abi"
+grep -F "/vmlinuz-$fallback_abi" /boot/grub/grub.cfg
 ```
 
 Install all four exact artifacts explicitly:

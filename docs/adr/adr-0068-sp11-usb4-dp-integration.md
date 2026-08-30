@@ -11,8 +11,9 @@ description: Architecture Decision Record (ADR) for starting the Surface Pro 11 
 
 Accepted for the source/static portion and the controlled procedure for an
 explicitly selected top-port retimer qualification boot at the
-`7.2.0-jg-0sp11v20` implementation milestone on 2026-08-30. The same-version
-package rebuild and runtime result remain pending. Full USB4 enablement is not
+`7.2.0-jg-0sp11v20` implementation milestone on 2026-08-30. The clean
+same-version package rebuild and packaged-image inspection passed; guarded and
+experimental runtime results remain pending. Full USB4 enablement is not
 accepted: the production Denali device tree still disables USB4 at both PS8830
 retimers, and this branch enables no host-router consumer.
 
@@ -258,8 +259,9 @@ isolation are validated statically at
 | Experimental DTB isolation | Pass: production OLED, explicitly targeted experimental OLED, and X1P Denali DTBs build; full ARM64 `dtbs` completes; the experimental filename is absent from the normal `dtbs-list` |
 | Compiled guard isolation | Pass: production OLED DTB contains two `parade,disable-usb4` properties; experimental DTB contains only the `i2c3` bottom-port property |
 | Experimental targeted schema validation | Not run locally: `dt-doc-validate` is unavailable. The wrapper adds no property and deletes one optional boolean already covered by the previously validated PS8830 binding |
-| Alternate Stubble construction | Pass in an Ubuntu 26.04 container: ARM64 PE image, exactly one `.dtbauto`, and extracted experimental model/guard count verified |
-| Experimental full qcom-x1e package rebuild | Pending at `70ddec100fe9`; retain version `7.2.0-jg-0sp11v20` and inspect both packaged EFI images because version alone cannot distinguish same-version rebuilds |
+| Alternate Stubble construction | Pass in the Ubuntu 26.04 qualification package: ARM64 PE image, exactly one `.dtbauto`, and extracted experimental model/guard count verified |
+| Experimental full qcom-x1e package rebuild | Pass at exact source head `70ddec100fe9`: `binary-indep binary-qcom-x1e` completed with no local patches; four version-`7.2.0-jg-0sp11v20` packages exported and their six-file checksum manifest verified strictly |
+| Packaged Stubble isolation | Pass: the normal ARM64 PE image contains 38 `.dtbauto` sections and no experimental marker; the alternate contains exactly one `.dtbauto`; no experimental path exists under `/boot` and no loose experimental DTB is packaged |
 | Linux USB4 domain/router runtime | Not run — production USB4 is disabled |
 | USB3, PCIe, or DisplayPort tunnel runtime | Not run — production USB4 is disabled |
 | Direct DisplayPort regression and automatic runtime-PM qualification | Not run; required before either production guard or runtime-PM policy changes |
@@ -299,9 +301,47 @@ its checksum-manifest SHA-256 is
 `7884167a1b56482e36bbc6034908810c9391ccbe2ea637b2b450ed5e51a0e2e0`.
 That guarded build is the installed pre-experiment baseline, not the new
 top-port experiment. Because all three builds use the same Debian version, the
-source manifest is mandatory evidence and the guarded artifacts must be kept
-under `artifacts-672638f-guarded/` before the experimental rebuild overwrites
-the working `artifacts/` path.
+source manifest is mandatory evidence. For the clean `70ddec100fe9`
+qualification rebuild, the operator intentionally cleared the prior local
+build and untracked payload assets before building. The hashes above remain
+provenance for the previously installed guarded v20, but no local
+`artifacts-672638f-guarded/` archive is claimed for this run. Guarded v20
+remains the installed pre-install baseline; v16 remains installed as the
+independent fallback and becomes the only independent rollback after the
+same-ABI v20 replacement.
+
+The clean qualification rebuild completed from exact source head
+[`70ddec100fe9`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/70ddec100fe953712c309067fe2db4d8207facc6)
+with `Local patches: none`, target `binary-indep binary-qcom-x1e`, and eight
+jobs. Each package reports version `7.2.0-jg-0sp11v20`; the three
+machine-specific packages report architecture `arm64`, and the common header
+package reports architecture `all`.
+
+| Clean qualification artifact | SHA-256 |
+|---|---|
+| `linux-headers-7.2.0-jg-0sp11v20-qcom-x1e_7.2.0-jg-0sp11v20_arm64.deb` | `535cef2ee7043a7756c9b57fd225d8353eff03c6b6404c1aed6750d59cb3404e` |
+| `linux-image-7.2.0-jg-0sp11v20-qcom-x1e_7.2.0-jg-0sp11v20_arm64.deb` | `ea0354d32dd11ae0fa0cb3b2d443099e37def695a6c119239b852d095c6a6333` |
+| `linux-modules-7.2.0-jg-0sp11v20-qcom-x1e_7.2.0-jg-0sp11v20_arm64.deb` | `64fbda78899a0a145fe826e33657c7a9b6cb359c34d4cfd98255ac5ab41d1ac1` |
+| `linux-qcom-x1e-headers-7.2.0-jg-0sp11v20_7.2.0-jg-0sp11v20_all.deb` | `763579b1d489a834c59ceb8710204810bb593a8fca56561084b5c0b68ce5238b` |
+| Generated source/build manifest | `4d1a7675fbbdfc11c8ca84bd040aa3446f1a0a702ebcc97e48501002ac252348` |
+| Generated package-list manifest | `8fc74e8f48e3cef6a1cc487ff0c55e073f4244017607c7ae419ecfdd0adec358` |
+
+The generated six-entry `SHA256SUMS` passed strict verification; its own
+SHA-256 is
+`980d4c3dca485b7f575c4f95c5ef8b0482a7ac6c5306c80aec21fd4904e13c88`.
+The Docker export helper now generates that manifest atomically, validates the
+declared package set against the exported set, and installs it read-only for
+normal-user verification.
+
+Package inspection confirms that the production DTB still contains two
+`parade,disable-usb4` properties while the alternate DTB contains one. The
+alternate's exact model is `Microsoft Surface Pro 11th Edition (OLED,
+top-port USB4 retimer experiment)`. The normal and alternate `.linux` payloads
+are identical at SHA-256
+`032c34ba16cddee96d3dcbe8190dc7e5a8848928313f41ebdd10fc2892e92779`;
+only their embedded DTB sets differ. The packaged production OLED DTB is
+byte-identical to the installed guarded v20 DTB at SHA-256
+`b65e0b97e3cd8ce2454000d9d14ff27bd8863c0730cde27a2b42b8fff4809efa`.
 
 Before removing the fallback from any production DTB, hardware evidence must
 show all of the following:
