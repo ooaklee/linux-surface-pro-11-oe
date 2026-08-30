@@ -45,6 +45,8 @@ var LegacyRules = []Rule{
 	{ID: "audio-wsa-helper-old", Feature: "audio", Path: "usr/local/sbin/sp11-enable-wsa-routing", Reason: "legacy WSA routing is superseded", Markers: []string{"sp11"}},
 	{ID: "audio-manual-sink", Feature: "audio", Path: "etc/pipewire/pipewire.conf.d/50-sp11-speakers.conf", Reason: "manual PipeWire sinks conflict with current native audio routing", Markers: []string{"sp11"}},
 	{ID: "audio-boot-race-helper", Feature: "audio", Path: "usr/local/sbin/sp11-fix-audio-boot-race", Reason: "legacy boot-race restarts are obsolete", Markers: []string{"sp11-wsa-routing"}},
+	{ID: "audio-pipewire-restart-unit", Feature: "audio", Path: "etc/systemd/user/sp11-pipewire-restart.service", Reason: "legacy user-session restarts are superseded by native FullIO discovery", Markers: []string{"sp11-wsa-routing-done", "wireplumber", "pipewire"}},
+	{ID: "audio-pipewire-restart-enablement", Feature: "audio", Path: "etc/systemd/user/default.target.wants/sp11-pipewire-restart.service", Reason: "legacy user-session restart enablement is obsolete", SymlinkTarget: "etc/systemd/user/sp11-pipewire-restart.service"},
 	{ID: "touch-modprobe", Feature: "touchscreen", Path: "etc/modprobe.d/sp11-touchscreen.conf", Reason: "the current kernel contains the touchscreen driver in-tree", Markers: []string{"mshw0485_touch"}},
 	{ID: "touch-modules-load", Feature: "touchscreen", Path: "etc/modules-load.d/sp11-touchscreen.conf", Reason: "the current kernel contains the touchscreen driver in-tree", Markers: []string{"mshw0485_touch"}},
 	{ID: "touch-initramfs-hook", Feature: "touchscreen", Path: "etc/initramfs-tools/hooks/sp11-touchscreen", Reason: "the current kernel contains the touchscreen driver in-tree", Markers: []string{"mshw0485_touch"}},

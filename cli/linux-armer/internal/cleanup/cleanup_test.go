@@ -225,6 +225,40 @@ func TestScanRecognisesOnlyExpectedEnablementSymlink(t *testing.T) {
 	}
 }
 
+// TestScanRecognisesRetiredPipeWireRestartIntegration verifies clean-up owns
+// both the exact system-wide user unit and its expected enablement link.
+func TestScanRecognisesRetiredPipeWireRestartIntegration(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	unit := filepath.Join(root, "etc", "systemd", "user", "sp11-pipewire-restart.service")
+	enablement := filepath.Join(root, "etc", "systemd", "user", "default.target.wants", "sp11-pipewire-restart.service")
+	if err := os.MkdirAll(filepath.Dir(unit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contents := "ExecStart=/bin/sh -c 'test -f /run/sp11-wsa-routing-done; systemctl --user restart wireplumber pipewire'\n"
+	if err := os.WriteFile(unit, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(enablement), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../sp11-pipewire-restart.service", enablement); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Findings) != 2 {
+		t.Fatalf("findings = %#v, want unit and enablement", report.Findings)
+	}
+	for _, finding := range report.Findings {
+		if !finding.Recognized {
+			t.Fatalf("retired PipeWire integration was not recognised: %#v", finding)
+		}
+	}
+}
+
 // TestScanRequiresMarkersForRegularEnablementFile verifies a regular file at a
 // symlink-only enablement path is never accepted solely because its path is
 // known.
