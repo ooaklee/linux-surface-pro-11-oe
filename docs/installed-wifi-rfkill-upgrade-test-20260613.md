@@ -1,5 +1,25 @@
 # Surface Pro 11 Wi-Fi rfkill Test After qcom-x1e Upgrade - 2026-06-13
 
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.**
+> This record preserves the upgraded-kernel Wi-Fi failure observed on 13 June
+> 2026. Its kernel comparison, DTB conclusion, and proposed patch work describe
+> that snapshot only and must not be followed as current bring-up guidance.
+
+## Current Read-Only Check
+
+Inspect the current static Wi-Fi support state with:
+
+```sh
+linux-armer doctor userspace --feature wifi
+```
+
+The doctor checks package and firmware files without probing the radio. It does
+not inspect live rfkill state, scan, associate, reconnect, or prove traffic.
+Supplemental Wi-Fi commands and logs can expose SSIDs, BSSIDs, saved-network
+names, MAC addresses, and interface identifiers; redact them before sharing
+the output.
+
 ## Context
 
 After the initial installed Wi-Fi rfkill test, the system was upgraded from the
@@ -48,7 +68,12 @@ support. The Wi-Fi blocker is still kernel-side plus DTB-side rfkill handling.
 A DTB-only edit should not be tested yet, because the running ath12k modules do
 not know how to read the `disable-rfkill` devicetree property.
 
-## Next Steps
+## Historical Next Steps
+
+> [!CAUTION]
+> The patch proposal below is preserved as part of the dated investigation. It
+> is superseded as current user guidance; assess a current installation with
+> the static doctor above rather than reproducing this experiment.
 
 Build and test a patched Ubuntu qcom-x1e kernel that carries both:
 

@@ -1,5 +1,26 @@
 # Surface Pro 11 Wi-Fi Clean USB Flow Test - 2026-06-14
 
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.**
+> This record preserves the Wi-Fi result observed on 14 June 2026. Its USB
+> layout, support helpers, patched kernel, DTB workaround, and follow-up are
+> historical and must not be used as current bring-up instructions.
+
+## Current Read-Only Checks
+
+For a newly generated ISO and a current installed system, use:
+
+```sh
+linux-armer image validate <generated.iso>
+linux-armer doctor userspace --feature wifi
+```
+
+The image validator checks the generated ISO rather than the written USB or
+radio. The doctor checks static package and firmware state only; it does not
+read live rfkill state, scan, associate, reconnect, or prove traffic. Commands
+and logs that do exercise Wi-Fi can expose SSIDs, BSSIDs, saved-network names,
+and interface identifiers. Redact them before sharing output or screenshots.
+
 ## Context
 
 The first successful Wi-Fi test required a manually refreshed
@@ -61,16 +82,17 @@ committed without redaction. The important public result is that scan,
 association, saved-network reconnect, and traffic all worked on the patched
 kernel/DTB path.
 
-## Follow-Up
+## Historical Follow-Up
 
-This confirms the clean USB-to-installed-system flow for Wi-Fi bring-up. Keep
-testing:
+This confirmed the clean USB-to-installed-system flow for that Wi-Fi bring-up.
+The recorded follow-up covered:
 
 - normal reboots without `grub-reboot`,
 - suspend/resume,
 - package upgrades that regenerate GRUB or initramfs,
 - whether `7.0.0-22-qcom-x1e` should become the temporary default boot entry
-  until a newer qcom-x1e kernel contains the same rfkill behavior.
+  until a newer qcom-x1e kernel contains the same rfkill behaviour.
 
-Keep `7.0.0-32-qcom-x1e` installed as a fallback and avoid `apt autoremove`
-until the patched path has survived several ordinary desktop sessions.
+The record also recommended keeping `7.0.0-32-qcom-x1e` installed as a fallback
+and avoiding `apt autoremove` until the patched path had survived several
+ordinary desktop sessions.

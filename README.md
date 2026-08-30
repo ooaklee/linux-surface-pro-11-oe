@@ -34,7 +34,7 @@ The current verified target is:
 - Windows backup + BitLocker/Device Encryption recovery key (suspend or decrypt before partition work)
 - Secure Boot disabled in Surface UEFI
 - Windows recovery USB or another restore path
-- USB-C flash drive, 16 GB+ (write script erases the entire disk)
+- USB-C flash drive, 16 GB+ (`linux-armer image write` erases the entire selected disk)
 - macOS build host with Docker Desktop, `git`, `diskutil`, sudo (20 GB free)
 - Temporary networking for post-install firmware (Wi-Fi doesn't work in the live session — use USB-C Ethernet, phone tethering, or a mounted Windows partition)
 - External USB keyboard recommended for installer recovery
@@ -57,7 +57,7 @@ list for the upstream Arch status.
 | USB-C boot | ✅ Working with `--grub-mode direct` | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified live-USB path. |
 | Wi-Fi | ✅ Working | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Uses a [kernel hack to disable rfkill](https://github.com/dwhinham/kernel-surface-pro-11/commit/fcc769be9eaa9823d55e98a28402104621fa6784). Continue validating normal reboots, suspend/resume, and package upgrades. |
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
-| Audio — speakers | ✅ Working on installed v6 kernel | Both physical speakers receive the stereo mix through a PipeWire manual sink with reordered `audio.position` labels — the 4-channel PCM is a transport layout mapping physical slots 0 and 2, not a DAPM bypass ([ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md)). The rc6 integration kernel (`7.2-rc6-jg-0sp11v6`) carries the wsa884x 2S/4-ohm PA-recovery profile, which fixes the left-speaker audio wedge at sustained full volume ([ADR-0057](docs/adr/adr-0057-sp11-7-2-rc6-jg-0sp11v6-rc-branch-build.md), [ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)). `sp11-wsa-routing.service` applies the WSA path with PCM1 closed and exercises a fresh graph at boot, replacing the superseded alsactl boot-race fix ([ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md)). PA Volume is capped at raw 6 (0 dB) and the digital volumes at 81 (−3 dB) by the machine driver; the volume-slider taper is stock cubic, with a log-dB taper accepted but not yet implemented ([ADR-0055](docs/adr/adr-0055-audio-volume-taper-log-db.md)). See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md). |
+| Audio — speakers | ✅ Supported from `sp11v12`; tested through `sp11v19` | Install the audited, checksum-pinned `audio-fullio-v19c` topology and UCM set with `linux-armer userspace pull audio` and `linux-armer userspace install audio`, then verify the exact files, compatible kernel, required boot argument, and known legacy conflicts with `linux-armer doctor userspace --feature audio`. The doctor is static, so complete the guide's low-volume left/right speaker gate before relying on physical routing. See [Bring Up Current Surface Pro 11 Audio](docs/how-to/how-to-bring-up-audio.md). |
 | Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
 | Touchscreen | ✅ Working on installed v6 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, now carried **in-tree** on the 7.2-rc6 build (`7.2-rc6-jg-0sp11v6`) as the phase55 `mshw0485_touch`, `spi-geni-qcom`, and `gpi` drivers — no out-of-tree module install. Multi-touch, pinch/zoom, and three-finger gestures work, and sound is verified on the same build. Supersedes the v3 geocausa OOT-module approach. See [ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
 | Pen | ✅ Supported on X1P/LCD and X1E/OLED; live-validated on X1E/OLED v19 | The matching pen-part-2 kernel and pinned upstream iptsd integration cover both `045e:0c80` and `045e:0c83`, with iptsd touch output disabled. Live X1E testing passed hover/lift, continuous input, pressure, both tilt axes, the barrel button, and normal one-, two-, and three-finger touch with balanced Phase 84 IRQ/report accounting and no transport errors, resets, or daemon restarts. Separate X1P hardware validation, eraser, recovery, repeated suspend/resume, and comprehensive touch/gesture regression qualification remain. Unmodified iptsd v3.1.0 does not expose a second stylus button. See [ADR0067](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md). |
@@ -75,7 +75,24 @@ go build -o bin/linux-armer ./cmd/linux-armer
 ./bin/linux-armer doctor
 ./bin/linux-armer image create --output linux-armer-ubuntu-sp11.iso
 ./bin/linux-armer image validate linux-armer-ubuntu-sp11.iso
+./bin/linux-armer image devices
+./bin/linux-armer image write linux-armer-ubuntu-sp11.iso \
+  --device /dev/diskX \
+  --dry-run
 ```
+
+Review the whole removable-device path and exact image-bound confirmation from
+the dry run, then perform the write with elevated privilege:
+
+```bash
+sudo ./bin/linux-armer image write linux-armer-ubuntu-sp11.iso \
+  --device /dev/diskX \
+  --confirm 'ERASE /dev/diskX DEVICE <opaque-fingerprint> AND WRITE SHA256 <full-sha256>'
+```
+
+The writer refuses internal, non-removable, non-USB, system-backed, read-only,
+undersized, changed, or still-mounted targets. Completion requires a flushed
+write, a full SHA-256 read-back, a final identity inspection, and safe ejection.
 
 See the [CLI guide](cli/linux-armer/README.md) for pinned source images, local
 or released kernel bundles, the userspace doctor, clean-up plans and restore,
@@ -455,56 +472,41 @@ D-state hang. See [ADR-0032](docs/adr/adr-0032-raw-mgmt-socket-bluetooth-cold-bo
 
 ### Audio
 
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/troubleshoot-sp11-audio.sh
-```
+The maintained path uses the checksum-pinned `audio-fullio-v19c` userspace
+release, supported from the `sp11v12` kernel generation and tested through
+`sp11v19`. Do not install the retired CRD topology, WSA routing or boot-race
+services, or a manual PipeWire speaker sink alongside it.
 
-Install the audio support (UCM profiles, probe-backed routing service, and
-GRUB DTB injection), then add the user-level PipeWire speaker sink:
+Inspect the current state, pull the audited release, preview the transaction,
+then install it explicitly. A non-zero doctor result is expected when support
+is missing or a recognised legacy conflict is present; the check makes no
+changes.
 
-```bash
-cd "$SP11DATA/support"
-sudo ./scripts/install-sp11-support.sh
-./scripts/sp11-pipewire-speaker-sink.sh --install
+```sh
+linux-armer doctor userspace --feature audio
+linux-armer userspace pull audio --cache-dir ./linux-armer-userspace
+
+AUDIO_RELEASE=./linux-armer-userspace/audio-fullio-v19c/sp11-audio-v19c
+linux-armer userspace install audio --from "$AUDIO_RELEASE" --dry-run
+sudo linux-armer userspace install audio --from "$AUDIO_RELEASE" --yes
 sudo reboot
+linux-armer doctor userspace --feature audio
 ```
 
-`sp11-wsa-routing.service` applies the WSA speaker route while PCM1 is closed
-and exercises a fresh AudioReach graph before the display manager starts. It
-runs after any ALSA-state restore; the distribution ALSA services must not be
-masked (the earlier alsactl boot-race diagnosis was superseded — see
-[ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md)).
+The installer accepts only the audited asset set and verifies its checksums
+before installing the coherent topology and UCM files. The release is marked
+redistribution-restricted because it contains protected vendor-derived bytes.
+The current image flow supplies the required
+`soundwire_qcom.sp11_feedback_active_offset2_zero=1` boot argument.
 
-If the topology file is missing, build and install it before running the
-support installer:
-
-```bash
-cd "$SP11DATA/support"
-./scripts/sp11-audio-topology.sh
-sudo ./scripts/sp11-audio-topology.sh --install
-```
-
-Alternatively, download the
-[audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
-Pair the corrected UCM with the newest kernel bundle
-[v7 (7.2.0-jg-0sp11v7)](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v7),
-built from the
-[`sp11/integration-7.2.x`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2.x)
-fork: it carries the wsa884x 2S/4-ohm PA-recovery profile (no left-speaker
-audio wedge at sustained full volume), the 2.4 MHz DMIC clock, and the
-in-tree phase55 touchscreen
-([ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)).
-The experimental
-[7.2-rc5-jg-0sp11v3 r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
-and the existing
-[7.1.3-jg-1 v2 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.1.3-jg-1-v2)
-remain available as rollback options.
-
-See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md),
-[ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md),
-[ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md), and
-[ADR-0055](docs/adr/adr-0055-audio-volume-taper-log-db.md) for details.
+The doctor is a static check and cannot prove audible routing. Complete the
+low-volume speaker and microphone gates in
+[Bring Up Current Surface Pro 11 Audio](docs/how-to/how-to-bring-up-audio.md).
+Systems carrying earlier audio workarounds must instead follow
+[Migrate Legacy SP11 Audio to FullIO v19c](docs/how-to/how-to-migrate-to-native-audio.md),
+including its reviewed, reversible clean-up workflow and rollback limitations.
+See the [linux-armer userspace companion](cli/linux-armer/README.md#userspace-companion)
+for the complete audited userspace contract.
 
 ## KDE Plasma (Kubuntu-like Experience)
 
@@ -540,7 +542,7 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 - [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
 - [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
 - [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
-- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-usb-flow-test-20260614.md)
+- [2026-06-14 Wi-Fi clean flow test](docs/installed-wifi-clean-flow-test-20260614.md)
 - [2026-06-14 Bluetooth public address test](docs/installed-bluetooth-public-address-test-20260614.md)
 
 ### Visual Evidence
@@ -553,12 +555,13 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 
 - [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 - [Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md)
-- [Bring Up Audio](docs/how-to/how-to-bring-up-audio.md)
+- [Bring Up Current Surface Pro 11 Audio](docs/how-to/how-to-bring-up-audio.md)
+- [Migrate Legacy SP11 Audio to FullIO v19c](docs/how-to/how-to-migrate-to-native-audio.md)
 - [Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md)
 - [Run the Legacy G6 Diagnostic Pen Processor](docs/how-to/how-to-run-g6-pen-processor.md)
 - [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
-- [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
+- [Inspect and Manage Audited Userspace Support](cli/linux-armer/README.md#userspace-companion)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 - [Touchscreen Clean-Install and Release Retrospective](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [Troubleshoot Docker Overlay Mount Failures on Linux Build Hosts](docs/how-to/how-to-troubleshoot-linux-docker-overlay.md)

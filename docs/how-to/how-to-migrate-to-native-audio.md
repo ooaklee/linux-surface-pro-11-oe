@@ -1,223 +1,221 @@
 ---
 id: how-to-migrate-to-native-audio
-title: "How To: Migrate SP11 Audio to the Native v9+ Pairing"
+title: "Migrate Legacy SP11 Audio to FullIO v19c"
 # prettier-ignore
-description: How-to guide for migrating from the legacy OE audio workarounds (CRD topology, OE UCM, and PipeWire speaker sink) to the native Golden v32 pairing used by the 7.2.0-jg-0sp11v9/v10 kernel line (canonical topology, geocausa UCM, and native sink), including rollback.
+description: Replace recognised legacy Surface Pro 11 audio workarounds with the verified FullIO v19c topology and UCM set through linux-armer.
 ---
 
-# How To: Migrate SP11 Audio to the Native v9+ Pairing
+# How To: Migrate Legacy SP11 Audio to FullIO v19c
 
-Use this procedure to replace the Surface Pro 11 legacy audio workaround stack
-with the userspace pairing required by the `7.2.0-jg-0sp11v9` and
-`7.2.0-jg-0sp11v10` kernels.
+Last reviewed: 2026-08-30
 
-## Purpose
+This guide replaces the retired CRD topology, WSA routing and boot-race
+helpers, and manual PipeWire sink with the maintained, checksum-pinned FullIO
+v19c topology and UCM set.
 
-The v9+ kernel line replaces the OE-built CRD topology, OE-authored
-`Surface11-HiFi.conf`, WSA routing enables, and manual PipeWire speaker sink
-with geocausa's canonical Golden v32 topology and UCM. WirePlumber then creates
-the native `Built-in Audio Pro` sink with the correct stereo mapping and
-VI+CPS speaker-protection feedback.
+Do not use the historical audio migration script for this path. It targeted an
+older kernel and userspace pairing, accepted different file identities, and had
+different rollback semantics from the current compiled installer.
 
-The old `50-sp11-speakers.conf` is fatal on this kernel line. Its target,
-`hw:X1E80100Microso,1`, does not exist under the canonical topology, so its
-context-level adapter creation makes PipeWire exit with status 234 in a crash
-loop. Remove the workaround as part of the pairing migration; do not carry it
-forward as a fallback sink.
+## Before you begin
 
-## Prerequisites
+- Boot a Surface `qcom-x1e` kernel compatible with FullIO v19c. The supported
+  userspace contract starts at `sp11v12` and is tested through `sp11v19`.
+- Make the current `linux-armer` executable available on the installed system.
+- Keep recovery media and a known-good kernel entry available.
+- Expect one reboot after installing the topology because the AudioReach graph
+  is loaded when the sound card probes.
 
-- Surface Pro 11 with either `7.2.0-jg-0sp11v9-qcom-x1e` or
-  `7.2.0-jg-0sp11v10-qcom-x1e` installed. See
-  [Build a Patched qcom-x1e Kernel](how-to-build-patched-qcom-x1e-kernel.md)
-  and
-  [Repeat Patched Kernel Build for a New qcom-x1e Release](how-to-repeat-kernel-build-for-new-release.md).
-- A current `geocausa/SP11X1e-audio` checkout containing
-  `deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin`
-  and `deploy/ucm2/Qualcomm/x1e80100/`.
-- `sudo` access for `/lib/firmware` and `/usr/share/alsa/ucm2`.
-- The migration script saved with executable mode. From this repository root,
-  set it explicitly with `chmod 0755 scripts/sp11-audio-migrate-to-native.sh`.
+The FullIO release contains protected vendor-derived bytes and is marked
+redistribution-restricted. Do not republish the downloaded bundle or include it
+in public installation media.
 
-## Procedure
+## 1. Record the starting state
 
-1. Clone the audio artifacts into a dedicated source directory, or refresh an
-   existing checkout.
+Run the static audio doctor before changing anything:
 
-```bash
-export SP11_AUDIO_SOURCE=/path/to/SP11X1e-audio
-git clone https://github.com/geocausa/SP11X1e-audio.git \
-  "$SP11_AUDIO_SOURCE"
-
-# For an existing checkout instead:
-git -C "$SP11_AUDIO_SOURCE" pull --ff-only
+```sh
+linux-armer doctor userspace --feature audio
 ```
 
-Pass this checkout's topology and UCM paths explicitly in step 4. This avoids
-depending on a machine-specific default checkout location.
+Save machine-readable evidence if this migration is part of a controlled test:
 
-2. Boot the native kernel and confirm its exact release.
-
-```bash
-uname -r
+```sh
+linux-armer doctor userspace --feature audio --json \
+  > linux-armer-audio-before.json
 ```
 
-Continue only with `7.2.0-jg-0sp11v9-qcom-x1e` or
-`7.2.0-jg-0sp11v10-qcom-x1e`. The script stops on other releases unless
-`--force` is supplied.
+Review the file before sharing it. The doctor avoids device identifiers, but
+the surrounding test environment or filename may still reveal local context.
 
-3. Preview the migration without writing files or restarting services.
+The doctor checks exact FullIO v19c file identities, kernel compatibility, the
+persistent feedback-port boot argument, and known legacy conflict paths. It
+does not inspect per-user PipeWire configuration or exercise the hardware.
 
-```bash
-./scripts/sp11-audio-migrate-to-native.sh --install --dry-run \
-  --tplg "$SP11_AUDIO_SOURCE/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin" \
-  --ucm-dir "$SP11_AUDIO_SOURCE/deploy/ucm2/Qualcomm/x1e80100"
+## 2. Create and review a reversible clean-up plan
+
+Scan without changing the system, then write a new private plan:
+
+```sh
+linux-armer clean scan --root /
+linux-armer clean plan \
+  --root / \
+  --output linux-armer-audio-cleanup-plan.json
+cat linux-armer-audio-cleanup-plan.json
 ```
 
-4. Install the native pairing using the selected source checkout.
+The plan is not limited to audio. It can contain recognised touchscreen or pen
+workarounds as well, so do not apply it until every recognised entry is
+understood and intended. An entry marked `manual-review` is preserved by
+`clean apply`.
 
-```bash
-./scripts/sp11-audio-migrate-to-native.sh --install \
-  --tplg "$SP11_AUDIO_SOURCE/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin" \
-  --ucm-dir "$SP11_AUDIO_SOURCE/deploy/ucm2/Qualcomm/x1e80100"
+For audio, the compiled allow-list is deliberately narrow. It recognises only
+known system-wide WSA routing units and helpers, the known boot-race helper,
+and the recognised system-wide manual PipeWire sink. It does not remove
+per-user PipeWire or WirePlumber configuration, unfamiliar UCM files, locally
+modified files, or arbitrary paths that merely look old.
+
+Apply the exact reviewed plan only when it is correct:
+
+```sh
+sudo linux-armer clean apply \
+  --root / \
+  --plan linux-armer-audio-cleanup-plan.json \
+  --yes
 ```
 
-The script prints the topology and UCM source paths it will use before running
-its system and source checks. To use a checkout elsewhere, override both
-artifact locations:
+Record the receipt path printed by the command. Newly discovered or changed
+targets are not silently added when the plan is applied.
 
-```bash
-./scripts/sp11-audio-migrate-to-native.sh --install \
-  --tplg /path/to/SP11X1e-audio/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin \
-  --ucm-dir /path/to/SP11X1e-audio/deploy/ucm2/Qualcomm/x1e80100
+If `doctor userspace` later reports a legacy UCM path that `clean` did not
+recognise, stop for manual review. Do the same if PipeWire still exposes a
+per-user manual sink, which the static doctor does not inspect. Do not run
+retired helpers or delete a file merely to silence the report.
+
+## 3. Pull and preview FullIO v19c
+
+Download the exact audited release into a dedicated cache:
+
+```sh
+linux-armer userspace pull audio \
+  --cache-dir ./linux-armer-userspace
+
+AUDIO_RELEASE=./linux-armer-userspace/audio-fullio-v19c/sp11-audio-v19c
 ```
 
-The script verifies the topology's full SHA-256 identity before making a
-backup or changing the system.
+Preview the complete installation as a regular user:
 
-5. Reboot. This is required even if PipeWire restarts successfully because
-   `audioreach_tplg_init` loads `qcom/<card>-tplg.bin` when the sound card
-   probes at boot.
+```sh
+linux-armer userspace install audio \
+  --from "$AUDIO_RELEASE" \
+  --dry-run
+```
 
-```bash
+The preview verifies the release receipt, every checksum and size, and the four
+compiled destination paths. It does not modify files or require root
+privileges.
+
+## 4. Install and reboot
+
+After reviewing the plan, install the verified release explicitly:
+
+```sh
+sudo linux-armer userspace install audio \
+  --from "$AUDIO_RELEASE" \
+  --yes
 sudo reboot
 ```
 
-## Expected Output
+The installer copies any existing managed target to a timestamped backup below
+`/var/lib/linux-armer/backups/userspace`, then publishes the complete four-file
+set. It automatically restores already-changed targets if the transaction
+fails before completion.
 
-- The canonical topology is installed at
-  `/lib/firmware/qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`
-  with SHA-256
-  `1b0c7217fc67bb11da002b06563dd8c411b0f0e35ac40778bff3d65093061c9d`.
-- Geocausa's `SP11-HiFi.conf` and `MICROSOFT-Surface-Pro-11.conf` are installed
-  under `/usr/share/alsa/ucm2/Qualcomm/x1e80100/`.
-- The boot command-line parameter
-  `soundwire_qcom.sp11_feedback_active_offset2_zero=1` is set for Windows
-  feedback-port Offset2 parity, preventing volume-change pops after reboot.
-- User PipeWire `50-sp11-*.conf` and WirePlumber `51-sp11-*.conf` workaround
-  files are removed.
-- Pre-migration files are preserved under
-  `/var/backups/sp11-audio-native-migration-<YYYYmmdd-HHMMSS>/`, retaining
-  their original absolute-path layout below that directory.
+## 5. Validate the migrated system
 
-## Validation
+After reboot, repeat the static check:
 
-Confirm that the running kernel is the expected native audio line:
-
-```bash
-uname -r
+```sh
+linux-armer doctor userspace --feature audio
 ```
 
-This must show the v9 or v10 release. It proves the userspace pairing is being
-tested with an allowlisted kernel.
+The expected static state is:
 
-Confirm that the SoundWire feedback-port Offset2 parameter reached the kernel
-and is active:
+- a compatible Surface kernel generation;
+- the exact FullIO v19c topology and three UCM files;
+- `soundwire_qcom.sp11_feedback_active_offset2_zero=1` in persistent GRUB
+  configuration; and
+- no known legacy audio conflict.
 
-```bash
-grep -o 'soundwire_qcom[^ ]*' /proc/cmdline
+If a non-linux-armer installation path omitted the required boot argument, add
+it using that distribution's bootloader procedure, regenerate the bootloader
+configuration, and reboot. The current CLI reports the omission but does not
+change existing bootloader configuration.
+
+Confirm the live kernel received the setting and that PipeWire exposes the
+current audio devices:
+
+```sh
+grep -o 'soundwire_qcom.sp11_feedback_active_offset2_zero=[^ ]*' /proc/cmdline
 cat /sys/module/soundwire_qcom/parameters/sp11_feedback_active_offset2_zero
+wpctl status
 ```
 
-The first command must show
-`soundwire_qcom.sp11_feedback_active_offset2_zero=1`; the second must show `Y`.
-This Windows feedback-port Offset2 parity prevents volume-change pops.
+## 6. Complete the manual hardware gate
 
-Confirm that WirePlumber created the native sink and did not recreate the
-legacy workaround sink:
+Set the desktop output volume low before playing a test tone. Keep the speakers
+clear and stop immediately if the output is distorted, crackling, or louder
+than expected.
 
-```bash
-wpctl status | grep -A6 Sinks
-```
-
-The output must show `Built-in Audio Pro` and must not show
-`Surface Pro 11 Speakers`.
-
-Test the physical left and right channels independently at a safe volume:
-
-```bash
+```sh
 speaker-test -D default -c 2 -t sine -f 440 -s 1 -l 1
 speaker-test -D default -c 2 -t sine -f 440 -s 2 -l 1
 ```
 
-The first command must play only the left speaker; the second must play only
-the right speaker. This proves the native sink's stereo channel mapping.
+The first test should reach only the left speaker and the second only the right
+speaker. This audible check is required because static file and boot-argument
+validation cannot prove physical channel routing.
 
-Check the protected graph's boot-time probe result:
+If microphone coverage is required, record a short local sample:
 
-```bash
-sudo dmesg | grep -Ei 'SP11 stage|SPVI|no backend' | tail -15
+```sh
+arecord -D default -f S16_LE -r 48000 -c 2 -d 5 ./sp11-mic-test.wav
 ```
 
-The output must include `SP11 stage SP/SPVI enabled with VI+CPS feedback
-accepted` and no `no backend DAIs` message. This proves that the canonical
-topology created the protected SP/SPVI graph and its backend routes.
+Treat the recording as private unless it has been reviewed and redacted.
 
-## Privacy and Safety
+## Recovery and rollback limits
 
-The script modifies system firmware and UCM paths and removes matching files
-from the current user's PipeWire and WirePlumber configuration. It creates a
-sudo-owned backup before changing those files and records which migration
-outputs did not exist beforehand.
+The clean-up transaction and the supported audio installation have separate
+recovery boundaries.
 
-To preview rollback, then restore the newest backup and restart user audio
-services, run:
+Restore recognised legacy workarounds removed by `clean apply` with its exact
+receipt:
 
-```bash
-./scripts/sp11-audio-migrate-to-native.sh --rollback --dry-run
-./scripts/sp11-audio-migrate-to-native.sh --rollback
+```sh
+sudo linux-armer clean restore \
+  <cleanup-receipt> \
+  --root / \
+  --yes
 ```
 
-Use `--backup-dir /var/backups/sp11-audio-native-migration-<timestamp>` to
-select a specific backup. Reboot after rollback so the restored topology is
-loaded at card probe.
+This does not uninstall FullIO v19c. It deliberately restores retired files
+and may make the audio doctor fail again.
 
-DMIC capture is not available on this kernel line. The canonical topology
-defines no VA/DMIC capture graph, so migrating restores native protected
-speaker playback but regresses the internal microphone. This accepted
-limitation is tracked in ADR-0062 and
-[linux-surface-pro-11-oe issue #48](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/48).
+There is currently no supported `linux-armer userspace uninstall audio`
+command. The installer's timestamped backup supports automatic rollback during
+a failed transaction, but a successful install does not produce an uninstall
+receipt. Do not copy those files back manually without a reviewed procedure
+for the exact target state.
 
-Do not commit the topology binary, backup directory, personal paths beyond the
-documented defaults, credentials, or diagnostic archives to this repository.
-
-## Troubleshooting
-
-If the script rejects the kernel release, build and install the v9/v10 kernel,
-reboot into it, and retry. Use `--force` only for a kernel independently known
-to implement the same native audio interface.
-
-If topology verification fails, refresh `geocausa/SP11X1e-audio` and confirm
-that the render-parity artifact has the SHA-256 shown above. Do not install an
-unverified topology under the canonical firmware filename.
-
-If PipeWire is not running in a systemd user session, log out and back in after
-the migration. A reboot is still required for every topology change.
+Per-user PipeWire or WirePlumber files are also outside `clean` and the audio
+installer. If they still affect routing after the static doctor passes, review
+them separately and preserve a recoverable copy before making any change.
 
 ## References
 
-- [ADR-0062: SP11 7.2.0-jg-0sp11v9 Golden-v32 Audio Kernel Line](../adr/adr-0062-sp11-7-2-0-jg-0sp11v9-golden-v32-audio-line.md)
-- [linux-surface-pro-11-oe issue #48](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/48)
-- [ooaklee/linux_ms_dev_kit-sp11 PR #17](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/17)
-- [`sp11-audio-topology.sh`](../../scripts/sp11-audio-topology.sh) — legacy CRD topology and OE UCM installer
-- [`sp11-pipewire-speaker-sink.sh`](../../scripts/sp11-pipewire-speaker-sink.sh) — legacy PipeWire speaker-sink workaround
+- [Bring Up Current Surface Pro 11 Audio](how-to-bring-up-audio.md)
+- [ADR-0064: SP11 Audio Release Strategy](../adr/adr-0064-sp11-audio-release-strategy.md)
+- [ADR-005: Reversible Legacy Clean-up](../../cli/linux-armer/docs/adr/adr-005-reversible-legacy-cleanup.md)
+- [linux-armer userspace companion](../../cli/linux-armer/README.md#userspace-companion)
+- [Audited userspace catalogue](../../cli/linux-armer/supported-userspace.json)

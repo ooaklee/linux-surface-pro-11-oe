@@ -1,5 +1,25 @@
 # Surface Pro 11 Wi-Fi rfkill Test After Patched qcom-x1e Boot - 2026-06-14
 
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.**
+> This record preserves the patched-kernel Wi-Fi observations made on 14 June
+> 2026. Its kernel and DTB workaround, live-network commands, and next steps are
+> retained as evidence, not as current bring-up or remediation guidance.
+
+## Current Read-Only Check
+
+Inspect the current static Wi-Fi support state with:
+
+```sh
+linux-armer doctor userspace --feature wifi
+```
+
+The doctor checks package and firmware files without probing the radio. It does
+not inspect live rfkill state, scan, associate, reconnect, or prove traffic.
+The historical `nmcli`, `iw`, and journal commands below can expose SSIDs,
+BSSIDs, saved-network names, MAC addresses, and interface identifiers; redact
+their output before sharing it.
+
 ## Context
 
 The Surface Pro 11 installed system had previously upgraded to
@@ -65,7 +85,7 @@ Wi-Fi hard-block gate. This is the first local test where `phy0` reports
 `Hard blocked: no`.
 
 The helper's module string scan is best-effort and produced a false-negative
-or non-authoritative result in this boot. Runtime validation should prioritize:
+or non-authoritative result in this boot. Runtime validation should prioritise:
 
 - the running kernel ABI,
 - the loaded DTB property,
@@ -81,12 +101,16 @@ Redacted visual evidence:
 - [Wi-Fi networks visible in GNOME](../assets/wifi/2026-06-14-sp11-wifi-networks-redacted.png)
 - [Browser speed test after Wi-Fi connection](../assets/wifi/2026-06-14-sp11-speedtest-redacted.webp)
 
-## Next Steps
+## Historical Next Steps
 
-Keep testing Wi-Fi stability across repeated boots, suspend/resume cycles,
-and normal desktop use.
+The following commands and recommendations are retained as part of the dated
+investigation. They operate on the live network and are not part of the current
+`linux-armer` static validation flow.
 
-For a quick post-boot check:
+The recorded stability work covered repeated boots, suspend/resume cycles, and
+normal desktop use.
+
+The recorded quick post-boot check was:
 
 ```bash
 nmcli radio wifi on
@@ -94,13 +118,13 @@ nmcli device status
 nmcli device wifi list --rescan yes
 ```
 
-If the saved network does not reconnect automatically, try GNOME Settings or:
+The recorded reconnection fallback used GNOME Settings or:
 
 ```bash
 nmcli device wifi connect "<ssid>" --ask
 ```
 
-If networks stop listing after a later boot, collect:
+The recorded diagnostic collection for a later failure was:
 
 ```bash
 iw dev
@@ -108,5 +132,6 @@ sudo iw dev wlP4p1s0 scan | head -n 120
 journalctl -b -u NetworkManager --no-pager | tail -n 120
 ```
 
-Keep `7.0.0-32-qcom-x1e` installed as a fallback and avoid `apt autoremove`
-until Wi-Fi behavior is known after several boots.
+The record also recommended keeping `7.0.0-32-qcom-x1e` installed as a fallback
+and avoiding `apt autoremove` until Wi-Fi behaviour was known after several
+boots.

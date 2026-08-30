@@ -1,319 +1,248 @@
-# How to Bring Up Audio on Surface Pro 11
+---
+id: how-to-bring-up-audio
+title: "Bring Up Current Surface Pro 11 Audio"
+# prettier-ignore
+description: Install, inspect, and validate the checksum-pinned FullIO v19c topology and UCM set with linux-armer.
+---
 
-Last updated: 2026-08-16
+# How To: Bring Up Current Surface Pro 11 Audio
+
+Last reviewed: 2026-08-30
+
+The maintained audio path uses the checksum-pinned `audio-fullio-v19c`
+userspace release. Do not install the retired CRD topology, WSA routing or
+boot-race services, or a manual PipeWire speaker sink on this path. Those
+workarounds can conflict with the current topology and UCM set.
+
+## Purpose
+
+This procedure uses `linux-armer` to:
+
+1. inspect the installed kernel, audio files, persistent boot argument, and
+   known legacy conflicts;
+2. review and reversibly remove only recognised obsolete workarounds;
+3. download and verify the exact FullIO v19c release;
+4. preview and install the complete four-file topology and UCM set; and
+5. repeat static checks before carrying out a small manual hardware test.
+
+`linux-armer doctor userspace` is deliberately static. It does not start audio
+services, execute target binaries, play sound, record from microphones, or
+prove physical speaker behaviour. The final hardware checks therefore remain
+manual.
 
 ## Prerequisites
 
-- [x] SP11 kernel patched with DTB audio DAI links (`wsa-dai-link`, `va-dai-link`)
-- [x] ADSP/CDSP firmware in place (`qcadsp8380.mbn`, `qccdsp8380.mbn`)
-- [x] Audio firmware copied from Windows / linux-firmware
-- [x] WSA routing/graph probe installed (see [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md))
+- A Surface Pro 11 booted with a Surface `qcom-x1e` kernel. FullIO v19c
+  requires the interfaces introduced by the `sp11v12` generation and is
+  currently tested through `sp11v19`.
+- The current `linux-armer` executable available on the installed system.
+- Network access for the release download.
+- Sufficient privilege to install files below `/lib/firmware` and
+  `/usr/share/alsa/ucm2`.
+- Recovery media and a known-good kernel entry before changing system audio
+  files.
 
-## Status (2026-08-16)
+The FullIO topology contains protected vendor-derived bytes and its catalogue
+entry is redistribution-restricted. Use the verified release only within the
+rights that apply to you; do not copy it into another published image or
+release.
 
-| Audio path | Status | Notes |
-|---|---|---|
-| Sound card (ALSA) | Working | `x1e80100` card instantiates with topology |
-| Speaker (WSA884x) | Experimental (both slots mapped) | 4-channel PCM via WSA_CODEC_DMA_RX_0. PipeWire uses `[ FL RL FR RR ]` so physical slots 0 and 2 receive the stereo mix; this is slot mapping, not a DAPM bypass. See [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md). |
-| Audio graph setup | Probe-backed | `sp11-wsa-routing.service` applies the route with PCM1 closed, then exercises a fresh graph. Boot opcode `0x1001021` is only the SPF readiness query; ALSA restore services must not be masked. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
-| PipeWire integration | Partial | Card detected but manual sink config needed |
-| Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
-| Internal microphones (VA DMIC) | Working, slightly tinny | Corrected UCM opens the `Mic` device and records two-channel 48 kHz `S16_LE` audio from `hw:0,3`. Surface-specific 0 dB decoder gain avoids the clipping seen with the shared +16 dB default. The validated 2.4 MHz DMIC clock eliminates the continuous static heard at 4.8 MHz; capture remains slightly tinny or thin. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
-| HDMI/DisplayPort audio | Untested | DP DAI links not in current DTS |
-| Bluetooth audio | Working | Independent of card topology |
+## 1. Inspect the current audio state
 
-## Quick Start: Build and Install Topology
+Run the audio-specific doctor as a regular user:
 
-### 1. Build the topology
-
-```bash
-./scripts/sp11-audio-topology.sh
+```sh
+linux-armer doctor userspace --feature audio
 ```
 
-### 2. Install (needs sudo)
+A non-zero exit status is expected when audio support is missing or
+inconsistent. The report checks:
 
-```bash
-sudo ./scripts/sp11-audio-topology.sh --install
+- the selected Surface kernel generation;
+- exact SHA-256 identities and sizes for the FullIO v19c topology and UCM set;
+- the persistent
+  `soundwire_qcom.sp11_feedback_active_offset2_zero=1` boot argument; and
+- known system-wide legacy audio conflicts.
+
+The report does not change the system.
+
+## 2. Review obsolete workarounds
+
+Start with a read-only scan, then write a private plan:
+
+```sh
+linux-armer clean scan --root /
+linux-armer clean plan \
+  --root / \
+  --output linux-armer-audio-cleanup-plan.json
+cat linux-armer-audio-cleanup-plan.json
 ```
 
-### 3. Reboot
+Review every finding. The plan is not audio-filtered: it may also contain
+recognised touchscreen or pen workarounds. Apply it only if every recognised
+entry is one you intend to remove. Entries labelled `manual-review` are not
+removed automatically.
 
-The topology is loaded by the AudioReach DSP at card probe time (boot). Reboot
-is required after first install.
+The current audio allow-list covers only recognised system-wide WSA routing
+units and helpers, the retired boot-race helper, and the recognised system-wide
+manual PipeWire sink. It does not remove:
 
-### 4. Install the WSA routing/graph probe
+- per-user PipeWire or WirePlumber configuration;
+- unfamiliar or locally modified files;
+- retired UCM files that are outside the compiled clean-up allow-list; or
+- the supported FullIO v19c files.
 
-The helper installs `sp11-wsa-routing.service`, unmasks any ALSA-state-service
-masks left by old releases, applies WSA routing while PCM1 is closed, and
-opens a short silent stream to exercise AudioReach and DAPM. See the corrected
-status in [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md).
+If the plan is correct, apply that exact reviewed plan:
 
-```bash
-sudo ./scripts/sp11-fix-audio-boot-race.sh install
+```sh
+sudo linux-armer clean apply \
+  --root / \
+  --plan linux-armer-audio-cleanup-plan.json \
+  --yes
+```
+
+Keep the printed receipt path. The command backs up recognised entries before
+removing them. Do not manually delete an unrecognised finding merely to make
+the doctor pass.
+
+## 3. Pull the verified FullIO v19c release
+
+Choose a writable cache directory and download the exact audited release:
+
+```sh
+linux-armer userspace pull audio \
+  --cache-dir ./linux-armer-userspace
+
+AUDIO_RELEASE=./linux-armer-userspace/audio-fullio-v19c/sp11-audio-v19c
+```
+
+The pull fails if the remote asset set differs from the allow-list, GitHub's
+publisher digests disagree with `SHA256SUMS`, or any required file is missing.
+It writes a portable verification receipt into the release directory.
+
+## 4. Preview and install the release
+
+Verify the release and review every planned target without changing the
+system:
+
+```sh
+linux-armer userspace install audio \
+  --from "$AUDIO_RELEASE" \
+  --dry-run
+```
+
+When the plan is correct, run the privileged installation explicitly:
+
+```sh
+sudo linux-armer userspace install audio \
+  --from "$AUDIO_RELEASE" \
+  --yes
 sudo reboot
 ```
 
-After reboot, verify the service's own probe and graph lifecycle:
+The installer verifies the bundle again and installs the complete topology and
+UCM set as one transaction. Existing files at the four managed destinations
+are copied to a timestamped directory below
+`/var/lib/linux-armer/backups/userspace` before replacement. A failure during
+the transaction triggers an automatic rollback of changes already applied.
 
-```bash
-# 1001021 is GET_SPF_STATE and is not a playback-graph failure.
-# The service should produce no new 1001000..1001006 errors.
-journalctl -k -b | grep -E '100100[0-6]|qcom-apm'
+## 5. Validate the installed state
 
-# Should show no Bus clash
-journalctl -k -b | grep 'Bus clash'
+After reboot, rerun the static doctor:
 
-# The WSA routing service should be active
-systemctl status sp11-wsa-routing.service
+```sh
+linux-armer doctor userspace --feature audio
 ```
 
-### 5. Test with ALSA directly
+If the boot argument is reported missing, media created by the current Ubuntu
+adapter normally supplies it to both live and installed boot paths. For a
+different installation path, add
+`soundwire_qcom.sp11_feedback_active_offset2_zero=1` to that distribution's
+persistent kernel command line, regenerate its bootloader configuration, and
+reboot. `linux-armer` currently diagnoses this condition but does not edit an
+existing system's bootloader configuration.
 
-```bash
-# Check card appeared
-cat /proc/asound/cards
-aplay -l
+Confirm that the argument reached the running kernel:
 
-# Close every PCM holder, apply the complete route, and exercise a fresh graph.
-systemctl --user stop wireplumber.service pipewire-pulse.service \
-  pipewire-pulse.socket pipewire.service pipewire.socket
-SP11_MAX_RETRIES=2 ./scripts/sp11-enable-wsa-routing.sh
-
-# Low-level tests of physical slots 0 and 2.
-speaker-test -D hw:X1E80100Microso,1 -c 4 -r 48000 -F S16_LE \
-  -t sine -f 440 -S 10 -s 1 -l 1
-speaker-test -D hw:X1E80100Microso,1 -c 4 -r 48000 -F S16_LE \
-  -t sine -f 440 -S 10 -s 3 -l 1
-
-systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service
+```sh
+grep -o 'soundwire_qcom.sp11_feedback_active_offset2_zero=[^ ]*' /proc/cmdline
+cat /sys/module/soundwire_qcom/parameters/sp11_feedback_active_offset2_zero
 ```
 
-**SAFETY**: Keep volume low (`SpkrLeft PA Volume`, `SpkrRight PA Volume`). The
-machine driver limits these to raw 6/31 (0 dB at index 6), but verify with:
+The commands should show the value `1` and the module parameter `Y`.
 
-```bash
-amixer -c0 cget numid=1   # SpkrLeft PA Volume
-amixer -c0 cget numid=9   # SpkrRight PA Volume
-```
+## 6. Carry out the live hardware gates
 
-### 6. PipeWire workaround
+First confirm that PipeWire exposes the built-in audio devices:
 
-If PipeWire shows only `Dummy Output` after reboot, install the user-level
-manual speaker sink:
-
-```bash
-./scripts/sp11-pipewire-speaker-sink.sh --install --enable-route
+```sh
 wpctl status
-./scripts/troubleshoot-sp11-audio.sh > sp11-audio-after-manual-sink.txt
 ```
 
-This writes
-`~/.config/pipewire/pipewire.conf.d/50-sp11-speakers.conf`, wraps the verified
-ALSA speaker PCM (`hw:X1E80100Microso,1`), applies a channelmix matrix that
-sums stereo onto physical slots 0 and 2, and restarts the user PipeWire
-services. This fixes userspace slot assignment; it does not bypass DAPM or
-prove that either amplifier is acoustically healthy. It is a stop-gap, not
-the final UCM fix. Remove it with:
+The static doctor cannot prove that a speaker is connected correctly. Before
+using `speaker-test`, set the desktop output volume to a low level, keep the
+speakers unobstructed, and stop immediately if you hear clipping, crackling, or
+unexpectedly loud output.
 
-```bash
-./scripts/sp11-pipewire-speaker-sink.sh --remove
+```sh
+speaker-test -D default -c 2 -t sine -f 440 -s 1 -l 1
+speaker-test -D default -c 2 -t sine -f 440 -s 2 -l 1
 ```
 
-## How It Works
+Confirm that the first command reaches only the left speaker and the second
+only the right speaker. Do not alter raw amplifier or DMA mixer controls as a
+normal bring-up step.
 
-### The Missing File
+If microphone validation is required, make a short local recording in a quiet
+room:
 
-The X1E80100 AudioReach DSP requires a *topology graph* (`.tplg.bin`) that
-describes the audio routing between frontend PCMs (MultiMedia1-6) and backend
-DAIs (WSA_CODEC_DMA_RX_0, VA_CODEC_DMA_TX_0, etc.).
-
-The file name is constructed as:
-
-```
-qcom/{driver_name}/{card_name}-tplg.bin
+```sh
+arecord -D default -f S16_LE -r 48000 -c 2 -d 5 ./sp11-mic-test.wav
 ```
 
-For Surface Pro 11:
-- `driver_name` = `x1e80100` (from machine driver)
-- `card_name` = `X1E80100-Microsoft-Surface-Pro-11` (from DTS `model` property)
+The recording may contain private conversation or background sound. Keep it
+local unless it has been reviewed and redacted.
 
-Result: `qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`
+## Recovery and rollback limits
 
-### Topology Generation
+To restore workarounds removed by `clean apply`, use the exact receipt printed
+by that command:
 
-The topology is built from the `X1E80100-CRD.m4` template in
-[linux-msm/audioreach-topology](https://github.com/linux-msm/audioreach-topology):
+```sh
+sudo linux-armer clean restore \
+  <cleanup-receipt> \
+  --root / \
+  --yes
+```
 
-1. `m4` macro processor expands the `.m4` template → `.conf` text description
-2. `alsatplg` (from alsa-utils) compiles `.conf` → `.tplg.bin` binary topology
+Restoring a retired workaround can make the FullIO audio doctor fail again, so
+use this only to recover from the reviewed clean-up transaction.
 
-The CRD template is the same source used for 10+ other X1E80100 devices
-including Romulus (Surface Laptop 7). It provides:
-- WSA_CODEC_DMA_RX_0 (4-channel: woofer + tweeter per channel)
-- VA_CODEC_DMA_TX_0 (voice-activation microphone array)
-- TX_CODEC_DMA_TX_3 (WCD939x headset mic — unused by current DTS)
-- RX_CODEC_DMA_RX_0 (WCD939x headphone — unused by current DTS)
-- DISPLAY_PORT_RX_0-7 (HDMI/DP audio — unused by current DTS)
-
-### ALSA UCM Integration
-
-The UCM profile (`/usr/share/alsa/ucm2/`) is configured via DMI-based regex
-matching in `conf.d/x1e80100/x1e80100.conf`. The Surface Pro 11 DMI string
-(`Microsoft Corporation-Surface-Microsoft Surface Pro, 11th Edition`) is matched
-and loads the Surface-specific UCM config.
-
-The Surface-specific profile must reference only the single WSA macro exposed
-by the card. Older copies also enabled `Wsa2Speaker*` sequences; UCM aborted on
-the missing `WSA2` controls before it could expose either `Speaker` or `Mic`.
-The corrected profile removes those invalid sequences and declares two capture
-channels. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md).
-
-The manual speaker sink remains necessary for the verified channel-position
-workaround. It bypasses ACP/UCM for playback and opens the speaker PCM directly.
+There is no supported `linux-armer userspace uninstall audio` command yet. The
+audio installer can automatically roll back a failed in-progress transaction,
+but it does not issue a receipt that can uninstall a successful installation.
+Its backup directory is recovery evidence, not an instruction to copy files
+back by hand. If a successful v19c installation must be reversed, stop and
+seek a reviewed recovery procedure for the exact system state.
 
 ## Troubleshooting
 
-### Card not appearing in /proc/asound/cards
-
-```bash
-dmesg | grep -i 'tplg\|snd-x1e'
-# Expected: no topology load error
-# If error: verify topology file exists at /lib/firmware/qcom/x1e80100/
-```
-
-### speaker-test fails with "Invalid argument"
-
-```bash
-# Check if DSP mixer route is enabled
-amixer -c0 cget numid=68
-# If "values=off", enable it:
-amixer -c0 cset numid=68 'on'
-```
-
-### WSA warning in dmesg
-
-```
-wsa_macro 6b00000.codec: using zero-initialized flat cache
-```
-
-This warning is on the active WSA macro (6b00000, prefix `WSA`) that drives
-the SoundWire bus. It indicates that the regmap cache began zero-initialized,
-but does not by itself prove an open-graph or amplifier failure. The
-`audio.position` reorder maps PipeWire onto physical PCM slots 0 and 2; it is
-not a DAPM workaround. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md)
-and [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md).
-
-### No sound from speakers
-
-1. Stop PipeWire services and activation sockets, then run
-   `SP11_MAX_RETRIES=2 ./scripts/sp11-enable-wsa-routing.sh`.
-2. Check mixer levels: `amixer -c0 contents | grep -A2 'PA Volume'`.
-3. Test `hw:X1E80100Microso,1` as four-channel S16_LE/48 kHz; slots 1 and 3
-   in `speaker-test -s` correspond to physical PCM slots 0 and 2.
-4. If the probe reports RUNNING plus both WSA DAPM endpoints but the tone is
-   still silent, investigate WSA884x PA state/profile; do not infer another
-   graph-open failure from boot opcode `0x1001021`.
-
-### UCM exposes no microphone source
-
-Check whether the `HiFi` verb opens and lists both devices:
-
-```bash
-alsaucm -c hw:0 set _verb HiFi list _devices
-```
-
-If this fails on a control beginning with `WSA2`, reinstall the repository's
-Surface UCM profile. The Surface card exposes one WSA macro with two WSA8845
-amplifiers; a second WSA macro sequence prevents the whole verb from loading.
-
-After installation, verify direct capture before debugging PipeWire:
-
-```bash
-arecord -D hw:0,3 -f S16_LE -r 48000 -c 2 -d 5 sp11-mic-test.wav
-```
-
-If the card retained its old `off` profile from an earlier failed UCM load,
-activate `HiFi` once and select the internal microphone source:
-
-```bash
-pactl set-card-profile alsa_card.platform-sound HiFi
-wpctl status
-wpctl set-default <internal-microphone-source-id>
-```
-
-### Microphone works but has constant static
-
-This is the current known limitation. The standard PipeWire source and direct
-ALSA capture both carry a persistent broadband static or scratching sound, and
-volume controls show input activity in a quiet room.
-
-Tests completed on the target device found:
-
-- reducing `VA_DEC0 Volume` and `VA_DEC1 Volume` from +16 dB to 0 dB removed
-  full-scale clipping and made speech clearer, but did not remove the static;
-- DMIC0 was cleaner than DMIC1, while DMIC2 produced anomalous full-scale data
-  and DMIC3 was silent;
-- an 80 Hz high-pass plus 8 kHz low-pass filter improved measured noise and
-  voice clarity, but the static remained clearly audible; and
-- WebRTC noise suppression reduced the idle level but degraded speech quality
-  substantially, so it is not enabled by default.
-
-Do not interpret activity in a quiet room as proof that Firefox, PipeWire, or
-the desktop portal is creating the noise. The same behavior is present in raw
-ALSA capture.
-
-The 2.4 MHz DMIC clock is now the validated Surface Pro 11 default. The
-co-installable `7.1.3-jg-1dmic2p4-qcom-x1e` diagnostic kernel eliminated the continuous
-feedback/static heard with 4.8 MHz, made recorded speech dramatically clearer,
-and caused no audible degradation during music playback. Capture remains
-slightly tinny or thin. The kernel uses a Stubble-provided device tree embedded
-in the packaged image, so changing a loose DTB under `/boot` or the EFI System
-Partition does not change the live tree. See
-[ADR-0045](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md) for the test
-build and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md) for the
-default-setting decision and device-side evidence.
-
-For a new installation, use the experimental
-[`7.2-rc5-jg-0sp11v3` r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
-with the
-[`sp11-audio-topology-v2` assets](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
-The v2 topology binary is unchanged from v1; v2 updates the UCM capture path to
-match the single WSA macro, use two microphone channels, and apply unity
-decoder gain. The kernel remains necessary because UCM changes alone do not
-alter the Denali DMIC clock. The v3 kernel retains the v2 build's validated
-2.4 MHz clock and adds the separately packaged, exact-ABI touchscreen module
-set. See [ADR-0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
-and [ADR-0049](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md).
-
-The 7.2-rc5 SP11 v2 and v3 kernels boot with the 2.4 MHz clock through the
-GRUB-injected `/boot/sp11-denali.dtb` (unlike the 7.1.3 v2 kernel, which carried
-the device tree embedded in the packaged Stubble image). The installer prefers
-the newest numeric `sp11vN` build's DTB and injects it into every GRUB kernel
-entry, so the live device-tree value reflects the injected file:
-
-```bash
-uname -r
-od -An -tu4 -N4 --endian=big \
-  /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
-```
-
-Expected output for the current bundle is
-`7.2-rc5-jg-0sp11v3-qcom-x1e` and `2400000`.
+- If the doctor reports `audio-legacy-conflicts`, use the reviewed clean-up
+  flow above. A remaining per-user or unfamiliar UCM conflict requires manual
+  review because it is outside the clean-up allow-list.
+- If `userspace pull audio` rejects the release, do not bypass verification or
+  assemble a bundle from individual files. Retry into a new empty cache after
+  checking network access and the published release state.
+- If the doctor passes but PipeWire shows only a dummy output, reboot once,
+  then collect `wpctl status` and relevant kernel logs. Do not reinstall the
+  retired manual sink or WSA routing helpers.
+- Passing static validation does not qualify headphones, DisplayPort audio,
+  Bluetooth audio, microphones, suspend, or repeated reboot behaviour. Record
+  each required hardware gate separately.
 
 ## References
 
-- ADR: [adr-0033-audio-topology-gap.md](../adr/adr-0033-audio-topology-gap.md)
-- ADR: [adr-0034-wsa2-regcache-right-speaker.md](../adr/adr-0034-wsa2-regcache-right-speaker.md)
-- ADR: [adr-0035-audio-boot-race-alsactl.md](../adr/adr-0035-audio-boot-race-alsactl.md)
-- ADR: [adr-0036-right-speaker-audio-position-reorder.md](../adr/adr-0036-right-speaker-audio-position-reorder.md)
-- ADR: [adr-0044-sp11-ucm-single-wsa-macro-microphone.md](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
-- ADR: [adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
-- ADR: [adr-0046-sp11-default-2p4mhz-dmic-clock.md](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md)
-- ADR: [adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
-- Script: [sp11-audio-topology.sh](../../scripts/sp11-audio-topology.sh)
-- Script: [sp11-pipewire-speaker-sink.sh](../../scripts/sp11-pipewire-speaker-sink.sh)
-- Script: [sp11-enable-wsa-routing.sh](../../scripts/sp11-enable-wsa-routing.sh)
-- Script: [sp11-fix-audio-boot-race.sh](../../scripts/sp11-fix-audio-boot-race.sh)
-- Source: [linux-msm/audioreach-topology](https://github.com/linux-msm/audioreach-topology)
-- UCM configs: `/usr/share/alsa/ucm2/Qualcomm/x1e80100/`
-- PipeWire UCM issue: see ADR-0033 for tracking and workarounds
+- [Migrate Legacy Audio to FullIO v19c](how-to-migrate-to-native-audio.md)
+- [ADR-0064: SP11 Audio Release Strategy](../adr/adr-0064-sp11-audio-release-strategy.md)
+- [linux-armer userspace companion](../../cli/linux-armer/README.md#userspace-companion)
+- [Audited userspace catalogue](../../cli/linux-armer/supported-userspace.json)
