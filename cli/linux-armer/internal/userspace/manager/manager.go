@@ -85,6 +85,12 @@ type InstallRequest struct {
 	Selector string
 	// From is an exact release directory, or the userspace cache root for recommended.
 	From string
+	// RepositoryRoot supplies current Git authority for a native camera build or
+	// prepared local release. Downloaded immutable bundles do not use it.
+	RepositoryRoot string
+	// CameraAuthoritySHA256 is the trusted build- or preparation-time digest
+	// required when Selector names a native camera input.
+	CameraAuthoritySHA256 string
 	// Root is the target filesystem root and defaults to the running system root.
 	Root string
 	// DryRun verifies inputs and returns a plan without changing the target.
@@ -279,9 +285,11 @@ func makeStatusPolicies(componentCatalog *catalog.Catalog) ([]userspacestatus.Co
 	return policies, nil
 }
 
-// Install validates catalogue policy, resolves verified release directories, and
-// dispatches only the three compiled component installers. A recommended
-// mutation preflights both bundles before changing either component.
+// Install validates catalogue policy, resolves verified component directories,
+// and dispatches only the three compiled installers. Camera may additionally
+// authenticate a native build or local release against the selected support
+// repository. A recommended mutation preflights both downloaded bundles before
+// changing either component.
 func (m *Manager) Install(ctx context.Context, request InstallRequest) ([]userspaceinstall.Result, error) {
 	if m == nil || m.Installer == nil {
 		return nil, errors.New("userspace install manager is unavailable")
@@ -294,20 +302,26 @@ func (m *Manager) Install(ctx context.Context, request InstallRequest) ([]usersp
 	if err != nil {
 		return nil, err
 	}
+	if request.CameraAuthoritySHA256 != "" && (recommended || len(components) != 1 || components[0] != CameraComponent) {
+		return nil, errors.New("camera authority SHA-256 applies only to an explicit camera installation")
+	}
+	if request.RepositoryRoot != "" && (recommended || len(components) != 1 || components[0] != CameraComponent) {
+		return nil, errors.New("repository root applies only to an explicit native camera installation")
+	}
 	targets, err := resolveInstallTargets(componentCatalog, components, request.From, recommended)
 	if err != nil {
 		return nil, err
 	}
 
 	if request.DryRun {
-		return m.runInstalls(ctx, targets, request.Root, true)
+		return m.runInstalls(ctx, targets, request.Root, request.RepositoryRoot, request.CameraAuthoritySHA256, true)
 	}
 	if recommended {
-		if _, err := m.runInstalls(ctx, targets, request.Root, true); err != nil {
+		if _, err := m.runInstalls(ctx, targets, request.Root, request.RepositoryRoot, request.CameraAuthoritySHA256, true); err != nil {
 			return nil, fmt.Errorf("preflight recommended userspace installation: %w", err)
 		}
 	}
-	return m.runInstalls(ctx, targets, request.Root, false)
+	return m.runInstalls(ctx, targets, request.Root, request.RepositoryRoot, request.CameraAuthoritySHA256, false)
 }
 
 // runInstalls invokes the component-specific installer for each already
@@ -316,11 +330,17 @@ func (m *Manager) runInstalls(
 	ctx context.Context,
 	targets []installTarget,
 	root string,
+	repositoryRoot string,
+	cameraAuthoritySHA256 string,
 	dryRun bool,
 ) ([]userspaceinstall.Result, error) {
 	results := make([]userspaceinstall.Result, 0, len(targets))
 	for _, target := range targets {
-		options := userspaceinstall.Options{BundleDir: target.bundleDir, Root: root, DryRun: dryRun}
+		options := userspaceinstall.Options{
+			BundleDir: target.bundleDir, RepositoryRoot: repositoryRoot,
+			CameraAuthoritySHA256: cameraAuthoritySHA256,
+			Root:                  root, DryRun: dryRun,
+		}
 		var result userspaceinstall.Result
 		var err error
 		switch target.component {

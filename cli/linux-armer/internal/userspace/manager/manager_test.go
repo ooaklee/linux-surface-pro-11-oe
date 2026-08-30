@@ -180,8 +180,11 @@ func TestInstallCameraUsesExactReleaseDirectoryOnlyOnExplicitSelection(t *testin
 	manager := New(catalog.NewLoader(testCatalogFS(), "supported-userspace.json"), &fakeDownloader{}, nil)
 	manager.Installer = installer
 	bundle := t.TempDir()
+	repositoryRoot := t.TempDir()
+	authority := strings.Repeat("a", 64)
 	results, err := manager.Install(context.Background(), InstallRequest{
-		Selector: "camera", From: bundle, Root: "/", DryRun: true,
+		Selector: "camera", From: bundle, RepositoryRoot: repositoryRoot,
+		CameraAuthoritySHA256: authority, Root: "/", DryRun: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +192,8 @@ func TestInstallCameraUsesExactReleaseDirectoryOnlyOnExplicitSelection(t *testin
 	if len(results) != 1 || len(installer.calls) != 1 {
 		t.Fatalf("results = %#v, calls = %#v", results, installer.calls)
 	}
-	if call := installer.calls[0]; call.component != CameraComponent || call.options.BundleDir != bundle || !call.options.DryRun {
+	if call := installer.calls[0]; call.component != CameraComponent || call.options.BundleDir != bundle ||
+		call.options.RepositoryRoot != repositoryRoot || call.options.CameraAuthoritySHA256 != authority || !call.options.DryRun {
 		t.Fatalf("camera call = %#v", call)
 	}
 }
@@ -219,6 +223,20 @@ func TestInstallRejectsUnknownCompiledWorkflow(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected unsupported install selector to fail")
+	}
+}
+
+// TestInstallRejectsCameraAuthorityForOtherSelectors verifies that camera-only
+// trust material cannot be silently ignored by a different installer.
+func TestInstallRejectsCameraAuthorityForOtherSelectors(t *testing.T) {
+	manager := New(catalog.NewLoader(testCatalogFS(), "supported-userspace.json"), &fakeDownloader{}, nil)
+	manager.Installer = &fakeInstaller{}
+	_, err := manager.Install(context.Background(), InstallRequest{
+		Selector: "audio", From: t.TempDir(),
+		CameraAuthoritySHA256: strings.Repeat("a", 64), DryRun: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "only to an explicit camera") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

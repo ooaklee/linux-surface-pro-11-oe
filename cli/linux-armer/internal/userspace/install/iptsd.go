@@ -114,13 +114,9 @@ func (installer *Installer) IPTSD(ctx context.Context, options Options) (Result,
 		return Result{}, err
 	}
 	archive := bundle.paths[iptsdArchiveName]
-	stage, err := os.MkdirTemp("", "linux-armer-iptsd-install-*")
+	stage, err := createPrivateInstallStaging("linux-armer-iptsd-install-*")
 	if err != nil {
 		return Result{}, fmt.Errorf("create private IPTSD staging directory: %w", err)
-	}
-	if err := os.Chmod(stage, 0o700); err != nil {
-		_ = os.RemoveAll(stage)
-		return Result{}, fmt.Errorf("protect IPTSD staging directory: %w", err)
 	}
 	defer os.RemoveAll(stage)
 	stagedArchive := filepath.Join(stage, iptsdArchiveName)

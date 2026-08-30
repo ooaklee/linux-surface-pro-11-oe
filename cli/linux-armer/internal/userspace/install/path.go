@@ -116,14 +116,31 @@ func openRegularNoFollow(path string) (*os.File, os.FileInfo, error) {
 
 // hashRegularNoFollow hashes the same no-follow descriptor returned by stat.
 func hashRegularNoFollow(path string) (string, os.FileInfo, error) {
+	return hashRegularNoFollowBounded(path, -1)
+}
+
+// hashRegularNoFollowBounded hashes one pinned regular descriptor only when its
+// opened size is within the selected ceiling. A negative ceiling is unlimited.
+func hashRegularNoFollowBounded(path string, maximum int64) (string, os.FileInfo, error) {
 	file, info, err := openRegularNoFollow(path)
 	if err != nil {
 		return "", nil, err
 	}
 	defer file.Close()
+	if info.Size() < 0 || maximum >= 0 && info.Size() > maximum {
+		return "", nil, fmt.Errorf("regular file exceeds the %d-byte hashing limit: %s", maximum, path)
+	}
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	readLimit := info.Size()
+	if readLimit < int64(^uint64(0)>>1) {
+		readLimit++
+	}
+	written, err := io.Copy(hash, io.LimitReader(file, readLimit))
+	if err != nil {
 		return "", nil, err
+	}
+	if written != info.Size() {
+		return "", nil, fmt.Errorf("regular file changed while it was hashed: %s", path)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), info, nil
 }

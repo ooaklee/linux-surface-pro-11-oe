@@ -19,6 +19,8 @@ import (
 	"time"
 
 	linuxarmer "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer"
+	camerabuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/build"
+	camerarelease "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/release"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 	userspacecatalog "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/catalog"
 	userspaceiptsd "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/iptsd"
@@ -456,6 +458,186 @@ func TestCameraUsesOneExactAptGetTransaction(t *testing.T) {
 	}
 }
 
+// TestCameraAcceptsAuthenticatedNativeBuild verifies that an eight-file native
+// build supplies its dynamic package generation without weakening apt ordering.
+func TestCameraAcceptsAuthenticatedNativeBuild(t *testing.T) {
+	directory, receipt := makeNativeCameraInput(t, false)
+	canonicalDirectory, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repositoryRoot := t.TempDir()
+	authority := cameraAuthorityDigest(t, directory, false)
+	installer := New(&fakeRunner{})
+	installer.validateCameraBuild = func(_ context.Context, _ platform.Runner, request camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error) {
+		if request.RepositoryRoot != repositoryRoot || request.Directory != canonicalDirectory || request.ExpectedAuthoritySHA256 != authority {
+			t.Fatalf("validation request = %+v", request)
+		}
+		return receipt, nil
+	}
+	installer.validateCameraRelease = func(context.Context, platform.Runner, camerarelease.ValidationRequest) (camerarelease.ValidationReceipt, error) {
+		return camerarelease.ValidationReceipt{}, errors.New("unexpected release validator")
+	}
+
+	result, err := installer.Camera(context.Background(), Options{
+		BundleDir: directory, RepositoryRoot: repositoryRoot,
+		CameraAuthoritySHA256: authority,
+		Root:                  "/", DryRun: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Command == nil || len(result.Command.Args) != 9 {
+		t.Fatalf("camera command = %+v", result.Command)
+	}
+	for index, packageName := range camerabuild.RuntimePackageNames() {
+		want := filepath.Join(canonicalDirectory, packageName+"_"+receipt.PackageVersion+"_arm64.deb")
+		if got := result.Command.Args[index+4]; got != want {
+			t.Fatalf("camera package %d = %q, want %q", index, got, want)
+		}
+	}
+}
+
+// TestCameraAcceptsAuthenticatedNativeRelease verifies that the eleven-file
+// release authority is selected even though it necessarily carries a build receipt.
+func TestCameraAcceptsAuthenticatedNativeRelease(t *testing.T) {
+	directory, buildReceipt := makeNativeCameraInput(t, true)
+	canonicalDirectory, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repositoryRoot := t.TempDir()
+	authority := cameraAuthorityDigest(t, directory, true)
+	installer := New(&fakeRunner{})
+	installer.validateCameraBuild = func(context.Context, platform.Runner, camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error) {
+		return camerabuild.BundleReceipt{}, errors.New("unexpected build validator")
+	}
+	installer.validateCameraRelease = func(_ context.Context, _ platform.Runner, request camerarelease.ValidationRequest) (camerarelease.ValidationReceipt, error) {
+		if request.RepositoryRoot != repositoryRoot || request.Directory != canonicalDirectory || request.ExpectedAuthoritySHA256 != authority {
+			t.Fatalf("validation request = %+v", request)
+		}
+		return camerarelease.ValidationReceipt{Manifest: camerarelease.Manifest{Build: buildReceipt}}, nil
+	}
+
+	result, err := installer.Camera(context.Background(), Options{
+		BundleDir: directory, RepositoryRoot: repositoryRoot,
+		CameraAuthoritySHA256: authority,
+		Root:                  "/", DryRun: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Command == nil || len(result.Command.Args) != 9 {
+		t.Fatalf("camera command = %+v", result.Command)
+	}
+}
+
+// TestCameraRejectsAmbiguousAuthority verifies that a downloaded receipt can
+// never coexist with either native authority family.
+func TestCameraRejectsAmbiguousAuthority(t *testing.T) {
+	directory, _ := makeBundle(t, CameraComponent, "sp11-imx681-libcamera-v1", map[string][]byte{
+		"fixture.deb": []byte("fixture"),
+	})
+	if err := os.WriteFile(filepath.Join(directory, camerabuild.ReceiptName), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installer := New(&fakeRunner{})
+	_, err := installer.Camera(context.Background(), Options{BundleDir: directory, Root: "/", DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "mixes downloaded and native") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestCameraNativeAuthorityRequiresRepositoryRoot verifies that native
+// provenance cannot silently fall back to the running directory.
+func TestCameraNativeAuthorityRequiresRepositoryRoot(t *testing.T) {
+	directory, _ := makeNativeCameraInput(t, false)
+	installer := New(&fakeRunner{})
+	_, err := installer.Camera(context.Background(), Options{BundleDir: directory, Root: "/", DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "repository root is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestCameraRevalidatesNativePackagesBeforeApt verifies that a native package
+// changed after provenance validation cannot cross the privileged boundary.
+func TestCameraRevalidatesNativePackagesBeforeApt(t *testing.T) {
+	directory, receipt := makeNativeCameraInput(t, false)
+	repositoryRoot := t.TempDir()
+	installer := New(&fakeRunner{})
+	installer.euid = func() int { return 0 }
+	installer.validateCameraBuild = func(context.Context, platform.Runner, camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error) {
+		name := camerabuild.RuntimePackageNames()[0] + "_" + receipt.PackageVersion + "_arm64.deb"
+		if err := os.WriteFile(filepath.Join(directory, name), []byte("changed after validation"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return receipt, nil
+	}
+	_, err := installer.Camera(context.Background(), Options{
+		BundleDir: directory, RepositoryRoot: repositoryRoot,
+		CameraAuthoritySHA256: cameraAuthorityDigest(t, directory, false),
+		Root:                  "/",
+	})
+	if err == nil || !strings.Contains(err.Error(), "stage verified camera package") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestCameraNativeAuthorityRejectsMissingOrMismatchedDigest verifies that a
+// native directory cannot establish trust with its own colocated receipt alone.
+func TestCameraNativeAuthorityRejectsMissingOrMismatchedDigest(t *testing.T) {
+	directory, _ := makeNativeCameraInput(t, false)
+	installer := New(&fakeRunner{})
+	for name, digest := range map[string]string{
+		"missing":    "",
+		"mismatched": strings.Repeat("0", 64),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := installer.Camera(context.Background(), Options{
+				BundleDir: directory, RepositoryRoot: t.TempDir(),
+				CameraAuthoritySHA256: digest, Root: "/", DryRun: true,
+			})
+			if err == nil || !strings.Contains(err.Error(), "authority SHA-256") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+// TestCameraNativeAuthorityRejectsOversizedReceiptBeforeHashing verifies a
+// sparse authority cannot force an unbounded pre-validation read.
+func TestCameraNativeAuthorityRejectsOversizedReceiptBeforeHashing(t *testing.T) {
+	directory, _ := makeNativeCameraInput(t, false)
+	receiptPath := filepath.Join(directory, camerabuild.ReceiptName)
+	if err := os.Truncate(receiptPath, maximumNativeCameraBuildAuthorityBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	installer := New(&fakeRunner{})
+	_, err := installer.Camera(context.Background(), Options{
+		BundleDir: directory, RepositoryRoot: t.TempDir(),
+		CameraAuthoritySHA256: strings.Repeat("0", 64), Root: "/", DryRun: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "hashing limit") {
+		t.Fatalf("oversized authority error = %v", err)
+	}
+}
+
+// TestCameraRejectsReleaseWithoutBuildAuthority verifies the paired authority
+// requirement before any validator or package-manager command can run.
+func TestCameraRejectsReleaseWithoutBuildAuthority(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, camerarelease.ManifestName), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installer := New(&fakeRunner{})
+	_, err := installer.Camera(context.Background(), Options{
+		BundleDir: directory, RepositoryRoot: t.TempDir(), Root: "/", DryRun: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "is missing "+camerabuild.ReceiptName) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 // nativeIPTSDExtractor creates a tiny private tree for transaction tests; the
 // production contract validator is replaced only inside these tests.
 type nativeIPTSDExtractor struct {
@@ -865,6 +1047,49 @@ func makeBundle(t *testing.T, component, tag string, contents map[string][]byte)
 		t.Fatal(err)
 	}
 	return directory, releaseSpec{component: component, tag: tag, files: files}
+}
+
+// makeNativeCameraInput creates the package subset needed to exercise authority
+// selection while injected validators stand in for the full ARM64 proof.
+func makeNativeCameraInput(t *testing.T, preparedRelease bool) (string, camerabuild.BundleReceipt) {
+	t.Helper()
+	directory := t.TempDir()
+	version := "0.7.0-1ubuntu2+sp11.2.20260830123456.0123456789abcdef01234567"
+	receipt := camerabuild.BundleReceipt{PackageVersion: version}
+	for _, packageName := range camerabuild.RuntimePackageNames() {
+		name := packageName + "_" + version + "_arm64.deb"
+		contents := []byte("native package " + packageName)
+		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		receipt.Artifacts = append(receipt.Artifacts, camerabuild.Artifact{
+			Name: name, SHA256: testDigest(contents), Size: int64(len(contents)),
+		})
+	}
+	if err := os.WriteFile(filepath.Join(directory, camerabuild.ReceiptName), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if preparedRelease {
+		if err := os.WriteFile(filepath.Join(directory, camerarelease.ManifestName), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return directory, receipt
+}
+
+// cameraAuthorityDigest returns the out-of-band digest a trusted native
+// build or preparation command would hand to the installer caller.
+func cameraAuthorityDigest(t *testing.T, directory string, preparedRelease bool) string {
+	t.Helper()
+	name := camerabuild.ReceiptName
+	if preparedRelease {
+		name = camerarelease.ManifestName
+	}
+	contents, err := os.ReadFile(filepath.Join(directory, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testDigest(contents)
 }
 
 // rewriteBundleReceipt applies one test mutation and rewrites the receipt with

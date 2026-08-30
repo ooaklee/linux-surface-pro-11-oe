@@ -1,8 +1,9 @@
-// Package install applies immutable, verified SP11 userspace release bundles.
+// Package install applies immutable, verified SP11 userspace inputs.
 //
 // Every command and writable target is compiled into this package. Callers
-// choose only the supported component, bundle directory, target root, and
-// whether to produce a dry-run plan.
+// choose only the supported component, input directory, target root, and
+// whether to produce a dry-run plan. Native camera inputs additionally require
+// the current support repository which authenticates their provenance.
 package install
 
 import (
@@ -13,6 +14,8 @@ import (
 	"path/filepath"
 	"time"
 
+	camerabuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/build"
+	camerarelease "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/release"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 	userspaceiptsd "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/iptsd"
 )
@@ -27,12 +30,18 @@ const (
 	CameraComponent = "imx681-libcamera-v1"
 )
 
-// Options selects the already-downloaded release bundle and explicit target
-// root. DryRun verifies all immutable inputs and target paths but performs no
-// target mutation and does not require root privileges.
+// Options selects a downloaded release or supported native input and an
+// explicit target root. DryRun verifies all immutable inputs and target paths
+// but performs no target mutation and does not require root privileges.
 type Options struct {
-	// BundleDir is the exact verified release-bundle directory.
+	// BundleDir is the exact verified component input directory.
 	BundleDir string
+	// RepositoryRoot supplies current Git authority for native camera inputs.
+	// Downloaded, immutable release bundles do not use it.
+	RepositoryRoot string
+	// CameraAuthoritySHA256 is the independently retained digest printed by the
+	// trusted native camera build or release-preparation invocation.
+	CameraAuthoritySHA256 string
 	// Root is the target filesystem root, defaulting to the live root.
 	Root string
 	// DryRun verifies immutable input and returns a plan without privilege.
@@ -120,6 +129,11 @@ type Installer struct {
 	isLiveRoot func(string) bool
 	// beforeIPTSDPublish is an internal hostile-mutation test hook.
 	beforeIPTSDPublish func(int, string) error
+	// validateCameraBuild statically authenticates a native camera build against
+	// support HEAD and an independently retained authority digest.
+	validateCameraBuild func(context.Context, platform.Runner, camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error)
+	// validateCameraRelease statically authenticates a prepared local camera release.
+	validateCameraRelease func(context.Context, platform.Runner, camerarelease.ValidationRequest) (camerarelease.ValidationReceipt, error)
 }
 
 // New constructs an installer with the production command runner and secure
@@ -135,6 +149,10 @@ func New(runner platform.Runner) *Installer {
 		now:                  time.Now,
 		activationTimeout:    15 * time.Second,
 		validateIPTSDRelease: userspaceiptsd.ValidateRelease,
+		validateCameraBuild:  camerabuild.ValidateBundleStatic,
+		validateCameraRelease: func(ctx context.Context, runner platform.Runner, request camerarelease.ValidationRequest) (camerarelease.ValidationReceipt, error) {
+			return camerarelease.New(runner).Validate(ctx, request)
+		},
 		isLiveRoot: func(root string) bool {
 			return root == string(filepath.Separator)
 		},

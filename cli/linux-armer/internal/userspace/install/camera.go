@@ -21,12 +21,12 @@ func (installer *Installer) Camera(ctx context.Context, options Options) (Result
 	if options.Root != string(filepath.Separator) {
 		return Result{}, errors.New("camera package installation is supported only for target root /")
 	}
-	bundle, err := verifyBundle(options.BundleDir, cameraSpec)
+	bundle, err := installer.verifyCameraInput(ctx, options)
 	if err != nil {
 		return Result{}, err
 	}
 	args := []string{"install", "--yes", "--no-install-recommends", "--"}
-	for _, immutable := range cameraRuntimeFiles {
+	for _, immutable := range bundle.runtimeFiles {
 		path, ok := bundle.paths[immutable.name]
 		if !ok {
 			return Result{}, fmt.Errorf("verified camera bundle is missing %s", immutable.name)
@@ -45,17 +45,13 @@ func (installer *Installer) Camera(ctx context.Context, options Options) (Result
 	if err := installer.requireRoot(false); err != nil {
 		return Result{}, err
 	}
-	stage, err := os.MkdirTemp("", "linux-armer-camera-install-*")
+	stage, err := createPrivateInstallStaging("linux-armer-camera-install-*")
 	if err != nil {
 		return Result{}, fmt.Errorf("create private camera staging directory: %w", err)
 	}
-	if err := os.Chmod(stage, 0o700); err != nil {
-		_ = os.RemoveAll(stage)
-		return Result{}, fmt.Errorf("protect camera staging directory: %w", err)
-	}
 	defer os.RemoveAll(stage)
 	executionArgs := []string{"install", "--yes", "--no-install-recommends", "--"}
-	for _, immutable := range cameraRuntimeFiles {
+	for _, immutable := range bundle.runtimeFiles {
 		staged := filepath.Join(stage, immutable.name)
 		if err := atomicCopyVerified(bundle.paths[immutable.name], staged, 0o600, immutable.sha256, immutable.size); err != nil {
 			return Result{}, fmt.Errorf("stage verified camera package %s: %w", immutable.name, err)
