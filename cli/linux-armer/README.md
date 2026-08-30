@@ -61,6 +61,8 @@ linux-armer catalog validate [path]
 linux-armer kernel release list
 linux-armer kernel release download [ref]
 linux-armer kernel inspect <directory>
+linux-armer kernel preflight <bundle-directory> --root <path> --fallback-abi <abi>
+linux-armer kernel install <bundle-directory> --root <path> --fallback-abi <abi> --dry-run
 linux-armer kernel build
 
 linux-armer image create --output <iso>
@@ -221,6 +223,32 @@ A usable kernel bundle contains, at minimum:
 The bundle records its release, repository, ABI, version, package digests, and expected device-tree paths. `linux-armer` derives the ABI and version from package filenames and rejects a bundle if required packages are absent, versions are mixed, or a local file no longer matches its recorded digest. Headers are optional for live-image creation.
 
 `kernel build` delegates to the repository's maintained Docker-based kernel build helper. By default it builds the [`sp11/integration-7.2.x`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2.x) branch of the custom kernel; `--git-url` and `--git-branch` select another source. `kernel release download` resolves candidate release assets and verifies the publisher checksum manifest before writing a local bundle manifest.
+
+`kernel preflight` is the read-only installation gate. It inspects the exact Debian package metadata, rejects unexpected packages or mixed ABIs, proves that the explicitly selected fallback ABI is the running and bootable kernel, requires a fresh target ABI, and shows the bounded package, initramfs, and GRUB command sequence. The target root and fallback ABI are always explicit. `--running-abi` is accepted only when checking an alternate-root fixture; the live root always uses direct `uname` evidence.
+
+`kernel install` repeats that preflight immediately before mutation, stages immutable package copies, retains the fallback kernel, backs up GRUB, and verifies the installed kernel image, initramfs, module tree, boot entry, and both Surface Pro 11 device trees. A real install requires effective root privilege and `--yes`; the CLI does not elevate itself, change the default kernel, remove the fallback, reboot, or install historical out-of-tree workarounds. If a mutating command or final verification fails, it attempts a bounded rollback and reports the recovery evidence in its receipt.
+
+Review the exact transaction without privilege before installing it:
+
+```sh
+RUNNING_ABI="$(uname -r)"
+
+linux-armer kernel preflight <kernel-bundle> \
+  --root / \
+  --fallback-abi "$RUNNING_ABI"
+
+linux-armer kernel install <kernel-bundle> \
+  --root / \
+  --fallback-abi "$RUNNING_ABI" \
+  --dry-run
+
+sudo linux-armer kernel install <kernel-bundle> \
+  --root / \
+  --fallback-abi "$RUNNING_ABI" \
+  --yes
+```
+
+A local bundle without an authoritative `SHA256SUMS` file is rejected unless `--allow-unverified` is supplied explicitly. That switch accepts only the locally measured package bytes; it is not publisher verification and should not be used for an unknown bundle.
 
 The build subcommand requires a complete OE checkout because its audited helper lives under `scripts/`. A standalone release archive can create images, inspect and download bundles, run diagnostics, and manage published userspace bundles, but it cannot reproduce repository-backed source builds. Run a source build from the checkout or pass its absolute location explicitly:
 

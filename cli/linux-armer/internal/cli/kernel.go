@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -9,8 +13,18 @@ import (
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	kernelbuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/build"
+	kernelinstall "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/install"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/release"
 )
+
+// kernelInstallationManager is the delivery-layer boundary for native kernel
+// preflight and installation operations.
+type kernelInstallationManager interface {
+	// Preflight validates an exact installation request without changing its root.
+	Preflight(context.Context, kernelinstall.Request) (kernelinstall.Plan, error)
+	// Install performs a dry run or the explicitly confirmed native transaction.
+	Install(context.Context, kernelinstall.Request) (kernelinstall.Receipt, error)
+}
 
 // newKernelCommand groups custom kernel build, release, and inspection workflows.
 func (a *application) newKernelCommand() *cobra.Command {
@@ -21,8 +35,152 @@ func (a *application) newKernelCommand() *cobra.Command {
 	}
 	releaseCommand := &cobra.Command{Use: "release", Short: "Use versioned kernel release bundles", Args: cobra.NoArgs}
 	releaseCommand.AddCommand(a.newKernelReleaseListCommand(), a.newKernelReleaseDownloadCommand())
-	command.AddCommand(releaseCommand, a.newKernelInspectCommand(), a.newKernelBuildCommand())
+	command.AddCommand(
+		releaseCommand,
+		a.newKernelInspectCommand(),
+		a.newKernelPreflightCommand(),
+		a.newKernelInstallCommand(),
+		a.newKernelBuildCommand(),
+	)
 	return command
+}
+
+// newKernelPreflightCommand creates the read-only delivery command for checking
+// a local kernel bundle, preserved fallback, target root, and planned commands.
+func (a *application) newKernelPreflightCommand() *cobra.Command {
+	var root string
+	var fallbackABI string
+	var runningABI string
+	var allowUnverified bool
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "preflight <bundle-directory>",
+		Short: "Validate a native kernel installation without changing the target",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			request, err := kernelInstallationRequest(args[0], root, fallbackABI, runningABI, true, allowUnverified)
+			if err != nil {
+				return err
+			}
+			plan, err := a.kernelInstallerForCommand().Preflight(command.Context(), request)
+			if err != nil {
+				return err
+			}
+			return a.writeKernelPreflight(plan, asJSON)
+		},
+	}
+	command.Flags().StringVar(&root, "root", "", "explicit absolute target Linux root filesystem")
+	command.Flags().StringVar(&fallbackABI, "fallback-abi", "", "currently running Surface kernel ABI to preserve")
+	command.Flags().StringVar(&runningABI, "running-abi", "", "running ABI evidence for an alternate-root fixture only")
+	command.Flags().BoolVar(&allowUnverified, "allow-unverified", false, "accept a locally hashed bundle without an authoritative checksum manifest")
+	command.Flags().BoolVar(&asJSON, "json", false, "write the machine-readable installation plan")
+	_ = command.MarkFlagRequired("root")
+	_ = command.MarkFlagRequired("fallback-abi")
+	return command
+}
+
+// newKernelInstallCommand creates the guarded native package installation
+// command while keeping confirmation outside the privileged domain manager.
+func (a *application) newKernelInstallCommand() *cobra.Command {
+	var root string
+	var fallbackABI string
+	var runningABI string
+	var allowUnverified bool
+	var dryRun bool
+	var yes bool
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "install <bundle-directory>",
+		Short: "Install a preflighted Surface kernel and retain its fallback",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			if !dryRun && !yes {
+				return errors.New("kernel install requires --yes for target filesystem changes; run kernel preflight or kernel install --dry-run first")
+			}
+			request, err := kernelInstallationRequest(args[0], root, fallbackABI, runningABI, dryRun, allowUnverified)
+			if err != nil {
+				return err
+			}
+			receipt, installErr := a.kernelInstallerForCommand().Install(command.Context(), request)
+			return a.writeKernelInstallReceipt(receipt, asJSON, installErr)
+		},
+	}
+	command.Flags().StringVar(&root, "root", "", "explicit absolute target Linux root filesystem")
+	command.Flags().StringVar(&fallbackABI, "fallback-abi", "", "currently running Surface kernel ABI to preserve")
+	command.Flags().StringVar(&runningABI, "running-abi", "", "running ABI evidence for an alternate-root fixture only")
+	command.Flags().BoolVar(&allowUnverified, "allow-unverified", false, "accept a locally hashed bundle without an authoritative checksum manifest")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "perform complete preflight without privileged changes")
+	command.Flags().BoolVar(&yes, "yes", false, "confirm the reviewed target filesystem changes")
+	command.Flags().BoolVar(&asJSON, "json", false, "write the machine-readable installation receipt")
+	_ = command.MarkFlagRequired("root")
+	_ = command.MarkFlagRequired("fallback-abi")
+	return command
+}
+
+// kernelInstallationRequest discovers the caller-selected local bundle and
+// enforces the alternate-root boundary for supplied running-ABI evidence.
+func kernelInstallationRequest(bundleDirectory, root, fallbackABI, runningABI string, dryRun, allowUnverified bool) (kernelinstall.Request, error) {
+	if filepath.Clean(root) == string(filepath.Separator) && strings.TrimSpace(runningABI) != "" {
+		return kernelinstall.Request{}, errors.New("--running-abi is permitted only with an alternate target root")
+	}
+	bundle, err := kernel.DiscoverLocalBundle(bundleDirectory)
+	if err != nil {
+		return kernelinstall.Request{}, err
+	}
+	return kernelinstall.Request{
+		Bundle:          bundle,
+		Root:            root,
+		FallbackABI:     fallbackABI,
+		RunningABI:      runningABI,
+		DryRun:          dryRun,
+		AllowUnverified: allowUnverified,
+	}, nil
+}
+
+// kernelInstallerForCommand returns the injected manager or a safe native
+// default for narrowly constructed application values in delivery tests.
+func (a *application) kernelInstallerForCommand() kernelInstallationManager {
+	if a != nil && a.kernelInstaller != nil {
+		return a.kernelInstaller
+	}
+	return kernelinstall.New(nil)
+}
+
+// writeKernelPreflight renders one successful read-only plan without changing
+// its machine-readable representation.
+func (a *application) writeKernelPreflight(plan kernelinstall.Plan, asJSON bool) error {
+	if asJSON {
+		return a.writeJSON(plan)
+	}
+	verification := "authoritative checksums"
+	if plan.UnverifiedAccepted {
+		verification = "explicitly accepted local hashes"
+	}
+	_, err := fmt.Fprintf(a.out,
+		"kernel installation preflight passed\nroot: %s\ntarget ABI: %s\nfallback ABI: %s\nversion: %s\npackages: %d\ndevice trees: %d\nverification: %s\nplanned commands: %d\nno changes were made\n",
+		plan.Root, plan.TargetABI, plan.FallbackABI, plan.Version, len(plan.Packages), len(plan.DeviceTrees), verification, len(plan.Commands))
+	return err
+}
+
+// writeKernelInstallReceipt preserves a structured partial receipt on failure
+// and otherwise renders concise dry-run or reboot guidance.
+func (a *application) writeKernelInstallReceipt(receipt kernelinstall.Receipt, asJSON bool, installErr error) error {
+	if asJSON {
+		return errors.Join(installErr, a.writeJSON(receipt))
+	}
+	if installErr != nil {
+		return installErr
+	}
+	if receipt.Plan.DryRun {
+		_, err := fmt.Fprintf(a.out,
+			"kernel installation dry run passed\nroot: %s\ntarget ABI: %s\nfallback ABI: %s\npackages: %d\nplanned commands: %d\nno changes were made\n",
+			receipt.Plan.Root, receipt.Plan.TargetABI, receipt.Plan.FallbackABI, len(receipt.Plan.Packages), len(receipt.Plan.Commands))
+		return err
+	}
+	_, err := fmt.Fprintf(a.out,
+		"kernel installed\nroot: %s\ntarget ABI: %s\nfallback ABI retained: %s\ndevice trees verified: %d\nreboot required: %t\nReboot manually when ready; retain the fallback kernel until the new kernel has been tested.\n",
+		receipt.Plan.Root, receipt.Plan.TargetABI, receipt.Plan.FallbackABI, len(receipt.DeviceTrees), receipt.RebootRequired)
+	return err
 }
 
 // newKernelReleaseListCommand shows releases containing a candidate runtime
