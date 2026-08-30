@@ -219,6 +219,8 @@ func (manager *Manager) Prepare(ctx context.Context, request Request) (receipt R
 		return receipt, fmt.Errorf("serialise camera release manifest: %w", err)
 	}
 	manifestData = append(manifestData, '\n')
+	authorityDigest := sha256.Sum256(manifestData)
+	authoritySHA256 := hex.EncodeToString(authorityDigest[:])
 	if err := writeExclusive(filepath.Join(staging, ManifestName), manifestData, 0o644); err != nil {
 		return receipt, err
 	}
@@ -235,12 +237,17 @@ func (manager *Manager) Prepare(ctx context.Context, request Request) (receipt R
 	if err := syncDirectory(plan.OutputDirectory); err != nil {
 		return receipt, err
 	}
-	authority, err := inspectFile(filepath.Join(plan.ReleaseDirectory, ManifestName))
-	if err != nil {
-		return receipt, fmt.Errorf("inspect published camera release authority: %w", err)
+	if manager.beforeAuthorityCheck != nil {
+		if err := manager.beforeAuthorityCheck(plan.ReleaseDirectory); err != nil {
+			return receipt, fmt.Errorf("camera release authority test hook: %w", err)
+		}
+	}
+	publishedAuthority, err := inspectFile(filepath.Join(plan.ReleaseDirectory, ManifestName))
+	if err != nil || publishedAuthority.SHA256 != authoritySHA256 || publishedAuthority.Size != int64(len(manifestData)) {
+		return receipt, errors.New("published camera release authority differs from its private pre-publication bytes")
 	}
 	receipt.Manifest = &manifest
-	receipt.AuthoritySHA256 = authority.SHA256
+	receipt.AuthoritySHA256 = authoritySHA256
 	receipt.Published = true
 	return receipt, nil
 }

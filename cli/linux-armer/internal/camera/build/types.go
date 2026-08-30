@@ -272,6 +272,9 @@ type Manager struct {
 	hostOS string
 	// hostArchitecture identifies the host architecture for native execution policy.
 	hostArchitecture string
+	// beforeAuthorityCheck is an internal hostile-mutation test hook invoked
+	// after publication but before the precomputed receipt digest is endorsed.
+	beforeAuthorityCheck func(string) error
 }
 
 // New constructs a native camera build manager with direct execution by default.

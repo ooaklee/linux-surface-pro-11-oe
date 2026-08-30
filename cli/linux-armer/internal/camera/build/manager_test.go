@@ -380,6 +380,24 @@ func TestFakeRunnerEndToEndBuild(t *testing.T) {
 	}
 }
 
+// TestBuildRejectsPublishedAuthorityReplacement verifies the returned digest
+// always describes private pre-publication bytes rather than a raced final file.
+func TestBuildRejectsPublishedAuthorityReplacement(t *testing.T) {
+	root, tuning := makeCameraRepository(t)
+	runner := &fakeCameraRunner{tuning: tuning}
+	manager := newExecutableTestManager(runner)
+	manager.beforeAuthorityCheck = func(directory string) error {
+		return os.WriteFile(filepath.Join(directory, ReceiptName), []byte("{}\n"), 0o644)
+	}
+	receipt, err := manager.Run(context.Background(), Request{RepositoryRoot: root, MinimumFreeGiB: 1})
+	if err == nil || !strings.Contains(err.Error(), "differs from its private pre-publication bytes") {
+		t.Fatalf("raced build authority error = %v", err)
+	}
+	if receipt.Published || receipt.AuthoritySHA256 != "" {
+		t.Fatalf("raced build authority was endorsed: %+v", receipt)
+	}
+}
+
 // TestValidateBundleStaticNeverExecutesPayload verifies the read-only proof and
 // independently supplied authority digest on every supported host architecture.
 func TestValidateBundleStaticNeverExecutesPayload(t *testing.T) {

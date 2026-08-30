@@ -239,6 +239,23 @@ func TestPrepareCreatesClosedElevenFileRelease(t *testing.T) {
 	}
 }
 
+// TestPrepareRejectsPublishedAuthorityReplacement verifies release preparation
+// never returns a digest calculated from a raced final manifest.
+func TestPrepareRejectsPublishedAuthorityReplacement(t *testing.T) {
+	fixture := makeReleaseFixture(t)
+	manager := executableReleaseManager(fixture.bundle)
+	manager.beforeAuthorityCheck = func(directory string) error {
+		return os.WriteFile(filepath.Join(directory, ManifestName), []byte("{}\n"), 0o644)
+	}
+	receipt, err := manager.Prepare(context.Background(), fixtureRequest(fixture))
+	if err == nil || !strings.Contains(err.Error(), "differs from its private pre-publication bytes") {
+		t.Fatalf("raced release authority error = %v", err)
+	}
+	if receipt.Published || receipt.AuthoritySHA256 != "" {
+		t.Fatalf("raced release authority was endorsed: %+v", receipt)
+	}
+}
+
 // TestValidateStaticIsReadOnlyAndRequiresAuthority verifies host-independent
 // validation, the enclosing closed set, and the independent manifest hand-off.
 func TestValidateStaticIsReadOnlyAndRequiresAuthority(t *testing.T) {

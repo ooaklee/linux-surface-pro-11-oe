@@ -165,6 +165,9 @@ type Manager struct {
 	now func() time.Time
 	// validate repeats the static build-bundle proof before local publication.
 	validate func(context.Context, platform.Runner, camerabuild.ValidationRequest) (camerabuild.BundleReceipt, error)
+	// beforeAuthorityCheck is an internal hostile-mutation test hook invoked
+	// after publication but before the precomputed manifest digest is endorsed.
+	beforeAuthorityCheck func(string) error
 }
 
 // New constructs a local release manager with direct read-only inspection.

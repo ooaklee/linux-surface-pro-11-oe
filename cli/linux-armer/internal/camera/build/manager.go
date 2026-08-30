@@ -207,17 +207,13 @@ func (manager *Manager) Run(ctx context.Context, request Request) (receipt Execu
 	if err != nil {
 		return receipt, err
 	}
-	published, err := publishBundle(plan, transaction, publication, bundle)
+	published, authoritySHA256, err := publishBundle(plan, transaction, publication, bundle, manager.beforeAuthorityCheck)
 	if err != nil {
 		return receipt, err
 	}
-	authority, err := inspectArtifact(filepath.Join(published, ReceiptName), maximumBuildRecordBytes)
-	if err != nil {
-		return receipt, fmt.Errorf("inspect published camera build authority: %w", err)
-	}
 	receipt.Bundle = &bundle
 	receipt.OutputDirectory = published
-	receipt.AuthoritySHA256 = authority.SHA256
+	receipt.AuthoritySHA256 = authoritySHA256
 	receipt.Published = true
 	return receipt, nil
 }
@@ -519,12 +515,13 @@ func platformCommand(command Command) platform.Command {
 	return platform.Command{Name: command.Name, Args: append([]string(nil), command.Args...)}
 }
 
-// publishBundle writes the public receipt and atomically renames a closed directory.
-func publishBundle(plan Plan, transaction, publication string, bundle BundleReceipt) (string, error) {
+// publishBundle writes the public receipt, derives its authority before
+// publication, and atomically renames a closed directory.
+func publishBundle(plan Plan, transaction, publication string, bundle BundleReceipt, beforeAuthorityCheck func(string) error) (string, string, error) {
 	artifacts := filepath.Join(transaction, "exchange", "artifacts")
 	staging := filepath.Join(plan.OutputDirectory, ".publish-"+bundle.BuildID)
 	if err := os.Mkdir(staging, 0o700); err != nil {
-		return "", fmt.Errorf("create private camera publication: %w", err)
+		return "", "", fmt.Errorf("create private camera publication: %w", err)
 	}
 	cleanup := true
 	defer func() {
@@ -534,31 +531,42 @@ func publishBundle(plan Plan, transaction, publication string, bundle BundleRece
 	}()
 	for _, artifact := range bundle.Artifacts {
 		if err := copyRegularFile(filepath.Join(artifacts, artifact.Name), filepath.Join(staging, artifact.Name), 0o644); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	receiptData, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("serialise camera build receipt: %w", err)
+		return "", "", fmt.Errorf("serialise camera build receipt: %w", err)
 	}
 	receiptData = append(receiptData, '\n')
+	authorityDigest := sha256.Sum256(receiptData)
+	authoritySHA256 := hex.EncodeToString(authorityDigest[:])
 	if err := writeExclusive(filepath.Join(staging, ReceiptName), receiptData, 0o644); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := syncDirectory(staging); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := os.Lstat(publication); !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("camera package-set publication collided before commit: %s", publication)
+		return "", "", fmt.Errorf("camera package-set publication collided before commit: %s", publication)
 	}
 	if err := publishNoReplace(staging, publication); err != nil {
-		return "", fmt.Errorf("atomically publish camera package set: %w", err)
+		return "", "", fmt.Errorf("atomically publish camera package set: %w", err)
 	}
 	cleanup = false
 	if err := syncDirectory(plan.OutputDirectory); err != nil {
-		return publication, fmt.Errorf("flush camera package publication: %w", err)
+		return publication, "", fmt.Errorf("flush camera package publication: %w", err)
 	}
-	return publication, nil
+	if beforeAuthorityCheck != nil {
+		if err := beforeAuthorityCheck(publication); err != nil {
+			return publication, "", fmt.Errorf("camera build authority test hook: %w", err)
+		}
+	}
+	publishedAuthority, err := inspectArtifact(filepath.Join(publication, ReceiptName), maximumBuildRecordBytes)
+	if err != nil || publishedAuthority.SHA256 != authoritySHA256 || publishedAuthority.Size != int64(len(receiptData)) {
+		return publication, "", errors.New("published camera build authority differs from its private pre-publication bytes")
+	}
+	return publication, authoritySHA256, nil
 }
 
 // copyRegularFile copies one non-link file into a newly created destination.
