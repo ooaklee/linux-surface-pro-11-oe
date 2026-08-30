@@ -117,8 +117,8 @@ chown -R "$HOST_UID:$HOST_GID" /out/stage
 // runIPTSD validates immutable integration input, resolves Docker provenance,
 // executes the compiled container recipe, then natively validates its output.
 func (manager *Manager) runIPTSD(ctx context.Context, root string, request Request) error {
-	if request.MinimumFreeGiB != 0 || request.NoPull {
-		return errors.New("minimum-free-gib and no-pull apply only to the camera builder")
+	if request.MinimumFreeGiB != 0 || request.NoPull || request.DryRun {
+		return errors.New("minimum-free-gib, no-pull, and dry-run apply only to the camera builder")
 	}
 	image := request.Image
 	if image == "" {

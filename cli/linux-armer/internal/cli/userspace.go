@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	camerabuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/build"
 	userspacebuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/build"
 	userspacecatalog "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/catalog"
 	userspaceinstall "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/install"
@@ -238,6 +239,7 @@ func (a *application) newUserspacePullCommand() *cobra.Command {
 // newUserspaceBuildCommand invokes only compiled, component-specific build helpers.
 func (a *application) newUserspaceBuildCommand() *cobra.Command {
 	request := userspacebuild.Request{}
+	var asJSON bool
 	command := &cobra.Command{
 		Use:   "build <iptsd|camera>",
 		Short: "Build a pinned userspace component with its maintained workflow",
@@ -263,17 +265,58 @@ func (a *application) newUserspaceBuildCommand() *cobra.Command {
 			default:
 				return fmt.Errorf("userspace component %q has no compiled build workflow", componentID)
 			}
-			return a.userspace.Build(command.Context(), request)
+			result, err := a.userspace.BuildWithResult(command.Context(), request)
+			if asJSON {
+				if writeErr := a.writeJSON(result); writeErr != nil {
+					return writeErr
+				}
+				return err
+			}
+			if writeErr := a.writeUserspaceBuildResult(result); writeErr != nil {
+				return writeErr
+			}
+			return err
 		},
 	}
 	command.Flags().StringVar(&request.RepositoryRoot, "repository-root", "", "OE repository root (auto-detected from the current directory)")
-	command.Flags().StringVar(&request.OutputDirectory, "output-dir", "", "iptsd build output directory")
-	command.Flags().StringVar(&request.Image, "image", "", "ARM64 builder image (default is selected by the compiled workflow)")
+	command.Flags().StringVar(&request.OutputDirectory, "output-dir", "", "component build output directory (camera paths are repository-relative)")
+	command.Flags().StringVar(&request.Image, "image", "", "iptsd ARM64 builder image (camera uses immutable compiled policy)")
 	command.Flags().StringVar(&request.WorkVolume, "work-volume", "", "iptsd case-sensitive Docker work volume")
 	command.Flags().IntVar(&request.Jobs, "jobs", 0, "parallel build jobs (zero uses the compiled workflow default)")
 	command.Flags().IntVar(&request.MinimumFreeGiB, "minimum-free-gib", 0, "camera builder minimum free space in GiB")
 	command.Flags().BoolVar(&request.NoPull, "no-pull", false, "camera builder: require an already-present image")
+	command.Flags().BoolVar(&request.DryRun, "dry-run", false, "camera builder: authenticate inputs and show policy without mutation")
+	command.Flags().BoolVar(&asJSON, "json", false, "write machine-readable JSON")
 	return command
+}
+
+// writeUserspaceBuildResult renders concise native build output and dry-run truth.
+func (a *application) writeUserspaceBuildResult(result userspacebuild.Result) error {
+	if result.Component == userspacebuild.ComponentIPTSD {
+		_, err := fmt.Fprintln(a.out, "built and validated the pinned IPTSD payload")
+		return err
+	}
+	if result.Component != userspacebuild.ComponentCamera || result.Camera == nil {
+		return fmt.Errorf("userspace build returned no recognised component result")
+	}
+	camera := result.Camera
+	if camera.Plan.DryRun {
+		if _, err := fmt.Fprintf(a.out, "camera build dry run\nimage: %s\nrecipe SHA-256: %s\n", camera.Plan.ContainerImage, camera.Plan.RecipeSHA256); err != nil {
+			return err
+		}
+		if !camera.Plan.Executable {
+			_, err := fmt.Fprintf(a.out, "execution unavailable: %s\n", camera.Plan.ExecutionBlocker)
+			return err
+		}
+		_, err := fmt.Fprintln(a.out, "native Linux ARM64 execution is available")
+		return err
+	}
+	if camera.Published && camera.Bundle != nil {
+		_, err := fmt.Fprintf(a.out, "built and validated coherent camera packages\nversion: %s\noutput: %s\nreceipt: %s\n", camera.Bundle.PackageVersion, camera.OutputDirectory, camerabuild.ReceiptName)
+		return err
+	}
+	_, err := fmt.Fprintln(a.out, "camera build did not publish a package set")
+	return err
 }
 
 // newUserspaceInstallCommand verifies and applies only compiled userspace

@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
+	camerabuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/build"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 	userspaceiptsd "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/iptsd"
 )
@@ -37,7 +37,7 @@ type Request struct {
 	// RepositoryRoot optionally identifies the checkout containing source data; an
 	// empty value searches upward from the current directory.
 	RepositoryRoot string
-	// OutputDirectory overrides where the native IPTSD workflow publishes its payload.
+	// OutputDirectory overrides the selected component's publication directory.
 	OutputDirectory string
 	// Image optionally overrides the pinned builder container image.
 	Image string
@@ -49,10 +49,26 @@ type Request struct {
 	MinimumFreeGiB int
 	// NoPull asks the camera helper to use its locally available image only.
 	NoPull bool
+	// DryRun returns the camera build plan without Docker or filesystem mutation.
+	DryRun bool
 }
 
-// Manager validates build requests before crossing the Docker or legacy-camera
-// process boundary, keeping workflow policy out of the CLI layer.
+// Result records component-specific native build output for delivery layers.
+type Result struct {
+	// Component is the exact compiled userspace workflow which ran.
+	Component Component `json:"component"`
+	// Camera contains the native camera plan and receipt when selected.
+	Camera *camerabuild.ExecutionReceipt `json:"camera,omitempty"`
+}
+
+// cameraBuildManager is the native camera capability required by this orchestrator.
+type cameraBuildManager interface {
+	// Run executes or previews one authenticated native camera build.
+	Run(context.Context, camerabuild.Request) (camerabuild.ExecutionReceipt, error)
+}
+
+// Manager validates build requests before crossing compiled Docker process
+// boundaries, keeping workflow policy out of the CLI layer.
 type Manager struct {
 	// Runner executes fixed, argument-separated host commands.
 	Runner platform.Runner
@@ -60,6 +76,8 @@ type Manager struct {
 	validateIPTSDIntegration func(string) error
 	// validateIPTSDPayload is injectable for command-orchestration tests.
 	validateIPTSDPayload func(string, string) error
+	// cameraBuilder owns the authenticated native camera package workflow.
+	cameraBuilder cameraBuildManager
 }
 
 // New returns a userspace build manager, using the host command runner when no
@@ -75,80 +93,64 @@ func New(runner platform.Runner) *Manager {
 			_, err := userspaceiptsd.ValidatePayload(payload, integration)
 			return err
 		},
+		cameraBuilder: camerabuild.New(runner),
 	}
 }
 
 // Run validates request and executes only the selected compiled workflow.
 func (m *Manager) Run(ctx context.Context, request Request) error {
-	if m == nil || m.Runner == nil || m.validateIPTSDIntegration == nil || m.validateIPTSDPayload == nil {
-		return errors.New("userspace build runner is unavailable")
+	_, err := m.RunWithResult(ctx, request)
+	return err
+}
+
+// RunWithResult executes one compiled workflow and returns its structured result.
+func (m *Manager) RunWithResult(ctx context.Context, request Request) (Result, error) {
+	if m == nil || m.Runner == nil {
+		return Result{}, errors.New("userspace build runner is unavailable")
 	}
 	if request.Jobs < 0 || request.Jobs > 64 {
-		return errors.New("jobs must be between 1 and 64, or zero to use the helper default")
+		return Result{}, errors.New("jobs must be between 1 and 64, or zero to use the workflow default")
 	}
 	root, err := resolveRepositoryRoot(request.RepositoryRoot, request.Component)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 
 	switch request.Component {
 	case ComponentIPTSD:
-		return m.runIPTSD(ctx, root, request)
+		if m.validateIPTSDIntegration == nil || m.validateIPTSDPayload == nil {
+			return Result{}, errors.New("IPTSD build validators are unavailable")
+		}
+		if err := m.runIPTSD(ctx, root, request); err != nil {
+			return Result{}, err
+		}
+		return Result{Component: ComponentIPTSD}, nil
 	case ComponentCamera:
-		if runtime.GOOS != "linux" || (runtime.GOARCH != "arm64" && runtime.GOARCH != "aarch64") {
-			return errors.New("the camera package builder requires a native ARM64 Linux host")
+		if m.cameraBuilder == nil {
+			return Result{}, errors.New("native camera build manager is unavailable")
 		}
-		script := filepath.Join(root, "scripts", "build-sp11-imx681-libcamera-docker.sh")
-		args, argsErr := cameraArgs(request)
-		if argsErr != nil {
-			return argsErr
+		if request.Image != "" || request.WorkVolume != "" {
+			return Result{}, errors.New("image and work-volume apply only to the iptsd builder; the camera image is immutable compiled policy")
 		}
-		if err := validateHelper(script); err != nil {
-			return err
+		if request.MinimumFreeGiB < 0 {
+			return Result{}, errors.New("minimum-free-gib cannot be negative")
 		}
-		args = append([]string{script}, args...)
-		return m.Runner.Run(ctx, platform.Command{Name: "bash", Args: args, Dir: root})
+		cameraReceipt, err := m.cameraBuilder.Run(ctx, camerabuild.Request{
+			RepositoryRoot:  root,
+			OutputDirectory: request.OutputDirectory,
+			Jobs:            request.Jobs,
+			MinimumFreeGiB:  request.MinimumFreeGiB,
+			NoPull:          request.NoPull,
+			DryRun:          request.DryRun,
+		})
+		result := Result{Component: ComponentCamera, Camera: &cameraReceipt}
+		if err != nil {
+			return result, err
+		}
+		return result, nil
 	default:
-		return fmt.Errorf("component %q does not have a supported source build", request.Component)
+		return Result{}, fmt.Errorf("component %q does not have a supported source build", request.Component)
 	}
-}
-
-// cameraArgs translates the camera-specific request fields into helper flags
-// and rejects settings that only the IPTSD workflow understands.
-func cameraArgs(request Request) ([]string, error) {
-	if request.OutputDirectory != "" || request.WorkVolume != "" {
-		return nil, errors.New("output-dir and work-volume apply only to the iptsd builder")
-	}
-	if request.MinimumFreeGiB < 0 {
-		return nil, errors.New("minimum-free-gib cannot be negative")
-	}
-	args := make([]string, 0, 8)
-	if request.Image != "" {
-		args = append(args, "--image", request.Image)
-	}
-	if request.Jobs > 0 {
-		args = append(args, "--jobs", fmt.Sprintf("%d", request.Jobs))
-	}
-	if request.MinimumFreeGiB > 0 {
-		args = append(args, "--min-free-gb", fmt.Sprintf("%d", request.MinimumFreeGiB))
-	}
-	if request.NoPull {
-		args = append(args, "--no-pull")
-	}
-	return args, nil
-}
-
-// validateHelper requires the selected build helper to be a regular file and
-// rejects symbolic links before it can be passed to Bash.
-func validateHelper(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("locate userspace build helper: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("userspace build helper is not a regular file: %s", path)
-	}
-	return nil
 }
 
 // resolveRepositoryRoot finds the checkout that owns the maintained workflow.
@@ -170,7 +172,7 @@ func resolveRepositoryRoot(configured string, component Component) (string, erro
 	for {
 		candidate := filepath.Join(absolute, "userspace", "iptsd-sp11", "SOURCE.env")
 		if component == ComponentCamera {
-			candidate = filepath.Join(absolute, "scripts", "build-sp11-imx681-libcamera-docker.sh")
+			candidate = filepath.Join(absolute, filepath.FromSlash(camerabuild.TrackedInputPaths()[0]))
 		}
 		if info, statErr := os.Lstat(candidate); statErr == nil && info.Mode().IsRegular() {
 			return absolute, nil

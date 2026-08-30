@@ -204,10 +204,17 @@ func releaseRepository(rawURL string) (string, error) {
 // Build delegates one validated userspace source-build request to the build
 // manager.
 func (m *Manager) Build(ctx context.Context, request userspacebuild.Request) error {
+	_, err := m.BuildWithResult(ctx, request)
+	return err
+}
+
+// BuildWithResult delegates one validated source-build request and preserves
+// component-specific structured output for CLI and automation delivery.
+func (m *Manager) BuildWithResult(ctx context.Context, request userspacebuild.Request) (userspacebuild.Result, error) {
 	if m == nil || m.Builder == nil {
-		return errors.New("userspace build manager is unavailable")
+		return userspacebuild.Result{}, errors.New("userspace build manager is unavailable")
 	}
-	return m.Builder.Run(ctx, request)
+	return m.Builder.RunWithResult(ctx, request)
 }
 
 // Status inspects an installed or mounted target against the embedded catalogue

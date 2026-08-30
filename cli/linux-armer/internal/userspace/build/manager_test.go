@@ -5,10 +5,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
+	camerabuild "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/camera/build"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
 
@@ -16,6 +16,19 @@ import (
 // metadata without executing a container.
 type recordingRunner struct {
 	commands []platform.Command
+}
+
+// recordingCameraBuilder captures the native request without invoking Docker.
+type recordingCameraBuilder struct {
+	requests []camerabuild.Request
+	receipt  camerabuild.ExecutionReceipt
+	err      error
+}
+
+// Run records and returns one deterministic native camera build result.
+func (builder *recordingCameraBuilder) Run(_ context.Context, request camerabuild.Request) (camerabuild.ExecutionReceipt, error) {
+	builder.requests = append(builder.requests, request)
+	return builder.receipt, builder.err
 }
 
 // Run records a command as a successful simulated execution.
@@ -116,17 +129,32 @@ func TestRejectsCrossComponentFlags(t *testing.T) {
 	}
 }
 
-// TestCameraRequiresNativeARM64Linux verifies that the camera builder refuses a
-// host that cannot produce its architecture-specific native packages.
-func TestCameraRequiresNativeARM64Linux(t *testing.T) {
-	if runtime.GOOS == "linux" && (runtime.GOARCH == "arm64" || runtime.GOARCH == "aarch64") {
-		t.Skip("host satisfies the native camera builder constraint")
-	}
-	err := New(&recordingRunner{}).Run(context.Background(), Request{
-		Component: ComponentCamera, RepositoryRoot: fakeRepository(t),
+// TestCameraBuildUsesNativeManager verifies request mapping and structured delivery.
+func TestCameraBuildUsesNativeManager(t *testing.T) {
+	root := fakeRepository(t)
+	runner := &recordingRunner{}
+	builder := &recordingCameraBuilder{receipt: camerabuild.ExecutionReceipt{Plan: camerabuild.Plan{DryRun: true, Executable: false, ExecutionBlocker: "fixture blocker"}}}
+	manager := New(runner)
+	manager.cameraBuilder = builder
+	result, err := manager.RunWithResult(context.Background(), Request{
+		Component: ComponentCamera, RepositoryRoot: root,
+		OutputDirectory: "build/camera-fixture", Jobs: 6,
+		MinimumFreeGiB: 24, NoPull: true, DryRun: true,
 	})
-	if err == nil {
-		t.Fatal("expected native ARM64 Linux constraint to fail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(builder.requests) != 1 || result.Camera == nil || result.Component != ComponentCamera {
+		t.Fatalf("camera result = %+v, requests = %+v", result, builder.requests)
+	}
+	request := builder.requests[0]
+	if request.RepositoryRoot != root || request.OutputDirectory != "build/camera-fixture" || request.Jobs != 6 || request.MinimumFreeGiB != 24 || !request.NoPull || !request.DryRun {
+		t.Fatalf("native camera request = %+v", request)
+	}
+	for _, command := range runner.commands {
+		if command.Name == "bash" || strings.Contains(strings.Join(command.Args, "\n"), "build-sp11-imx681-libcamera-docker.sh") {
+			t.Fatalf("legacy camera command was invoked: %+v", command)
+		}
 	}
 }
 
@@ -155,8 +183,7 @@ func TestRejectsBroadOrPayloadOutput(t *testing.T) {
 	}
 }
 
-// fakeRepository creates the minimal native IPTSD marker and unchanged camera
-// helper in an isolated repository tree.
+// fakeRepository creates minimal IPTSD and native camera input markers.
 func fakeRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -167,12 +194,14 @@ func fakeRepository(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(integration, "SOURCE.env"), []byte("fixture\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	scripts := filepath.Join(root, "scripts")
-	if err := os.MkdirAll(scripts, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(scripts, "build-sp11-imx681-libcamera-docker.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, relative := range camerabuild.TrackedInputPaths() {
+		path := filepath.Join(root, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return root
 }
