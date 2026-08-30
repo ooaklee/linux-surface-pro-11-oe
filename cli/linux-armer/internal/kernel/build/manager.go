@@ -2,8 +2,12 @@ package build
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +21,10 @@ const (
 	transactionPrefix = ".linux-armer-kernel-build-"
 	// buildLockDirectoryName serialises processes sharing one persistent volume.
 	buildLockDirectoryName = ".linux-armer-kernel-build.lock"
+	// buildLockOwnerPrefix distinguishes the private per-acquisition marker.
+	buildLockOwnerPrefix = ".owner-"
+	// buildLockOwnerBytes provides a collision-resistant ownership identity.
+	buildLockOwnerBytes = 32
 	// containerCleanupTimeout bounds recovery independently of caller cancellation.
 	containerCleanupTimeout = 30 * time.Second
 )
@@ -172,6 +180,12 @@ func (manager *Manager) Run(ctx context.Context, request Request) (receipt Recei
 // the same labelled Docker source volume.
 func acquireBuildLock(workDirectory string) (func() error, error) {
 	lockPath := filepath.Join(workDirectory, buildLockDirectoryName)
+	var ownerToken [buildLockOwnerBytes]byte
+	if _, err := rand.Read(ownerToken[:]); err != nil {
+		return nil, fmt.Errorf("generate kernel build lock owner: %w", err)
+	}
+	ownerName := buildLockOwnerPrefix + hex.EncodeToString(ownerToken[:])
+	ownerPath := filepath.Join(lockPath, ownerName)
 	if err := os.Mkdir(lockPath, 0o700); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("another kernel build is using this work directory, or a stale lock remains: %s", lockPath)
@@ -182,8 +196,15 @@ func acquireBuildLock(workDirectory string) (func() error, error) {
 		_ = os.Remove(lockPath)
 		return nil, fmt.Errorf("validate kernel build lock: %w", err)
 	}
+	ownerInfo, err := createBuildLockOwner(ownerPath, ownerToken[:])
+	if err != nil {
+		_ = os.Remove(ownerPath)
+		_ = os.Remove(lockPath)
+		return nil, err
+	}
 	lockInfo, err := os.Lstat(lockPath)
 	if err != nil {
+		_ = os.Remove(ownerPath)
 		_ = os.Remove(lockPath)
 		return nil, fmt.Errorf("inspect kernel build lock: %w", err)
 	}
@@ -193,15 +214,73 @@ func acquireBuildLock(workDirectory string) (func() error, error) {
 			return nil
 		}
 		released = true
-		current, err := os.Lstat(lockPath)
-		if err != nil || current.Mode()&os.ModeSymlink != 0 || !os.SameFile(lockInfo, current) {
+		if !buildLockIsOwned(lockPath, lockInfo, ownerPath, ownerInfo, ownerToken[:]) {
 			return fmt.Errorf("refuse to remove changed kernel build lock: %s", lockPath)
+		}
+		if err := os.Remove(ownerPath); err != nil {
+			return fmt.Errorf("remove kernel build lock owner: %w", err)
 		}
 		if err := os.Remove(lockPath); err != nil {
 			return fmt.Errorf("remove kernel build lock: %w", err)
 		}
 		return nil
 	}, nil
+}
+
+// createBuildLockOwner writes the unpredictable identity retained by the
+// acquiring process and returns the marker's original filesystem identity.
+func createBuildLockOwner(path string, token []byte) (os.FileInfo, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create kernel build lock owner: %w", err)
+	}
+	written, writeErr := file.Write(token)
+	if writeErr == nil && written != len(token) {
+		writeErr = io.ErrShortWrite
+	}
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return nil, fmt.Errorf("write kernel build lock owner: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() != int64(len(token)) {
+		return nil, fmt.Errorf("inspect kernel build lock owner: %s", path)
+	}
+	return info, nil
+}
+
+// buildLockIsOwned requires the exact closed directory and owner marker
+// created by this acquisition, including the marker's unpredictable content.
+func buildLockIsOwned(lockPath string, lockInfo os.FileInfo, ownerPath string, ownerInfo os.FileInfo, token []byte) bool {
+	currentLock, err := os.Lstat(lockPath)
+	if err != nil || currentLock.Mode()&os.ModeSymlink != 0 || !currentLock.IsDir() || !os.SameFile(lockInfo, currentLock) {
+		return false
+	}
+	entries, err := os.ReadDir(lockPath)
+	if err != nil || len(entries) != 1 || filepath.Join(lockPath, entries[0].Name()) != ownerPath {
+		return false
+	}
+	currentOwner, err := os.Lstat(ownerPath)
+	if err != nil || currentOwner.Mode()&os.ModeSymlink != 0 || !currentOwner.Mode().IsRegular() ||
+		currentOwner.Size() != int64(len(token)) || !os.SameFile(ownerInfo, currentOwner) {
+		return false
+	}
+	file, err := os.Open(ownerPath)
+	if err != nil {
+		return false
+	}
+	openedOwner, statErr := file.Stat()
+	content, readErr := io.ReadAll(io.LimitReader(file, int64(len(token)+1)))
+	closeErr := file.Close()
+	afterOwner, afterOwnerErr := os.Lstat(ownerPath)
+	afterLock, afterLockErr := os.Lstat(lockPath)
+	if statErr != nil || readErr != nil || closeErr != nil || afterOwnerErr != nil || afterLockErr != nil ||
+		!os.SameFile(ownerInfo, openedOwner) || !os.SameFile(openedOwner, afterOwner) ||
+		afterLock.Mode()&os.ModeSymlink != 0 || !afterLock.IsDir() || !os.SameFile(lockInfo, afterLock) ||
+		len(content) != len(token) || subtle.ConstantTimeCompare(content, token) != 1 {
+		return false
+	}
+	afterEntries, err := os.ReadDir(lockPath)
+	return err == nil && len(afterEntries) == 1 && filepath.Join(lockPath, afterEntries[0].Name()) == ownerPath
 }
 
 // prepareWorkDirectory creates only the explicit private work directory and

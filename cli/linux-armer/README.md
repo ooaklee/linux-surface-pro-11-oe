@@ -389,7 +389,7 @@ Contract version 2 is an unpublished pre-release cut-over, not an import, applic
 Run collection from an elevated Windows PowerShell 5.1 session. First create one new protected parent on a local fixed NTFS volume. The following locale-independent commands set the exact owner and access rules required by the collector:
 
 ```powershell
-$privateParent = 'C:\ProgramData\linux-armer-private'
+$privateParent = Join-Path $env:ProgramFiles 'linux-armer-private'
 if ([System.IO.Directory]::Exists($privateParent) -or
     [System.IO.File]::Exists($privateParent)) {
     throw 'Choose a new private parent; do not reset an existing directory.'
@@ -413,6 +413,15 @@ $security.SetAccessRuleProtection($true, $false)
     $localSystem, $fullControl, $inheritance, $propagation, $allow)))
 [System.IO.Directory]::SetAccessControl($privateParent, $security)
 ```
+
+Use the stock `Program Files` directory as the protected parent's immediate
+ancestor. Its default ACL grants unprivileged principals read and execute
+access only, while the stock filesystem-root ACL grants create-directory
+access on the root and makes its broader Modify entry inherit-only. Do not put
+the parent beneath `ProgramData`: its stock Users rule grants write-attribute
+and write-extended-attribute access to that ancestor, which the collector
+deliberately rejects at this privileged boundary even when the new child has
+the exact private ACL.
 
 Choose a new child name for every collection; the requested child must not already exist. Unplug external Bluetooth radios before collecting Bluetooth evidence, then run the collector from the CLI source tree:
 

@@ -286,8 +286,8 @@ Describe 'Surface Pro 11 Windows hand-off collector contract' {
             return
         }
 
-        $commonApplicationData = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonApplicationData)
-        $privateParent = Join-Path $commonApplicationData ('linux-armer-pester-' + [guid]::NewGuid().ToString('N'))
+        $programFiles = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)
+        $privateParent = Join-Path $programFiles ('linux-armer-pester-' + [guid]::NewGuid().ToString('N'))
         $transaction = $null
         [void][System.IO.Directory]::CreateDirectory($privateParent)
         try {
@@ -307,6 +307,44 @@ Describe 'Surface Pro 11 Windows hand-off collector contract' {
             if ([System.IO.Directory]::Exists($privateParent)) {
                 $parentIdentity = Get-WindowsFileObjectIdentity -Path $privateParent
                 Remove-ClosedDirectoryNoFollow -Root $privateParent -ExpectedRootIdentity $parentIdentity
+            }
+        }
+    }
+
+    It 'rejects write-metadata access on an ancestor of an exact protected parent' {
+        if ($env:OS -cne 'Windows_NT') {
+            Set-ItResult -Skipped -Because 'Windows directory access-control rules are unavailable on this host.'
+            return
+        }
+
+        $programFiles = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ProgramFiles)
+        $unsafeAncestor = Join-Path $programFiles ('linux-armer-pester-unsafe-' + [guid]::NewGuid().ToString('N'))
+        $privateParent = Join-Path $unsafeAncestor 'private'
+        [void][System.IO.Directory]::CreateDirectory($unsafeAncestor)
+        try {
+            Set-PrivateDirectoryACL -Path $unsafeAncestor
+            [void][System.IO.Directory]::CreateDirectory($privateParent)
+            Set-PrivateDirectoryACL -Path $privateParent
+
+            $security = [System.IO.Directory]::GetAccessControl($unsafeAncestor)
+            $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+            $writeMetadata = [System.Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+                [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $users,
+                $writeMetadata,
+                [System.Security.AccessControl.InheritanceFlags]::None,
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow
+            )
+            [void]$security.AddAccessRule($rule)
+            [System.IO.Directory]::SetAccessControl($unsafeAncestor, $security)
+
+            { Assert-SecureOutputPath -ParentPath $privateParent } | Should -Throw '*ancestor that a medium-integrity principal can redirect*'
+        } finally {
+            if ([System.IO.Directory]::Exists($unsafeAncestor)) {
+                $ancestorIdentity = Get-WindowsFileObjectIdentity -Path $unsafeAncestor
+                Remove-ClosedDirectoryNoFollow -Root $unsafeAncestor -ExpectedRootIdentity $ancestorIdentity
             }
         }
     }

@@ -62,9 +62,12 @@ pre-provisioned parent on a ready local NTFS filesystem. The parent must have a
 protected DACL, be owned by Local System or the built-in Administrators group,
 and contain only explicit inheritable Full Control entries for those two
 principals. A fixed or removable local NTFS volume can satisfy the mechanism,
-but the operating procedure uses a fixed local volume for collection and
-copies the completed child to trusted removable storage afterwards. Network,
-FAT, exFAT, permissive, and already existing output destinations are rejected.
+but the operating procedure creates the protected parent directly beneath the
+stock `Program Files` directory on a fixed local volume, then copies the
+completed child to trusted removable storage afterwards. The stock
+`ProgramData` ACL grants Users write-attribute and write-extended-attribute
+access which the ancestor policy rejects. Network, FAT, exFAT, permissive, and
+already existing output destinations are rejected.
 
 Every ancestor from the filesystem root to the protected parent must be a
 non-reparse directory with a trusted owner. An access rule for any other

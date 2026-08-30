@@ -38,12 +38,12 @@ collecting device data. This parameter set does not require Windows or
 administrator privileges.
 
 .EXAMPLE
-powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory C:\ProgramData\linux-armer-private\sp11-handoff
+powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory (Join-Path $env:ProgramFiles 'linux-armer-private\sp11-handoff')
 
 Collects both supported sections into a new directory.
 
 .EXAMPLE
-powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory C:\ProgramData\linux-armer-private\sp11-handoff -Components PlatformFirmware
+powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory (Join-Path $env:ProgramFiles 'linux-armer-private\sp11-handoff') -Components PlatformFirmware
 
 Collects only the complete platform firmware set and records Bluetooth as not
 requested.

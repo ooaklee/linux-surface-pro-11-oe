@@ -210,17 +210,55 @@ func TestChangedBuildLockIsNotRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(work, buildLockDirectoryName)
-	if err := os.Remove(path); err != nil {
+	if err := os.RemoveAll(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(path, 0o700); err != nil {
+	releaseReplacement, err := acquireBuildLock(work)
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = releaseReplacement() })
 	if err := release(); err == nil || !strings.Contains(err.Error(), "changed kernel build lock") {
 		t.Fatalf("changed build lock release error = %v", err)
 	}
 	if info, err := os.Lstat(path); err != nil || !info.IsDir() {
 		t.Fatalf("replacement build lock was removed: %v", err)
+	}
+	if err := releaseReplacement(); err != nil {
+		t.Fatalf("replacement build lock release error = %v", err)
+	}
+}
+
+// TestChangedBuildLockOwnerIsNotRemoved verifies cleanup retains a lock whose
+// ownership proof changed without changing its directory identity.
+func TestChangedBuildLockOwnerIsNotRemoved(t *testing.T) {
+	work, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := acquireBuildLock(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(work, buildLockDirectoryName)
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("build lock owner entries = %d, error = %v", len(entries), err)
+	}
+	ownerPath := filepath.Join(path, entries[0].Name())
+	owner, err := os.ReadFile(ownerPath)
+	if err != nil || len(owner) != buildLockOwnerBytes {
+		t.Fatalf("read build lock owner length = %d, error = %v", len(owner), err)
+	}
+	owner[0] ^= 0xff
+	if err := os.WriteFile(ownerPath, owner, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err == nil || !strings.Contains(err.Error(), "changed kernel build lock") {
+		t.Fatalf("changed build lock owner release error = %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+		t.Fatalf("changed-owner build lock was removed: %v", err)
 	}
 }
 
