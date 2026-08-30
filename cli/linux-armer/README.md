@@ -20,6 +20,8 @@ The first implemented image adapter targets the experimental Ubuntu Concept Reso
 - Preserves the source image's hybrid ISO/GPT boot layout and updates both ARM64 EFI boot paths.
 - Validates the finished ISO before publishing it.
 - Can place a manifest-tracked Linux ARM64 companion CLI, its corresponding source and catalogues, and an eligible offline IPTSD release on the finished medium.
+- Discovers whole storage devices on Linux and macOS, refuses unsafe targets, and writes a validated ISO only after an exact image-and-device-bound confirmation; success requires a complete SHA-256 read-back and safe ejection.
+- Imports strictly validated, device-bound Windows evidence into a private content-addressed store and exposes only redacted summaries and exact-confirmation retention controls.
 - Audits firmware, audio, pen, camera, wireless, Bluetooth, power-profile, and obsolete-workaround state without changing the installed system.
 - Downloads exact, checksum-verified userspace release sets and exposes bounded build and install workflows only for explicitly supported components.
 - Detects a fixed set of legacy Surface Pro 11 workarounds and can apply and reverse an exact reviewed clean-up plan with durable receipts.
@@ -30,8 +32,9 @@ The first implemented image adapter targets the experimental Ubuntu Concept Reso
 - Docker with a running daemon and Linux ARM64 container support.
 - At least 24 GiB of free workspace storage for an image build.
 - Network access when downloading an upstream image, kernel release, or userspace release.
+- `diskutil` and `plutil` on macOS, or `lsblk`, `umount`, and `udisksctl` on Linux, when discovering or writing removable media.
 
-Run the CLI as a regular user for image, catalogue, download, build, and diagnostic commands. Image tooling runs in an isolated ARM64 Docker container; the CLI does not require the entire process to run as root. A userspace install or clean-up against a real system root is the exception and requires elevated access for the specific apply operation.
+Run the CLI as a regular user for image creation and validation, catalogue, download, build, diagnostic, hand-off import, and dry-run commands. Image tooling runs in an isolated ARM64 Docker container; the CLI does not require the entire process to run as root. Writing a raw USB device, a userspace install, or clean-up against a real system root is the exception and requires elevated access for the specific operation.
 
 ## Build
 
@@ -62,6 +65,12 @@ linux-armer kernel build
 
 linux-armer image create --output <iso>
 linux-armer image validate <iso>
+linux-armer image devices
+linux-armer image write <iso> --device <whole-device> --dry-run
+
+linux-armer handoff import <directory>
+linux-armer handoff list
+linux-armer handoff purge <id> --dry-run
 
 linux-armer userspace list
 linux-armer userspace show <component>
@@ -125,7 +134,7 @@ linux-armer image create \
 
 `--companion-source-dir` must identify a complete `linux-armer` source tree and requires a working host Go toolchain. Keep the image output, its sidecars, and any explicit `--workspace-dir` outside that source tree, as in the example. The source is snapshotted before its binary and archive are built, and a clean Git-backed tree must match the CLI's recorded commit. `--companion-userspace` is repeatable, but the initial offline allow-list accepts only `iptsd`. `recommended`, restricted audio, platform firmware, and experimental camera packages are not accepted for on-media inclusion.
 
-The payload is stored under `/sp11/companion`. The existing `/sp11/linux-armer-manifest.json` and its sidecar remain the only image inventory; their mandatory `companion_bundle` attribute records every companion file. The portable receipt inside an IPTSD release verifies that component's relocatable files and is itself included in the outer inventory. It is not a second image manifest.
+The payload is stored under `/sp11/companion`. The existing `/sp11/linux-armer-manifest.json` and its sidecar remain the only image inventory; their mandatory `companion_bundle` attribute records every companion file. The deterministic source archive includes the strict Windows hand-off collector at `linux-armer/tools/collect-sp11-windows-handoff.ps1`; it never contains collected device data. The portable receipt inside an IPTSD release verifies that component's relocatable files and is itself included in the outer inventory. It is not a second image manifest.
 
 The repository currently declares no project-wide redistribution terms for the CLI. A locally requested companion records `project_licence: not-declared` and prints a warning. Do not redistribute that companion image until the copyright holder publishes suitable project terms and the required third-party notices.
 
@@ -174,6 +183,31 @@ The extracted live filesystem stays inside a named Linux Docker volume throughou
 Structural validation is a publication gate, not a substitute for booting the media on a Surface Pro 11. Disable Secure Boot before using the unsigned custom kernel, and treat an actual device boot as the final compatibility gate.
 
 Compressed raw disk images use a different partition and boot model. Catalogue entries such as Fedora's `.raw.xz` image will require a separate adapter rather than being passed through the ISO remasterer.
+
+## Write the validated image to USB
+
+`image devices` is read-only and lists every whole physical device with the evidence needed to review it, including whether the disk has an active non-mount consumer. It does not present an internal, non-removable, non-USB, read-only, system-backed, in-use, weakly identified, or undersized device as an acceptable target merely because its path was supplied explicitly.
+
+```sh
+linux-armer image devices
+linux-armer image write linux-armer-ubuntu-sp11.iso \
+  --device /dev/diskX \
+  --dry-run
+```
+
+Replace `/dev/diskX` with the reviewed whole-device path shown on your host. The dry run performs structural ISO validation, hashes the complete source, inspects the target, and prints an exact confirmation phrase without unmounting or writing anything. It is safe to repeat after reconnecting the device.
+
+Run the real operation with elevated privilege and paste the exact phrase from the current plan. The phrase includes both the whole-device path and full source SHA-256; `yes`, a shortened digest, and a phrase from a different plan are rejected.
+
+```sh
+sudo linux-armer image write linux-armer-ubuntu-sp11.iso \
+  --device /dev/diskX \
+  --confirm 'ERASE /dev/diskX DEVICE <opaque-fingerprint> AND WRITE SHA256 <full-sha256>'
+```
+
+An interactive terminal can omit `--confirm` and type the displayed phrase at the protected prompt. Automation must pass the exact phrase explicitly. Because the phrase contains the opaque fingerprint, a confirmation obtained for a previous USB device is rejected after another device takes over the same `/dev` path. Immediately before mutation, the manager reopens and rehashes the source, re-inspects the target, compares the already-open source descriptor with target mounts, checks privilege, unmounts only approved removable-style target filesystems, and refuses to continue if any mount, host-storage classification, active storage consumer, or identity drift remains. The production raw opener rejects links and ordinary files, proves that ordinary and raw nodes address the same kernel device, opens with `O_NOFOLLOW`, and proves that its descriptor still denotes that inspected device. The manager then writes bounded chunks, flushes them, reads back exactly the source length, verifies the SHA-256, re-inspects once more, and ejects or powers off the target. A failure returns the exact not-started, prepared, writing, written, verifying, or verified receipt state, complete byte counts, and only complete digests; it never claims that writing, verification, or ejection began before the corresponding boundary was crossed.
+
+This writer is distribution-neutral, but the current pre-write structural validator accepts only the implemented linux-armer Ubuntu Casper output. Future Fedora, Debian, elementary OS, Pop!_OS, and raw-image adapters will retain their own image validation and live-media contracts while reusing the removable-device manager.
 
 ## Kernel bundles
 
@@ -236,6 +270,30 @@ To add discoverable media before an adapter exists, use:
 ```
 
 Mark an entry `implemented` only when its named adapter can create and validate that artefact format.
+
+## Private Windows hand-offs
+
+Some Surface Pro 11 platform firmware and the Bluetooth public controller address must come from an authorised Windows installation on the same device. They are private device data, not a userspace release and not an ISO companion. Do not add a collected hand-off directory, its manifest, or any of its payloads to an image, release, issue, diagnostic archive, or source checkout.
+
+The canonical Windows collector is `tools/collect-sp11-windows-handoff.ps1` in the CLI source tree and emits one strict directory. It is also present in the companion source archive, so a user can extract that ordinary non-private script from the live medium before running it in Windows. The v1 contract uses a fresh random salt and domain-separated bindings for the SMBIOS UUID and selected Bluetooth adapter instance, so neither raw identifier is exported and independently collected hand-offs are not trivially linkable. Platform firmware is an all-or-absent eleven-file set with fixed destinations, copied-byte digests, and Windows DriverStore provenance. Windows Wi-Fi firmware is deliberately excluded because Linux board firmware remains owned by the distribution firmware package.
+
+Copy the collector's output directory to the Linux system through a private medium, then import it as the same unprivileged user who will manage it:
+
+```sh
+linux-armer handoff import <windows-handoff-directory>
+linux-armer handoff list
+```
+
+Import rejects unknown or mis-cased JSON fields, missing or extra files, symbolic links, special files, case-colliding paths, non-canonical mappings, digest or size mismatches, and source mutation during verification. It publishes the exact bytes atomically beneath a mode-`0700` content-addressed store and protects every stored file with mode `0600`. Re-importing identical bytes revalidates and reuses the existing entry. Ordinary and JSON output contain only redacted summary fields; they never contain the Bluetooth address, raw UUID, adapter identifier, salts, or their bindings.
+
+The default store is `.linux-armer-handoffs` beneath the current user's home directory. Use `--store <directory>` when a different private location is required. Review retention before deleting an entry:
+
+```sh
+linux-armer handoff purge <id> --dry-run
+linux-armer handoff purge <id> --confirm 'purge <id>'
+```
+
+Purge accepts only the complete content-addressed phrase, revalidates the private closed set, atomically isolates that exact direct child, revalidates it again, and removes only the verified files and directories. `handoff apply` is intentionally not available yet: importing trustworthy evidence is distinct from authorising a system mutation, and firmware and Bluetooth application require their own same-device check, transaction, rollback, and receipt before they can become supported commands.
 
 ## Userspace companion
 
@@ -326,7 +384,7 @@ The allow-list currently covers selected system-wide audio routing helpers, in-t
 
 ## Architecture
 
-The executable and Bubble Tea UI are delivery layers. Feature packages own image catalogue, kernel, image, userspace, doctor, and clean-up behaviour; orchestration managers compose simpler services. Docker and process execution are isolated behind platform interfaces. Interactive and scriptable image entry points share the same manager and operation plan; other commands use feature-specific dry runs, verified bundle manifests, status reports, or recovery receipts where those records fit their workflow.
+The executable and Bubble Tea UI are delivery layers. Feature packages own image catalogue, kernel, image, removable media, private hand-off, userspace, doctor, and clean-up behaviour; orchestration managers compose simpler services. Docker and process execution are isolated behind platform interfaces. Interactive and scriptable image entry points share the same manager and operation plan; other commands use feature-specific dry runs, verified bundle manifests, content-addressed private stores, status reports, or recovery receipts where those records fit their workflow.
 
 Architecture decisions are recorded in [`docs/adr`](docs/adr/).
 

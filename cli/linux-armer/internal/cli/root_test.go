@@ -37,6 +37,7 @@ func TestRootNoArgumentsOnNonTerminalPrintsHelp(t *testing.T) {
 		"image",
 		"kernel",
 		"userspace",
+		"handoff",
 		"wizard",
 	} {
 		if !strings.Contains(output, text) {

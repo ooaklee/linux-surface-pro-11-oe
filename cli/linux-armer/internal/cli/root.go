@@ -34,6 +34,8 @@ type application struct {
 	images               *manager.ImageManager
 	releases             *release.Client
 	userspace            *userspacemanager.Manager
+	mediaFactory         removableMediaFactory
+	imageValidator       imageValidationFunc
 }
 
 // NewRootCommand assembles a fully isolated command tree around the supplied
@@ -86,6 +88,7 @@ func NewRootCommand(input io.Reader, output, errorOutput io.Writer) *cobra.Comma
 		app.newKernelCommand(),
 		app.newImageCommand(),
 		app.newUserspaceCommand(),
+		app.newHandoffCommand(),
 		app.newDoctorCommand(),
 		app.newCleanCommand(),
 		app.newWizardCommand(),

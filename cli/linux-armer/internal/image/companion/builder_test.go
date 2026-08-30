@@ -269,6 +269,9 @@ func TestBuilderSourceArchiveIsDeterministic(t *testing.T) {
 	if _, found := files["linux-armer/LICENSE"]; !found {
 		t.Error("source archive omits discovered project licence")
 	}
+	if _, found := files["linux-armer/tools/collect-sp11-windows-handoff.ps1"]; !found {
+		t.Error("source archive omits the strict Windows hand-off collector")
+	}
 }
 
 // TestBuilderStagesEligiblePortableUserspace verifies source-required bundle
@@ -793,7 +796,7 @@ func assertPublishedDirectoryModes(t *testing.T, root string) {
 func makeTestSource(t *testing.T, withLicence bool) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, directory := range []string{filepath.Join("cmd", "linux-armer"), "docs", "internal"} {
+	for _, directory := range []string{filepath.Join("cmd", "linux-armer"), "docs", "internal", "tools"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -802,12 +805,13 @@ func makeTestSource(t *testing.T, withLicence bool) string {
 		"go.mod":     "module example.invalid/linux-armer\n\ngo 1.26\n",
 		"go.sum":     "",
 		"catalog.go": "package linuxarmer\n",
-		filepath.Join("cmd", "linux-armer", "main.go"): "package main\nfunc main() {}\n",
-		filepath.Join("internal", "logic.go"):          "package internal\n",
-		filepath.Join("docs", "README.md"):             "# Documentation\n",
-		"README.md":                                    "# linux-armer\n",
-		"CHANGELOG.md":                                 "# Changelog\n",
-		".gitignore":                                   "/bin/\n/linux-armer\n/*.iso\n",
+		filepath.Join("cmd", "linux-armer", "main.go"):             "package main\nfunc main() {}\n",
+		filepath.Join("internal", "logic.go"):                      "package internal\n",
+		filepath.Join("docs", "README.md"):                         "# Documentation\n",
+		filepath.Join("tools", "collect-sp11-windows-handoff.ps1"): "# Strict Windows hand-off collector\n",
+		"README.md":    "# linux-armer\n",
+		"CHANGELOG.md": "# Changelog\n",
+		".gitignore":   "/bin/\n/linux-armer\n/*.iso\n",
 	}
 	if withLicence {
 		files["LICENSE"] = "test redistribution terms\n"

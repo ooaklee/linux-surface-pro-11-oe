@@ -39,6 +39,7 @@ var (
 		"cmd":      ".go",
 		"docs":     ".md",
 		"internal": ".go",
+		"tools":    ".ps1",
 	}
 )
 
