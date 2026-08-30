@@ -1,0 +1,146 @@
+name: Linux Armer CLI
+
+on:
+  pull_request:
+    paths:
+      - "cli/linux-armer/**"
+      - ".github/workflows/linux-armer.yml"
+  push:
+    branches:
+      - "**"
+    tags:
+      - "linux-armer/v*"
+    paths:
+      - "cli/linux-armer/**"
+      - ".github/workflows/linux-armer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-armer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  quality:
+    name: Format, test, vet, and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli/linux-armer
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: cli/linux-armer/.tool-versions
+          cache-dependency-path: cli/linux-armer/go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'The following Go files need formatting:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Run race-enabled tests
+        run: go test -race ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Build Linux amd64 binary without CGO
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${RUNNER_TEMP}/linux-armer-linux-amd64" ./cmd/linux-armer
+
+      - name: Build Linux arm64 binary without CGO
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o "${RUNNER_TEMP}/linux-armer-linux-arm64" ./cmd/linux-armer
+
+  release:
+    name: Publish CLI release
+    if: startsWith(github.ref, 'refs/tags/linux-armer/v')
+    needs:
+      - quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli/linux-armer
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: cli/linux-armer/.tool-versions
+          cache-dependency-path: cli/linux-armer/go.sum
+
+      - name: Prepare namespaced release tag
+        id: release-version
+        run: |
+          tag_pattern='^linux-armer/(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$'
+          if [[ ! "$GITHUB_REF_NAME" =~ $tag_pattern ]]; then
+            printf 'Release tag must match linux-armer/vMAJOR.MINOR.PATCH and use valid SemVer syntax: %s\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+          semver_tag="${BASH_REMATCH[1]}"
+          printf 'GORELEASER_CURRENT_TAG=%s\n' "$semver_tag" >> "$GITHUB_ENV"
+          printf 'LINUX_ARMER_VERSION=%s\n' "${semver_tag#v}" >> "$GITHUB_ENV"
+          git tag --force "$semver_tag" "$GITHUB_SHA"
+
+          previous_namespaced_tag="$(git describe --tags --match 'linux-armer/v[0-9]*' --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [[ -n "$previous_namespaced_tag" && ! "$previous_namespaced_tag" =~ $tag_pattern ]]; then
+            previous_namespaced_tag=""
+          fi
+
+          if [[ -n "$previous_namespaced_tag" ]]; then
+            previous_semver_tag="${previous_namespaced_tag#linux-armer/}"
+            git tag --force "$previous_semver_tag" "$previous_namespaced_tag"
+            printf 'GORELEASER_PREVIOUS_TAG=%s\n' "$previous_semver_tag" >> "$GITHUB_ENV"
+            printf 'PREVIOUS_LINUX_ARMER_TAG=%s\n' "$previous_namespaced_tag" >> "$GITHUB_ENV"
+          fi
+
+      - name: Package release with GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.0
+          args: release --clean --skip=publish
+          workdir: cli/linux-armer
+
+      - name: Publish namespaced GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes_file="${RUNNER_TEMP}/linux-armer-release-notes.md"
+          {
+            printf '# Linux Armer %s\n\n' "$LINUX_ARMER_VERSION"
+            printf 'Each platform archive contains the Linux Armer binary, both supported-component catalogues, and the user documentation. Verify downloads with `checksums.txt`.\n\n'
+            printf '## Changes\n\n'
+            if [[ -n "${PREVIOUS_LINUX_ARMER_TAG:-}" ]]; then
+              git log --format='- %s (`%h`)' "${PREVIOUS_LINUX_ARMER_TAG}..${GITHUB_SHA}" -- .
+            else
+              git log --format='- %s (`%h`)' "$GITHUB_SHA" -- .
+            fi
+          } > "$notes_file"
+
+          gh release create "$GITHUB_REF_NAME" \
+            dist/*.tar.gz \
+            dist/checksums.txt \
+            --verify-tag \
+            --title "Linux Armer ${LINUX_ARMER_VERSION}" \
+            --notes-file "$notes_file" \
+            --latest=false

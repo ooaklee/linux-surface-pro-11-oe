@@ -39,6 +39,7 @@ archives:
       - README.md
       - CHANGELOG.md
       - supported-isos.json
+      - supported-userspace.json
 
 checksum:
   name_template: checksums.txt
@@ -52,4 +53,5 @@ changelog:
       - "^test:"
 
 release:
-  draft: true
+  draft: false
+  make_latest: false
