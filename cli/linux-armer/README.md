@@ -72,6 +72,8 @@ linux-armer image write <iso> --device <whole-device> --dry-run
 
 linux-armer handoff import <directory>
 linux-armer handoff list
+linux-armer handoff apply <id> --target-root <path> --dry-run
+linux-armer handoff restore <receipt-id> --target-root <path> --dry-run
 linux-armer handoff purge <id> --dry-run
 
 linux-armer userspace list
@@ -317,6 +319,42 @@ linux-armer handoff list
 
 Import rejects unknown or mis-cased JSON fields, missing or extra files, symbolic links, special files, case-colliding paths, non-canonical mappings, digest or size mismatches, and source mutation during verification. It publishes the exact bytes atomically beneath a mode-`0700` content-addressed store and protects every stored file with mode `0600`. Re-importing identical bytes revalidates and reuses the existing entry. Ordinary and JSON output contain only redacted summary fields; they never contain the Bluetooth address, raw UUID, adapter identifier, salts, or their bindings.
 
+Applying an imported hand-off is a separate, privileged transaction. The command revalidates the stored closed set, proves that the live SMBIOS identity at `--identity-root` matches the device-bound evidence, and prepares changes only beneath the mandatory `--target-root`. The default identity root is `/`; keep it when preparing another mounted root on the same Surface. Use `--feature firmware` or `--feature bluetooth` to select one included feature, or omit the repeatable flag to select every included feature. Firmware application also requires an explicit aDSP policy: `enabled` for an installed system whose root is on internal storage, or `disabled` for a live USB root.
+
+Review the immutable plan as an unprivileged user before applying it. The dry run prints the exact ID-, policy-, target-, and current-state-bound confirmation phrase:
+
+```sh
+linux-armer handoff apply <id> \
+  --target-root /target \
+  --feature firmware \
+  --feature bluetooth \
+  --adsp-policy enabled \
+  --dry-run
+
+sudo linux-armer handoff apply <id> \
+  --target-root /target \
+  --feature firmware \
+  --feature bluetooth \
+  --adsp-policy enabled \
+  --confirm '<exact phrase from the current dry run>'
+```
+
+For the running live system, spell the target explicitly as `--target-root /` and select `--adsp-policy disabled` when firmware is included. The transaction installs only the fixed eleven-file platform-firmware set, its Denali GPU link, the selected aDSP policy, and the private Bluetooth runtime integration represented by the imported evidence. It does not copy Windows Wi-Fi firmware, change an unselected feature, expose private values in output, or accept a confirmation generated for another plan.
+
+Every started mutation keeps private same-filesystem backups and a durable receipt beneath the target. A failure attempts bounded rollback but deliberately retains the receipt and backups for inspection or recovery. Restore is therefore explicit and uses its own current-state-bound confirmation:
+
+```sh
+linux-armer handoff restore <receipt-id> \
+  --target-root /target \
+  --dry-run
+
+sudo linux-armer handoff restore <receipt-id> \
+  --target-root /target \
+  --confirm '<exact phrase from the current restore dry run>'
+```
+
+Do not delete a retained receipt or its private backup directory until application, boot validation, and any necessary restoration have completed. `--json` is available for redacted automation output on both commands.
+
 The default store is `.linux-armer-handoffs` beneath the current user's home directory. Use `--store <directory>` when a different private location is required. Review retention before deleting an entry:
 
 ```sh
@@ -324,7 +362,7 @@ linux-armer handoff purge <id> --dry-run
 linux-armer handoff purge <id> --confirm 'purge <id>'
 ```
 
-Purge accepts only the complete content-addressed phrase, revalidates the private closed set, atomically isolates that exact direct child, revalidates it again, and removes only the verified files and directories. `handoff apply` is intentionally not available yet: importing trustworthy evidence is distinct from authorising a system mutation, and firmware and Bluetooth application require their own same-device check, transaction, rollback, and receipt before they can become supported commands.
+Purge accepts only the complete content-addressed phrase, revalidates the private closed set, atomically isolates that exact direct child, revalidates it again, and removes only the verified files and directories. Purging an imported source does not remove application receipts or backups from a target root; recover or deliberately retain those records independently.
 
 ## Userspace companion
 
