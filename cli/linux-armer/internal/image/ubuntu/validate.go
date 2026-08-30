@@ -3,8 +3,10 @@ package ubuntu
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +21,9 @@ import (
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
+
+// maximumValidationImageBytes bounds one private ISO validation snapshot.
+const maximumValidationImageBytes int64 = 64 << 30
 
 // Validator inspects a completed Ubuntu image with isolated tooling and produces
 // a digest-bound report covering its boot layout and embedded kernel payload.
@@ -44,37 +49,27 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 	if err != nil {
 		return imagecontract.ValidationReport{}, err
 	}
-	info, err := os.Stat(absolute)
-	if err != nil {
-		return imagecontract.ValidationReport{}, fmt.Errorf("stat ISO: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return imagecontract.ValidationReport{}, fmt.Errorf("ISO path %q is not a regular file", absolute)
-	}
-	digest, err := artifact.HashFile(absolute)
-	if err != nil {
-		return imagecontract.ValidationReport{}, err
-	}
-	report := imagecontract.ValidationReport{
-		Path: absolute, SHA256: digest, Size: info.Size(), Layout: "hybrid-iso", Adapter: AdapterID,
-	}
-	addCheck := func(name string, passed bool, details string) {
-		report.Checks = append(report.Checks, imagecontract.ValidationCheck{Name: name, Passed: passed, Details: details})
-	}
 	if err := v.Docker.Check(ctx); err != nil {
-		return report, err
+		return imagecontract.ValidationReport{Path: absolute, Layout: "hybrid-iso", Adapter: AdapterID}, err
 	}
 	toolsImage, err := v.Docker.EnsureToolsImage(ctx)
 	if err != nil {
-		return report, err
+		return imagecontract.ValidationReport{Path: absolute, Layout: "hybrid-iso", Adapter: AdapterID}, err
 	}
 	workspace, err := os.MkdirTemp(filepath.Dir(absolute), ".linux-armer-validate-")
 	if err != nil {
-		return report, err
+		return imagecontract.ValidationReport{Path: absolute, Layout: "hybrid-iso", Adapter: AdapterID}, err
 	}
 	defer os.RemoveAll(workspace)
-	if err := stageFile(absolute, filepath.Join(workspace, "image.iso")); err != nil {
-		return report, err
+	digest, size, err := snapshotValidationImage(ctx, absolute, filepath.Join(workspace, "image.iso"))
+	if err != nil {
+		return imagecontract.ValidationReport{Path: absolute, Layout: "hybrid-iso", Adapter: AdapterID}, err
+	}
+	report := imagecontract.ValidationReport{
+		Path: absolute, SHA256: digest, Size: size, Layout: "hybrid-iso", Adapter: AdapterID,
+	}
+	addCheck := func(name string, passed bool, details string) {
+		report.Checks = append(report.Checks, imagecontract.ValidationCheck{Name: name, Passed: passed, Details: details})
 	}
 
 	systemArea, systemErr := v.Docker.CaptureInWorkspace(ctx, toolsImage, workspace,
@@ -120,10 +115,15 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 	}
 	addCheck("required-iso-members", true, "kernel, initramfs, Casper identity, live root, paired DTBs, manifest, and GRUB files are present")
 
-	manifestBytes, err := os.ReadFile(filepath.Join(workspace, "manifest.json"))
+	manifestPath := filepath.Join(workspace, "manifest.json")
+	manifestBytes, err := readValidationManifest(manifestPath)
 	if err != nil {
-		return report, err
+		addCheck("embedded-manifest", false, "embedded manifest is missing, non-regular, or outside its size limit")
+		return report, fmt.Errorf("inspect embedded manifest: %w", err)
 	}
+	manifestDigest := sha256.Sum256(manifestBytes)
+	report.ManifestSHA256 = fmt.Sprintf("%x", manifestDigest)
+	report.ManifestSize = int64(len(manifestBytes))
 	manifest, err := imagecontract.DecodeManifest(bytes.NewReader(manifestBytes))
 	if err != nil {
 		addCheck("embedded-manifest", false, err.Error())
@@ -323,6 +323,140 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		return report, errors.New("ISO validation failed")
 	}
 	return report, nil
+}
+
+// snapshotValidationImage copies and hashes one descriptor-pinned ISO into the
+// private validation workspace so every later check observes those same bytes.
+func snapshotValidationImage(ctx context.Context, sourcePath, destinationPath string) (digest string, size int64, resultErr error) {
+	return snapshotValidationImageAfterInspection(ctx, sourcePath, destinationPath, nil)
+}
+
+// snapshotValidationImageAfterInspection exposes one test-only scheduling seam
+// while retaining the production descriptor and identity checks.
+func snapshotValidationImageAfterInspection(ctx context.Context, sourcePath, destinationPath string, afterInspection func() error) (digest string, size int64, resultErr error) {
+	listed, err := os.Lstat(sourcePath)
+	if err != nil {
+		return "", 0, fmt.Errorf("inspect ISO: %w", err)
+	}
+	if listed.Mode()&os.ModeSymlink != 0 || !listed.Mode().IsRegular() || listed.Size() <= 0 || listed.Size() > maximumValidationImageBytes {
+		return "", 0, fmt.Errorf("ISO path %q is not a bounded non-symbolic-link regular file", sourcePath)
+	}
+	if afterInspection != nil {
+		if err := afterInspection(); err != nil {
+			return "", 0, err
+		}
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return "", 0, fmt.Errorf("open ISO snapshot source: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, source.Close()) }()
+	opened, err := source.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(listed, opened) ||
+		opened.Size() != listed.Size() || opened.Size() <= 0 || opened.Size() > maximumValidationImageBytes {
+		return "", 0, errors.Join(errors.New("ISO identity changed while opening its validation snapshot"), err)
+	}
+	destination, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", 0, fmt.Errorf("create private ISO validation snapshot: %w", err)
+	}
+	keepDestination := false
+	defer func() {
+		if !keepDestination {
+			resultErr = errors.Join(resultErr, os.Remove(destinationPath))
+		}
+	}()
+	hasher := sha256.New()
+	buffer := make([]byte, 256*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = destination.Close()
+			return "", size, err
+		}
+		count, readErr := source.Read(buffer)
+		if count > 0 {
+			size += int64(count)
+			if size > opened.Size() || size > maximumValidationImageBytes {
+				_ = destination.Close()
+				return "", size, errors.New("ISO grew while its validation snapshot was copied")
+			}
+			written, writeErr := io.MultiWriter(destination, hasher).Write(buffer[:count])
+			if writeErr != nil {
+				_ = destination.Close()
+				return "", size, writeErr
+			}
+			if written != count {
+				_ = destination.Close()
+				return "", size, io.ErrShortWrite
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			_ = destination.Close()
+			return "", size, readErr
+		}
+	}
+	afterRead, statErr := source.Stat()
+	syncErr := destination.Sync()
+	closeErr := destination.Close()
+	if err := errors.Join(statErr, syncErr, closeErr); err != nil {
+		return "", size, err
+	}
+	if size != opened.Size() || !afterRead.Mode().IsRegular() || !os.SameFile(opened, afterRead) || afterRead.Size() != opened.Size() {
+		return "", size, errors.New("ISO changed while its validation snapshot was copied")
+	}
+	keepDestination = true
+	return fmt.Sprintf("%x", hasher.Sum(nil)), size, nil
+}
+
+// readValidationManifest reads one bounded regular manifest from a single
+// descriptor and rejects identity or size drift around that read.
+func readValidationManifest(path string) (data []byte, resultErr error) {
+	return readValidationManifestAfterInspection(path, nil)
+}
+
+// readValidationManifestAfterInspection exposes one test-only scheduling seam
+// while retaining the production bounded descriptor read.
+func readValidationManifestAfterInspection(path string, afterInspection func() error) (data []byte, resultErr error) {
+	listed, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if listed.Mode()&os.ModeSymlink != 0 || !listed.Mode().IsRegular() || listed.Size() < 0 || listed.Size() > imagecontract.MaximumManifestSize {
+		return nil, errors.New("embedded manifest is not a bounded non-symbolic-link regular file")
+	}
+	if afterInspection != nil {
+		if err := afterInspection(); err != nil {
+			return nil, err
+		}
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(listed, opened) ||
+		opened.Size() != listed.Size() || opened.Size() < 0 || opened.Size() > imagecontract.MaximumManifestSize {
+		return nil, errors.Join(errors.New("embedded manifest identity changed while opening"), err)
+	}
+	data, err = io.ReadAll(io.LimitReader(file, imagecontract.MaximumManifestSize+1))
+	if err != nil {
+		return nil, err
+	}
+	afterRead, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	current, currentErr := os.Lstat(path)
+	if currentErr != nil || len(data) > imagecontract.MaximumManifestSize || int64(len(data)) != opened.Size() ||
+		!afterRead.Mode().IsRegular() || !os.SameFile(opened, afterRead) || afterRead.Size() != opened.Size() ||
+		current.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, current) || current.Size() != opened.Size() {
+		return nil, errors.Join(errors.New("embedded manifest changed while reading"), currentErr)
+	}
+	return data, nil
 }
 
 // validateCompanionBundle checks the single manifest's companion record,

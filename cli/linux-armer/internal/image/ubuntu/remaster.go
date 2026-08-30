@@ -3,6 +3,7 @@ package ubuntu
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // Ubuntu media compatibility manifest uses MD5.
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +29,10 @@ import (
 // AdapterID is the stable manifest and catalogue identifier for the Ubuntu
 // Casper remaster implementation.
 const AdapterID = "ubuntu-casper"
+
+// portableISONameExpression accepts the bounded release-compatible basename
+// subset used for newly created installation images.
+var portableISONameExpression = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~%-]{0,199}$`)
 
 // Request contains all verified inputs and output policy for one Ubuntu image
 // remaster operation.
@@ -106,6 +112,9 @@ func BuildPlan(request Request) (plan.Plan, error) {
 	if request.SourceISO == "" || request.OutputISO == "" {
 		return plan.Plan{}, errors.New("source and output ISO paths are required")
 	}
+	if !validPortableISOOutput(request.OutputISO) {
+		return plan.Plan{}, errors.New("output ISO must have a bounded portable .iso filename")
+	}
 	if request.Bundle.ABI == "" {
 		return plan.Plan{}, errors.New("kernel bundle ABI is required")
 	}
@@ -131,22 +140,17 @@ func BuildPlan(request Request) (plan.Plan, error) {
 		{ID: "repack-live-root", Kind: "filesystem", Description: "Repack the modified Casper filesystem"},
 		{ID: "replay-hybrid-boot", Kind: "boot", Description: "Replay the source ISO hybrid boot layout and install direct GRUB in both boot paths"},
 		{ID: "validate-output", Kind: "verify", Description: "Validate live-media and installed-system kernel, initramfs, GRUB, and DTB agreement"},
-		{ID: "publish-output", Kind: "publish", Description: "Atomically publish the completed remastered ISO", Inputs: map[string]string{"path": request.OutputISO}},
+		{ID: "publish-output", Kind: "publish", Description: "Exclusively publish the completed ISO, single manifest sidecar, and execution journal", Inputs: map[string]string{"path": request.OutputISO}},
 	}...)
 }
 
-// Create remasters, structurally validates, and atomically publishes an Ubuntu
-// hybrid ISO. Temporary Linux filesystem work occurs in a case-sensitive Docker
-// volume, and no final output is published unless every validation check passes.
+// Create remasters, structurally validates, and transactionally publishes an
+// Ubuntu hybrid ISO with its single manifest sidecar and execution journal.
+// Temporary Linux filesystem work occurs in a case-sensitive Docker volume, and
+// no final output is published unless every validation check passes.
 func (r *Remasterer) Create(ctx context.Context, request Request) (result Result, returnErr error) {
 	operationPlan, err := BuildPlan(request)
 	if err != nil {
-		return Result{}, err
-	}
-	if err := validateBundlePaths(request.Bundle); err != nil {
-		return Result{}, err
-	}
-	if err := r.Docker.Check(ctx); err != nil {
 		return Result{}, err
 	}
 	outputAbsolute, err := filepath.Abs(request.OutputISO)
@@ -163,6 +167,24 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (result Result
 	if err := os.MkdirAll(filepath.Dir(outputAbsolute), 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output directory: %w", err)
 	}
+	for _, destination := range []struct {
+		path  string
+		label string
+	}{
+		{path: outputAbsolute, label: "output ISO"},
+		{path: outputAbsolute + ".manifest.json", label: "manifest sidecar"},
+		{path: outputAbsolute + ".journal.json", label: "execution journal"},
+	} {
+		if err := requireAbsentPublicationPath(destination.path, destination.label); err != nil {
+			return Result{}, err
+		}
+	}
+	if err := validateBundlePaths(request.Bundle); err != nil {
+		return Result{}, err
+	}
+	if err := r.Docker.Check(ctx); err != nil {
+		return Result{}, err
+	}
 	workspaceParent := request.WorkspaceRoot
 	if workspaceParent == "" {
 		workspaceParent = filepath.Dir(outputAbsolute)
@@ -178,10 +200,10 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (result Result
 		defer os.RemoveAll(workspace)
 	}
 	journal := plan.NewJournal(operationPlan.Operation)
-	journalPath := outputAbsolute + ".journal.json"
+	workingJournalPath := filepath.Join(workspace, "image-create.journal.json")
 	checkpoint := func(step string, digests map[string]string) error {
 		journal.Complete(step, digests)
-		return journal.Save(journalPath)
+		return journal.Save(workingJournalPath)
 	}
 
 	logf(r.Out, "Staging source image and kernel bundle")
@@ -381,7 +403,11 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (result Result
 	if err != nil {
 		return Result{}, err
 	}
-	if err := writeSupportFiles(workspace, bootManifest, request.Bundle.ABI); err != nil {
+	manifestBytes, err := serialiseManifest(bootManifest)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := writeSupportFiles(workspace, bootManifest, manifestBytes, request.Bundle.ABI); err != nil {
 		return Result{}, err
 	}
 	if err := updateMD5Manifest(workspace); err != nil {
@@ -425,20 +451,39 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (result Result
 	if !validation.Valid {
 		return Result{}, errors.New("validate remastered ISO before publication: validator returned an invalid report")
 	}
+	manifestIdentity := identifyPublicationBytes(manifestBytes)
+	if validation.ManifestSHA256 != manifestIdentity.digest || validation.ManifestSize != manifestIdentity.size {
+		return Result{}, errors.New("validate remastered ISO before publication: embedded manifest bytes differ from the staged sidecar")
+	}
 	outputDigest := validation.SHA256
 	outputSize := validation.Size
 	journal.Output = &plan.OutputRecord{Path: outputAbsolute, SHA256: outputDigest, Size: outputSize}
 	if err := checkpoint("validate-output", map[string]string{"output.iso": outputDigest}); err != nil {
 		return Result{}, err
 	}
-	if err := publishFile(partialPath, outputAbsolute); err != nil {
-		return Result{}, err
+	publicationJournal := *journal
+	publicationJournal.Records = append([]plan.StepRecord(nil), journal.Records...)
+	publicationJournal.Complete("publish-output", map[string]string{"output.iso": outputDigest})
+	publicationJournalPath := filepath.Join(workspace, "image-create.complete.journal.json")
+	if err := publicationJournal.Save(publicationJournalPath); err != nil {
+		return Result{}, fmt.Errorf("stage completed image journal: %w", err)
 	}
-	manifestPath := outputAbsolute + ".manifest.json"
-	if err := writeManifest(manifestPath, bootManifest); err != nil {
-		return Result{}, err
+	journalBytes, err := os.ReadFile(publicationJournalPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("read completed image journal: %w", err)
 	}
-	if err := checkpoint("publish-output", map[string]string{"output.iso": outputDigest}); err != nil {
+	journalIdentity := identifyPublicationBytes(journalBytes)
+	manifestPath, journalPath, err := publishImageOutputs(
+		partialPath,
+		outputAbsolute,
+		manifestBytes,
+		journalBytes,
+		publicationIdentity{digest: outputDigest, size: outputSize},
+		manifestIdentity,
+		journalIdentity,
+		nil,
+	)
+	if err != nil {
 		return Result{}, err
 	}
 	resultWorkspace := ""
@@ -820,7 +865,14 @@ func portableKernelBundle(bundle kernel.Bundle) kernel.Bundle {
 
 // writeSupportFiles stages reinstallable kernel packages, provenance, operator
 // notes, disk identity, and the device-specific GRUB configuration under the ISO tree.
-func writeSupportFiles(workspace string, manifest imagecontract.Manifest, abi string) error {
+func writeSupportFiles(workspace string, manifest imagecontract.Manifest, manifestBytes []byte, abi string) error {
+	expectedManifestBytes, err := serialiseManifest(manifest)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(manifestBytes, expectedManifestBytes) {
+		return errors.New("embedded manifest bytes differ from their manifest value")
+	}
 	sp11 := filepath.Join(workspace, "sp11")
 	if err := os.MkdirAll(filepath.Join(sp11, "kernel"), 0o755); err != nil {
 		return err
@@ -833,7 +885,7 @@ func writeSupportFiles(workspace string, manifest imagecontract.Manifest, abi st
 			return err
 		}
 	}
-	if err := writeManifest(filepath.Join(sp11, "linux-armer-manifest.json"), manifest); err != nil {
+	if err := writeNewSyncedFile(filepath.Join(sp11, "linux-armer-manifest.json"), manifestBytes, 0o644); err != nil {
 		return err
 	}
 	companionNote := "No companion CLI bundle was requested for this image."
@@ -1062,34 +1114,39 @@ func samePath(first, second string) bool {
 	return firstErr == nil && secondErr == nil && os.SameFile(firstInfo, secondInfo)
 }
 
-// publishFile stages a completed artefact next to its destination and renames it
-// into place so readers never observe a partially copied image.
-func publishFile(source, destination string) error {
-	temporary := destination + ".partial"
-	_ = os.Remove(temporary)
-	if err := stageFile(source, temporary); err != nil {
-		return fmt.Errorf("stage final output: %w", err)
-	}
-	if err := os.Rename(temporary, destination); err != nil {
-		return fmt.Errorf("publish final output: %w", err)
-	}
-	return nil
+// validPortableISOOutput reports whether an output path has one bounded,
+// release-compatible ISO basename without host-specific separator bytes.
+func validPortableISOOutput(output string) bool {
+	name := filepath.Base(filepath.Clean(output))
+	return portableISONameExpression.MatchString(name) &&
+		strings.HasSuffix(strings.ToLower(name), ".iso") &&
+		!strings.ContainsAny(name, `/\`)
 }
 
-// writeManifest writes indented JSON to a sibling temporary file and atomically
-// replaces the requested manifest only after encoding and closing succeed.
-func writeManifest(path string, manifest imagecontract.Manifest) error {
-	file, err := os.OpenFile(path+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+// serialiseManifest produces the exact bounded JSON bytes shared by the
+// embedded image member and its publication sidecar.
+func serialiseManifest(manifest imagecontract.Manifest) ([]byte, error) {
+	var output bytes.Buffer
+	if err := manifest.WriteJSON(&output); err != nil {
+		return nil, fmt.Errorf("serialise image manifest: %w", err)
+	}
+	if output.Len() == 0 || output.Len() > imagecontract.MaximumManifestSize {
+		return nil, fmt.Errorf("serialised image manifest is outside its %d-byte limit", imagecontract.MaximumManifestSize)
+	}
+	return output.Bytes(), nil
+}
+
+// writeNewSyncedFile writes and flushes one ordinary file without following or
+// replacing any filesystem object planted at its requested path.
+func writeNewSyncedFile(path string, data []byte, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
-	writeErr := manifest.WriteJSON(file)
+	_, writeErr := file.Write(data)
+	syncErr := file.Sync()
 	closeErr := file.Close()
-	if err := errors.Join(writeErr, closeErr); err != nil {
-		_ = os.Remove(path + ".tmp")
-		return err
-	}
-	return os.Rename(path+".tmp", path)
+	return errors.Join(writeErr, syncErr, closeErr)
 }
 
 // artifactRecord hashes a local file and returns its size under the portable

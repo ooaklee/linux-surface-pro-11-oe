@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	imagecontract "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/companion"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/plan"
 )
 
@@ -177,7 +178,7 @@ func (manager *Manager) Prepare(ctx context.Context, request Request) (receipt R
 	if err != nil {
 		return receipt, fmt.Errorf("structurally validate release image: %w", err)
 	}
-	validation, err := projectValidation(report, operationPlan.Image, contracts.manifest)
+	validation, err := projectValidation(report, operationPlan.Image, operationPlan.ImageManifest, contracts.manifest)
 	if err != nil {
 		return receipt, err
 	}
@@ -321,6 +322,9 @@ func validateImageContract(manifest imagecontract.Manifest) error {
 	if manifest.MediaDiscovery.Strategy == "" || manifest.MediaDiscovery.Protocol == "" || len(manifest.BootArtifacts.DTBs) == 0 {
 		return errors.New("image manifest lacks media-discovery or device-tree evidence")
 	}
+	if err := companion.ValidateRecord(manifest.CompanionBundle); err != nil {
+		return fmt.Errorf("image manifest has an invalid companion bundle: %w", err)
+	}
 	seenDevices := make(map[string]struct{}, len(manifest.KernelBundle.DeviceTrees))
 	for _, deviceTree := range manifest.KernelBundle.DeviceTrees {
 		if !safeReleaseName(deviceTree.Device) {
@@ -385,10 +389,13 @@ func projectJournal(journal plan.Journal) ImageCreationRecord {
 }
 
 // projectValidation checks exact image agreement and removes local diagnostic paths.
-func projectValidation(report imagecontract.ValidationReport, image FileRecord, manifest imagecontract.Manifest) (ValidationRecord, error) {
+func projectValidation(report imagecontract.ValidationReport, image, manifestFile FileRecord, manifest imagecontract.Manifest) (ValidationRecord, error) {
 	if !report.Valid || report.SHA256 != image.SHA256 || report.Size != image.Size ||
 		report.Layout != manifest.Layout || report.Adapter != manifest.Adapter || report.KernelABI != manifest.KernelBundle.ABI {
 		return ValidationRecord{}, errors.New("structural validation evidence does not match the release image contract")
+	}
+	if report.ManifestSHA256 != manifestFile.SHA256 || report.ManifestSize != manifestFile.Size {
+		return ValidationRecord{}, errors.New("embedded image manifest differs from its adjacent sidecar")
 	}
 	if len(report.Checks) == 0 || len(report.Checks) > 256 {
 		return ValidationRecord{}, errors.New("structural validation returned an invalid check count")

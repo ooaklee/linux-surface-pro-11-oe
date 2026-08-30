@@ -448,6 +448,10 @@ type ValidationReport struct {
 	Layout string `json:"layout"`
 	// Adapter identifies the distribution-specific validator used.
 	Adapter string `json:"adapter"`
+	// ManifestSHA256 identifies the exact embedded image-manifest bytes.
+	ManifestSHA256 string `json:"manifest_sha256"`
+	// ManifestSize is the embedded image-manifest length in bytes.
+	ManifestSize int64 `json:"manifest_size_bytes"`
 	// KernelABI is the exact ABI read from the embedded manifest.
 	KernelABI string `json:"kernel_abi"`
 	// DeviceTrees lists the hardware identities declared by the kernel bundle.

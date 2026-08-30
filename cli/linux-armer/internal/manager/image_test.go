@@ -263,6 +263,25 @@ func TestImageManagerPlanRequiresOutput(t *testing.T) {
 	}
 }
 
+// TestImageManagerPlanRejectsNonPortableISOOutput verifies manager planning
+// refuses output names that cannot enter the image-release contract.
+func TestImageManagerPlanRejectsNonPortableISOOutput(t *testing.T) {
+	t.Parallel()
+
+	for _, output := range []string{
+		"/output/result.img",
+		"/output/not portable.iso",
+		"/output/.hidden.iso",
+		"/output/result.iso.tmp",
+		"/output/" + strings.Repeat("a", 197) + ".iso",
+	} {
+		_, err := newImagePlanTestManager().Plan(CreateImageRequest{Output: output})
+		if err == nil || !strings.Contains(err.Error(), "portable .iso filename") {
+			t.Errorf("Plan(Output=%q) error = %v", output, err)
+		}
+	}
+}
+
 // TestImageManagerCreateRejectsCatalogOnlyEntryBeforeExecution verifies an image
 // listed for discovery alone cannot reach download or remaster execution.
 func TestImageManagerCreateRejectsCatalogOnlyEntryBeforeExecution(t *testing.T) {

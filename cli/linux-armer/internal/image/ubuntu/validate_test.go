@@ -150,6 +150,132 @@ func TestISODirectoryListingContainsRequiresExactName(t *testing.T) {
 	}
 }
 
+// TestSnapshotValidationImagePinsOneSourceIdentity proves a pathname exchange
+// between inspection and opening cannot pair one ISO digest with another ISO's
+// embedded manifest.
+func TestSnapshotValidationImagePinsOneSourceIdentity(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.iso")
+	replacement := filepath.Join(root, "replacement.iso")
+	destination := filepath.Join(root, "snapshot.iso")
+	if err := os.WriteFile(source, []byte("first image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(replacement, []byte("second image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := func() error {
+		if err := os.Rename(source, source+".original"); err != nil {
+			return err
+		}
+		return os.Rename(replacement, source)
+	}
+	if _, _, err := snapshotValidationImageAfterInspection(context.Background(), source, destination, hook); err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("snapshot source-swap error = %v", err)
+	}
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed snapshot destination exists: %v", err)
+	}
+}
+
+// TestSnapshotValidationImageRejectsSameInodeGrowth proves the absolute ISO
+// bound is repeated on the opened descriptor rather than trusted from Lstat.
+func TestSnapshotValidationImageRejectsSameInodeGrowth(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.iso")
+	destination := filepath.Join(root, "snapshot.iso")
+	if err := os.WriteFile(source, []byte("small image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := func() error {
+		return os.Truncate(source, maximumValidationImageBytes+1)
+	}
+	if _, _, err := snapshotValidationImageAfterInspection(context.Background(), source, destination, hook); err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("snapshot same-inode growth error = %v", err)
+	}
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed snapshot destination exists: %v", err)
+	}
+}
+
+// TestSnapshotValidationImageHashesThePrivateCopy verifies successful
+// snapshots report the exact bytes later supplied to all structural tools.
+func TestSnapshotValidationImageHashesThePrivateCopy(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.iso")
+	destination := filepath.Join(root, "snapshot.iso")
+	contents := []byte("one coherent image snapshot")
+	if err := os.WriteFile(source, contents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest, size, err := snapshotValidationImage(context.Background(), source, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDigest := sha256.Sum256(contents)
+	copied, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != fmt.Sprintf("%x", wantDigest) || size != int64(len(contents)) || string(copied) != string(contents) {
+		t.Fatalf("snapshot digest=%s size=%d contents=%q", digest, size, copied)
+	}
+}
+
+// TestReadValidationManifestRejectsPathSwapAndOversize proves the manifest
+// bound and regular-file identity survive hostile pathname changes.
+func TestReadValidationManifestRejectsPathSwapAndOversize(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "manifest.json")
+	replacement := filepath.Join(root, "replacement.json")
+	if err := os.WriteFile(manifest, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(replacement, []byte("{\"different\":true}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := func() error {
+		if err := os.Rename(manifest, manifest+".original"); err != nil {
+			return err
+		}
+		return os.Rename(replacement, manifest)
+	}
+	if _, err := readValidationManifestAfterInspection(manifest, hook); err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("manifest source-swap error = %v", err)
+	}
+	overlong := filepath.Join(root, "overlong.json")
+	file, err := os.Create(overlong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	truncateErr := file.Truncate(imagecontract.MaximumManifestSize + 1)
+	closeErr := file.Close()
+	if err := errors.Join(truncateErr, closeErr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readValidationManifest(overlong); err == nil || !strings.Contains(err.Error(), "bounded") {
+		t.Fatalf("overlong manifest error = %v", err)
+	}
+}
+
+// TestReadValidationManifestRejectsSameInodeGrowth proves the manifest size
+// observed before opening must still match the descriptor-bound file.
+func TestReadValidationManifestRejectsSameInodeGrowth(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := filepath.Join(root, "manifest.json")
+	if err := os.WriteFile(manifest, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := func() error {
+		return os.Truncate(manifest, 32)
+	}
+	if _, err := readValidationManifestAfterInspection(manifest, hook); err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("manifest same-inode growth error = %v", err)
+	}
+}
+
 // writeCompanionValidationFixture stages the smallest valid companion closed
 // set and returns matching immutable records for validator tests.
 func writeCompanionValidationFixture(t *testing.T, root string) imagecontract.CompanionBundleRecord {

@@ -2,6 +2,7 @@ package plan
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,27 +57,27 @@ func (j *Journal) Complete(stepID string, digests map[string]string) {
 	})
 }
 
-// Save atomically replaces the journal on a resource-clean boundary.
+// Save serialises the journal through a random, exclusively created sibling and
+// atomically replaces its destination on a resource-clean boundary.
 func (j *Journal) Save(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return fmt.Errorf("create journal directory: %w", err)
 	}
-	temporary := path + ".tmp"
-	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	file, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create journal: %w", err)
 	}
+	temporary := file.Name()
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	encodeErr := encoder.Encode(j)
+	modeErr := file.Chmod(0o644)
+	syncErr := file.Sync()
 	closeErr := file.Close()
-	if encodeErr != nil {
+	if err := errors.Join(encodeErr, modeErr, syncErr, closeErr); err != nil {
 		_ = os.Remove(temporary)
-		return fmt.Errorf("encode journal: %w", encodeErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(temporary)
-		return fmt.Errorf("close journal: %w", closeErr)
+		return fmt.Errorf("write journal: %w", err)
 	}
 	if err := os.Rename(temporary, path); err != nil {
 		_ = os.Remove(temporary)

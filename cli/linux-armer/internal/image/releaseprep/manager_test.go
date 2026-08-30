@@ -17,6 +17,7 @@ import (
 	"time"
 
 	imagecontract "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/companion"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/plan"
 )
@@ -121,10 +122,8 @@ func newFixture(t *testing.T) fixture {
 		MediaDiscovery: imagecontract.MediaDiscoveryRecord{
 			Strategy: "direct-hybrid", Protocol: "casper", Evidence: []imagecontract.MediaDiscoveryEvidence{},
 		},
-		CompanionBundle: imagecontract.CompanionBundleRecord{
-			Included: false, Root: "sp11/companion", Reason: "not requested", Userspace: []imagecontract.OfflineUserspaceRecord{},
-		},
-		BootArguments: []string{"clk_ignore_unused"}, SecureBoot: "unsupported",
+		CompanionBundle: companion.Absent(companion.OmissionReasonNotRequested),
+		BootArguments:   []string{"clk_ignore_unused"}, SecureBoot: "unsupported",
 	}
 	manifestFile, err := os.Create(imagePath + ".manifest.json")
 	if err != nil {
@@ -136,6 +135,11 @@ func newFixture(t *testing.T) fixture {
 	if err := manifestFile.Close(); err != nil {
 		t.Fatal(err)
 	}
+	manifestData, err := os.ReadFile(imagePath + ".manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest := sha256.Sum256(manifestData)
 	journal := plan.NewJournal("image.create")
 	for _, step := range expectedImageSteps {
 		digests := map[string]string(nil)
@@ -157,10 +161,69 @@ func newFixture(t *testing.T) fixture {
 		report: imagecontract.ValidationReport{
 			Valid: true, Path: imagePath, SHA256: digest, Size: int64(len(imageBytes)),
 			Layout: "hybrid-iso", Adapter: "ubuntu-casper", KernelABI: "1.0-test-qcom-x1e",
+			ManifestSHA256: hex.EncodeToString(manifestDigest[:]), ManifestSize: int64(len(manifestData)),
 			DeviceTrees: []string{"surface-pro-11-x1e-oled"},
 			Checks:      []imagecontract.ValidationCheck{{Name: "hybrid-layout", Passed: true, Details: imagePath}},
 		},
 	}
+}
+
+// includedCompanionFixture returns one semantically valid companion record
+// whose source digest can differ from the manifest embedded in a fixture ISO.
+func includedCompanionFixture() imagecontract.CompanionBundleRecord {
+	return imagecontract.CompanionBundleRecord{
+		Included: true,
+		Root:     companion.ISOFilesystemRoot,
+		Tool: &imagecontract.ToolIdentityRecord{
+			Version: "v0.1.0-test", Commit: "working-tree", BuildDate: "2026-08-30T12:00:00Z",
+		},
+		ProjectLicence: "not-declared",
+		Executable: &imagecontract.ExecutableArtifactRecord{
+			Artifact: imagecontract.ArtifactRecord{
+				Path: "sp11/companion/bin/linux-arm64/linux-armer", SHA256: strings.Repeat("5", 64), Size: 1,
+			},
+			OperatingSystem: "linux", Architecture: "arm64", Format: "ELF", Mode: "0755",
+		},
+		SourceArchive: &imagecontract.ArtifactRecord{
+			Path:   "sp11/companion/source/linux-armer_v0.1.0-test_source.tar.gz",
+			SHA256: strings.Repeat("6", 64), Size: 1,
+		},
+		Catalogues: []imagecontract.ArtifactRecord{
+			{Path: "sp11/companion/catalogues/supported-isos.json", SHA256: strings.Repeat("7", 64), Size: 1},
+			{Path: "sp11/companion/catalogues/supported-userspace.json", SHA256: strings.Repeat("8", 64), Size: 1},
+		},
+		Userspace: []imagecontract.OfflineUserspaceRecord{},
+	}
+}
+
+// rewriteFixtureManifest replaces one fixture sidecar with canonical bytes.
+func rewriteFixtureManifest(t *testing.T, imagePath string, manifest imagecontract.Manifest) {
+	t.Helper()
+	file, err := os.OpenFile(imagePath+".manifest.json", os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeErr := manifest.WriteJSON(file)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// readFixtureManifest decodes one fixture sidecar through the production
+// bounded, strict manifest decoder.
+func readFixtureManifest(t *testing.T, imagePath string) imagecontract.Manifest {
+	t.Helper()
+	file, err := os.Open(imagePath + ".manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, decodeErr := imagecontract.DecodeManifest(file)
+	closeErr := file.Close()
+	if err := errors.Join(decodeErr, closeErr); err != nil {
+		t.Fatal(err)
+	}
+	return manifest
 }
 
 // TestPrepareAndValidatePublishesExactRelease exercises the complete local transaction.
@@ -192,6 +255,46 @@ func TestPrepareAndValidatePublishesExactRelease(t *testing.T) {
 		if strings.HasSuffix(entry.Name(), ".journal.json") {
 			t.Fatalf("private path-bearing journal was published: %s", entry.Name())
 		}
+	}
+}
+
+// TestPrepareRejectsSidecarEmbeddedCompanionMismatch proves release
+// preparation binds the complete adjacent manifest to the bytes extracted from
+// the ISO, including a valid but different companion inventory.
+func TestPrepareRejectsSidecarEmbeddedCompanionMismatch(t *testing.T) {
+	fixture := newFixture(t)
+	manifest := readFixtureManifest(t, fixture.image)
+	manifest.CompanionBundle = includedCompanionFixture()
+	rewriteFixtureManifest(t, fixture.image, manifest)
+
+	manager := New(fakeValidator{report: fixture.report}, fakeCompressor{})
+	_, err := manager.Prepare(context.Background(), Request{
+		RepositoryRoot: fixture.root, ImagePath: fixture.image,
+		ReleaseName: "mismatched-companion", PartSizeBytes: 31,
+	})
+	if err == nil || !strings.Contains(err.Error(), "embedded image manifest differs") {
+		t.Fatalf("Prepare() sidecar mismatch error = %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(fixture.root, "build", "release", "mismatched-companion")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("mismatched release output exists: %v", statErr)
+	}
+}
+
+// TestPlanRejectsMalformedCompanionRecord proves release planning applies the
+// same mandatory companion schema as image creation and validation.
+func TestPlanRejectsMalformedCompanionRecord(t *testing.T) {
+	fixture := newFixture(t)
+	manifest := readFixtureManifest(t, fixture.image)
+	manifest.CompanionBundle.Reason = "not requested"
+	rewriteFixtureManifest(t, fixture.image, manifest)
+
+	manager := New(fakeValidator{report: fixture.report}, fakeCompressor{})
+	_, err := manager.Plan(context.Background(), Request{
+		RepositoryRoot: fixture.root, ImagePath: fixture.image,
+		ReleaseName: "malformed-companion", PartSizeBytes: 31,
+	})
+	if err == nil || !strings.Contains(err.Error(), companion.OmissionReasonNotRequested) {
+		t.Fatalf("Plan() malformed companion error = %v", err)
 	}
 }
 

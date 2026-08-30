@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,10 @@ import (
 // DefaultCatalogID selects the first source image whose adapter is implemented
 // when a caller does not explicitly choose a catalogue entry.
 const DefaultCatalogID = "ubuntu-concept-resolute-x1e"
+
+// portableISOOutputExpression accepts the release-compatible basename subset
+// used for a newly created installation image.
+var portableISOOutputExpression = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~%-]{0,199}$`)
 
 // CreateImageRequest describes source, kernel, cache, workspace, and publication
 // choices for the complete image-creation workflow.
@@ -257,6 +262,9 @@ func (m *ImageManager) prepareImageOperation(request CreateImageRequest) (imageO
 	if strings.TrimSpace(request.Output) == "" {
 		return imageOperation{}, errors.New("output ISO path is required")
 	}
+	if !validPortableISOOutput(request.Output) {
+		return imageOperation{}, errors.New("output ISO must have a bounded portable .iso filename")
+	}
 	componentIDs, err := resolveOfflineCompanionComponentIDs(request.CompanionUserspace)
 	if err != nil {
 		return imageOperation{}, err
@@ -311,6 +319,15 @@ func (m *ImageManager) prepareImageOperation(request CreateImageRequest) (imageO
 			KeepWorkspace:      request.KeepWorkspace,
 		},
 	}, nil
+}
+
+// validPortableISOOutput reports whether an output path ends in one bounded,
+// release-compatible ISO basename without host-specific separator bytes.
+func validPortableISOOutput(output string) bool {
+	name := filepath.Base(filepath.Clean(output))
+	return portableISOOutputExpression.MatchString(name) &&
+		strings.HasSuffix(strings.ToLower(name), ".iso") &&
+		!strings.ContainsAny(name, `/\`)
 }
 
 // adapterForEntry enforces support and format capabilities before returning
