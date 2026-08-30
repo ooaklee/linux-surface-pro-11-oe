@@ -62,6 +62,7 @@ func (a *application) newImageCommand() *cobra.Command {
 	command.AddCommand(
 		a.newImageCreateCommand(),
 		a.newImageValidateCommand(),
+		a.newImageReleaseCommand(),
 		a.newImageDevicesCommand(),
 		a.newImageWriteCommand(),
 	)
