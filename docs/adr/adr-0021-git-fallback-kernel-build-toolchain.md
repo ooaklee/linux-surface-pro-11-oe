@@ -7,7 +7,7 @@ description: Architecture Decision Record (ADR) for selecting the Docker image u
 
 ## Context
 
-[ADR020](adr-0020-dockerized-arm64-kernel-build.md) added a Dockerized ARM64
+[ADR020](adr-0020-dockerized-arm64-kernel-build.md) added a Dockerised ARM64
 kernel build workflow. The preferred path is apt source mode with metadata
 collected from the installed Surface Pro 11 kernel package.
 

@@ -6,7 +6,7 @@ description: Architecture decision for collecting, importing, retaining, and lat
 
 ## Status
 
-Accepted on 2026-08-30.
+Superseded on 2026-08-30 by ADR021.
 
 ## Context
 
@@ -30,7 +30,7 @@ Bluetooth evidence is also a strict union. An included section contains a canoni
 
 `handoff list` will revalidate every direct store child before returning redacted summaries. `handoff purge` will first return a plan bound to the current closed set, require the exact phrase `purge <content-address>`, revalidate the plan, atomically isolate that direct child, validate it again, and remove only its verified files and directories. It will never accept a blanket `yes`, an arbitrary path, or recursive deletion of unchecked content.
 
-Import and retention do not authorise application. A future `handoff apply` must independently re-derive the target device binding, verify the Bluetooth adapter binding where applicable, present an exact transaction plan, install only compiled destinations, preserve byte-exact backups, rebuild only necessary boot artefacts, and produce a rollback-capable receipt. Until that contract exists, the CLI will not expose application commands.
+Import and retention do not authorise application. ADR013 subsequently defined the same-device application, exact transaction planning, byte-exact backup, and rollback-capable receipt contract that this decision left as future work.
 
 Collected documents and payloads will never be included in an ISO, release, issue, or diagnostic bundle. The collector source itself may be a manifest-tracked companion file because it contains policy and code rather than collected device data.
 
@@ -41,4 +41,4 @@ Collected documents and payloads will never be included in an ISO, release, issu
 - Ordinary command output remains useful without disclosing reusable hardware identity.
 - Import, audit, and retention can ship before system mutation because those authorities remain deliberately separate.
 - An operator must keep the private store backed up or retain an authorised Windows source; content addressing does not make restricted payloads redistributable.
-- Same-device application, firmware rollback, Bluetooth rollback, and hardware validation remain explicit future gates.
+- At the time of this decision, same-device application, firmware rollback, Bluetooth rollback, and hardware validation remained explicit future gates. ADR013 subsequently completed the transaction and rollback design.

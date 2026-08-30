@@ -22,7 +22,7 @@ Accepted (2026-08-03).
 Validated by a complete `binary-indep binary-qcom-x1e` Docker build that
 produced the `7.2-rc5-jg-0sp11v3-qcom-x1e` kernel packages in
 `payload/kernel-debs/`, and by device-side testing: the MSHW0485 G6 touch
-controller initializes over `spi@a88000`, the input device reports as
+controller initialises over `spi@a88000`, the input device reports as
 `Microsoft Surface G6 Touch`, and multi-touch works. The 2.4 MHz DMIC clock
 fix and the audio capture path from the v2 build remain intact.
 
@@ -53,7 +53,7 @@ The working configuration was reached cooperatively with the geocausa
 [SP11X1e-touchscreen](https://github.com/geocausa/SP11X1e-touchscreen) project,
 whose Phase 91 baseline provides three out-of-tree modules that the
 7.2-rc5-jg-0 kernel does not carry: a QSPI-aware `gpi` DMA engine driver, a
-`spi-geni-qcom` controller driver that recognizes GENI protocol 9 (QSPI) and
+`spi-geni-qcom` controller driver that recognises GENI protocol 9 (QSPI) and
 performs the Linux-integrated QSPI SE preparation, and the `mshw0485_touch`
 HID-SPI client driver.
 
@@ -71,7 +71,7 @@ The touchscreen runs over the SE2 QSPI controller at `0xa88000` (spi10).
   and GPIO 64 power, and
 - enables the `spi@a88000` node.
 
-The upstream driver only probes the node as a SPI slave unless it recognizes
+The upstream driver only probes the node as a SPI slave unless it recognises
 the resident GENI protocol. The geocausa `spi-geni-qcom` accepts protocol 9 on
 `a88000.spi` as a QSPI controller (`qcom,biosref-qspi`), which is the native
 boot-time protocol of the Surface Pro 11 G6 touch controller.
@@ -96,7 +96,7 @@ new standard Surface Pro 11 kernel:
    initramfs and loads them at early boot; without a rebuild the stock
    `gpi` module (which has no QSPI TRE support) binds `a00000.dma-controller`
    permanently and the touch DMA path fails with `CH START completion timeout`.
-4. Generalize the installer's DTB selection from `sp11v2` to any
+4. Generalise the installer's DTB selection from `sp11v2` to any
    `sp11v[0-9]+` suffix so a v3 build is preferred when it coexists with the
    plain or v2 build.
 
@@ -154,7 +154,7 @@ fi
 ## Consequences
 
 - The v3 kernel boots with the touchscreen DTB enabled; the MSHW0485 controller
-  initializes (`touch controller initialized path=hardware`) and the input
+  initialises (`touch controller initialized path=hardware`) and the input
   device reports as `Microsoft Surface G6 Touch`.
 - Multi-touch, pinch/zoom, and three-finger gestures work through the Linux
   `mshw0485_touch` HID-SPI driver.

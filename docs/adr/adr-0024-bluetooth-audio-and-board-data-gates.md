@@ -45,7 +45,7 @@ The Wi-Fi rfkill fix remains the patched qcom-x1e kernel and Denali DTB path
 from [ADR019](adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md).
 
 The project will add read-only diagnostics for Bluetooth and audio before
-enabling additional hardware behavior:
+enabling additional hardware behaviour:
 
 - `scripts/troubleshoot-sp11-bluetooth.sh` collects rfkill, HCI, BlueZ,
   systemd, and dmesg state.

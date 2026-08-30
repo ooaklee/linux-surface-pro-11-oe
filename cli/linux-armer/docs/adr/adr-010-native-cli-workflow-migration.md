@@ -6,16 +6,21 @@ description: Architecture decision for replacing legacy repository scripts with 
 
 ## Status
 
-Accepted on 2026-08-30. Implementation remains in progress while the legacy
-files and their workflow references still exist. The register below records
-the intended native owner, explicit retirement, or specialist rehoming outcome
-for the historical 39-file inventory. One file has already been removed and
-38 remain; the register is not a claim that removal or every physical hardware
-gate has completed.
+Accepted and completed on 2026-08-30. All 38 files that remained in the legacy
+`scripts` directory, their obsolete test workflow, and the six associated
+root-level test and tool files have been removed. The registers below preserve
+the final native owner, explicit retirement, or specialist rehoming outcome
+for that historical material. Completion of the software migration does not
+claim that every physical hardware gate has passed.
 
 ## Context
 
-The repository accumulated shell and Python helpers while Surface Pro 11 support was being discovered. Some helpers still implement necessary kernel, firmware, Bluetooth, IPTSD, camera, diagnostic, release, and removable-media workflows. Others install out-of-tree touchscreen modules, manual WSA routing, PipeWire sinks, raw-GPT live images, or broad support bundles that the current integration kernel and direct hybrid-ISO adapter have superseded.
+The repository accumulated shell and Python helpers while Surface Pro 11
+support was being discovered. Some helpers implemented necessary kernel,
+firmware, Bluetooth, IPTSD, camera, diagnostic, release, and removable-media
+workflows. Others installed out-of-tree touchscreen modules, manual WSA
+routing, PipeWire sinks, raw-GPT live images, or broad support bundles that the
+current integration kernel and direct hybrid-ISO adapter superseded.
 
 Exposing a Cobra command that merely invokes one of those helpers does not make the workflow part of the CLI. It preserves two behaviour contracts, keeps validation in an untyped subprocess, and prevents the released companion binary from operating without a repository checkout. Porting every historic branch is also unsafe because it would present retired workarounds as supported choices.
 
@@ -113,8 +118,9 @@ that merely invokes Bash is not accepted as a native port.
 
 Current how-to documentation uses the CLI. Dated reports and ADRs retain former
 commands only as historical evidence, with an explicit non-prescriptive notice
-and a current native owner. Links to files selected for retirement are removed
-before deletion so the change cannot break the documentation.
+and a current native owner. Links to files selected for retirement were
+removed before deletion so the current documentation does not depend on absent
+helpers.
 
 Each port or retirement is accepted only after the applicable software gates
 below pass:
@@ -128,12 +134,11 @@ below pass:
 - required hardware behaviour that cannot be simulated is recorded as an
   outstanding hardware gate rather than claimed from structural tests.
 
-The following register records the intended disposition of every file in the
-legacy directory. A native owner means the CLI owns the maintained software
-contract; it is not proof that the legacy file has already been removed or a
-blanket hardware-qualification statement.
+The following register records the final disposition of every file in the
+historical legacy directory. A native owner means the CLI owns the maintained
+software contract; it is not a blanket hardware-qualification statement.
 
-| Legacy file | Intended outcome | Native owner, retirement, or rehoming evidence |
+| Legacy file | Outcome | Native owner, retirement, or rehoming evidence |
 | --- | --- | --- |
 | `build-sp11-imx681-libcamera-docker.sh` | Native | `userspace build camera`, `userspace camera release prepare`, and `userspace camera release validate` own coherent camera packages |
 | `build-sp11-iptsd-docker.sh` | Native | `userspace build iptsd` owns the pinned build and portable receipt |
@@ -175,6 +180,19 @@ blanket hardware-qualification statement.
 | `validate-sp11-touchscreen-release.sh` | Native generic part; obsolete part retired | `kernel release validate` owns generic package proof; out-of-tree touchscreen requirements are rejected |
 | `write-image-to-macos-disk.sh` | Native | `image devices` and `image write` own identity-bound write, flush, and read-back verification |
 
+The migration also removed six root-level files that tested or supported the
+legacy helpers. Their final dispositions are recorded separately because they
+were never members of the 39-file `scripts` inventory.
+
+| Auxiliary legacy file | Outcome | Native owner or retirement evidence |
+| --- | --- | --- |
+| `tests/test-iptsd-integration.sh` | Native | `internal/userspace/iptsd/repository_contract_test.go` validates the checked-in integration and layer recipe; the native IPTSD workflow runs the Go contract tests |
+| `tests/test-kernel-patch-selection.sh` | Retired legacy semantics; native provenance retained | `internal/kernel/build` builds one immutable requested Git tree, while `internal/kernel/releaseprep` validates the corresponding source and closed release; repository-local patch injection is no longer a supported build mode |
+| `tests/test-kernel-test-preflight.sh` | Native | `internal/kernel/install` manager and review tests cover coherent packages, the distinct bootable fallback, GRUB evidence, alternate roots, hostile inputs, rollback, and cancellation |
+| `tools/collect-sp11-windows-bluetooth-address.ps1` | Native replacement | `cli/linux-armer/tools/collect-sp11-windows-handoff.ps1` emits the strict same-device private contract consumed by `handoff import`, `handoff apply`, and `handoff restore` |
+| `tools/collect-sp11-windows-diagnostics.ps1` | Retired | The broad diagnostic archive exposed unrelated identifiers and had no bounded consumer. The strict Windows hand-off collector admits only reviewed firmware and Bluetooth evidence, while `doctor` owns bounded, redacted Linux diagnosis |
+| `tools/sp11-bt-set-addr.c` | Native | `internal/bluetoothmgmt` owns the bounded Linux management-socket client used by the private hand-off lifecycle and tests its fixed protocol directly |
+
 ## Consequences
 
 - A released companion binary can perform maintained workflows without carrying the repository's legacy script directory.
@@ -183,7 +201,6 @@ blanket hardware-qualification statement.
 - Destructive writes and installed-system changes become previewable, identity-bound, revalidated, and evidenced.
 - Windows-derived values have an auditable interchange format and a private import boundary.
 - Maintainer publication remains possible without conflating local artefact preparation with authority to change a remote release.
-- Migration temporarily retains legacy files while their native coverage,
-  unique tests, workflow references, and explicit retirement decisions are
-  completed.
+- The legacy script directory, its obsolete test workflow, and its associated
+  root-level shell tests and tools no longer form a second supported API.
 - Structural and simulated checks cannot replace cold-boot, suspend, pen, wireless, Bluetooth, camera, audio, installation, or removable-media tests on actual Surface hardware, so those gates remain explicit.

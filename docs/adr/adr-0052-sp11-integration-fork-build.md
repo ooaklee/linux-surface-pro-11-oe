@@ -126,7 +126,7 @@ integration fork's `sp11/integration-7.2-rc5` HEAD (`88b64724b4`):
 ```
 
 All SP11-specific kernel deltas are reviewed through pull requests with
-the `Validate integration delta` CI gate (checkpatch + binary/artifact
+the `Validate integration delta` CI gate (checkpatch + binary/artefact
 detection + base-commit ancestry check). The branch is protected by a
 GitHub ruleset requiring the status check to pass before merge.
 

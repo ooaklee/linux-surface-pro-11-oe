@@ -10,7 +10,7 @@ Accepted on 2026-08-30.
 
 ## Context
 
-ADR011 defines a private, device-bound Windows hand-off and deliberately withholds mutation authority from import, list, and purge operations. Applying that material is a separate security boundary. It can overwrite firmware used during boot, retain a persistent Bluetooth controller address, install an executable with system privileges, and alter systemd ordering. A valid imported document therefore cannot be treated as sufficient authority to modify either the running system or a mounted target.
+ADR011 originally defined a private, device-bound Windows hand-off and deliberately withheld mutation authority from import, list, and purge operations. ADR021 replaces that interchange shape with version 2 while retaining the SMBIOS binding as this transaction's same-device boundary. Applying the material remains a separate security boundary. It can overwrite firmware used during boot, retain a persistent Bluetooth controller address, install an executable with system privileges, and alter systemd ordering. A valid imported document therefore cannot be treated as sufficient authority to modify either the running system or a mounted target.
 
 The identity source and installation target are also different concepts. An operator may use the running Surface Pro 11 identity while preparing an installed root or live USB mounted elsewhere. Reading identity from the target would either fail for an offline root or allow target-controlled content to impersonate the physical device. Conversely, using the running filesystem as an implicit target would make an otherwise read-only inspection unexpectedly dangerous.
 

@@ -1,14 +1,18 @@
 # Surface Pro 11 Right Speaker Diagnostic Test - 2026-06-15
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.** This record
 > captures experiments against the retired `7.0.0-22-qcom-x1e` kernel and CRD
 > topology. Current systems use the checksum-pinned FullIO v19c release; follow
-> [Bring Up Current Surface Pro 11 Audio](how-to/how-to-bring-up-audio.md) and
-> run `linux-armer doctor userspace --feature audio`. Do not copy commands from
-> this record into a current system. In particular, do not repeat the platform
-> driver unbind/rebind experiment: this record shows that reprobe failed and a
-> reboot was required to restore the card.
+> [Bring Up Current Surface Pro 11 Audio](how-to/how-to-bring-up-audio.md),
+> including its explicit `USER_HOME`, and run
+> `linux-armer doctor userspace --feature audio --user-home "$USER_HOME"` followed by
+> `linux-armer doctor hardware audio`. Do not copy commands from this record
+> into a current system. In particular, do not repeat the platform driver
+> unbind/rebind experiment: this record shows that reprobe failed and a reboot
+> was required to restore the card.
 
 ## Context
 
@@ -311,7 +315,7 @@ of likelihood:
 3. **Bootstrap sequence** — the WSA884x driver may not fully initialise the
    second amplifier (no temperature sensor readings observed for either amp).
 
-See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md) for the full
+See [ADR-0034](adr/adr-0034-wsa2-regcache-right-speaker.md) for the full
 hypothesis breakdown with investigation steps.
 
 ## Next Steps

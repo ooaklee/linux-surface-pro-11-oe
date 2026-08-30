@@ -24,7 +24,7 @@ Surface Pro 11 DTB and boot arguments that make the live USB viable.
 The first README instructions used `findmnt -S LABEL=SP11DATA` to locate the
 USB data partition. Testing showed this is not enough. During a live USB boot,
 Ubuntu mounts the looped ISO as `/cdrom`, while the underlying ext4 data
-partition labeled `SP11DATA` may remain unmounted. `findmnt` only reports
+partition labelled `SP11DATA` may remain unmounted. `findmnt` only reports
 mounted filesystems, so it can return nothing even though the USB partition is
 present and discoverable through `blkid -L SP11DATA`.
 

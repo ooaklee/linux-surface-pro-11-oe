@@ -36,7 +36,7 @@ of hanging, but the reboot test exposed a second issue: the generated unit ran
 `Before=bluetooth.service` and was also enabled through
 `bluetooth.service.wants`. That held BlueZ back until the helper had exhausted
 its `btmgmt` attempts. The journal then showed `bluetooth.service` starting and
-initializing the management interface only after the helper failed.
+initialising the management interface only after the helper failed.
 
 ## Decision
 

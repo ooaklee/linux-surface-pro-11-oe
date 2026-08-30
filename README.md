@@ -118,11 +118,15 @@ linux-armer image devices
 linux-armer image write build/linux-armer/linux-armer-ubuntu-sp11.iso \
   --device <whole-device> \
   --dry-run
+
+sudo linux-armer image write build/linux-armer/linux-armer-ubuntu-sp11.iso \
+  --device <whole-device> \
+  --confirm '<exact phrase from the current dry run>'
 ```
 
-Repeat `image write` without `--dry-run` and enter the exact confirmation it
-prints. The writer rejects unsafe targets and succeeds only after a full
-SHA-256 read-back and safe ejection.
+Review the current dry run, then use its exact device-bound confirmation in the
+privileged command. The CLI never elevates itself. The writer rejects unsafe
+targets and succeeds only after a full SHA-256 read-back and safe ejection.
 
 ### 5. Install while retaining a fallback
 
@@ -202,20 +206,33 @@ private, device-bound and proprietary; do not publish it or add it to an image
 or release. Move it privately to Linux, then validate and import it:
 
 ```sh
-linux-armer handoff import /path/to/sp11-handoff
-linux-armer handoff list
+HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
+linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+linux-armer handoff list --store "$HANDOFF_STORE"
 linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
   --target-root / \
   --feature firmware \
   --feature bluetooth \
   --adsp-policy enabled \
   --dry-run
+
+sudo linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
+  --target-root / \
+  --feature firmware \
+  --feature bluetooth \
+  --adsp-policy enabled \
+  --confirm '<exact phrase from the current dry run>'
 ```
 
+The unprivileged shell expands `$HOME`, so `HANDOFF_STORE` remains the same
+absolute user-store path when it is passed through `sudo`.
+
 Use `--adsp-policy disabled` for a live USB target and `enabled` for the
-installed NVMe system. Repeat the apply with the exact confirmation after
-review. `handoff restore` reverses a recorded application, and `handoff purge`
-removes a reviewed private import from the store.
+installed NVMe system. `handoff restore` runs with `sudo` and reads its receipt
+beneath the target rather than the hand-off store. `handoff purge` must receive
+`--store "$HANDOFF_STORE"` when removing a reviewed private import.
 
 ### 9. Detect and recover from recognised legacy changes
 

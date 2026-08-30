@@ -86,7 +86,7 @@ Hardware verification on 2026-08-23 with the X1E80100 OLED device running
 
 ## Consequences
 
-- On ACPI systems behavior is unchanged (`acpi_kobj` reused, no new kobject
+- On ACPI systems behaviour is unchanged (`acpi_kobj` reused, no new kobject
   created).
 - On DT-only systems the `platform_profile` framework now loads,
   `surface_platform_profile` can autoload via the existing SSAM modalias, and

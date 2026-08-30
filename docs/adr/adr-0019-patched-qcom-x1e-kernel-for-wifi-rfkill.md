@@ -64,7 +64,7 @@ checks for a different installed qcom-x1e kernel ABI and refuses to proceed
 unless a fallback exists or the operator explicitly passes `--allow-no-fallback`.
 Users must keep an older known-good qcom-x1e ABI installed as a GRUB fallback
 during this experiment and should not run `apt autoremove` until the patched
-kernel has booted and Wi-Fi behavior is known.
+kernel has booted and Wi-Fi behaviour is known.
 
 The installed DTB injector will prefer the newest versioned Denali DTB path for
 each compatible DTB name, so a patched kernel package is less likely to be
@@ -79,7 +79,7 @@ The build should happen on the installed Surface Pro 11 or another ARM64 Linux
 system with enough disk space and power. The macOS USB-image builder remains
 separate from kernel-package building.
 
-Generated kernel `.deb` files and build trees are local artifacts. They must
+Generated kernel `.deb` files and build trees are local artefacts. They must
 not be committed to this repository.
 
 If the patched kernel boots and the diagnostic helper reports both DT and

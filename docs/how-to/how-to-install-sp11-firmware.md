@@ -34,13 +34,16 @@ releases and ISO payloads.
 Move the collection privately to Linux on the same Surface:
 
 ```sh
-linux-armer handoff import /path/to/sp11-handoff
-linux-armer handoff list
+HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
+linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+linux-armer handoff list --store "$HANDOFF_STORE"
 linux-armer doctor userspace --feature firmware
 ```
 
 Import verifies the hand-off before storing it. A userspace doctor failure is
-expected until the material is applied to the selected root.
+expected until the material is applied to the selected root. The unprivileged
+shell expands `$HOME`, making `HANDOFF_STORE` an absolute path that remains
+unchanged when it is later passed through `sudo`.
 
 ## Apply to a live or installed root
 
@@ -51,18 +54,26 @@ For the installed NVMe system:
 
 ```sh
 linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
   --target-root / \
   --feature firmware \
   --adsp-policy enabled \
   --dry-run
+
+sudo linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
+  --target-root / \
+  --feature firmware \
+  --adsp-policy enabled \
+  --confirm '<exact phrase from the current dry run>'
 ```
 
 For a live USB root, use `--adsp-policy disabled`. For an installed system
 mounted from live media, set `--target-root` to its absolute mount point and
 use `enabled`.
 
-Review the dry run, then repeat without `--dry-run` and enter the exact
-confirmation printed by the CLI. Do not copy firmware paths manually.
+Review the dry run and exact confirmation before running the privileged command.
+Do not copy firmware paths manually.
 
 ## Verify
 
@@ -74,18 +85,25 @@ linux-armer doctor hardware audio
 ```
 
 Also verify the display, GPU acceleration, audio and suspend/resume on the
-physical device. Static file validation alone is not hardware qualification.
+physical device. These are intentional physical qualification steps rather
+than capabilities claimed by the CLI; static file validation alone is not
+hardware qualification.
 
 ## Recover
 
 Preview restoration using the receipt created by the application:
 
 ```sh
-linux-armer handoff restore <receipt-id> \
+sudo linux-armer handoff restore <receipt-id> \
   --target-root / \
   --dry-run
+
+sudo linux-armer handoff restore <receipt-id> \
+  --target-root / \
+  --confirm '<exact phrase from the current restore dry run>'
 ```
 
-Repeat with its exact confirmation only after checking the selected root and
-receipt. Purging an import is a separate retention action and does not undo an
-application.
+Restore reads its receipt beneath the selected target and does not accept a
+hand-off store. Purging an import is a separate retention action; pass
+`--store "$HANDOFF_STORE"` to that command, and remember that it does not undo
+an application.

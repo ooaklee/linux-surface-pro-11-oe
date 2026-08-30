@@ -20,7 +20,7 @@ metadata feature report rather than hard-coded configuration.
 
 The udev, systemd, and sleep lifecycle is adapted from the MIT-licensed
 `turbineBMW/surface-pro-11-linux` integration at commit
-`05e5335bc72476d44390336701cf03efa5fd0165`; its license is retained as
+`05e5335bc72476d44390336701cf03efa5fd0165`; its licence is retained as
 `LICENSE.integration`. That project provides useful hardware evidence, but its
 transport differs from this kernel bridge and does not replace validation of
 this integration.

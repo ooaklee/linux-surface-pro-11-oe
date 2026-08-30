@@ -29,7 +29,7 @@ Wi-Fi rfkill bring-up needs both parts at the same time:
 The installed-system DTB injector will prefer Denali DTB candidates that contain
 the literal `disable-rfkill` property. Among rfkill-capable candidates it will
 still choose the highest versioned path. If no candidate contains that property,
-it will fall back to the previous highest-versioned Denali DTB behavior.
+it will fall back to the previous highest-versioned Denali DTB behaviour.
 
 This keeps the fallback-kernel safety model from [ADR019](adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md)
 while preventing a newer unpatched fallback DTB from replacing the patched DTB

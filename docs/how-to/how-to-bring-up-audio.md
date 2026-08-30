@@ -23,9 +23,15 @@ audio-routing workaround.
 
 ## Inspect the system
 
+Select the target-visible home of the Linux user whose desktop audio
+configuration must be checked, then keep that exact value for every doctor and
+clean-up command in this guide:
+
 ```sh
+USER_HOME="<absolute-target-visible-linux-user-home>"
+
 linux-armer userspace show audio-fullio-v19c
-linux-armer doctor userspace --feature audio
+linux-armer doctor userspace --feature audio --user-home "$USER_HOME"
 linux-armer doctor hardware audio
 ```
 
@@ -37,8 +43,11 @@ If the userspace doctor reports recognised legacy conflicts, create a
 reversible clean-up plan rather than changing files manually:
 
 ```sh
-linux-armer clean scan --root /
-linux-armer clean plan --root / --output linux-armer-audio-cleanup.json
+linux-armer clean scan --root / --user-home "$USER_HOME"
+linux-armer clean plan \
+  --root / \
+  --user-home "$USER_HOME" \
+  --output linux-armer-audio-cleanup.json
 ```
 
 Review every plan entry. Apply only a plan whose complete scope you accept:
@@ -46,6 +55,7 @@ Review every plan entry. Apply only a plan whose complete scope you accept:
 ```sh
 sudo linux-armer clean apply \
   --root / \
+  --user-home "$USER_HOME" \
   --plan linux-armer-audio-cleanup.json \
   --yes
 ```
@@ -72,13 +82,15 @@ sudo linux-armer userspace install audio \
 
 For an installed system mounted below a live environment, add
 `--root <absolute-mount-point>` to the doctor, clean and install commands.
+`USER_HOME` remains the absolute path as seen from inside that target; do not
+prefix it with the host mount point.
 
 ## Verify playback and capture
 
 Reboot into the intended kernel, then run:
 
 ```sh
-linux-armer doctor userspace --feature audio
+linux-armer doctor userspace --feature audio --user-home "$USER_HOME"
 linux-armer doctor hardware audio
 wpctl status
 ```
@@ -86,7 +98,9 @@ wpctl status
 Select the built-in audio devices in the desktop settings. Test both speakers
 at a low volume first, then make a short recording and play it back. A static
 doctor pass is necessary evidence, but successful playback, capture and a
-suspend/resume cycle are the hardware acceptance gates.
+suspend/resume cycle are the hardware acceptance gates. Those exercises are an
+intentional physical qualification boundary and are not capabilities claimed
+by the CLI.
 
 ## Recover
 
@@ -98,6 +112,7 @@ reverse an earlier clean-up, validate and apply its receipt:
 sudo linux-armer clean restore \
   /var/lib/linux-armer/backups/<transaction>/receipt.json \
   --root / \
+  --user-home "$USER_HOME" \
   --yes
 ```
 

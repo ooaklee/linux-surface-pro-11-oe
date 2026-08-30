@@ -35,14 +35,17 @@ Move the directory privately to the same device's Linux installation, then
 run as a normal user:
 
 ```sh
-linux-armer handoff import /path/to/sp11-handoff
-linux-armer handoff list
+HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
+linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+linux-armer handoff list --store "$HANDOFF_STORE"
 linux-armer doctor hardware bluetooth
 ```
 
 Import validates the closed manifest and stores only accepted material.
 `handoff list` returns redacted summaries; keep import output private because
 it identifies the private store. The stored material itself is never public.
+The unprivileged shell expands `$HOME`, making `HANDOFF_STORE` an absolute path
+that remains unchanged when it is later passed through `sudo`.
 
 ## Apply the Bluetooth feature
 
@@ -50,13 +53,19 @@ Review a dry run first:
 
 ```sh
 linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
   --target-root / \
   --feature bluetooth \
   --dry-run
+
+sudo linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
+  --target-root / \
+  --feature bluetooth \
+  --confirm '<exact phrase from the current dry run>'
 ```
 
-Repeat without `--dry-run` and enter the exact confirmation printed by the
-CLI. The application receipt is the recovery authority.
+The application receipt is the recovery authority.
 
 For an installed system mounted from live media, replace `/` with its absolute
 mount point. Never apply one device's hand-off to another Surface.
@@ -72,16 +81,26 @@ linux-armer doctor hardware bluetooth
 
 Confirm that the desktop can enable Bluetooth, discover a test device, pair,
 reconnect after reboot and recover after suspend/resume. Diagnostics describe
-observable state but do not replace those physical qualification steps.
+observable state but do not replace those intentional physical qualification
+steps, which are not capabilities claimed by the CLI.
 
 ## Recover or remove private material
 
 Preview and restore a recorded application with:
 
 ```sh
-linux-armer handoff restore <receipt-id> --target-root / --dry-run
+sudo linux-armer handoff restore <receipt-id> --target-root / --dry-run
+sudo linux-armer handoff restore <receipt-id> \
+  --target-root / \
+  --confirm '<exact phrase from the current restore dry run>'
 ```
 
-Repeat with the exact confirmation after review. When the imported hand-off is
-no longer needed, preview `handoff purge <id> --dry-run`, then repeat with its
-confirmation. Purging the store does not undo an earlier application.
+Restore uses its target receipt and does not accept a hand-off store. When the
+imported hand-off is no longer needed, preview its removal from the same store:
+
+```sh
+linux-armer handoff purge <id> --store "$HANDOFF_STORE" --dry-run
+```
+
+Repeat with its confirmation and the same store. Purging the store does not
+undo an earlier application.

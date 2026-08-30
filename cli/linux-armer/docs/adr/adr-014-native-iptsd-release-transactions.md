@@ -32,7 +32,7 @@ The generic `iptsd@.service` unit is the sole intentional installed link. An abs
 
 For the live root only, the installer then runs the fixed `systemctl` and `udevadm` sequence as separate arguments with per-command timeouts and bounded captured output. These operations disable the conflicting diagnostic daemon, stop generic IPTSD instances, reload systemd and udev state, retrigger hidraw devices, and wait for udev settlement. Alternate roots run no host service command. A command failure does not roll back already durable files: the result and receipt state that file installation succeeded while activation remains incomplete, and the CLI returns a non-zero error without discarding that state.
 
-The compiled contract remains byte-compatible with the published `sp11-iptsd-v1` archive. Bundled installer and validator scripts may remain present for historical release compatibility, but the CLI neither requires nor executes them.
+The compiled contract remains byte-compatible with the published `sp11-iptsd-v1` archive. That immutable archive contains an earlier README than the maintained integration tree, so documentation alone has two explicitly pinned size-and-SHA-256 identities. The validator returns whichever reviewed README identity it actually matched and carries that identity into the copy plan. Every executable, configuration, template, source, payload, and provenance file retains one exact identity; a third README variant is rejected. Bundled installer and validator scripts may remain present for historical release compatibility, but the CLI neither requires nor executes them.
 
 ## Consequences
 

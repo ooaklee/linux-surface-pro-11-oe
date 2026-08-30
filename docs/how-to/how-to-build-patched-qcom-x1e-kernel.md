@@ -29,7 +29,9 @@ linux-armer kernel build --dry-run
 
 The dry run prints the resolved policy without invoking Docker, compiling or
 publishing packages. It therefore cannot prove that the daemon can execute an
-ARM64 container.
+ARM64 container. Confirming that host capability is an intentional bounded
+external qualification step; the CLI does not claim success until the real
+build has executed its pinned container workflow.
 
 ## Build the maintained branch
 
@@ -75,13 +77,17 @@ linux-armer image create \
   --source <ubuntu-concept-iso> \
   --source-sha256 <sha256> \
   --kernel-dir build/linux-armer/kernel-20260830 \
+  --companion-source-dir cli/linux-armer \
   --output build/linux-armer/linux-armer-ubuntu-sp11.iso
 linux-armer image validate build/linux-armer/linux-armer-ubuntu-sp11.iso
 ```
 
 The implemented Ubuntu adapter preserves the source image's Casper contract
 while replacing the kernel-facing module set. Validation checks the finished
-media rather than assuming a successful build produced a bootable image.
+media rather than assuming a successful build produced a bootable image. The
+explicit companion source includes the matching Linux ARM64 CLI and source
+archive on the medium; omitting that option deliberately produces an image
+without the companion.
 
 ## Qualify and recover
 
@@ -89,10 +95,12 @@ Keep a known-good GRUB entry. After booting the candidate, run:
 
 ```sh
 linux-armer doctor userspace
-linux-armer doctor hardware wifi bluetooth audio
+linux-armer doctor hardware wifi bluetooth audio touchscreen
 ```
 
 Then qualify boot, display, storage, Wi-Fi, Bluetooth, audio, pen and
 suspend/resume on the physical device. Static validation is not a hardware
-qualification claim. If the candidate fails, select the retained fallback and
-use the kernel recovery guide rather than removing the fallback ABI.
+qualification claim. These device exercises are an intentional physical
+qualification boundary rather than behaviour claimed by the CLI. If the
+candidate fails, select the retained fallback and use the kernel recovery guide
+rather than removing the fallback ABI.

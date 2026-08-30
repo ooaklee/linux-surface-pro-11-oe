@@ -72,7 +72,7 @@ static immediately before system sounds was audible on v10.
   reads `Y`.
 - Rollback is a one-line GRUB edit followed by `update-grub`, or the migration
   script's restore path.
-- Unrelated kernel configurations are unaffected; the module behavior changes
+- Unrelated kernel configurations are unaffected; the module behaviour changes
   only when the parameter is present.
 - Migration tooling is recorded in
   [a864d31](https://github.com/ooaklee/linux-surface-pro-11-oe/commit/a864d31)

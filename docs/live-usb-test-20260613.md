@@ -1,18 +1,33 @@
 # Surface Pro 11 Live USB Test - 2026-06-13
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.**
 > This record preserves one live-USB observation from 13 June 2026. Its image
 > design, results, open questions, helper assumptions, and kernel state are not
 > current installation or troubleshooting instructions.
 
-## Current Read-Only Checks
+## Current Validation and Guarded Write Flow
 
 Validate a newly generated ISO before writing it to media:
 
 ```sh
 linux-armer image validate <generated.iso>
+linux-armer image devices
+linux-armer image write <generated.iso> \
+  --device <whole-device> \
+  --dry-run
+
+sudo linux-armer image write <generated.iso> \
+  --device <whole-device> \
+  --confirm '<exact phrase from the current dry run>'
 ```
+
+Review the fresh whole-device inventory and exact dry-run confirmation before
+running the privileged command. The real command requires effective root,
+writes, reads back, verifies and ejects the selected removable medium; the CLI
+never elevates itself.
 
 After booting, inspect the relevant static filesystem and package state with:
 
@@ -24,14 +39,19 @@ linux-armer doctor userspace \
   --feature bluetooth \
   --feature audio \
   --feature touchscreen
+linux-armer doctor hardware wifi bluetooth audio touchscreen
 ```
 
 `image validate` checks the generated ISO and its version-bound boot
-artefacts; it does not prove that a written USB device or the target hardware
-will boot. The doctor does not probe live devices, scan or associate with
-networks, start services, play audio, or exercise touch input. Wi-Fi and
-Bluetooth commands used outside the doctor can expose SSIDs, BSSIDs, MAC
-addresses, and paired-device names, which must be redacted before publication.
+artefacts; the write workflow additionally verifies the bytes read back from
+the selected medium. Neither proves that the target hardware will boot. The
+userspace doctor checks static state, while the hardware doctor adds bounded
+live evidence without changing devices, radio blocks, services, networking or
+audio routing. Physical boot, network association, playback, touch interaction
+and suspend/resume are intentional hardware qualification boundaries rather
+than capabilities claimed by the CLI. Wi-Fi and Bluetooth commands used
+outside the doctor can expose SSIDs, BSSIDs, MAC addresses, and paired-device
+names, which must be redacted before publication.
 
 ## Image
 

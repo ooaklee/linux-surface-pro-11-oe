@@ -28,7 +28,7 @@ exact manifest commit.
 
 Corrective-release amendment (2026-08-07): the fresh image uses the new
 immutable tag `sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1`. The project
-owner authorized it as an experimental prerelease before completion of the
+owner authorised it as an experimental prerelease before completion of the
 clean-install hardware matrix. It is not a hardware-qualified promotion, and
 the exception does not relax checksum, provenance, explicit-target, or
 fresh-download validation requirements.
@@ -45,8 +45,8 @@ build/sp11-ubuntu-live-direct.img
 For the Johan G. qcom-x1e 7.1.1 test image, the raw disk image is about 6.2 GB.
 The image contains:
 
-- an EFI system partition labeled `SP11EFI`
-- an ext4 data partition labeled `SP11DATA`
+- an EFI system partition labelled `SP11EFI`
+- an ext4 data partition labelled `SP11DATA`
 - the direct GRUB boot path for the Surface Pro 11 Denali DTB
 - the Ubuntu concept ISO payload
 - the Surface Pro 11 support tree
@@ -169,7 +169,7 @@ payload is the split compressed archive plus metadata files.
 
 The release remains experimental. The raw image is unsigned, and users must
 verify checksums and choose the correct removable disk before writing. The r1
-authorization permits experimental distribution while the hardware matrix is
+authorisation permits experimental distribution while the hardware matrix is
 outstanding; it does not justify a stable or hardware-qualified claim.
 
 ## Alternatives Considered
@@ -186,7 +186,7 @@ with the release tag, checksums, and generated provenance. External links can
 also change, hit quota limits, or be harder to mirror.
 
 An external mirror can still be added as a convenience later, but GitHub
-Releases should remain the canonical artifact location.
+Releases should remain the canonical artefact location.
 
 ### Split the raw image without compression
 
@@ -242,6 +242,6 @@ decompressed raw image hash matched the manifest.
 
 ## Related
 
-- [ADR026: Prebuilt Kernel Release Artifacts](adr-0026-prebuilt-kernel-release-artifacts.md)
+- [ADR026: Prebuilt Kernel Release Artefacts](adr-0026-prebuilt-kernel-release-artifacts.md)
 - [ADR037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1](adr-0037-jglathe-qcom-7-1-1-stubble-paths.md)
 - [CLI ADR017: Native image release preparation](../../cli/linux-armer/docs/adr/adr-017-native-image-release-preparation.md)

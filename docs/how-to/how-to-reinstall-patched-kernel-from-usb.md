@@ -7,6 +7,8 @@ description: How-to guide for validating, preflighting, and installing a Surface
 
 # How To: Reinstall the Patched Kernel from USB or a Release
 
+Last reviewed: 2026-08-30
+
 Use the `linux-armer` companion to install one version-bound Surface Pro 11
 kernel package set while retaining a known-good qcom-x1e fallback. The native
 installer does not use repository scripts, install an out-of-tree touchscreen
@@ -19,8 +21,10 @@ old `sp11v3` bundle or copy separate `gpi.ko`, `spi-geni-qcom.ko`, or
 ## Prerequisites
 
 - Root access for the final installation only.
-- A Linux ARM64 `linux-armer` executable. A linux-armer-built live image carries
-  it at `/cdrom/sp11/companion/bin/linux-arm64/linux-armer`.
+- A Linux ARM64 `linux-armer` executable. A live image created with
+  `--companion-source-dir` carries it at
+  `/cdrom/sp11/companion/bin/linux-arm64/linux-armer`; an image built without
+  that explicit option does not contain the companion.
 - One coherent Surface `linux-image` and `linux-modules` package pair. Matching
   headers may be included as a pair.
 - `SHA256SUMS` from the same release.
@@ -28,7 +32,8 @@ old `sp11v3` bundle or copy separate `gpi.ko`, `spi-geni-qcom.ko`, or
   GRUB.
 - Recovery media kept available throughout testing.
 
-Copy the live-image companion to a writable path before running it:
+If the image includes the companion, copy it to a writable path before running
+it:
 
 ```bash
 install -m 0755 \
@@ -169,7 +174,9 @@ linux-armer doctor userspace
 
 Structural success does not prove cold boot, suspend, pen, touch, Wi-Fi,
 Bluetooth, camera, or audio behaviour. Retain the fallback kernel and recovery
-media until those checks pass on the actual Surface.
+media until those checks pass on the actual Surface. These device exercises are
+an intentional physical qualification boundary and are not capabilities
+claimed by the CLI.
 
 ## Alternate roots
 

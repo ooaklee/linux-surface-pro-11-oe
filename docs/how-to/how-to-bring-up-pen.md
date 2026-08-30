@@ -29,6 +29,7 @@ Download the published, checksum-verified release:
 
 ```sh
 linux-armer userspace pull iptsd --cache-dir build/linux-armer/userspace
+IPTSD_INPUT="<exact-directory-printed-by-userspace-pull>"
 ```
 
 Or build the pinned source using the maintained container policy:
@@ -36,20 +37,23 @@ Or build the pinned source using the maintained container policy:
 ```sh
 linux-armer userspace build iptsd \
   --output-dir build/linux-armer/iptsd
+IPTSD_INPUT="build/linux-armer/iptsd/stage"
 ```
 
 The IPTSD build executes when invoked; unlike the camera build it has no dry-run
 mode. Its verified payload is `build/linux-armer/iptsd/stage` for the explicit
-output above.
+output above. Whichever acquisition route you choose, keep its corresponding
+`IPTSD_INPUT` value for installation; a pulled release is not installed from
+the native build path.
 
 ## Install
 
 ```sh
 linux-armer userspace install iptsd \
-  --from build/linux-armer/iptsd/stage \
+  --from "$IPTSD_INPUT" \
   --dry-run
 sudo linux-armer userspace install iptsd \
-  --from build/linux-armer/iptsd/stage \
+  --from "$IPTSD_INPUT" \
   --yes
 ```
 
@@ -67,7 +71,8 @@ linux-armer doctor userspace --feature iptsd
 Then test hover, contact, pressure, both buttons, eraser, edge accuracy,
 multi-touch coexistence and suspend/resume in a drawing application. A static
 doctor pass verifies files and policy; it does not claim physical pen
-qualification.
+qualification. Those interaction tests are an intentional physical
+qualification boundary and are not capabilities claimed by the CLI.
 
 If the doctor reports a recognised legacy conflict, use `clean scan`, `clean
 plan` and `clean apply` as described in the root README. Keep the clean-up

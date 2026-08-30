@@ -2,7 +2,7 @@
 id: adrs-adr006
 title: "ADR006: Build and Write Guardrails"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for using a containerized image builder and guarded macOS USB writer.
+description: Architecture Decision Record (ADR) for using a containerised image builder and guarded macOS USB writer.
 ---
 
 ## Context
@@ -19,8 +19,8 @@ is destructive, and the host may also have internal disks attached.
 The image builder will run inside an ARM64 Ubuntu container. It will produce a
 raw GPT disk image with:
 
-- a FAT EFI System Partition labeled `SP11EFI`,
-- an ext4 data partition labeled `SP11DATA`,
+- a FAT EFI System Partition labelled `SP11EFI`,
+- an ext4 data partition labelled `SP11DATA`,
 - a validation pass using GPT tooling before exporting the image.
 
 The macOS writer will accept only explicit `/dev/diskN` targets and refuse to

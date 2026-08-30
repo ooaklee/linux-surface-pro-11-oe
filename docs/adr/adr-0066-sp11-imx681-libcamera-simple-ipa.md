@@ -177,7 +177,7 @@ userspace/camera/libcamera/README.md
   `sp11-imx681-libcamera-build-manifest.txt`.
 - Treat the retained `.changes` as the unmodified record of the complete
   binary-any build, not as a self-contained upload directory. It references
-  development, debug, Python, and other unexported artifacts. The container
+  development, debug, Python, and other unexported artefacts. The container
   verifies every entry while all outputs exist; the host verifies the six
   delivered entries, and the manifest distinguishes both phases and enumerates
   every intentionally omitted entry.

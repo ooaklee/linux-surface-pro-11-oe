@@ -60,14 +60,14 @@ Historical failures:
    bluetooth.service` before `btmgmt` causes the restarted bluetoothd to claim
    the controller, making `btmgmt public-addr` fail with status `0x14`
    (Permission Denied). The working pattern is: wait for bluetoothd to
-   initialize the controller, stop bluetoothd, apply the address to the
+   initialise the controller, stop bluetoothd, apply the address to the
    unclaimed controller, then restart bluetoothd.
 
 2. **Blind `ExecStartPre=stop` is too early.** On cold boot, the unit fires via
    udev very early. Stopping `bluetooth.service` before the daemon has had time
-   to download firmware and initialize the controller means the controller
+   to download firmware and initialise the controller means the controller
    never becomes reachable at all. The poll must run **while bluetoothd is
-   running** so the controller gets initialized first. Then bluetoothd is
+   running** so the controller gets initialised first. Then bluetoothd is
    stopped to release the controller before `public-addr`.
 
 3. **Blind sleep is unreliable.** Firmware download plus init takes 60-90s on
@@ -79,7 +79,7 @@ Historical failures:
    fallback to the working indexed path.
 
 4. **The indexed command works even when `info` doesn't.** In the early cold-boot
-   state (before bluetoothd initializes), `btmgmt -i hci0 info` returns
+   state (before bluetoothd initialises), `btmgmt -i hci0 info` returns
    `Invalid Index (0x11)`, but `btmgmt -i hci0 public-addr` still reaches and
    configures the controller.
 
@@ -146,6 +146,6 @@ The current workaround is manual execution after cold boot:
 This succeeds every time from a terminal session.
 
 `wait_for_hci_ready` returns non-zero on timeout so callers can distinguish the
-initialized / not-initialized case. The script aborts cleanly when the
-controller never initializes rather than striking a half-initialized controller
+initialised / not-initialised case. The script aborts cleanly when the
+controller never initialises rather than striking a half-initialised controller
 with `public-addr`.

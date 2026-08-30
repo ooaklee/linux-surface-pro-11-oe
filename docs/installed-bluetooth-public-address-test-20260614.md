@@ -1,5 +1,7 @@
 # Surface Pro 11 Bluetooth Public Address Test - 2026-06-14
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.**
 > This record preserves the Bluetooth public-address investigation performed on
@@ -13,13 +15,18 @@ Inspect the current static Bluetooth support state with:
 
 ```sh
 linux-armer doctor userspace --feature bluetooth
+linux-armer doctor hardware bluetooth
 ```
 
-The doctor checks firmware, package, and service files. It does not read or set
-a controller address, start or restart BlueZ, probe a live controller, pair a
-device, or prove reboot and suspend behaviour. Supplemental Bluetooth commands,
-logs, and screenshots can expose controller and peripheral MAC addresses,
-device names, and pairing history; redact those details before sharing them.
+The userspace doctor checks firmware, package, and service files. The hardware
+doctor adds bounded live controller, address-quality, rfkill, BlueZ service and
+controller evidence without revealing or changing an address. Neither command
+starts or restarts BlueZ, pairs a device, or proves reboot and suspend
+behaviour. Supplemental Bluetooth commands, logs, and screenshots can expose
+controller and peripheral MAC addresses, device names, and pairing history;
+redact those details before sharing them. Use the current private hand-off
+workflow in [Bring Up Bluetooth](how-to/how-to-bring-up-bluetooth.md) when
+same-device address material must be applied.
 
 ## Context
 

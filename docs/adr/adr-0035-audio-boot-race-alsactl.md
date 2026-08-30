@@ -93,7 +93,7 @@ persisted into subsequent boots — triggering the race.
 ### 1. Clear WSA controls from asound.state
 
 Strip all WSA/Spkr control blocks from `/var/lib/alsa/asound.state` so they
-default to their kernel-initialized state at boot. Non-WSA controls (VA mic,
+default to their kernel-initialised state at boot. Non-WSA controls (VA mic,
 etc.) are preserved.
 
 ### 2. Mask alsa-restore.service

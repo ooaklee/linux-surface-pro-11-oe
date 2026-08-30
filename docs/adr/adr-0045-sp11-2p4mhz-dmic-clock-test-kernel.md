@@ -63,7 +63,7 @@ package is therefore named:
 linux-image-7.1.3-jg-1dmic2p4-qcom-x1e
 ```
 
-Use a dedicated Docker work volume and artifact directory so the experiment
+Use a dedicated Docker work volume and artefact directory so the experiment
 does not reuse or overwrite the normal 7.1.3-jg-1 build output:
 
 ```bash

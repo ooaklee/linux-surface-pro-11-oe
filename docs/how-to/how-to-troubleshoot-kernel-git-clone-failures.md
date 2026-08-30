@@ -21,6 +21,11 @@ git ls-remote https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
   <reviewed-ref>
 ```
 
+The `git ls-remote` invocation is an intentional bounded external reachability
+check. The CLI resolves and records the reviewed source during a real build,
+but it does not claim to diagnose the host's proxy, certificate, DNS or Git
+credential configuration.
+
 An empty `ls-remote` result means the requested ref is not advertised. An
 authentication prompt for this public source, TLS failure or connection reset
 points to local proxy, certificate, DNS or network policy rather than the

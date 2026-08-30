@@ -1,5 +1,7 @@
 # Surface Pro 11 Wi-Fi Test After Windows Firmware and Cold Boot - 2026-06-13
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.**
 > This record preserves the firmware and cold-boot observations made on 13 June
@@ -13,13 +15,16 @@ Inspect the current static platform-firmware and Wi-Fi support state with:
 
 ```sh
 linux-armer doctor userspace --feature firmware --feature wifi
+linux-armer doctor hardware wifi
 ```
 
-The doctor reads package and firmware files. It does not extract firmware,
-probe the radio, inspect live rfkill state, scan, associate, or prove traffic.
-Supplemental Wi-Fi commands and logs can expose SSIDs, BSSIDs, saved-network
-names, MAC addresses, and interface identifiers; redact them before sharing
-the output.
+The userspace doctor reads package and firmware files. The hardware doctor adds
+bounded PCI, driver, loaded device-tree, rfkill and interface evidence without
+changing the radio. Neither command extracts firmware, scans, associates, or
+proves traffic. Supplemental Wi-Fi commands and logs can expose SSIDs, BSSIDs,
+saved-network names, MAC addresses, and interface identifiers; redact them
+before sharing the output. Apply same-device platform firmware only through
+[Install Surface Pro 11 Platform Firmware](how-to/how-to-install-sp11-firmware.md).
 
 ## Context
 

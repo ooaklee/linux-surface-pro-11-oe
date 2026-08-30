@@ -146,7 +146,7 @@ The decision deliberately separates five evidence classes.
    active CAMSS/CSIPHY MMIO. It therefore does not directly prove the sensor
    PLL registers, C-PHY rate, CDR value, physical trio, exposure register, or
    gain register. Raw capture material remains private because it can contain
-   device-specific data; this ADR records only the bounded, sanitized result.
+   device-specific data; this ADR records only the bounded, sanitised result.
 
 2. **Static Windows driver-package oracle from this device**
 
@@ -178,7 +178,7 @@ The decision deliberately separates five evidence classes.
    as CSIPHY2 -> CSID1 -> VFE1 IPP/FULL and the ISP-internal start order as
    CDM -> IFE -> initial configuration packets -> CSID. The RT-CDM work is
    deliberately still an inert resource plus disabled IRQ/DMA scaffold: the
-   branch does not authorize Linux RT-CDM MMIO, IRQ arming, or FIFO submission
+   branch does not authorise Linux RT-CDM MMIO, IRQ arming, or FIFO submission
    because two live register origins and stop-time power semantics remain
    unresolved. This is valuable for the later IPP/image-processing parity
    stage, but importing it cannot explain or repair the zero-buffer RDI capture
@@ -241,7 +241,7 @@ The decision deliberately separates five evidence classes.
    commit `6621d73e732c` therefore keeps `0x10` while importing the address-
    independent transaction stream and receiver lifecycle.
 
-### Boot and deployment behavior
+### Boot and deployment behaviour
 
 The qcom-x1e package uses stubble/UKI construction with auto-selected embedded
 DTBs. Although GRUB contains a `devicetree /sp11-denali.dtb` directive, the
@@ -307,7 +307,7 @@ active sensor and C-PHY profile.
   three table lanes and treated runtime override value zero as "use the table
   default". Commit `64999b9fc6e6` removes that superseded table family and its
   trio, settle, and CDR override interface.
-- Use CSIPHY2 with one C-PHY trio. Preserve D-PHY behavior for other cameras.
+- Use CSIPHY2 with one C-PHY trio. Preserve D-PHY behaviour for other cameras.
 - Program CSID680's frame, pixel, and line drop engines to the same explicit
   keep-all state used by the generic CSID implementation: period 1, pattern 0.
 - Decode the 3844-pixel RAW10 input, crop horizontally to 3840 pixels, and feed
@@ -388,7 +388,7 @@ active sensor and C-PHY profile.
   `clock-frequency` properties; the assigned MCLK4 rate remains 19.2 MHz and
   CCS reads that rate from the clock provider.
 - GPIO225 active-high is supported by the separate hardware-proven reference,
-  but not by this device's Windows trace. Its on/off behavior remains a
+  but not by this device's Windows trace. Its on/off behaviour remains a
   post-install hardware validation gate.
 
 ### Build and release
@@ -400,7 +400,7 @@ active sensor and C-PHY profile.
 - On a reused Docker source volume, refresh the requested branch or tag through
   an explicit destination ref and require the updated tracking ref to match
   `FETCH_HEAD`; an ambiguous fetch can otherwise leave a stale shallow ref.
-- Install only artifacts whose package version and recorded source commit match
+- Install only artefacts whose package version and recorded source commit match
   the milestone. Do not use a wildcard copied from an earlier v13 build.
 - Treat `sp11-kernel-build-manifest.txt` and its `Source HEAD` field as the
   package provenance authority. The persistent build volume contains an older
@@ -568,7 +568,7 @@ touched, and no reboot was performed as part of the build and provenance gate.
 
 The verified package was later installed and booted as
 `7.2.0-jg-0sp11v14-qcom-x1e`. Loaded module source versions matched the
-immutable artifact evidence:
+immutable artefact evidence:
 
 - `qcom-camss`: `26CF187C5D69D7818A1BDCB`
 - `ccs`: `426DF2BB77E8D8D0F7BDAF8`
@@ -587,7 +587,7 @@ inside `configure_stream(false)` was suppressed by the normal one-shot
 virtual-channel configuration guard, so this run does not establish the
 packet count. Teardown again received `-ENXIO` while writing `MODE_SELECT=0`
 and scheduled runtime power-down. Evidence is retained in
-the contemporaneous local validation record; it is not a repository artifact.
+the contemporaneous local validation record; it is not a repository artefact.
 
 ### `4d190bc96139` local diagnostic package build
 
@@ -635,7 +635,7 @@ provenance gate.
 ### `4d190bc96139` boot and runtime result
 
 The provenance-verified package was subsequently installed and booted as
-`7.2.0-jg-0sp11v14-qcom-x1e`. Loaded source versions matched its artifacts for
+`7.2.0-jg-0sp11v14-qcom-x1e`. Loaded source versions matched its artefacts for
 CAMSS (`0486AE0FB983546F7875668`), CCS (`51A4C4B08DF03EDE294DD26`), CCS PLL
 (`F5D68994B5EB8E947AC4F6B`), and Qualcomm MIPI CSI-2 PHY
 (`F578CE5728BAC71AB6C9374`). The live endpoint remained 969.6 MHz and the CCS
@@ -714,7 +714,7 @@ SHA-256 values are:
 
 No package was installed, no live module or camera device was touched, and no
 reboot was performed as part of the build itself. The package was later
-installed and booted. Loaded source versions matched the artifacts, the media
+installed and booted. Loaded source versions matched the artefacts, the media
 graph again negotiated, and `VIDIOC_STREAMON` succeeded. The nonfatal 100 ms
 sample then reported `-ENXIO` for both sensor registers and the 40-second
 capture ended with an empty file, `TOTAL_PKTS=0`, no receive IRQs, and no
@@ -774,7 +774,7 @@ manifest are retained in the distinct read-only directory
 - build arguments: `13cf9b25abf149feb8fb8f726bb84e32cc4ae989b2521da95eb25efb8fc2b39a`
 
 No package was installed, no live module or camera device was touched, and no
-reboot was performed as part of this build and artifact verification. Runtime
+reboot was performed as part of this build and artefact verification. Runtime
 gates remain pending until the package is deliberately installed and booted.
 
 ### `6621d73e732c` boot, raw, and stable-light control result
@@ -950,7 +950,7 @@ privacy-LED, or post-resume application gates.
 - The privacy LED is managed by the media stack instead of a polling service.
   Incorrect polarity must be fixed in DT after hardware testing, not hidden by
   a permanently running GPIO script.
-- The six explicit CSID drop-register writes are based on generic CSID behavior
+- The six explicit CSID drop-register writes are based on generic CSID behaviour
   and the completed hardware reference. Windows traces do not independently
   establish them. Other CSID680 routes must be regression-tested.
 - The v14 CSID680 path only unmasks register-update completion, while VFE680 RDI
@@ -983,7 +983,7 @@ processed starts in the same boot; application sessions across suspend/resume
 remain unqualified.
 
 1. Package build completes from the recorded source commit and produces v14
-   artifacts with no DT binding or module build errors.
+   artefacts with no DT binding or module build errors.
 2. The installed v14 kernel boots, and the live endpoint bytes are
    `00 00 00 00 47 b4 52 c0`.
 3. Standalone `imx681` binds at `1-0010`, detects model `0x0681`, and the old

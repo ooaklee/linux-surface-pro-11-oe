@@ -49,14 +49,18 @@ deliberately excludes Windows Wi-Fi firmware.
 Move the directory privately to Linux on the same device:
 
 ```sh
-linux-armer handoff import /path/to/sp11-handoff
-linux-armer handoff list --json > handoff-summary.json
+HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
+linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+linux-armer handoff list --store "$HANDOFF_STORE" --json > handoff-summary.json
 ```
 
-The JSON summary is redacted, but still review it before sharing. Never share
-the collector output, the private store or application receipts. Use `handoff
-apply` only after selecting the target root, feature set and explicit aDSP
-policy described in the firmware and Bluetooth guides.
+The unprivileged shell expands `$HOME`, making `HANDOFF_STORE` the absolute
+user-store path that later application commands must pass through `sudo` with
+`--store "$HANDOFF_STORE"`. The JSON summary is redacted, but still review it
+before sharing. Never share the collector output, the private store or
+application receipts. Use `handoff apply` only after selecting the target root,
+feature set and explicit aDSP policy described in the firmware and Bluetooth
+guides.
 
 Historical dated hardware reports in this repository remain evidence of their
 original test runs; they are not instructions for the current collector.

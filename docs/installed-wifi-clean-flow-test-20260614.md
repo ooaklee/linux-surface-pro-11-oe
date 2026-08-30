@@ -1,5 +1,7 @@
 # Surface Pro 11 Wi-Fi Clean USB Flow Test - 2026-06-14
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.**
 > This record preserves the Wi-Fi result observed on 14 June 2026. Its USB
@@ -13,13 +15,16 @@ For a newly generated ISO and a current installed system, use:
 ```sh
 linux-armer image validate <generated.iso>
 linux-armer doctor userspace --feature wifi
+linux-armer doctor hardware wifi
 ```
 
 The image validator checks the generated ISO rather than the written USB or
-radio. The doctor checks static package and firmware state only; it does not
-read live rfkill state, scan, associate, reconnect, or prove traffic. Commands
-and logs that do exercise Wi-Fi can expose SSIDs, BSSIDs, saved-network names,
-and interface identifiers. Redact them before sharing output or screenshots.
+radio. The userspace doctor checks static package and firmware state. The
+hardware doctor adds bounded PCI, driver, loaded device-tree, rfkill and
+interface evidence without changing the radio. Neither doctor scans,
+associates, reconnects, or proves traffic. Commands and logs that do exercise
+Wi-Fi can expose SSIDs, BSSIDs, saved-network names, and interface identifiers.
+Redact them before sharing output or screenshots.
 
 ## Context
 

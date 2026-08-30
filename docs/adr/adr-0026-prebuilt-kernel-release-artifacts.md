@@ -1,8 +1,8 @@
 ---
 id: adrs-adr026
-title: "ADR026: Prebuilt Kernel Release Artifacts"
+title: "ADR026: Prebuilt Kernel Release Artefacts"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for publishing optional prebuilt Surface Pro 11 qcom-x1e kernel packages as release artifacts instead of committing binaries to git.
+description: Architecture Decision Record (ADR) for publishing optional prebuilt Surface Pro 11 qcom-x1e kernel packages as release artefacts instead of committing binaries to git.
 ---
 
 > **Current implementation:** This ADR records the original release policy.
@@ -19,7 +19,7 @@ description: Architecture Decision Record (ADR) for publishing optional prebuilt
 patched qcom-x1e kernel build for the Surface Pro 11 Wi-Fi rfkill blocker.
 [ADR020](adr-0020-dockerized-arm64-kernel-build.md) and
 [ADR023](adr-0023-docker-kernel-build-case-sensitive-work-volume.md) moved the
-heavy build into a Dockerized ARM64 Linux environment on a stronger host.
+heavy build into a Dockerised ARM64 Linux environment on a stronger host.
 
 That workflow works, but it is slow. The first successful git-fallback kernel
 build produced three installable `.deb` packages:
@@ -38,7 +38,7 @@ per release with individual assets under the documented release-asset limit:
 - <https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases>
 
 The existing project guardrails already treat generated kernel packages as
-local artifacts:
+local artefacts:
 
 - `.gitignore` excludes `payload/kernel-debs/`, `*.deb`, and `build/`;
 - `payload/kernel-debs/` is copied into USB images as local install media;
@@ -60,7 +60,7 @@ set.
 
 The project will publish optional prebuilt qcom-x1e kernel packages as GitHub
 Release assets, not as tracked git files. This supersedes ADR019's
-local-artifacts-only stance only for optional public downloads; it does not
+local-artefacts-only stance only for optional public downloads; it does not
 change the rule that generated `.deb` files and build trees stay out of git.
 
 `payload/kernel-debs/` will remain a local/offline staging directory for USB
@@ -81,7 +81,7 @@ Each binary release must include, at minimum:
 - `SHA256SUMS` covering every other uploaded asset exactly once; the checksum
   file must not list itself, and a local `RELEASE-NOTES.md` used only as the
   GitHub release body is neither uploaded nor listed;
-- a sanitized build manifest recording source mode, upstream URL, source ref,
+- a sanitised build manifest recording source mode, upstream URL, source ref,
   source commit, build target, patch list, repository commit, Docker image
   family or digest when available, and build command shape;
 - a package manifest listing package filenames, sizes, versions, and checksums
@@ -89,9 +89,9 @@ Each binary release must include, at minimum:
 - patch checksums for every project patch directory applied to the source (the
   original 7.0 release used `patches/ubuntu-qcom-x1e-7.0/`);
 - corresponding source sufficient for the binary release, either as source
-  package artifacts, a patched source archive, or immutable instructions and
+  package artefacts, a patched source archive, or immutable instructions and
   links that retrieve the exact source commit plus the project patches used;
-- release notes that mark the artifacts as experimental, Surface Pro 11
+- release notes that mark the artefacts as experimental, Surface Pro 11
   specific, unsigned, and optional.
 
 The checksum and exact-asset rules above were clarified by the touchscreen
@@ -104,11 +104,11 @@ have been hashed.
 The raw local manifests under `build/.../artifacts/` are build outputs, not
 automatically public release manifests. They may contain absolute paths from
 the container, host, or device that built the packages. Public release
-manifests must be regenerated or sanitized before upload and should prefer
+manifests must be regenerated or sanitised before upload and should prefer
 package basenames, repository-relative paths, upstream URLs, commits, and
 checksums.
 
-The project will provide a release-preparation helper that writes sanitized
+The project will provide a release-preparation helper that writes sanitised
 assets under ignored `build/release/<release-name>/` directories. That helper
 may copy local `.deb` files into the release directory, but those copies remain
 ignored build output and must not be committed. Public release preparation
@@ -168,13 +168,13 @@ and understand that Secure Boot may need to remain disabled for this bring-up
 path.
 
 Git LFS is intentionally not used for these packages. It would add quota and
-bandwidth management, require users to understand LFS behavior, and still make
+bandwidth management, require users to understand LFS behaviour, and still make
 binary pointers part of normal repository history. GitHub Releases are a
 better fit for optional downloads.
 
-The first available artifacts were produced from git fallback source mode,
+The first available artefacts were produced from git fallback source mode,
 which is useful for bring-up but not the preferred long-term package source.
-Those artifacts may be published only if they are clearly labeled as
+Those artefacts may be published only if they are clearly labelled as
 experimental git-fallback builds. Future releases should prefer apt source
 mode that matches the installed Ubuntu qcom-x1e package stream when the exact
 source package is available.

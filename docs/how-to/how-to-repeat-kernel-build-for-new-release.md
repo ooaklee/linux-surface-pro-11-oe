@@ -67,14 +67,23 @@ linux-armer image create \
   --source <ubuntu-concept-iso> \
   --source-sha256 <sha256> \
   --kernel-dir build/linux-armer/kernel-<generation> \
+  --companion-source-dir cli/linux-armer \
   --output build/linux-armer/linux-armer-<generation>.iso
 linux-armer image validate build/linux-armer/linux-armer-<generation>.iso
+linux-armer image devices
 linux-armer image write build/linux-armer/linux-armer-<generation>.iso \
   --device <whole-device> \
   --dry-run
+
+sudo linux-armer image write build/linux-armer/linux-armer-<generation>.iso \
+  --device <whole-device> \
+  --confirm '<exact phrase from the current dry run>'
 ```
 
-Repeat `image write` only after reviewing its exact device-bound confirmation.
+The explicit companion source makes the matching Linux ARM64 binary and source
+archive available from the live medium. Review the fresh `image devices`
+inventory, then run the privileged command only after checking and copying its
+exact device-bound confirmation. The CLI never elevates itself.
 
 ## Qualify and retain recovery
 
@@ -82,13 +91,14 @@ Keep the previous ABI installed and visible in GRUB. On the candidate kernel:
 
 ```sh
 linux-armer doctor userspace
-linux-armer doctor hardware wifi bluetooth audio
+linux-armer doctor hardware wifi bluetooth audio touchscreen
 ```
 
 Exercise cold boot, display, storage, networking, Bluetooth, speakers,
 microphone, pen, touch, camera and suspend/resume. Record failures against the
 exact source revision and ABI. Static validation proves package coherence, not
-physical hardware qualification.
+physical hardware qualification. These device exercises are an intentional
+physical qualification boundary and are not capabilities claimed by the CLI.
 
 If the new build fails, boot the retained fallback and follow
 [Reinstall a Patched Kernel from USB](how-to-reinstall-patched-kernel-from-usb.md).

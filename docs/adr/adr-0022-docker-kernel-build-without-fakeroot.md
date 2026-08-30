@@ -37,9 +37,9 @@ When the helper is running as root, it will invoke `debian/rules` directly.
 When the helper is running as a normal user, it will keep using `fakeroot`.
 
 The Docker wrapper will pass `--no-fakeroot` to the inner helper to make the
-root-container behavior explicit. Passing `--no-fakeroot` outside a root
+root-container behaviour explicit. Passing `--no-fakeroot` outside a root
 context is invalid and fails early rather than silently producing unexpected
-package ownership behavior.
+package ownership behaviour.
 
 This applies to all three qcom-x1e build rule invocations currently used by the
 helper:
@@ -53,7 +53,7 @@ helper:
 Docker builds no longer depend on fakeroot's IPC layer during the expensive
 parallel qcom-x1e package build.
 
-The on-device build path keeps its existing non-root package build behavior.
+The on-device build path keeps its existing non-root package build behaviour.
 
 The Docker output remains local generated package data and must not be
 committed.

@@ -235,7 +235,7 @@ but it does not provide an obvious "topology missing, continue with simple DAI
 routing" fallback for this AudioReach card.
 
 A kernel patch to make topology optional is possible as an experiment, but it
-should be treated as a third research track, not as known existing behavior. If
+should be treated as a third research track, not as known existing behaviour. If
 attempted, it must prove that the resulting card has usable controls/routes and
 does not allow unsafe speaker amplifier states.
 

@@ -1,5 +1,7 @@
 # Surface Pro 11 Wi-Fi rfkill Test After Patched qcom-x1e Boot - 2026-06-14
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.**
 > This record preserves the patched-kernel Wi-Fi observations made on 14 June
@@ -12,13 +14,15 @@ Inspect the current static Wi-Fi support state with:
 
 ```sh
 linux-armer doctor userspace --feature wifi
+linux-armer doctor hardware wifi
 ```
 
-The doctor checks package and firmware files without probing the radio. It does
-not inspect live rfkill state, scan, associate, reconnect, or prove traffic.
-The historical `nmcli`, `iw`, and journal commands below can expose SSIDs,
-BSSIDs, saved-network names, MAC addresses, and interface identifiers; redact
-their output before sharing it.
+The userspace doctor checks package and firmware files. The hardware doctor
+adds bounded PCI, driver, loaded device-tree, rfkill and interface evidence
+without changing the radio. Neither doctor scans, associates, reconnects, or
+proves traffic. The historical `nmcli`, `iw`, and journal commands below can
+expose SSIDs, BSSIDs, saved-network names, MAC addresses, and interface
+identifiers; redact their output before sharing it.
 
 ## Context
 

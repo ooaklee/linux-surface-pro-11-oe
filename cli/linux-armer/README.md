@@ -34,7 +34,7 @@ The first implemented image adapter targets the experimental Ubuntu Concept Reso
 - Network access when downloading an upstream image, kernel release, or userspace release.
 - `diskutil` and `plutil` on macOS, or `lsblk`, `umount`, and `udisksctl` on Linux, when discovering or writing removable media.
 
-Run the CLI as a regular user for image creation and validation, catalogue, download, build, diagnostic, hand-off import, and dry-run commands. Image tooling runs in an isolated ARM64 Docker container; the CLI does not require the entire process to run as root. Writing a raw USB device, a userspace install, or clean-up against a real system root is the exception and requires elevated access for the specific operation.
+Run the CLI as a regular user for image creation and validation, catalogue, download, build, diagnostics, hand-off import, and every dry run whose input is readable by that user. Image tooling runs in an isolated ARM64 Docker container; the CLI does not require the entire process to run as root. Raw USB writing, kernel installation, userspace installation, hand-off application, hand-off restoration, and clean-up against a real system root require elevated access for the specific operation. A hand-off restore preview normally also needs elevation because the privileged application creates its receipt directory with private root-only permissions. The CLI never elevates itself.
 
 ## Build
 
@@ -74,11 +74,12 @@ linux-armer image write <iso> --device <whole-device> --dry-run
 linux-armer image release prepare <iso> --dry-run
 linux-armer image release validate <release-directory>
 
-linux-armer handoff import <directory>
-linux-armer handoff list
-linux-armer handoff apply <id> --target-root <path> --dry-run
-linux-armer handoff restore <receipt-id> --target-root <path> --dry-run
-linux-armer handoff purge <id> --dry-run
+HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
+linux-armer handoff import <directory> --store "$HANDOFF_STORE"
+linux-armer handoff list --store "$HANDOFF_STORE"
+linux-armer handoff apply <id> --store "$HANDOFF_STORE" --target-root <path> --dry-run
+sudo linux-armer handoff restore <receipt-id> --target-root <path> --dry-run
+linux-armer handoff purge <id> --store "$HANDOFF_STORE" --dry-run
 
 linux-armer userspace list
 linux-armer userspace show <component>
@@ -160,6 +161,8 @@ that component's relocatable files and is itself included in the outer
 inventory. It is not a second image manifest.
 
 The repository currently declares no project-wide redistribution terms for the CLI. A locally requested companion records `project_licence: not-declared` and prints a warning. Do not redistribute that companion image until the copyright holder publishes suitable project terms and the required third-party notices.
+
+Tag-based CLI publication is fail-closed for the same reason. The repository root is the single legal-document authority for both companion images and CLI releases. The companion builder requires the complete Git repository to be clean, inventories those root documents, and includes them in its source archive. The release job will not invoke GoReleaser unless the root contains a non-empty regular recognised project licence or copying document and a non-empty regular `THIRD_PARTY_NOTICES.md`; it then verifies the exact bytes occur once in every platform archive before publication. Neither document exists yet, so tag publication remains intentionally blocked. Supplying them requires an explicit copyright and dependency review; the CLI and workflow do not invent licensing terms.
 
 After booting the live image, copy the executable from the read-only medium to a writable executable filesystem before using it:
 
@@ -377,14 +380,83 @@ Mark an entry `implemented` only when its named adapter can create and validate 
 
 Some Surface Pro 11 platform firmware and the Bluetooth public controller address must come from an authorised Windows installation on the same device. They are private device data, not a userspace release and not an ISO companion. Do not add a collected hand-off directory, its manifest, or any of its payloads to an image, release, issue, diagnostic archive, or source checkout.
 
-The canonical Windows collector is `tools/collect-sp11-windows-handoff.ps1` in the CLI source tree and emits one strict directory. It is also present in the companion source archive, so a user can extract that ordinary non-private script from the live medium before running it in Windows. The v1 contract uses a fresh random salt and domain-separated bindings for the SMBIOS UUID and selected Bluetooth adapter instance, so neither raw identifier is exported and independently collected hand-offs are not trivially linkable. Platform firmware is an all-or-absent eleven-file set with fixed destinations, copied-byte digests, and Windows DriverStore provenance. Windows Wi-Fi firmware is deliberately excluded because Linux board firmware remains owned by the distribution firmware package.
+The canonical Windows collector is `tools/collect-sp11-windows-handoff.ps1` in the CLI source tree and emits one strict directory. It is also present in the companion source archive, so a user can extract that ordinary non-private script from the live medium before running it in Windows. Contract version 2 and collector `2.0.0` use a fresh random salt and a domain-separated SMBIOS UUID binding for same-device application. The raw SMBIOS UUID is never exported. A selected Bluetooth adapter instance identifier remains private in-memory collection evidence and is not exported as either raw text or a digest. Platform firmware is an all-or-absent eleven-file set with fixed destinations, copied-byte digests, and Windows DriverStore provenance; every file must come from its exact compiled original INF basename rather than a mutable `oemN.inf` alias or a filename-only match. Windows Wi-Fi firmware is deliberately excluded because Linux board firmware remains owned by the distribution firmware package.
 
-Copy the collector's output directory to the Linux system through a private medium, then import it as the same unprivileged user who will manage it:
+Contract version 2 is an unpublished pre-release cut-over, not an import, application, or migration compatibility extension. The CLI never imports or applies version 1 material. An exact version 1 entry already held in the content-addressed private store remains visible as schema `1` through `handoff list` and can be removed only through the reviewed `handoff purge` transaction below. Purge each such entry before recollecting with collector `2.0.0`; do not bypass the closed-set checks with recursive deletion. A transferred version 1 source directory is not valid version 2 input and must not be reused.
+
+### Collect on Windows
+
+Run collection from an elevated Windows PowerShell 5.1 session. First create one new protected parent on a local fixed NTFS volume. The following locale-independent commands set the exact owner and access rules required by the collector:
+
+```powershell
+$privateParent = 'C:\ProgramData\linux-armer-private'
+if ([System.IO.Directory]::Exists($privateParent) -or
+    [System.IO.File]::Exists($privateParent)) {
+    throw 'Choose a new private parent; do not reset an existing directory.'
+}
+[void][System.IO.Directory]::CreateDirectory($privateParent)
+
+$administrators = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+$localSystem = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+    [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+$propagation = [System.Security.AccessControl.PropagationFlags]::None
+$allow = [System.Security.AccessControl.AccessControlType]::Allow
+$fullControl = [System.Security.AccessControl.FileSystemRights]::FullControl
+
+$security = New-Object System.Security.AccessControl.DirectorySecurity
+$security.SetOwner($administrators)
+$security.SetAccessRuleProtection($true, $false)
+[void]$security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $administrators, $fullControl, $inheritance, $propagation, $allow)))
+[void]$security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $localSystem, $fullControl, $inheritance, $propagation, $allow)))
+[System.IO.Directory]::SetAccessControl($privateParent, $security)
+```
+
+Choose a new child name for every collection; the requested child must not already exist. Unplug external Bluetooth radios before collecting Bluetooth evidence, then run the collector from the CLI source tree:
+
+```powershell
+$handoff = Join-Path $privateParent `
+    ('sp11-handoff-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+    .\tools\collect-sp11-windows-handoff.ps1 `
+    -OutputDirectory $handoff
+if ($LASTEXITCODE -ne 0) {
+    throw 'Windows hand-off collection failed.'
+}
+```
+
+The default Bluetooth source is the sole network-adapter `PermanentAddress` whose structured PnP ancestry reaches the exact built-in WCN7850 radio. Add `-UseBTHPORTRegistry` only when you also want the collector to require the sole valid local BTHPORT address to agree exactly with that independently correlated value. The built-in radio and transport identities are `QCA_SHB\UART_H4_HMT` and `ACPI\QCOM0D04`; attached or ambiguous physical radios fail closed.
+
+The parent check walks from the filesystem root without following reparse points, requires trusted ownership, rejects access which could redirect the privileged path, and retains filesystem object identities across writes and publication. Staging receives the same private DACL. Publication is a no-replace same-parent move, and failure cleanup enumerates and removes only checked entries without recursive traversal through a reparse object.
+
+Do not collect directly onto FAT, exFAT, a network share, or an unprotected directory. The implementation can accept a local removable NTFS parent only when the identical ACL, ancestor, and no-reparse policy passes, but collecting on fixed local NTFS and transferring only the completed child gives the clearest boundary. Copy that complete child to a new directory on trusted removable storage after the collector reports success:
+
+```powershell
+$transferRoot = 'E:\linux-armer-private-transfer'
+if ([System.IO.Directory]::Exists($transferRoot) -or
+    [System.IO.File]::Exists($transferRoot)) {
+    throw 'Choose a new empty transfer directory.'
+}
+[void][System.IO.Directory]::CreateDirectory($transferRoot)
+Copy-Item -LiteralPath $handoff -Destination $transferRoot -Recurse -ErrorAction Stop
+```
+
+The removable copy is private even when its filesystem cannot preserve Windows ACLs. It is a transfer copy, never the live privileged output transaction. Keep it physically controlled and remove unneeded copies after Linux import has been verified.
+
+### Import and apply on Linux
+
+Copy the completed hand-off directory from the private medium to the Linux system, then import it as the same unprivileged user who will manage it:
 
 ```sh
-linux-armer handoff import <windows-handoff-directory>
-linux-armer handoff list
+HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
+linux-armer handoff import <windows-handoff-directory> --store "$HANDOFF_STORE"
+linux-armer handoff list --store "$HANDOFF_STORE"
 ```
+
+`$HOME` is expanded by the unprivileged shell, so `HANDOFF_STORE` is the absolute path to that user's private store. Keep this same value for every import, inspection, application, and retention command; in particular, the shell expands it before `sudo`, preventing privileged application from selecting root's separate default store.
 
 Import rejects unknown or mis-cased JSON fields, missing or extra files, symbolic links, special files, case-colliding paths, non-canonical mappings, digest or size mismatches, and source mutation during verification. It publishes the exact bytes atomically beneath a mode-`0700` content-addressed store and protects every stored file with mode `0600`. Re-importing identical bytes revalidates and reuses the existing entry. Ordinary and JSON output contain only redacted summary fields; they never contain the Bluetooth address, raw UUID, adapter identifier, salts, or their bindings.
 
@@ -394,6 +466,7 @@ Review the immutable plan as an unprivileged user before applying it. The dry ru
 
 ```sh
 linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
   --target-root /target \
   --feature firmware \
   --feature bluetooth \
@@ -401,6 +474,7 @@ linux-armer handoff apply <id> \
   --dry-run
 
 sudo linux-armer handoff apply <id> \
+  --store "$HANDOFF_STORE" \
   --target-root /target \
   --feature firmware \
   --feature bluetooth \
@@ -410,10 +484,12 @@ sudo linux-armer handoff apply <id> \
 
 For the running live system, spell the target explicitly as `--target-root /` and select `--adsp-policy disabled` when firmware is included. The transaction installs only the fixed eleven-file platform-firmware set, its Denali GPU link, the selected aDSP policy, and the private Bluetooth runtime integration represented by the imported evidence. It does not copy Windows Wi-Fi firmware, change an unselected feature, expose private values in output, or accept a confirmation generated for another plan.
 
+Bluetooth application records the compiled selector `surface-pro-11-wcn7850-uart`, never a boot-order-dependent numeric index. At service start, the Linux helper scans `/sys/class/bluetooth/hciN/device/of_node/compatible` for the exact NUL-delimited `qcom,wcn7850-bt` token supplied by the Surface Pro 11 UART device-tree node. An external controller cannot acquire authority by appearing as `hci0`; no built-in match times out without issuing an HCI address mutation, and multiple matching candidates fail as ambiguous.
+
 Every started mutation keeps private same-filesystem backups and a durable receipt beneath the target. A failure attempts bounded rollback but deliberately retains the receipt and backups for inspection or recovery. Restore is therefore explicit and uses its own current-state-bound confirmation:
 
 ```sh
-linux-armer handoff restore <receipt-id> \
+sudo linux-armer handoff restore <receipt-id> \
   --target-root /target \
   --dry-run
 
@@ -424,14 +500,16 @@ sudo linux-armer handoff restore <receipt-id> \
 
 Do not delete a retained receipt or its private backup directory until application, boot validation, and any necessary restoration have completed. `--json` is available for redacted automation output on both commands.
 
-The default store is `.linux-armer-handoffs` beneath the current user's home directory. Use `--store <directory>` when a different private location is required. Review retention before deleting an entry:
+Review retention before deleting an entry from the same explicit private store:
 
 ```sh
-linux-armer handoff purge <id> --dry-run
-linux-armer handoff purge <id> --confirm 'purge <id>'
+linux-armer handoff purge <id> --store "$HANDOFF_STORE" --dry-run
+linux-armer handoff purge <id> --store "$HANDOFF_STORE" --confirm 'purge <id>'
 ```
 
-Purge accepts only the complete content-addressed phrase, revalidates the private closed set, atomically isolates that exact direct child, revalidates it again, and removes only the verified files and directories. Purging an imported source does not remove application receipts or backups from a target root; recover or deliberately retain those records independently.
+Purge accepts only the complete content-addressed phrase, revalidates the private closed set, atomically isolates that exact direct child, revalidates it again, and removes only the verified files and directories. This is also the sole supported removal path for an exact pre-release version 1 store entry; version 1 remains ineligible for import, migration, and application. Purging a stored entry does not remove application receipts or backups from a target root; recover or deliberately retain those records independently.
+
+Host-independent tests do not replace maintained-hardware qualification. Successful collection on supported Windows, private transfer, same-device Linux import and application, Bluetooth address programming, firmware loading, cold boot, and restoration on the same physical Surface Pro 11 remain release gates. [ADR022](docs/adr/adr-022-privileged-windows-collection-and-controller-authority.md) records the privileged storage and controller-authority decision together with the reviewed Microsoft driver-package evidence.
 
 ## Userspace companion
 

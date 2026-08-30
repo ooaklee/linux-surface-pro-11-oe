@@ -117,7 +117,7 @@ commits. Tag builds treat an existing local tag as stable. If an upstream
 project moves a published tag, the cached checkout or Docker work volume must
 be removed before rebuilding from the replacement tag.
 
-The source build's existing `mk-build-deps` behavior remains the reference for
+The source build's existing `mk-build-deps` behaviour remains the reference for
 the regeneration environment; it is not replaced by the new helper.
 
 ## Alternatives Considered

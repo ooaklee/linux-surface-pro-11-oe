@@ -13,7 +13,7 @@ Accepted for X1P/LCD and X1E/OLED integration on 2026-08-30 on matching
 `sp11/integration-7.2.x-pen-part-2` branches. ARM64 kernel builds, checkpatch,
 the pinned userspace build, manifest verification, offline installation, and
 final v19 kernel packaging pass. Live hardware acceptance currently covers
-X1E/OLED pressure, tilt, barrel-button, and normal multitouch behavior.
+X1E/OLED pressure, tilt, barrel-button, and normal multitouch behaviour.
 Separate X1P hardware validation, eraser transitions, transport recovery,
 repeated suspend/resume, OpenEmbedded recipe parse/build validation, and
 release qualification remain.
@@ -35,7 +35,7 @@ complete proprietary stylus processor.
 
 Upstream `iptsd` already decodes this DFT protocol and emits standard Linux
 stylus events. The `turbineBMW/surface-pro-11-linux` integration provides
-useful independent evidence for hover, strokes, and eraser behavior with
+useful independent evidence for hover, strokes, and eraser behaviour with
 `iptsd`, plus a practical udev/systemd/sleep lifecycle. Its touchscreen
 transport differs from this tree, so that evidence cannot qualify this bridge
 without testing it on the target kernel.
@@ -61,7 +61,7 @@ the physical report descriptor and either supported product identity—X1P/LCD
 - `/dev/g6ts-heat` remains available for bounded diagnostics and replay; it is
   not the production pen input path.
 - The driver defaults to the validated Phase 84 profile: SET_FEATURE `0x05`
-  minimal initialization, one response per level-low IRQ, bounded ready-line
+  minimal initialisation, one response per level-low IRQ, bounded ready-line
   quiescing, and cold host-fault recovery. Read-only module parameters retain a
   load-time fallback without installing a global modprobe configuration that
   could affect an older fallback kernel.
@@ -77,14 +77,14 @@ Userspace will use unmodified upstream `iptsd` v3.1.0 at commit
   the matching HIDRAW node. `BindsTo=` stops it when that node disappears.
 - A system-sleep hook stops the daemon before device suspend, then discovers
   and verifies the recreated node after resume.
-- The lifecycle assets are adapted under the MIT license from
+- The lifecycle assets are adapted under the MIT licence from
   `turbineBMW/surface-pro-11-linux` commit
   `05e5335bc72476d44390336701cf03efa5fd0165`.
 - The production package conflicts with `g6-pen`, whose service is no longer
   enabled automatically, and with a generic `iptsd` package. The local
   installer masks generic `iptsd@.service`, while the SP11 udev rule replaces
   an earlier generic service request. Only one processor may own the stream.
-- ARM64 payload builds include exact source identity, hashes, licenses, and the
+- ARM64 payload builds include exact source identity, hashes, licences, and the
   complete Meson fallback sources and patches linked into the binaries.
 
 ## Alternatives Considered
@@ -152,4 +152,4 @@ unqualified.
   suspend/resume gates.
 - The live-image builder carries the installer and payload on `SP11DATA`; it
   does not inject iptsd into the running live desktop. Live-session and
-  installed-system behavior remain separate test gates.
+  installed-system behaviour remain separate test gates.

@@ -36,6 +36,11 @@ docker run --rm --platform linux/arm64 \
 The expected output is `aarch64`. Use the complete digest-qualified reference
 from the plan, not a mutable tag.
 
+This direct Docker invocation is an intentional bounded external capability
+probe. `linux-armer doctor` checks daemon availability and the build dry run
+reports compiled policy, but neither command claims that the host can execute
+the selected ARM64 container.
+
 ## Restore ARM64 container support
 
 - On Docker Desktop, enable its supported Linux ARM64 emulation and restart the

@@ -1,5 +1,7 @@
 # Surface Pro 11 Installed NVMe Boot Test - 2026-06-13
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.**
 > This record preserves the installed-boot result observed on 13 June 2026.
@@ -19,7 +21,8 @@ linux-armer doctor userspace --feature kernel --feature firmware
 The image validator checks ISO structure and version-bound boot artefacts. The
 doctor reads static filesystem and package state. Neither command proves that
 the machine can boot from NVMe, validates a live GRUB transition, or changes
-the installed system.
+the installed system. NVMe boot remains an intentional physical qualification
+boundary and is not a capability claimed by the CLI.
 
 ## Context
 

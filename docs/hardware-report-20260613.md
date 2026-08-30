@@ -1,5 +1,7 @@
 # Surface Pro 11 Hardware Report - 2026-06-13
 
+Last reviewed: 2026-08-30
+
 > [!IMPORTANT]
 > **Immutable historical evidence — not a current procedure.**
 > This report preserves the hardware inventory observed on 13 June 2026. Its
@@ -17,13 +19,15 @@ linux-armer doctor userspace \
   --feature firmware \
   --feature wifi \
   --feature bluetooth
+linux-armer doctor hardware wifi bluetooth
 ```
 
-The doctor reads the selected filesystem and package state. It does not
-interrogate Windows, probe live hardware, exercise either radio, or prove that
-a device works. Supplemental Wi-Fi or Bluetooth commands and logs can expose
-SSIDs, BSSIDs, Bluetooth MAC addresses, and paired-device names; redact those
-identifiers before sharing any evidence.
+The userspace doctor reads the selected filesystem and package state. The
+hardware doctor adds bounded, redacted live radio evidence without changing
+devices, services or rfkill state. Neither command interrogates Windows,
+scans, associates, pairs, or proves that a device works. Supplemental Wi-Fi or
+Bluetooth commands and logs can expose SSIDs, BSSIDs, Bluetooth MAC addresses,
+and paired-device names; redact those identifiers before sharing any evidence.
 
 Source: Windows diagnostic report collected from the target Surface Pro 11 over
 AnyDesk/Live Share.

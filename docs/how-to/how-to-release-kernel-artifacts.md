@@ -7,6 +7,8 @@ description: How-to guide for preparing a closed, checksummed Surface Pro 11 ker
 
 # How To: Prepare and Validate Kernel Release Artefacts
 
+Last reviewed: 2026-08-30
+
 Use `linux-armer kernel release prepare` to turn one exact native kernel build
 into a new local release directory. Preparation is deliberately separate from
 publication: it does not create a tag, contact GitHub, upload files, install a
@@ -71,6 +73,12 @@ URLs, and provenance that does not match this exact native-builder contract.
 Read the immutable source identity from the private build provenance and
 create an archive of that exact tree. This example uses a temporary checkout
 and verifies both the commit and tree before archiving:
+
+Source materialisation and licence selection are intentional bounded external
+preparation steps: the CLI does not claim to choose legally sufficient source
+or licence evidence on the publisher's behalf. The subsequent
+`kernel release prepare` command authenticates the supplied bytes and binds
+them into the closed release contract.
 
 ```bash
 provenance="$build_dir/linux-armer-kernel-build-provenance.json"

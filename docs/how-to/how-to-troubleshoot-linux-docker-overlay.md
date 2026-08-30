@@ -23,6 +23,11 @@ docker system df
 df -h .
 ```
 
+The Docker and filesystem commands are intentional bounded external host
+diagnostics. `linux-armer doctor` reports the minimum daemon and workspace
+readiness needed by its workflows; it does not claim to inspect or repair the
+container engine's complete storage configuration.
+
 Record the Docker server version, storage driver, backing filesystem and the
 first daemon error. Redact registry credentials, proxy values, user names and
 private paths before sharing a report.

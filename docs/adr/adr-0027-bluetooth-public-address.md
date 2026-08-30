@@ -39,7 +39,7 @@ powered public controller.
 We will treat the invalid Bluetooth public address as the next Bluetooth
 bring-up gate.
 
-The project will not invent, randomize, or derive a Bluetooth MAC address from
+The project will not invent, randomise, or derive a Bluetooth MAC address from
 the Wi-Fi MAC. The operator must supply the Bluetooth address from Windows, the
 Windows diagnostic bundle, or another trusted source.
 

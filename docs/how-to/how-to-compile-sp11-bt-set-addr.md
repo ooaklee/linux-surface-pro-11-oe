@@ -17,18 +17,32 @@ address workflow and creates the required system integration itself.
 
 1. Collect the Bluetooth component on Windows with
    `cli/linux-armer/tools/collect-sp11-windows-handoff.ps1`.
-2. Import it on the same Surface with `linux-armer handoff import`.
+2. Import it on the same Surface into one explicit absolute user store:
+
+   ```sh
+   HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
+   linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+   linux-armer handoff list --store "$HANDOFF_STORE"
+   ```
+
+   The unprivileged shell expands `$HOME` before any later `sudo` command.
 3. Preview the application:
 
    ```sh
    linux-armer handoff apply <id> \
+     --store "$HANDOFF_STORE" \
      --target-root / \
      --feature bluetooth \
      --dry-run
+
+   sudo linux-armer handoff apply <id> \
+     --store "$HANDOFF_STORE" \
+     --target-root / \
+     --feature bluetooth \
+     --confirm '<exact phrase from the current dry run>'
    ```
 
-4. Repeat the apply with its exact confirmation.
-5. Verify with `linux-armer doctor userspace --feature bluetooth` and
+4. Verify with `linux-armer doctor userspace --feature bluetooth` and
    `linux-armer doctor hardware bluetooth`.
 
 The hand-off is private, proprietary and device-bound. It must not be
