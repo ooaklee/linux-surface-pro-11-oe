@@ -6,25 +6,35 @@ on:
   pull_request:
     paths:
       - ".github/workflows/kernel-build-script-tests.yml"
+      - "README.md"
+      - "docs/adr/adr-0068-sp11-usb4-dp-integration.md"
+      - "docs/how-to/how-to-test-sp11-usb4-dp.md"
       - "docs/how-to/how-to-release-kernel-artifacts.md"
+      - "scripts/collect-sp11-usb4-diagnostics.sh"
       - "scripts/build-sp11-qcom-x1e-kernel.sh"
       - "scripts/build-sp11-qcom-x1e-kernel-docker.sh"
       - "scripts/preflight-sp11-kernel-test.sh"
       - "scripts/prepare-sp11-kernel-release-assets.sh"
       - "tests/test-kernel-test-preflight.sh"
       - "tests/test-kernel-patch-selection.sh"
+      - "tests/test-usb4-integration-policy.sh"
   push:
     branches:
       - main
     paths:
       - ".github/workflows/kernel-build-script-tests.yml"
+      - "README.md"
+      - "docs/adr/adr-0068-sp11-usb4-dp-integration.md"
+      - "docs/how-to/how-to-test-sp11-usb4-dp.md"
       - "docs/how-to/how-to-release-kernel-artifacts.md"
+      - "scripts/collect-sp11-usb4-diagnostics.sh"
       - "scripts/build-sp11-qcom-x1e-kernel.sh"
       - "scripts/build-sp11-qcom-x1e-kernel-docker.sh"
       - "scripts/preflight-sp11-kernel-test.sh"
       - "scripts/prepare-sp11-kernel-release-assets.sh"
       - "tests/test-kernel-test-preflight.sh"
       - "tests/test-kernel-patch-selection.sh"
+      - "tests/test-usb4-integration-policy.sh"
 
 permissions:
   contents: read
@@ -46,10 +56,12 @@ jobs:
           for script in \
             scripts/build-sp11-qcom-x1e-kernel.sh \
             scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+            scripts/collect-sp11-usb4-diagnostics.sh \
             scripts/preflight-sp11-kernel-test.sh \
             scripts/prepare-sp11-kernel-release-assets.sh \
             tests/test-kernel-test-preflight.sh \
-            tests/test-kernel-patch-selection.sh
+            tests/test-kernel-patch-selection.sh \
+            tests/test-usb4-integration-policy.sh
           do
             bash -n "$script"
           done
@@ -59,3 +71,6 @@ jobs:
 
       - name: Test distinct-ABI hardware-test preflight
         run: bash tests/test-kernel-test-preflight.sh
+
+      - name: Test guarded USB4 integration policy
+        run: bash tests/test-usb4-integration-policy.sh
