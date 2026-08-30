@@ -82,7 +82,7 @@ Once that commit exists, run it on an ARM64 Linux host with an ARM64 Docker
 server:
 
 ```bash
-cd /home/leon/Workspace/repos/linux-surface-pro-11-oe
+cd /path/to/linux-surface-pro-11-oe
 ./scripts/build-sp11-imx681-libcamera-docker.sh --jobs 10
 ```
 
@@ -143,7 +143,7 @@ case "$SP11_LIBCAMERA_ARTIFACTS" in
 esac
 SP11_CANONICAL_ARTIFACTS="$(readlink -e -- "$SP11_LIBCAMERA_ARTIFACTS")"
 test "$SP11_CANONICAL_ARTIFACTS" = "$SP11_LIBCAMERA_ARTIFACTS"
-export SP11_EXPECTED_OUTPUT_ROOT=/home/leon/Workspace/repos/linux-surface-pro-11-oe/build/libcamera-docker
+export SP11_EXPECTED_OUTPUT_ROOT="$(pwd -P)/build/libcamera-docker"
 test "$(dirname "$SP11_LIBCAMERA_ARTIFACTS")" = "$SP11_EXPECTED_OUTPUT_ROOT"
 case "$(basename "$SP11_LIBCAMERA_ARTIFACTS")" in
   build.*) ;;
@@ -325,7 +325,7 @@ workflow:
 
 ```bash
 set -euo pipefail
-export SP11_OE_REPO=/home/leon/Workspace/repos/linux-surface-pro-11-oe
+export SP11_OE_REPO="$(pwd -P)"
 sudo apt update
 sudo apt install build-essential devscripts quilt libcamera-tools
 sudo apt build-dep libcamera

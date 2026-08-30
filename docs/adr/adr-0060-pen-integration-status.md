@@ -9,10 +9,18 @@ description: Architecture Decision Record (ADR) for integrating validated G6 pen
 
 ## Status
 
-Accepted (2026-08-21). Live-hardware hover and position validation is complete.
-Tap-to-click behavior and full button and tool parity are deferred to a
-follow-up. This decision advances the evidence-gated userspace design recorded
-in ADR0059.
+Accepted as an experimental result (2026-08-21), then superseded for production
+pen input by ADR0067 (2026-08-29). The tested thresholds were not committed to
+the packaged configuration, which remains fail-closed. This record therefore
+documents historical `g6-pen` hardware evidence rather than a shipped hover
+capability.
+
+## Superseding note (2026-08-29)
+
+ADR0067 selects the HIDRAW plus pinned-iptsd path for production validation.
+The thresholds used for this historical experiment were not committed to the
+packaged `g6-pen.conf`, which remains fail-closed. The accepted decision and
+consequences below are preserved as the record made on 2026-08-21.
 
 ## Context
 

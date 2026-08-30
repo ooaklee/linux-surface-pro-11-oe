@@ -1,0 +1,19 @@
+SUBSYSTEM!="hidraw", GOTO="sp11_iptsd_end"
+ACTION=="remove", GOTO="sp11_iptsd_end"
+
+# The private kernel bridge uses BUS_SPI (001C) and one of the two SP11 panel
+# product IDs. Do not attach this integration to unrelated IPTS devices.
+KERNELS=="001C:045E:0C80.*", GOTO="sp11_iptsd_candidate"
+KERNELS=="001C:045E:0C83.*", GOTO="sp11_iptsd_candidate"
+GOTO="sp11_iptsd_end"
+
+LABEL="sp11_iptsd_candidate"
+ENV{SP11_IPTSD_ELIGIBLE}!="1", \
+	PROGRAM="@CHECKER@ --quiet $env{DEVNAME}", \
+	ENV{SP11_IPTSD_ELIGIBLE}="1"
+
+ENV{SP11_IPTSD_ELIGIBLE}=="1", TAG+="systemd", \
+	PROGRAM="@SYSTEMD_ESCAPE@ --path $env{DEVNAME}", \
+	ENV{SYSTEMD_WANTS}="sp11-iptsd@$result.service"
+
+LABEL="sp11_iptsd_end"

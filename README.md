@@ -53,7 +53,7 @@ list for the upstream Arch status.
 | Audio — speakers | ✅ Working on installed v6 kernel | Both physical speakers receive the stereo mix through a PipeWire manual sink with reordered `audio.position` labels — the 4-channel PCM is a transport layout mapping physical slots 0 and 2, not a DAPM bypass ([ADR-0036](docs/adr/adr-0036-right-speaker-audio-position-reorder.md)). The rc6 integration kernel (`7.2-rc6-jg-0sp11v6`) carries the wsa884x 2S/4-ohm PA-recovery profile, which fixes the left-speaker audio wedge at sustained full volume ([ADR-0057](docs/adr/adr-0057-sp11-7-2-rc6-jg-0sp11v6-rc-branch-build.md), [ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)). `sp11-wsa-routing.service` applies the WSA path with PCM1 closed and exercises a fresh graph at boot, replacing the superseded alsactl boot-race fix ([ADR-0035](docs/adr/adr-0035-audio-boot-race-alsactl.md)). PA Volume is capped at raw 6 (0 dB) and the digital volumes at 81 (−3 dB) by the machine driver; the volume-slider taper is stock cubic, with a log-dB taper accepted but not yet implemented ([ADR-0055](docs/adr/adr-0055-audio-volume-taper-log-db.md)). See [`how-to-bring-up-audio`](docs/how-to/how-to-bring-up-audio.md). |
 | Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
 | Touchscreen | ✅ Working on installed v6 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, now carried **in-tree** on the 7.2-rc6 build (`7.2-rc6-jg-0sp11v6`) as the phase55 `mshw0485_touch`, `spi-geni-qcom`, and `gpi` drivers — no out-of-tree module install. Multi-touch, pinch/zoom, and three-finger gestures work, and sound is verified on the same build. Supersedes the v3 geocausa OOT-module approach. See [ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
-| Pen | ❌ Not working | Not working in live USB. Upstream Arch notes also list pen as not working. |
+| Pen | ✅ Supported on X1P/LCD and X1E/OLED; live-validated on X1E/OLED v19 | The matching pen-part-2 kernel and pinned upstream iptsd integration cover both `045e:0c80` and `045e:0c83`, with iptsd touch output disabled. Live X1E testing passed hover/lift, continuous input, pressure, both tilt axes, the barrel button, and normal one-, two-, and three-finger touch with balanced Phase 84 IRQ/report accounting and no transport errors, resets, or daemon restarts. Separate X1P hardware validation, eraser, recovery, repeated suspend/resume, and comprehensive touch/gesture regression qualification remain. Unmodified iptsd v3.1.0 does not expose a second stylus button. See [ADR0067](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md). |
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
 
@@ -69,11 +69,12 @@ Surface Pro 11 device tree at boot. This avoids remastering the Ubuntu ISO.
 cd /path/to/linux-surface-pro-11-oe
 mkdir -p build
 
-# Default: current SP11 integration (7.2.0-jg-0sp11v7, in-tree delta, ubuntu:26.04)
+# Pen part 2 integration branch (build and validate for release)
+# This git-mode command is usable after the paired branch is published.
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
-  --git-branch sp11/integration-7.2.x \
+  --git-branch sp11/integration-7.2.x-pen-part-2 \
   --image ubuntu:26.04 \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
@@ -143,6 +144,10 @@ mkdir -p build
   --jobs 8
 ```
 
+Until the paired branches are published, build the local kernel checkout only
+from a case-sensitive Linux filesystem or Docker volume; the remote git-mode
+command above cannot see unpushed changes.
+
 The release examples use the immutable
 `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag. The moving
 `jg/ubuntu-qcom-x1e-7.2rc` branch resolved to the same source commit when this
@@ -199,6 +204,16 @@ original build command unchanged.
 
 See the [patched qcom-x1e kernel how-to](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 for the full on-device build path and fallback-kernel safety model.
+
+Build the matching pinned ARM64 iptsd payload before creating a pen test image:
+
+```bash
+./scripts/build-sp11-iptsd-docker.sh --copy-to-payload
+```
+
+The builder verifies the exact upstream source and emits binaries, hashes,
+licenses, and corresponding source under `payload/iptsd-sp11`. See
+[Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md).
 
 ### 2. Build the USB image
 
@@ -355,6 +370,30 @@ Linux-integrated path still fails on a cold boot, reinstall explicitly with
 `--windows-se-init` as an A/B recovery test and retain the known-good kernel
 fallback.
 
+### Pen
+
+Pen part 2 requires the matching kernel and userspace branches. If
+`payload/iptsd-sp11` was included on `SP11DATA`, the installed-system support
+flow installs it automatically. To make a missing payload fatal, run:
+
+```bash
+cd "$SP11DATA/support"
+sudo ./scripts/install-sp11-support.sh --installed-system --require-iptsd
+```
+
+The installer verifies the payload, disables the legacy `g6-pen.service`,
+masks the generic `iptsd@.service`, and lets udev start one dynamic
+`sp11-iptsd@` instance for the matching HIDRAW node. The SP11 udev rule
+replaces any earlier generic iptsd request for that node. It deliberately
+disables iptsd's virtual touchscreen so the kernel's direct touch device
+remains the only touch provider. Do not hard-code a `hidrawN` number; it
+changes across recovery and resume.
+
+This installs support into the target system, not the running live desktop.
+Follow the complete discovery, functional, suspend/resume, and rollback matrix
+in [Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md)
+before merging either branch.
+
 ### Wi-Fi
 
 The WCN7850 needs a patched kernel with rfkill disabled. The `board.bin`
@@ -487,6 +526,8 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 - [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 - [Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md)
 - [Bring Up Audio](docs/how-to/how-to-bring-up-audio.md)
+- [Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md)
+- [Run the Legacy G6 Diagnostic Pen Processor](docs/how-to/how-to-run-g6-pen-processor.md)
 - [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
 - [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
 - [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
@@ -554,6 +595,19 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0052: Build from the SP11 Integration Kernel Fork](docs/adr/adr-0052-sp11-integration-fork-build.md)
 - [ADR0053: Repair Stale Stock-Module Initramfs During Touchscreen Install](docs/adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md)
 - [ADR0054: JG 7.2-rc5-jg-0sp11v4 In-Tree Touchscreen Build](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md)
+- [ADR0055: Log-dB Speaker Volume Taper](docs/adr/adr-0055-audio-volume-taper-log-db.md)
+- [ADR0056: SP11 7.2-rc5-jg-0sp11v6 Integration Fork Build](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)
+- [ADR0057: SP11 7.2-rc6-jg-0sp11v6 rc-Branch Integration Build](docs/adr/adr-0057-sp11-7-2-rc6-jg-0sp11v6-rc-branch-build.md)
+- [ADR0058: SP11 7.2.0-jg-0sp11v7 Non-rc Integration Line](docs/adr/adr-0058-sp11-7-2-0-jg-0sp11v7-non-rc-integration-line.md)
+- [ADR0059: Evidence-Gated G6 HEAT Userspace Pen Processor](docs/adr/adr-0059-evidence-gated-g6-heat-userspace-pen-processor.md)
+- [ADR0060: Pen Integration Status: Hover Validated, Tap-to-Click Deferred](docs/adr/adr-0060-pen-integration-status.md)
+- [ADR0061: SP11 Platform Profile Framework on Non-ACPI Systems](docs/adr/adr-0061-sp11-platform-profile-framework-non-acpi.md)
+- [ADR0062: SP11 7.2.0-jg-0sp11v9 Golden-v32 Audio Kernel Line](docs/adr/adr-0062-sp11-7-2-0-jg-0sp11v9-golden-v32-audio-line.md)
+- [ADR0063: SP11 Feedback-Port Offset2 Boot Param](docs/adr/adr-0063-sp11-v10-feedback-port-offset2-parity.md)
+- [ADR0064: Dedicated SP11 Audio Release Strategy](docs/adr/adr-0064-sp11-audio-release-strategy.md)
+- [ADR0065: SP11 Front Camera C-PHY Integration](docs/adr/adr-0065-sp11-front-camera-cphy-integration.md)
+- [ADR0066: SP11 IMX681 libcamera Simple IPA Integration](docs/adr/adr-0066-sp11-imx681-libcamera-simple-ipa.md)
+- [ADR0067: SP11 Kernel HIDRAW Bridge and Pinned iptsd Pen Integration](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md)
 
 ## Windows Firmware
 
@@ -598,6 +652,8 @@ Base projects and install flow:
 - Surface Laptop 7 Ubuntu notes by Bryce Hoehn: <https://github.com/bryce-hoehn/linux-surface-laptop-7>
 - Surface Pro 11 Arch notes by Dan Whinham: <https://github.com/dwhinham/linux-surface-pro-11>
 - linux-surface project and Surface Pro 11 support discussion: <https://github.com/linux-surface/linux-surface> and <https://github.com/linux-surface/linux-surface/issues/1962>
+- linux-surface iptsd userspace processor: <https://github.com/linux-surface/iptsd>
+- turbineBMW Surface Pro 11 Linux integration, used as attributed pen lifecycle and hardware-reference evidence: <https://github.com/turbineBMW/surface-pro-11-linux>
 - Ubuntu Snapdragon X concept images and discussion: <https://people.canonical.com/~platform/images/ubuntu-concept/> and <https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800>
 - Fedora Snapdragon WoA install notes: <https://fedoraproject.org/wiki/Snapdragon_WoA_Laptop_Install>
 - Debian ThinkPad X13s installation notes, useful for WoA boot and firmware patterns: <https://wiki.debian.org/InstallingDebianOn/Thinkpad/X13s>

@@ -3,16 +3,18 @@ set -euo pipefail
 
 ROOT="${ROOT:-/}"
 USB_SAFE="false"
+REQUIRE_IPTSD="false"
 
 usage() {
   cat <<EOF
-Usage: sudo $0 [--installed-system | --usb-safe] [--root DIR]
+Usage: sudo $0 [--installed-system | --usb-safe] [--root DIR] [--require-iptsd]
 
 Installs Surface Pro 11 Ubuntu support helpers into an installed Ubuntu root.
 
   --installed-system   Configure for NVMe-installed Ubuntu.
   --usb-safe           Add the qcom_q6v5_pas blacklist for live USB boot.
   --root DIR           Target root, default /.
+  --require-iptsd      Fail if the verified SP11 iptsd payload is absent.
 EOF
 }
 
@@ -29,6 +31,10 @@ while [ "$#" -gt 0 ]; do
     --root)
       ROOT="$2"
       shift 2
+      ;;
+    --require-iptsd)
+      REQUIRE_IPTSD="true"
+      shift
       ;;
     -h|--help)
       usage
@@ -274,6 +280,26 @@ chmod 0755 "$(target /etc/kernel/postrm.d/zzzz-surface-pro-11-dtb)"
 cat > "$(target /etc/apt/apt.conf.d/99surface-pro-11-wifi-fixup)" <<'EOF'
 DPkg::Post-Invoke { "if [ -x /usr/local/sbin/sp11-wifi-board-fixup ]; then /usr/local/sbin/sp11-wifi-board-fixup || true; fi"; };
 EOF
+
+iptsd_payload=""
+for candidate in \
+  "$repo_dir/payload/iptsd-sp11" \
+  "$repo_dir/../payload/iptsd-sp11"; do
+  if [ -f "$candidate/SHA256SUMS" ]; then
+    iptsd_payload="$candidate"
+    break
+  fi
+done
+
+if [ -n "$iptsd_payload" ]; then
+  "$repo_dir/scripts/install-sp11-iptsd.sh" \
+    --root "$ROOT" --payload "$iptsd_payload"
+elif [ "$REQUIRE_IPTSD" = "true" ]; then
+  echo "The verified SP11 iptsd payload is required but was not found." >&2
+  exit 1
+else
+  echo "SP11 iptsd payload not present; pen integration was not installed." >&2
+fi
 
 if [ "$ROOT" = "/" ]; then
   if command -v update-grub >/dev/null 2>&1; then

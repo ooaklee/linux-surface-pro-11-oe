@@ -40,6 +40,7 @@ do_install() {
 }
 
 SYSTEMD_SERVICE:${PN} = "g6-pen.service"
-SYSTEMD_AUTO_ENABLE:${PN} = "enable"
+SYSTEMD_AUTO_ENABLE:${PN} = "disable"
+RCONFLICTS:${PN} += "iptsd-sp11"
 
 FILES:${PN} += "${systemd_system_unitdir}/g6-pen.service"

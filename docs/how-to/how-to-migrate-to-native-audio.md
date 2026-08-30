@@ -41,20 +41,20 @@ forward as a fallback sink.
 
 ## Procedure
 
-1. Clone the audio artifacts at the script's default location, or refresh an
+1. Clone the audio artifacts into a dedicated source directory, or refresh an
    existing checkout.
 
 ```bash
+export SP11_AUDIO_SOURCE=/path/to/SP11X1e-audio
 git clone https://github.com/geocausa/SP11X1e-audio.git \
-  ~/Workspace/repos/SP11X1e-audio
+  "$SP11_AUDIO_SOURCE"
 
 # For an existing checkout instead:
-git -C ~/Workspace/repos/SP11X1e-audio pull --ff-only
+git -C "$SP11_AUDIO_SOURCE" pull --ff-only
 ```
 
-Here `~` is the invoking user's home. If the migration script itself is run
-through `sudo`, it resolves this default from the original user's home rather
-than root's home.
+Pass this checkout's topology and UCM paths explicitly in step 4. This avoids
+depending on a machine-specific default checkout location.
 
 2. Boot the native kernel and confirm its exact release.
 
@@ -69,13 +69,17 @@ Continue only with `7.2.0-jg-0sp11v9-qcom-x1e` or
 3. Preview the migration without writing files or restarting services.
 
 ```bash
-./scripts/sp11-audio-migrate-to-native.sh --install --dry-run
+./scripts/sp11-audio-migrate-to-native.sh --install --dry-run \
+  --tplg "$SP11_AUDIO_SOURCE/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin" \
+  --ucm-dir "$SP11_AUDIO_SOURCE/deploy/ucm2/Qualcomm/x1e80100"
 ```
 
-4. Install the native pairing using the default source checkout.
+4. Install the native pairing using the selected source checkout.
 
 ```bash
-./scripts/sp11-audio-migrate-to-native.sh --install
+./scripts/sp11-audio-migrate-to-native.sh --install \
+  --tplg "$SP11_AUDIO_SOURCE/deploy/render-parity/X1E80100-Microsoft-Surface-Pro-11-Render-Parity-tplg.bin" \
+  --ucm-dir "$SP11_AUDIO_SOURCE/deploy/ucm2/Qualcomm/x1e80100"
 ```
 
 The script prints the topology and UCM source paths it will use before running

@@ -4,7 +4,7 @@ umask 022
 
 DEFAULT_TAG="sp11-audio-v19c"
 DEFAULT_KERNEL_TAG="sp11-qcom-x1e-7.2.0-jg-0sp11v12"
-DEFAULT_SOURCE_ROOT="${HOME}/Workspace/repos/SP11X1e-audio"
+DEFAULT_SOURCE_ROOT="${SP11_AUDIO_SOURCE:-}"
 
 TAG="$DEFAULT_TAG"
 KERNEL_TAG="$DEFAULT_KERNEL_TAG"
@@ -37,8 +37,8 @@ Options:
   --tag TAG             Audio release tag (default: $DEFAULT_TAG).
   --kernel-tag TAG      Supported kernel release tag
                         (default: $DEFAULT_KERNEL_TAG).
-  --source-root DIR     SP11X1e-audio checkout
-                        (default: $DEFAULT_SOURCE_ROOT).
+  --source-root DIR     SP11X1e-audio checkout (required unless
+                        SP11_AUDIO_SOURCE is set).
   -h, --help            Show this help.
 
 Staging directory:
@@ -121,6 +121,8 @@ done
 	usage >&2
 	exit 2
 }
+[[ -n "$SOURCE_ROOT" ]] ||
+	die "--source-root is required unless SP11_AUDIO_SOURCE is set"
 [[ "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "unsafe release tag: $TAG"
 [[ "$KERNEL_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "unsafe kernel tag: $KERNEL_TAG"
 
