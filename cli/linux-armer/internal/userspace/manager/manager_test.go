@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,10 @@ type installCall struct {
 // filesystem.
 type fakeInstaller struct {
 	calls []installCall
+	// iptsdResult optionally supplies a partial native installation result.
+	iptsdResult userspaceinstall.Result
+	// iptsdError optionally simulates incomplete post-file activation.
+	iptsdError error
 }
 
 // Audio records installation of the supported audio component.
@@ -41,6 +46,10 @@ func (f *fakeInstaller) Audio(_ context.Context, options userspaceinstall.Option
 
 // IPTSD records installation of the supported touchscreen component.
 func (f *fakeInstaller) IPTSD(_ context.Context, options userspaceinstall.Options) (userspaceinstall.Result, error) {
+	if f.iptsdError != nil {
+		f.calls = append(f.calls, installCall{component: IPTSDComponent, options: options})
+		return f.iptsdResult, f.iptsdError
+	}
 	return f.record(IPTSDComponent, options), nil
 }
 
@@ -182,6 +191,21 @@ func TestInstallCameraUsesExactReleaseDirectoryOnlyOnExplicitSelection(t *testin
 	}
 	if call := installer.calls[0]; call.component != CameraComponent || call.options.BundleDir != bundle || !call.options.DryRun {
 		t.Fatalf("camera call = %#v", call)
+	}
+}
+
+// TestInstallPreservesPartialIPTSDResult verifies that orchestration does not
+// hide durable file state when only live activation remains incomplete.
+func TestInstallPreservesPartialIPTSDResult(t *testing.T) {
+	partial := userspaceinstall.Result{Component: IPTSDComponent, Root: "/", FilesInstalled: true, ActivationRequired: true}
+	installer := &fakeInstaller{iptsdResult: partial, iptsdError: errors.New("activation incomplete")}
+	manager := New(catalog.NewLoader(testCatalogFS(), "supported-userspace.json"), &fakeDownloader{}, nil)
+	manager.Installer = installer
+	results, err := manager.Install(context.Background(), InstallRequest{
+		Selector: "iptsd", From: t.TempDir(), Root: "/", DryRun: true,
+	})
+	if err == nil || len(results) != 1 || !results[0].FilesInstalled {
+		t.Fatalf("results=%+v error=%v", results, err)
 	}
 }
 

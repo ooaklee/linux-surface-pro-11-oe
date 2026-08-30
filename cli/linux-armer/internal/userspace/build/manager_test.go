@@ -2,17 +2,18 @@ package build
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
 
-// recordingRunner captures delegated platform commands without executing the
-// repository build scripts they reference.
+// recordingRunner captures Docker commands and returns bounded fixture
+// metadata without executing a container.
 type recordingRunner struct {
 	commands []platform.Command
 }
@@ -20,6 +21,12 @@ type recordingRunner struct {
 // Run records a command as a successful simulated execution.
 func (r *recordingRunner) Run(_ context.Context, command platform.Command) error {
 	r.commands = append(r.commands, command)
+	if len(command.Args) >= 2 && command.Name == "docker" && command.Args[0] == "image" && command.Args[1] == "inspect" {
+		_, _ = io.WriteString(command.Stdout, "sha256:"+strings.Repeat("a", 64)+"\nubuntu@sha256:"+strings.Repeat("b", 64)+"\n")
+	}
+	if len(command.Args) >= 2 && command.Name == "docker" && command.Args[0] == "volume" && command.Args[1] == "inspect" {
+		_, _ = io.WriteString(command.Stdout, command.Args[len(command.Args)-1]+"\n")
+	}
 	return nil
 }
 
@@ -29,30 +36,62 @@ func (*recordingRunner) Capture(context.Context, platform.Command) ([]byte, erro
 	return nil, nil
 }
 
-// TestIPTSDDelegatesOnlySupportedFlags verifies that IPTSD builds invoke the
-// audited helper with only the component's bounded command-line options.
-func TestIPTSDDelegatesOnlySupportedFlags(t *testing.T) {
+// TestIPTSDBuildUsesCompiledDockerRecipe verifies that the native workflow
+// validates both ends and never invokes a host repository script.
+func TestIPTSDBuildUsesCompiledDockerRecipe(t *testing.T) {
 	root := fakeRepository(t)
 	runner := &recordingRunner{}
-	err := New(runner).Run(context.Background(), Request{
+	manager := New(runner)
+	manager.validateIPTSDIntegration = func(path string) error {
+		if path != filepath.Join(root, "userspace", "iptsd-sp11") {
+			t.Fatalf("integration path = %s", path)
+		}
+		return nil
+	}
+	output := filepath.Join(t.TempDir(), "output")
+	resolvedOutput := filepath.Join(mustResolvePath(t, filepath.Dir(output)), filepath.Base(output))
+	manager.validateIPTSDPayload = func(payload, integration string) error {
+		if payload != filepath.Join(resolvedOutput, "stage") || integration != filepath.Join(root, "userspace", "iptsd-sp11") {
+			t.Fatalf("payload validation = %s, %s", payload, integration)
+		}
+		return nil
+	}
+	err := manager.Run(context.Background(), Request{
 		Component: ComponentIPTSD, RepositoryRoot: root,
-		OutputDirectory: "build/pen", Image: "ubuntu:26.04",
+		OutputDirectory: output, Image: "ubuntu:26.04",
 		WorkVolume: "linux-armer-iptsd", Jobs: 8,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.commands) != 1 {
-		t.Fatalf("commands = %d, want 1", len(runner.commands))
+	if len(runner.commands) != 3 {
+		t.Fatalf("commands = %d, want 3", len(runner.commands))
 	}
-	want := []string{
-		filepath.Join(root, "scripts", "build-sp11-iptsd-docker.sh"),
-		"--out-dir", "build/pen", "--image", "ubuntu:26.04",
-		"--linux-work-volume", "linux-armer-iptsd", "--jobs", "8",
+	for _, command := range runner.commands {
+		if command.Name == "bash" || strings.Contains(strings.Join(command.Args, "\n"), "build-sp11-iptsd-docker.sh") {
+			t.Fatalf("host script invocation leaked into command: %+v", command)
+		}
 	}
-	if !reflect.DeepEqual(runner.commands[0].Args, want) {
-		t.Fatalf("args = %#v, want %#v", runner.commands[0].Args, want)
+	run := runner.commands[2]
+	joined := strings.Join(run.Args, "\n")
+	if run.Name != "docker" || run.Args[0] != "run" || !strings.Contains(joined, userspaceRecipeMarker) ||
+		!strings.Contains(joined, resolvedOutput+":/out") || !strings.Contains(joined, "linux-armer-iptsd:/work") {
+		t.Fatalf("unexpected Docker build command: %+v", run)
 	}
+}
+
+// userspaceRecipeMarker is one invariant line proving the compiled recipe was
+// supplied to Docker rather than a repository script path.
+const userspaceRecipeMarker = "-Dforce_access_checks=true"
+
+// mustResolvePath resolves one existing test path or terminates the test.
+func mustResolvePath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 // TestRejectsUnsafeDockerVolume verifies that traversal-like volume names never
@@ -91,41 +130,49 @@ func TestCameraRequiresNativeARM64Linux(t *testing.T) {
 	}
 }
 
-// TestRejectsSymlinkedHelper verifies that build delegation cannot be redirected
-// through a symlink in place of the expected repository script.
-func TestRejectsSymlinkedHelper(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	target := filepath.Join(root, "target")
-	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, filepath.Join(root, "scripts", "build-sp11-iptsd-docker.sh")); err != nil {
-		t.Fatal(err)
-	}
+// TestRejectsUnsafeDockerImage verifies that a flag-like image reference never
+// reaches Docker.
+func TestRejectsUnsafeDockerImage(t *testing.T) {
 	err := New(&recordingRunner{}).Run(context.Background(), Request{
-		Component: ComponentIPTSD, RepositoryRoot: root,
+		Component: ComponentIPTSD, RepositoryRoot: fakeRepository(t), Image: "--privileged",
 	})
 	if err == nil {
-		t.Fatal("expected symlinked helper to fail")
+		t.Fatal("expected unsafe image to fail")
 	}
 }
 
-// fakeRepository creates regular executable helper files in an isolated tree so
-// build validation can run without the real repository scripts.
+// TestRejectsBroadOrPayloadOutput verifies that the native recipe cannot clean
+// a repository root or publish build intermediates into release payload data.
+func TestRejectsBroadOrPayloadOutput(t *testing.T) {
+	root := fakeRepository(t)
+	if err := os.Mkdir(filepath.Join(root, "payload"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{root, filepath.Join(root, "payload", "iptsd-sp11")} {
+		if _, err := prepareIPTSDOutput(root, output); err == nil {
+			t.Fatalf("unsafe output %s passed", output)
+		}
+	}
+}
+
+// fakeRepository creates the minimal native IPTSD marker and unchanged camera
+// helper in an isolated repository tree.
 func fakeRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	integration := filepath.Join(root, "userspace", "iptsd-sp11")
+	if err := os.MkdirAll(integration, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(integration, "SOURCE.env"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	scripts := filepath.Join(root, "scripts")
 	if err := os.MkdirAll(scripts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"build-sp11-iptsd-docker.sh", "build-sp11-imx681-libcamera-docker.sh"} {
-		if err := os.WriteFile(filepath.Join(scripts, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(scripts, "build-sp11-imx681-libcamera-docker.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	return root
 }

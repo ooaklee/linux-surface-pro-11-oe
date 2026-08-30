@@ -50,6 +50,11 @@ func resolveTargetDepth(root, relative string, depth int) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("read userspace target parent %s: %w", candidate, err)
 			}
+			rechecked, recheckErr := os.Lstat(candidate)
+			recheckedLink, rereadErr := os.Readlink(candidate)
+			if recheckErr != nil || rereadErr != nil || !os.SameFile(info, rechecked) || recheckedLink != link {
+				return "", fmt.Errorf("userspace target parent changed while resolving: %s", candidate)
+			}
 			var linkDestination string
 			if filepath.IsAbs(link) {
 				linkDestination = filepath.Join(root, strings.TrimLeft(filepath.Clean(link), string(filepath.Separator)))
@@ -123,8 +128,8 @@ func hashRegularNoFollow(path string) (string, os.FileInfo, error) {
 	return hex.EncodeToString(hash.Sum(nil)), info, nil
 }
 
-// atomicCopyVerified rehashes one pinned descriptor before atomically
-// publishing it at the destination.
+// atomicCopyVerified hashes bytes while copying them, rereads the temporary
+// file, and only then publishes the verified inode at the destination.
 func atomicCopyVerified(source, destination string, mode os.FileMode, expectedDigest string, expectedSize int64) error {
 	sourceFile, sourceInfo, err := openRegularNoFollow(source)
 	if err != nil {
@@ -133,16 +138,6 @@ func atomicCopyVerified(source, destination string, mode os.FileMode, expectedDi
 	defer sourceFile.Close()
 	if expectedSize >= 0 && sourceInfo.Size() != expectedSize {
 		return fmt.Errorf("source size changed for %s", source)
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, sourceFile); err != nil {
-		return fmt.Errorf("reverify source %s: %w", source, err)
-	}
-	if expectedDigest != "" && hex.EncodeToString(hash.Sum(nil)) != expectedDigest {
-		return fmt.Errorf("source digest changed for %s", source)
-	}
-	if _, err := sourceFile.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("rewind source %s: %w", source, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return fmt.Errorf("create target directory: %w", err)
@@ -162,11 +157,34 @@ func atomicCopyVerified(source, destination string, mode os.FileMode, expectedDi
 	if err := temporary.Chmod(mode.Perm()); err != nil {
 		return fmt.Errorf("set atomic install mode: %w", err)
 	}
-	if _, err := io.Copy(temporary, sourceFile); err != nil {
+	copiedHash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(temporary, copiedHash), sourceFile)
+	if err != nil {
 		return fmt.Errorf("copy atomic install file: %w", err)
+	}
+	if written != sourceInfo.Size() || expectedSize >= 0 && written != expectedSize {
+		return fmt.Errorf("source size changed while copying %s", source)
+	}
+	copiedDigest := hex.EncodeToString(copiedHash.Sum(nil))
+	if expectedDigest != "" && copiedDigest != expectedDigest {
+		return fmt.Errorf("source digest changed for %s", source)
+	}
+	currentSourceInfo, err := sourceFile.Stat()
+	if err != nil || currentSourceInfo.Size() != sourceInfo.Size() {
+		return fmt.Errorf("source metadata changed while copying %s", source)
 	}
 	if err := temporary.Sync(); err != nil {
 		return fmt.Errorf("sync atomic install file: %w", err)
+	}
+	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind atomic install file: %w", err)
+	}
+	publishedHash := sha256.New()
+	if _, err := io.Copy(publishedHash, temporary); err != nil {
+		return fmt.Errorf("reverify atomic install file: %w", err)
+	}
+	if hex.EncodeToString(publishedHash.Sum(nil)) != copiedDigest {
+		return fmt.Errorf("atomic install file changed before publication: %s", destination)
 	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close atomic install file: %w", err)
@@ -180,5 +198,15 @@ func atomicCopyVerified(source, destination string, mode os.FileMode, expectedDi
 		return fmt.Errorf("publish userspace target %s: %w", destination, err)
 	}
 	removeTemporary = false
-	return nil
+	return syncDirectory(filepath.Dir(destination))
+}
+
+// syncDirectory makes a preceding atomic publication durable before the
+// installer advances to service activation or another transaction member.
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open userspace target directory for sync: %w", err)
+	}
+	return errors.Join(directory.Sync(), directory.Close())
 }

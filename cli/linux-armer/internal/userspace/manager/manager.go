@@ -105,7 +105,7 @@ type Manager struct {
 	Loader catalog.Loader
 	// Releases downloads exact catalogue-backed release bundles.
 	Releases releaseDownloader
-	// Builder delegates supported component source builds to maintained helpers.
+	// Builder runs supported component-specific source-build workflows.
 	Builder *userspacebuild.Manager
 	// Installer applies only the compiled, checksum-bound component workflows.
 	Installer Installer
@@ -327,7 +327,10 @@ func (m *Manager) runInstalls(
 			err = fmt.Errorf("userspace component %q has no compiled install workflow", target.component)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("install %s: %w", target.component, err)
+			if result.Component != "" {
+				results = append(results, result)
+			}
+			return results, fmt.Errorf("install %s: %w", target.component, err)
 		}
 		results = append(results, result)
 	}

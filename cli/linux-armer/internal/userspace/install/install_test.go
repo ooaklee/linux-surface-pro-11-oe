@@ -21,6 +21,7 @@ import (
 	linuxarmer "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 	userspacecatalog "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/catalog"
+	userspaceiptsd "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/iptsd"
 	userspacerelease "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/release"
 )
 
@@ -30,6 +31,24 @@ type fakeRunner struct {
 	commands []platform.Command
 	err      error
 	inspect  func(platform.Command) error
+}
+
+// blockingActivationRunner waits for cancellation to prove per-command timeout
+// enforcement without starting a host process.
+type blockingActivationRunner struct {
+	runs int
+}
+
+// Run blocks until the supplied command context is cancelled.
+func (runner *blockingActivationRunner) Run(ctx context.Context, _ platform.Command) error {
+	runner.runs++
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Capture is unavailable because native activation uses only bounded Run I/O.
+func (*blockingActivationRunner) Capture(context.Context, platform.Command) ([]byte, error) {
+	return nil, errors.New("unexpected capture")
 }
 
 // Run records and validates one simulated command before returning its configured
@@ -437,104 +456,233 @@ func TestCameraUsesOneExactAptGetTransaction(t *testing.T) {
 	}
 }
 
-// fakeExtractor records validation and extraction phases while creating the
-// minimum IPTSD payload tree needed by delegation tests.
-type fakeExtractor struct {
-	validations int
+// nativeIPTSDExtractor creates a tiny private tree for transaction tests; the
+// production contract validator is replaced only inside these tests.
+type nativeIPTSDExtractor struct {
 	extractions int
-	malicious   bool
 }
 
-// Validate records a successful archive preflight without reading the fixture.
-func (extractor *fakeExtractor) Validate(context.Context, string) error {
-	extractor.validations++
-	return nil
+// Validate is deliberately unused because native dry-runs fully extract and
+// validate immutable input.
+func (*nativeIPTSDExtractor) Validate(context.Context, string) error {
+	return errors.New("unexpected validate-only IPTSD path")
 }
 
-// Extract creates a bounded IPTSD fixture and can substitute a malicious
-// installer symlink to exercise post-extraction containment checks.
-func (extractor *fakeExtractor) Extract(_ context.Context, _ string, destination string) error {
+// Extract creates one regular source beneath the expected archive root.
+func (extractor *nativeIPTSDExtractor) Extract(_ context.Context, _ string, destination string) error {
 	extractor.extractions++
-	root := filepath.Join(destination, iptsdArchiveRoot)
-	for _, directory := range []string{
-		"scripts", "payload/iptsd-sp11", "userspace/iptsd-sp11/packaging",
-	} {
-		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(directory)), 0o755); err != nil {
-			return err
-		}
-	}
-	validator := filepath.Join(root, "scripts/validate-sp11-iptsd-payload.sh")
-	if err := os.WriteFile(validator, []byte("validator"), 0o755); err != nil {
+	root := filepath.Join(destination, userspaceiptsd.ArchiveRoot)
+	if err := os.Mkdir(root, 0o700); err != nil {
 		return err
 	}
-	script := filepath.Join(root, "scripts/install-sp11-iptsd.sh")
-	if extractor.malicious {
-		return os.Symlink(validator, script)
-	}
-	return os.WriteFile(script, []byte("installer"), 0o755)
+	return os.WriteFile(filepath.Join(root, "fixture-binary"), []byte("new-binary"), 0o755)
 }
 
-// TestIPTSDDelegatesOnlyContainedPinnedInstaller verifies that preflight does not
-// extract and mutation delegates only to regular files inside the pinned bundle.
-func TestIPTSDDelegatesOnlyContainedPinnedInstaller(t *testing.T) {
-	originalSpec := iptsdSpec
-	t.Cleanup(func() { iptsdSpec = originalSpec })
-	bundle, spec := makeBundle(t, IPTSDComponent, "sp11-iptsd-v1", map[string][]byte{
-		iptsdArchiveName:                  []byte("archive"),
-		"sp11-iptsd-release-manifest.txt": []byte("manifest"),
-	})
-	iptsdSpec = spec
-	extractor := &fakeExtractor{}
-	runner := &fakeRunner{inspect: func(command platform.Command) error {
-		if command.Name != "/bin/bash" || len(command.Args) != 5 {
-			return errors.New("unexpected iptsd command")
-		}
-		for _, index := range []int{0, 4} {
-			if _, err := os.Lstat(command.Args[index]); err != nil {
-				return err
-			}
-		}
-		return nil
-	}}
-	installer := New(runner)
-	installer.extractor = extractor
-	installer.euid = func() int { return 501 }
+// TestIPTSDNativeDryRunAndInstall verifies full dry-run extraction, exact file
+// planning, native rendering, private backup/receipt state, and mask creation.
+func TestIPTSDNativeDryRunAndInstall(t *testing.T) {
+	bundle := makeTestIPTSDBundle(t)
 	root := t.TempDir()
-	if result, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: root, DryRun: true}); err != nil {
+	existing := filepath.Join(root, "usr/local/libexec/sp11-iptsd")
+	if err := os.MkdirAll(filepath.Dir(existing), 0o755); err != nil {
 		t.Fatal(err)
-	} else if result.Command == nil || extractor.validations != 1 || extractor.extractions != 0 {
-		t.Fatalf("unexpected dry run: result=%+v extractor=%+v", result, extractor)
+	}
+	if err := os.WriteFile(existing, []byte("old-binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	installer, extractor := configureTestIPTSDInstaller(t, runner)
+	installer.euid = func() int { return 501 }
+	dryRun, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: root, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extractor.extractions != 1 || len(dryRun.Files) != 3 || !dryRun.Files[0].Replaced || dryRun.FilesInstalled {
+		t.Fatalf("unexpected native dry-run: result=%+v extractor=%+v", dryRun, extractor)
+	}
+	if len(runner.commands) != 0 || len(dryRun.Commands) != 0 {
+		t.Fatalf("alternate-root dry-run commands = %+v", dryRun.Commands)
+	}
+	if got, _ := os.ReadFile(existing); string(got) != "old-binary" {
+		t.Fatalf("dry-run changed target: %q", got)
 	}
 	installer.euid = func() int { return 0 }
-	if _, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: root}); err != nil {
+	result, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: root})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if extractor.validations != 1 || extractor.extractions != 1 || len(runner.commands) != 1 {
-		t.Fatalf("unexpected execution: extractor=%+v commands=%+v", extractor, runner.commands)
+	if !result.FilesInstalled || !result.ActivationComplete || result.Receipt == "" || result.BackupDirectory == "" {
+		t.Fatalf("unexpected install result: %+v", result)
+	}
+	if got, _ := os.ReadFile(existing); string(got) != "new-binary" {
+		t.Fatalf("installed binary = %q", got)
+	}
+	if got, _ := os.ReadFile(result.Files[0].Backup); string(got) != "old-binary" {
+		t.Fatalf("backup = %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "etc/systemd/system/sp11-iptsd@.service")); string(got) != "rendered-unit\n" {
+		t.Fatalf("rendered unit = %q", got)
+	}
+	mask := filepath.Join(root, filepath.FromSlash(iptsdMaskRelative))
+	if target, err := os.Readlink(mask); err != nil || target != "/dev/null" {
+		t.Fatalf("mask target = %q, error = %v", target, err)
+	}
+	if info, err := os.Stat(result.BackupDirectory); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("backup permissions = %v, error = %v", info, err)
+	}
+	if info, err := os.Stat(result.Receipt); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("receipt permissions = %v, error = %v", info, err)
 	}
 }
 
-// TestIPTSDRejectsSymlinkedExtractedInstaller verifies that archive extraction
-// cannot redirect the delegated installer through a symlink.
-func TestIPTSDRejectsSymlinkedExtractedInstaller(t *testing.T) {
-	originalSpec := iptsdSpec
-	t.Cleanup(func() { iptsdSpec = originalSpec })
-	bundle, spec := makeBundle(t, IPTSDComponent, "sp11-iptsd-v1", map[string][]byte{
-		iptsdArchiveName:                  []byte("archive"),
-		"sp11-iptsd-release-manifest.txt": []byte("manifest"),
-	})
-	iptsdSpec = spec
-	runner := &fakeRunner{}
-	installer := New(runner)
-	installer.extractor = &fakeExtractor{malicious: true}
-	installer.euid = func() int { return 0 }
-	_, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "non-symlink") {
+// TestIPTSDRejectsSymlinkedTarget verifies that native publication never
+// follows or replaces an attacker-controlled final target link.
+func TestIPTSDRejectsSymlinkedTarget(t *testing.T) {
+	bundle := makeTestIPTSDBundle(t)
+	root := t.TempDir()
+	target := filepath.Join(root, "usr/local/libexec/sp11-iptsd")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "escape"), target); err != nil {
+		t.Fatal(err)
+	}
+	installer, _ := configureTestIPTSDInstaller(t, &fakeRunner{})
+	installer.euid = func() int { return 501 }
+	_, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: root, DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "symlinked userspace target") {
 		t.Fatalf("error = %v", err)
 	}
-	if len(runner.commands) != 0 {
-		t.Fatal("symlinked installer was executed")
+}
+
+// TestIPTSDMaskRevalidationRejectsParentSwap verifies that the intentional mask
+// cannot be redirected after planning by replacing its systemd parent.
+func TestIPTSDMaskRevalidationRejectsParentSwap(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "etc/systemd/system")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
 	}
+	mask, err := inspectIPTSDMask(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := filepath.Join(root, "saved-systemd")
+	if err := os.Rename(parent, saved); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := revalidateIPTSDMask(root, mask); err == nil || !strings.Contains(err.Error(), "parent changed") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestIPTSDMutationRollsBackPublishedFiles verifies that a target appearing
+// between planning and publication aborts and restores every earlier member.
+func TestIPTSDMutationRollsBackPublishedFiles(t *testing.T) {
+	bundle := makeTestIPTSDBundle(t)
+	root := t.TempDir()
+	first := filepath.Join(root, "usr/local/libexec/sp11-iptsd")
+	if err := os.MkdirAll(filepath.Dir(first), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first, []byte("old-binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	installer, _ := configureTestIPTSDInstaller(t, &fakeRunner{})
+	installer.euid = func() int { return 0 }
+	installer.beforeIPTSDPublish = func(index int, target string) error {
+		if index != 1 {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, []byte("attacker"), 0o644)
+	}
+	result, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: root})
+	if err == nil || !strings.Contains(err.Error(), "appeared after planning") {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+	if got, _ := os.ReadFile(first); string(got) != "old-binary" {
+		t.Fatalf("rollback restored %q", got)
+	}
+	if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(iptsdMaskRelative))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("mask survived rollback: %v", err)
+	}
+}
+
+// TestIPTSDActivationFailurePreservesInstalledState verifies that live command
+// failure is reported after durable files and receipt state remain visible.
+func TestIPTSDActivationFailurePreservesInstalledState(t *testing.T) {
+	bundle := makeTestIPTSDBundle(t)
+	runner := &fakeRunner{err: errors.New("service unavailable")}
+	installer, _ := configureTestIPTSDInstaller(t, runner)
+	installer.euid = func() int { return 0 }
+	installer.isLiveRoot = func(string) bool { return true }
+	result, err := installer.IPTSD(context.Background(), Options{BundleDir: bundle, Root: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "files are installed") {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+	if !result.FilesInstalled || result.ActivationComplete || result.ActivationError == "" || len(runner.commands) != len(iptsdActivationCommands) {
+		t.Fatalf("incomplete activation state = %+v, commands=%+v", result, runner.commands)
+	}
+	for _, command := range runner.commands {
+		if command.Name != "/usr/bin/systemctl" && command.Name != "/usr/bin/udevadm" {
+			t.Fatalf("unexpected activation executable: %+v", command)
+		}
+	}
+	data, readErr := os.ReadFile(result.Receipt)
+	if readErr != nil || !bytes.Contains(data, []byte(`"files_installed": true`)) || !bytes.Contains(data, []byte(`"activation_complete": false`)) {
+		t.Fatalf("receipt=%s error=%v", data, readErr)
+	}
+}
+
+// TestIPTSDActivationCommandsAreTimeoutBound verifies that an unresponsive
+// fixed system operation cannot block the installer indefinitely.
+func TestIPTSDActivationCommandsAreTimeoutBound(t *testing.T) {
+	runner := &blockingActivationRunner{}
+	installer := New(runner)
+	installer.activationTimeout = time.Millisecond
+	err := installer.activateIPTSD(context.Background(), []Command{{Name: "/usr/bin/systemctl", Args: []string{"daemon-reload"}}})
+	if err == nil || runner.runs != 1 || !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("runs=%d error=%v", runner.runs, err)
+	}
+}
+
+// makeTestIPTSDBundle creates one outer verified bundle for native transaction
+// tests and temporarily installs its matching compiled test policy.
+func makeTestIPTSDBundle(t *testing.T) string {
+	t.Helper()
+	originalSpec := iptsdSpec
+	t.Cleanup(func() { iptsdSpec = originalSpec })
+	bundle, spec := makeBundle(t, IPTSDComponent, "sp11-iptsd-v1", map[string][]byte{
+		iptsdArchiveName:                  []byte("archive"),
+		"sp11-iptsd-release-manifest.txt": []byte("manifest"),
+	})
+	iptsdSpec = spec
+	return bundle
+}
+
+// configureTestIPTSDInstaller supplies a two-file release contract while
+// retaining the production planner, publisher, mask, receipt, and rollback.
+func configureTestIPTSDInstaller(t *testing.T, runner platform.Runner) (*Installer, *nativeIPTSDExtractor) {
+	t.Helper()
+	extractor := &nativeIPTSDExtractor{}
+	installer := New(runner)
+	installer.extractor = extractor
+	installer.now = func() time.Time { return time.Date(2026, 8, 30, 12, 34, 56, 7, time.UTC) }
+	installer.validateIPTSDRelease = func(root string) (userspaceiptsd.Release, error) {
+		source := filepath.Join(root, "fixture-binary")
+		return userspaceiptsd.Release{Files: []userspaceiptsd.InstallFile{
+			{Source: source, SourceLabel: "archive:payload/fixture-binary", Target: "usr/local/libexec/sp11-iptsd", Mode: 0o755, SHA256: testDigest([]byte("new-binary")), Size: 10},
+			{SourceLabel: "rendered:sp11-iptsd@.service", Data: []byte("rendered-unit\n"), Target: "etc/systemd/system/sp11-iptsd@.service", Mode: 0o644, SHA256: testDigest([]byte("rendered-unit\n")), Size: 14},
+		}}, nil
+	}
+	return installer, extractor
 }
 
 // TestProcessTarRejectsUnsafeEntryTypesAndPaths verifies that traversal,
@@ -616,8 +764,8 @@ func TestSecureXZTarExtractorStreamsValidatedArchive(t *testing.T) {
 	}
 }
 
-// TestPinnedIPTSDArchiveFixture optionally validates and inspects an actual
-// downloaded IPTSD release archive supplied by the integration environment.
+// TestPinnedIPTSDArchiveFixture optionally validates an actual downloaded IPTSD
+// release through both secure extraction and the complete native contract.
 func TestPinnedIPTSDArchiveFixture(t *testing.T) {
 	archivePath := os.Getenv("LINUX_ARMER_TEST_IPTSD_ARCHIVE")
 	if archivePath == "" {
@@ -631,15 +779,12 @@ func TestPinnedIPTSDArchiveFixture(t *testing.T) {
 	if err := extractor.Extract(context.Background(), archivePath, destination); err != nil {
 		t.Fatal(err)
 	}
-	for _, relative := range []string{
-		"scripts/install-sp11-iptsd.sh",
-		"scripts/validate-sp11-iptsd-payload.sh",
-		"payload/iptsd-sp11/SHA256SUMS",
-		"userspace/iptsd-sp11/packaging/sp11-iptsd@.service.in",
-	} {
-		if _, err := requireContainedRegular(filepath.Join(destination, iptsdArchiveRoot), relative); err != nil {
-			t.Fatal(err)
-		}
+	release, err := userspaceiptsd.ValidateRelease(filepath.Join(destination, userspaceiptsd.ArchiveRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(release.Files) != 28 {
+		t.Fatalf("native install files = %d, want 28", len(release.Files))
 	}
 }
 

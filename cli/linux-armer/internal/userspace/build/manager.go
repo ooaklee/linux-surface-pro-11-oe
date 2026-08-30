@@ -1,5 +1,4 @@
-// Package build delegates userspace component builds to the repository's
-// maintained, pinned build workflows.
+// Package build owns bounded userspace component build workflows.
 package build
 
 import (
@@ -12,13 +11,14 @@ import (
 	"strings"
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
+	userspaceiptsd "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/iptsd"
 )
 
 // Component identifies a buildable userspace component.
 type Component string
 
-// Supported userspace build components map stable CLI values to maintained,
-// audited helper workflows.
+// Supported userspace build components map stable CLI values to audited
+// workflows.
 const (
 	// ComponentIPTSD selects the maintained container workflow for the pen and
 	// touchscreen daemon.
@@ -28,22 +28,22 @@ const (
 	ComponentCamera Component = "camera"
 )
 
-// Request describes one bounded invocation of a maintained userspace build
-// helper. Fields that do not apply to the selected component are rejected
+// Request describes one bounded invocation of a maintained userspace build.
+// Fields that do not apply to the selected component are rejected
 // instead of being silently ignored.
 type Request struct {
 	// Component selects the supported userspace source build to run.
 	Component Component
-	// RepositoryRoot optionally identifies the checkout containing scripts; an
+	// RepositoryRoot optionally identifies the checkout containing source data; an
 	// empty value searches upward from the current directory.
 	RepositoryRoot string
-	// OutputDirectory overrides where the IPTSD helper publishes its payload.
+	// OutputDirectory overrides where the native IPTSD workflow publishes its payload.
 	OutputDirectory string
 	// Image optionally overrides the pinned builder container image.
 	Image string
 	// WorkVolume names the case-sensitive Docker volume used by the IPTSD build.
 	WorkVolume string
-	// Jobs limits parallel build work; zero preserves the helper's default.
+	// Jobs limits parallel build work; zero preserves the workflow default.
 	Jobs int
 	// MinimumFreeGiB sets the camera helper's host-space safety threshold.
 	MinimumFreeGiB int
@@ -51,11 +51,15 @@ type Request struct {
 	NoPull bool
 }
 
-// Manager validates build requests before delegating them through a command
-// runner, keeping helper selection and argument policy out of the CLI layer.
+// Manager validates build requests before crossing the Docker or legacy-camera
+// process boundary, keeping workflow policy out of the CLI layer.
 type Manager struct {
-	// Runner executes the single validated Bash helper invocation.
+	// Runner executes fixed, argument-separated host commands.
 	Runner platform.Runner
+	// validateIPTSDIntegration is injectable for command-orchestration tests.
+	validateIPTSDIntegration func(string) error
+	// validateIPTSDPayload is injectable for command-orchestration tests.
+	validateIPTSDPayload func(string, string) error
 }
 
 // New returns a userspace build manager, using the host command runner when no
@@ -64,72 +68,49 @@ func New(runner platform.Runner) *Manager {
 	if runner == nil {
 		runner = platform.ExecRunner{}
 	}
-	return &Manager{Runner: runner}
+	return &Manager{
+		Runner:                   runner,
+		validateIPTSDIntegration: userspaceiptsd.ValidateIntegration,
+		validateIPTSDPayload: func(payload, integration string) error {
+			_, err := userspaceiptsd.ValidatePayload(payload, integration)
+			return err
+		},
+	}
 }
 
-// Run validates request, selects the maintained component helper, and executes
-// it from the repository root. It never constructs an arbitrary script path
-// from user input.
+// Run validates request and executes only the selected compiled workflow.
 func (m *Manager) Run(ctx context.Context, request Request) error {
-	if m == nil || m.Runner == nil {
+	if m == nil || m.Runner == nil || m.validateIPTSDIntegration == nil || m.validateIPTSDPayload == nil {
 		return errors.New("userspace build runner is unavailable")
 	}
 	if request.Jobs < 0 || request.Jobs > 64 {
 		return errors.New("jobs must be between 1 and 64, or zero to use the helper default")
 	}
-	root, err := resolveRepositoryRoot(request.RepositoryRoot)
+	root, err := resolveRepositoryRoot(request.RepositoryRoot, request.Component)
 	if err != nil {
 		return err
 	}
 
-	var script string
-	var args []string
 	switch request.Component {
 	case ComponentIPTSD:
-		script = filepath.Join(root, "scripts", "build-sp11-iptsd-docker.sh")
-		args, err = iptsdArgs(request)
+		return m.runIPTSD(ctx, root, request)
 	case ComponentCamera:
 		if runtime.GOOS != "linux" || (runtime.GOARCH != "arm64" && runtime.GOARCH != "aarch64") {
 			return errors.New("the camera package builder requires a native ARM64 Linux host")
 		}
-		script = filepath.Join(root, "scripts", "build-sp11-imx681-libcamera-docker.sh")
-		args, err = cameraArgs(request)
+		script := filepath.Join(root, "scripts", "build-sp11-imx681-libcamera-docker.sh")
+		args, argsErr := cameraArgs(request)
+		if argsErr != nil {
+			return argsErr
+		}
+		if err := validateHelper(script); err != nil {
+			return err
+		}
+		args = append([]string{script}, args...)
+		return m.Runner.Run(ctx, platform.Command{Name: "bash", Args: args, Dir: root})
 	default:
 		return fmt.Errorf("component %q does not have a supported source build", request.Component)
 	}
-	if err != nil {
-		return err
-	}
-	if err := validateHelper(script); err != nil {
-		return err
-	}
-	args = append([]string{script}, args...)
-	return m.Runner.Run(ctx, platform.Command{Name: "bash", Args: args, Dir: root})
-}
-
-// iptsdArgs translates the IPTSD-specific request fields into the helper's
-// bounded flag vocabulary and rejects camera-only settings.
-func iptsdArgs(request Request) ([]string, error) {
-	args := make([]string, 0, 10)
-	if request.OutputDirectory != "" {
-		args = append(args, "--out-dir", request.OutputDirectory)
-	}
-	if request.Image != "" {
-		args = append(args, "--image", request.Image)
-	}
-	if request.WorkVolume != "" {
-		if !safeDockerName(request.WorkVolume) {
-			return nil, errors.New("work volume must be a safe Docker volume name")
-		}
-		args = append(args, "--linux-work-volume", request.WorkVolume)
-	}
-	if request.Jobs > 0 {
-		args = append(args, "--jobs", fmt.Sprintf("%d", request.Jobs))
-	}
-	if request.MinimumFreeGiB != 0 || request.NoPull {
-		return nil, errors.New("minimum-free-gib and no-pull apply only to the camera builder")
-	}
-	return args, nil
 }
 
 // cameraArgs translates the camera-specific request fields into helper flags
@@ -170,10 +151,10 @@ func validateHelper(path string) error {
 	return nil
 }
 
-// resolveRepositoryRoot finds the checkout that owns the maintained helpers.
+// resolveRepositoryRoot finds the checkout that owns the maintained workflow.
 // An explicit root must match immediately; an implicit root is found by walking
 // upward without leaving the filesystem hierarchy.
-func resolveRepositoryRoot(configured string) (string, error) {
+func resolveRepositoryRoot(configured string, component Component) (string, error) {
 	current := configured
 	if current == "" {
 		var err error
@@ -187,12 +168,15 @@ func resolveRepositoryRoot(configured string) (string, error) {
 		return "", err
 	}
 	for {
-		candidate := filepath.Join(absolute, "scripts", "build-sp11-iptsd-docker.sh")
+		candidate := filepath.Join(absolute, "userspace", "iptsd-sp11", "SOURCE.env")
+		if component == ComponentCamera {
+			candidate = filepath.Join(absolute, "scripts", "build-sp11-imx681-libcamera-docker.sh")
+		}
 		if info, statErr := os.Lstat(candidate); statErr == nil && info.Mode().IsRegular() {
 			return absolute, nil
 		}
 		if configured != "" {
-			return "", fmt.Errorf("configured repository root does not contain the maintained userspace helpers: %s", absolute)
+			return "", fmt.Errorf("configured repository root does not contain the maintained userspace workflow: %s", absolute)
 		}
 		parent := filepath.Dir(absolute)
 		if parent == absolute || strings.TrimSpace(parent) == "" {

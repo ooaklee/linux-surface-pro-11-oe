@@ -21,9 +21,12 @@ type userspaceInstallReport struct {
 	Results []userspaceinstall.Result `json:"results"`
 	// NextSteps tells the user how to safely continue after the reported operation.
 	NextSteps []string `json:"next_steps"`
+	// Error preserves a structured incomplete-install diagnostic after results.
+	Error string `json:"error,omitempty"`
 }
 
-// newUserspaceCommand groups catalogue, status, pull, build, and install workflows.
+// newUserspaceCommand groups catalogue, status, pull, build, install, and
+// camera-inspection workflows.
 func (a *application) newUserspaceCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "userspace",
@@ -44,6 +47,7 @@ func (a *application) newUserspaceCommand() *cobra.Command {
 		a.newUserspacePullCommand(),
 		a.newUserspaceBuildCommand(),
 		a.newUserspaceInstallCommand(),
+		a.newUserspaceCameraCommand(nil),
 	)
 	return command
 }
@@ -264,9 +268,9 @@ func (a *application) newUserspaceBuildCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&request.RepositoryRoot, "repository-root", "", "OE repository root (auto-detected from the current directory)")
 	command.Flags().StringVar(&request.OutputDirectory, "output-dir", "", "iptsd build output directory")
-	command.Flags().StringVar(&request.Image, "image", "", "ARM64 builder image (default is selected by the maintained helper)")
+	command.Flags().StringVar(&request.Image, "image", "", "ARM64 builder image (default is selected by the compiled workflow)")
 	command.Flags().StringVar(&request.WorkVolume, "work-volume", "", "iptsd case-sensitive Docker work volume")
-	command.Flags().IntVar(&request.Jobs, "jobs", 0, "parallel build jobs (zero lets the helper choose)")
+	command.Flags().IntVar(&request.Jobs, "jobs", 0, "parallel build jobs (zero uses the compiled workflow default)")
 	command.Flags().IntVar(&request.MinimumFreeGiB, "minimum-free-gib", 0, "camera builder minimum free space in GiB")
 	command.Flags().BoolVar(&request.NoPull, "no-pull", false, "camera builder: require an already-present image")
 	return command
@@ -300,14 +304,20 @@ func (a *application) newUserspaceInstallCommand() *cobra.Command {
 				Root:        root,
 				DryRun:      dryRun,
 			})
+			report := makeUserspaceInstallReport(results, dryRun)
 			if err != nil {
+				report.Error = err.Error()
+			}
+			if asJSON {
+				if writeErr := a.writeJSON(report); writeErr != nil {
+					return writeErr
+				}
 				return err
 			}
-			report := makeUserspaceInstallReport(results, dryRun)
-			if asJSON {
-				return a.writeJSON(report)
+			if writeErr := a.writeUserspaceInstallReport(report); writeErr != nil {
+				return writeErr
 			}
-			return a.writeUserspaceInstallReport(report)
+			return err
 		},
 	}
 	command.Flags().StringVar(&from, "from", "", "exact verified release directory (userspace cache root for recommended)")
@@ -328,6 +338,10 @@ func makeUserspaceInstallReport(results []userspaceinstall.Result, dryRun bool) 
 		return report
 	}
 	for _, result := range results {
+		if result.ActivationRequired && !result.ActivationComplete && result.FilesInstalled {
+			report.NextSteps = append(report.NextSteps,
+				"The IPTSD files are durable; resolve the reported service activation failure, then rerun userspace status.")
+		}
 		if result.RebootRequired {
 			report.NextSteps = append(report.NextSteps,
 				"Reboot before validating userspace support so the updated audio integration is active.")
@@ -346,12 +360,22 @@ func (a *application) writeUserspaceInstallReport(report userspaceInstallReport)
 		operation := "installed"
 		if result.DryRun {
 			operation = "verified plan for"
+		} else if !result.FilesInstalled && result.Component == userspacemanager.IPTSDComponent {
+			operation = "incomplete install for"
 		}
 		if _, err := fmt.Fprintf(a.out, "%s %s\nroot: %s\n", operation, result.Component, result.Root); err != nil {
 			return err
 		}
-		if len(result.Files) != 0 {
-			if _, err := fmt.Fprintf(a.out, "file changes: %d\n", len(result.Files)); err != nil {
+		for _, change := range result.Files {
+			if _, err := fmt.Fprintf(a.out, "file: %s %s <- %s", change.Action, change.Target, change.Source); err != nil {
+				return err
+			}
+			if change.Backup != "" {
+				if _, err := fmt.Fprintf(a.out, " (backup %s)", change.Backup); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintln(a.out); err != nil {
 				return err
 			}
 		}
@@ -364,6 +388,31 @@ func (a *application) writeUserspaceInstallReport(report userspaceInstallReport)
 			if _, err := fmt.Fprintf(a.out, "command: %s %s\n", result.Command.Name, strings.Join(result.Command.Args, " ")); err != nil {
 				return err
 			}
+		}
+		for _, command := range result.Commands {
+			if _, err := fmt.Fprintf(a.out, "command: %s %s\n", command.Name, strings.Join(command.Args, " ")); err != nil {
+				return err
+			}
+		}
+		if result.Receipt != "" {
+			if _, err := fmt.Fprintf(a.out, "receipt: %s\n", result.Receipt); err != nil {
+				return err
+			}
+		}
+		if result.FilesInstalled {
+			if _, err := fmt.Fprintln(a.out, "installed files: durable"); err != nil {
+				return err
+			}
+		}
+		if result.ActivationError != "" {
+			if _, err := fmt.Fprintf(a.out, "activation: incomplete: %s\n", result.ActivationError); err != nil {
+				return err
+			}
+		}
+	}
+	if report.Error != "" {
+		if _, err := fmt.Fprintf(a.out, "error: %s\n", report.Error); err != nil {
+			return err
 		}
 	}
 	if len(report.NextSteps) != 0 {

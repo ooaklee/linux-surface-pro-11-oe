@@ -12,11 +12,13 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	userspaceiptsd "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/iptsd"
 )
 
 // Archive layout and resource limits bound the trusted iptsd extraction.
 const (
-	iptsdArchiveRoot = "sp11-iptsd-v1"
+	iptsdArchiveRoot = userspaceiptsd.ArchiveRoot
 	maxArchiveFiles  = 10000
 	maxArchiveBytes  = 512 << 20
 	maxArchiveFile   = 256 << 20

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -17,6 +18,10 @@ import (
 // so command tests can exercise orchestration without changing the host system.
 type cliFakeInstaller struct {
 	calls []userspaceinstall.Options
+	// iptsdResult optionally supplies an incomplete native result.
+	iptsdResult userspaceinstall.Result
+	// iptsdError optionally reports failed live activation.
+	iptsdError error
 }
 
 // Audio records a simulated audio installation that requires a reboot.
@@ -26,6 +31,10 @@ func (f *cliFakeInstaller) Audio(_ context.Context, options userspaceinstall.Opt
 
 // IPTSD records a simulated touchscreen userspace installation.
 func (f *cliFakeInstaller) IPTSD(_ context.Context, options userspaceinstall.Options) (userspaceinstall.Result, error) {
+	if f.iptsdError != nil {
+		f.calls = append(f.calls, options)
+		return f.iptsdResult, f.iptsdError
+	}
 	return f.record(userspacemanager.IPTSDComponent, options, false), nil
 }
 
@@ -98,16 +107,44 @@ func TestUserspaceInstallHumanReportIncludesRebootAndDoctorGuidance(t *testing.T
 	report := makeUserspaceInstallReport([]userspaceinstall.Result{{
 		Component:      userspacemanager.AudioComponent,
 		Root:           "/",
-		Files:          []userspaceinstall.FileChange{{Source: "bundle", Target: "target"}},
+		Files:          []userspaceinstall.FileChange{{Source: "bundle", Target: "target", Action: "replace"}},
 		RebootRequired: true,
 	}}, false)
 	if err := app.writeUserspaceInstallReport(report); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"installed audio-fullio-v19c", "file changes: 1", "Reboot", "doctor userspace"} {
+	for _, expected := range []string{"installed audio-fullio-v19c", "file: replace target <- bundle", "Reboot", "doctor userspace"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("human report does not contain %q:\n%s", expected, output.String())
 		}
+	}
+}
+
+// TestUserspaceInstallJSONPreservesIncompleteActivation verifies that a
+// non-zero command result still emits structured durable installed-file state.
+func TestUserspaceInstallJSONPreservesIncompleteActivation(t *testing.T) {
+	installer := &cliFakeInstaller{
+		iptsdResult: userspaceinstall.Result{
+			Component: userspacemanager.IPTSDComponent, Root: "/", FilesInstalled: true,
+			ActivationRequired: true, ActivationError: "systemctl failed",
+		},
+		iptsdError: errors.New("activation incomplete"),
+	}
+	app, output := newUserspaceInstallTestApplication(installer)
+	command := app.newUserspaceInstallCommand()
+	command.SetArgs([]string{"iptsd", "--from", t.TempDir(), "--yes", "--json"})
+	command.SilenceErrors = true
+	command.SilenceUsage = true
+	err := command.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected incomplete activation error")
+	}
+	var report userspaceInstallReport
+	if decodeErr := json.Unmarshal(output.Bytes(), &report); decodeErr != nil {
+		t.Fatalf("decode partial report: %v\n%s", decodeErr, output.String())
+	}
+	if report.Error == "" || len(report.Results) != 1 || !report.Results[0].FilesInstalled {
+		t.Fatalf("partial report = %+v", report)
 	}
 }
 
