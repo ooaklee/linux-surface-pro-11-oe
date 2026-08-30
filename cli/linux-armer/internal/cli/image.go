@@ -35,7 +35,8 @@ func (a *application) newImageCreateCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			request.CatalogPath = a.catalogPath
-			request.ToolVersion, _, _ = version.Info()
+			request.UserspaceCatalogPath = a.userspaceCatalogPath
+			request.ToolVersion, request.ToolCommit, request.ToolBuildDate = version.Info()
 			if dryRun {
 				operationPlan, err := a.images.Plan(request)
 				if err != nil {
@@ -50,10 +51,7 @@ func (a *application) newImageCreateCommand() *cobra.Command {
 			if asJSON {
 				return a.writeJSON(result)
 			}
-			_, err = fmt.Fprintf(a.out, "image created and validated\npath: %s\nSHA-256: %s\nsize: %d bytes\nkernel ABI: %s\nmanifest: %s\njournal: %s\n\nSecure Boot must be disabled for the unsigned custom kernel.\n",
-				result.Image.OutputISO, result.Image.SHA256, result.Image.Size, result.KernelBundle.ABI,
-				result.Image.ManifestPath, result.Image.JournalPath)
-			return err
+			return a.writeImageCreateResult(result)
 		},
 	}
 	command.Flags().StringVar(&request.CatalogID, "catalog-id", manager.DefaultCatalogID, "source image catalogue ID")
@@ -65,6 +63,8 @@ func (a *application) newImageCreateCommand() *cobra.Command {
 	command.Flags().StringVar(&request.KernelRelease, "kernel-release", "latest", "kernel release tag, or latest")
 	command.Flags().StringVar(&request.CacheDirectory, "cache-dir", "", "download cache (defaults to the user cache directory)")
 	command.Flags().StringVar(&request.WorkspaceRoot, "workspace-dir", "", "parent directory for temporary remaster work")
+	command.Flags().StringVar(&request.CompanionSourceDirectory, "companion-source-dir", "", "complete linux-armer source directory to archive and cross-build with the host Go toolchain")
+	command.Flags().StringSliceVar(&request.CompanionUserspace, "companion-userspace", nil, "redistribution-eligible userspace component to include for offline installation (repeatable)")
 	command.Flags().StringVarP(&request.Output, "output", "o", "linux-armer-sp11.iso", "output ISO path")
 	command.Flags().BoolVar(&request.KeepWorkspace, "keep-workspace", false, "keep temporary remaster files for debugging")
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "print the deterministic workflow plan without downloading or building")
@@ -72,12 +72,24 @@ func (a *application) newImageCreateCommand() *cobra.Command {
 	return command
 }
 
+// writeImageCreateResult reports the validated output and makes an undeclared
+// companion licence impossible to overlook in human-readable delivery.
+func (a *application) writeImageCreateResult(result manager.CreateImageResult) error {
+	_, err := fmt.Fprintf(a.out, "image created and validated\npath: %s\nSHA-256: %s\nsize: %d bytes\nkernel ABI: %s\nmanifest: %s\njournal: %s\n\nSecure Boot must be disabled for the unsigned custom kernel.\n",
+		result.Image.OutputISO, result.Image.SHA256, result.Image.Size, result.KernelBundle.ABI,
+		result.Image.ManifestPath, result.Image.JournalPath)
+	if err == nil && result.Image.CompanionBundle.Included && result.Image.CompanionBundle.ProjectLicence == "not-declared" {
+		_, err = fmt.Fprintln(a.out, "The local companion bundle records that the project licence is not declared; do not redistribute it until the copyright holder publishes suitable terms and required notices.")
+	}
+	return err
+}
+
 // newImageValidateCommand rechecks a generated image without modifying it.
 func (a *application) newImageValidateCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "validate <iso>",
-		Short: "Validate a generated ISO and all version-bound boot artifacts",
+		Short: "Validate a generated ISO and all version-bound boot artefacts",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			report, err := ubuntu.NewValidator(nil).Validate(command.Context(), args[0])

@@ -53,11 +53,12 @@ func NewRootCommand(input io.Reader, output, errorOutput io.Writer) *cobra.Comma
 		in: input, out: output, errOut: errorOutput, loader: loader,
 		releases: release.NewClient(nil),
 	}
-	app.images = manager.NewImageManager(loader, errorOutput)
 	app.userspace = userspacemanager.New(
 		userspacecatalog.NewLoader(linuxarmer.UserspaceCatalogFS(), "supported-userspace.json"),
 		userspacerelease.NewClient(nil), nil,
 	)
+	app.images = manager.NewImageManager(loader, errorOutput)
+	app.images.Userspace = app.userspace
 	buildVersion, _, _ := version.Info()
 	root := &cobra.Command{
 		Use:           "linux-armer",

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/artifact"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/companion"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
@@ -422,7 +423,8 @@ func TestEmbeddedManifestContainsOnlyPortableKernelPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := buildEmbeddedManifest(Request{Bundle: bundle}, workspace, strings.Repeat("c", 64))
+	manifest, err := buildEmbeddedManifest(
+		Request{Bundle: bundle}, workspace, strings.Repeat("c", 64), companion.Absent(companion.OmissionReasonNotRequested))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,6 +441,10 @@ func TestEmbeddedManifestContainsOnlyPortableKernelPaths(t *testing.T) {
 		manifest.MediaDiscovery.Evidence[0].Artifact == nil ||
 		manifest.MediaDiscovery.Evidence[0].Artifact.Path != ".disk/casper-uuid-generic" {
 		t.Fatalf("media discovery = %#v", manifest.MediaDiscovery)
+	}
+	if manifest.CompanionBundle.Included || manifest.CompanionBundle.Root != companion.ISOFilesystemRoot ||
+		manifest.CompanionBundle.Reason != companion.OmissionReasonNotRequested || manifest.CompanionBundle.Userspace == nil {
+		t.Fatalf("companion bundle = %#v", manifest.CompanionBundle)
 	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {

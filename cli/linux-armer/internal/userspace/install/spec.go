@@ -1,7 +1,9 @@
 package install
 
+import userspacepolicy "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/policy"
+
 // userspaceRepository is the sole trusted publisher for pinned bundles.
-const userspaceRepository = "ooaklee/linux-surface-pro-11-oe"
+const userspaceRepository = userspacepolicy.IPTSDRepository
 
 // immutableFile binds one release filename to its exact content and length.
 type immutableFile struct {
@@ -31,14 +33,16 @@ var audioSpec = releaseSpec{
 }
 
 // iptsdSpec pins the complete source-bearing pen integration release.
-var iptsdSpec = releaseSpec{
-	component: IPTSDComponent,
-	tag:       "sp11-iptsd-v1",
-	files: []immutableFile{
-		{name: "SHA256SUMS", sha256: "53835187b6b4cd1a85ee6d76eb56535fbfb77d86c48e6b429765ef0b35c13481", size: 201},
-		{name: "sp11-iptsd-3.1.0-sp11.1-arm64.tar.xz", sha256: "ba88686ee3a18249a4be584989b5e52024bbd403f9df340552c852570e8e9901", size: 4381736},
-		{name: "sp11-iptsd-release-manifest.txt", sha256: "f83cd5652f03001b2a57d2504d841cba29102ad7d7119dffdb08e1f03b353585", size: 3566},
-	},
+var iptsdSpec = releaseSpecFromPolicy(userspacepolicy.IPTSDRelease())
+
+// releaseSpecFromPolicy projects one shared immutable userspace contract into
+// the installer's private representation.
+func releaseSpecFromPolicy(contract userspacepolicy.Release) releaseSpec {
+	spec := releaseSpec{component: contract.Component, tag: contract.Tag, files: make([]immutableFile, len(contract.Artifacts))}
+	for index, artifact := range contract.Artifacts {
+		spec.files[index] = immutableFile{name: artifact.Name, sha256: artifact.SHA256, size: artifact.Size}
+	}
+	return spec
 }
 
 // cameraVersion is the only package generation accepted by this build.

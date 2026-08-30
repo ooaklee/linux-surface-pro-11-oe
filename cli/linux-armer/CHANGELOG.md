@@ -26,10 +26,14 @@ Notable changes to `linux-armer` are documented here. The project follows [Keep 
 - Repository-wide documentation quality gates covering all Go declarations, including tests, and British-English comments and public prose.
 - Cross-platform GoReleaser configuration for Linux and macOS on AMD64 and ARM64.
 - Adapter-owned live-media discovery metadata with exact Casper initramfs and ISO UUID synchronisation.
+- A manifest-tracked on-media companion containing a static Linux ARM64 CLI, its corresponding source archive, validated catalogues, and optionally the redistribution-eligible IPTSD release.
+- Closed-set companion validation that rehashes every extracted file and rejects absent, extra, malformed, or incorrectly permissioned payloads.
 
 ### Changed
 
 - Removed the unsafe live-USB aDSP menu entry; every live entry now retains the USB-protection blacklist while installed systems remain unaffected.
+- Advanced the image manifest to schema v3 so `companion_bundle` is always explicit without creating a second ISO inventory.
+- Made verified userspace release receipts relocatable so an offline bundle remains installable after being copied to installation media.
 
 ### Fixed
 

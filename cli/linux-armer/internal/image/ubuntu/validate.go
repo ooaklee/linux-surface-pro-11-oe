@@ -14,6 +14,7 @@ import (
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/artifact"
 	imagecontract "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/companion"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/ubuntu/caspermedia"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
@@ -134,12 +135,15 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 	}
 	abiSafe := safeKernelABI(manifest.KernelBundle.ABI)
 	manifestMediaContract, markerRecord, manifestMediaErr := caspermedia.FromDiscoveryRecord(manifest.MediaDiscovery)
+	companionRecordErr := companion.ValidateRecord(manifest.CompanionBundle)
 	manifestOK := manifest.SchemaVersion == imagecontract.ManifestSchemaVersion &&
 		manifest.Adapter == AdapterID &&
 		manifest.KernelBundle.SchemaVersion == kernel.BundleSchemaVersion &&
 		manifestMediaErr == nil &&
+		companionRecordErr == nil &&
 		abiSafe
 	addCheck("embedded-manifest", manifestOK, fmt.Sprintf("schema=%d adapter=%s abi=%s", manifest.SchemaVersion, manifest.Adapter, manifest.KernelBundle.ABI))
+	report.Checks = append(report.Checks, v.validateCompanionBundle(ctx, toolsImage, workspace, manifest.CompanionBundle, companionRecordErr)...)
 	if !abiSafe {
 		report.Valid = false
 		return report, errors.New("ISO validation failed: embedded kernel ABI is not a safe path component")
@@ -319,6 +323,82 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		return report, errors.New("ISO validation failed")
 	}
 	return report, nil
+}
+
+// validateCompanionBundle checks the single manifest's companion record,
+// proves that its reserved ISO directory agrees with the inclusion flag, and
+// verifies every extracted artefact when the optional payload is present.
+func (v *Validator) validateCompanionBundle(
+	ctx context.Context,
+	toolsImage string,
+	workspace string,
+	record imagecontract.CompanionBundleRecord,
+	recordErr error,
+) []imagecontract.ValidationCheck {
+	checks := make([]imagecontract.ValidationCheck, 0, 3)
+	addCheck := func(name string, passed bool, details string) {
+		checks = append(checks, imagecontract.ValidationCheck{Name: name, Passed: passed, Details: details})
+	}
+	recordDetails := "single image manifest declares a valid companion bundle"
+	if recordErr != nil {
+		recordDetails = recordErr.Error()
+	}
+	addCheck("companion-bundle-record", recordErr == nil, recordDetails)
+
+	listing, presenceErr := v.Docker.CaptureInWorkspace(ctx, toolsImage, workspace,
+		"xorriso", "-indev", "/work/image.iso", "-ls", "/sp11")
+	companionPresent := presenceErr == nil && isoDirectoryListingContains(listing, "companion")
+	if !record.Included {
+		passed := presenceErr == nil && !companionPresent
+		details := "reserved companion directory is absent as declared"
+		if presenceErr != nil {
+			details = fmt.Sprintf("inspect /sp11 directory: %v", presenceErr)
+		} else if companionPresent {
+			details = "manifest marks the companion absent, but the ISO contains " + companion.ISOFilesystemRoot
+		}
+		addCheck("companion-bundle-presence", passed, details)
+		return checks
+	}
+
+	presencePassed := presenceErr == nil && companionPresent
+	presenceDetails := "reserved companion directory is present as declared"
+	if presenceErr != nil {
+		presenceDetails = fmt.Sprintf("inspect /sp11 directory: %v", presenceErr)
+	} else if !companionPresent {
+		presenceDetails = "manifest includes the companion, but the ISO has no " + companion.ISOFilesystemRoot
+	}
+	addCheck("companion-bundle-presence", presencePassed, presenceDetails)
+	if !presencePassed || recordErr != nil {
+		return checks
+	}
+
+	extractErr := v.Docker.RunInWorkspace(ctx, toolsImage, workspace,
+		"xorriso", "-osirrox", "on", "-indev", "/work/image.iso",
+		"-extract", "/"+companion.ISOFilesystemRoot, "/work/companion")
+	if extractErr != nil {
+		addCheck("companion-bundle-contents", false, fmt.Sprintf("extract companion directory: %v", extractErr))
+		return checks
+	}
+	directoryErr := companion.ValidateDirectory(record, filepath.Join(workspace, "companion"))
+	details := fmt.Sprintf("%d declared companion artefacts form an exact, verified directory", len(companion.FlattenArtifacts(record)))
+	if directoryErr != nil {
+		details = directoryErr.Error()
+	}
+	addCheck("companion-bundle-contents", directoryErr == nil, details)
+	return checks
+}
+
+// isoDirectoryListingContains reports whether xorriso's one-entry-per-line
+// directory output contains the exact quoted or unquoted child name.
+func isoDirectoryListingContains(listing []byte, name string) bool {
+	quotedName := "'" + name + "'"
+	for _, line := range strings.Split(string(listing), "\n") {
+		line = strings.TrimSpace(line)
+		if line == name || line == quotedName {
+			return true
+		}
+	}
+	return false
 }
 
 // validateInstalledSystemSupport extracts and checks the minimal root assets

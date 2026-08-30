@@ -19,13 +19,14 @@ The first implemented image adapter targets the experimental Ubuntu Concept Reso
 - Applies `soundwire_qcom.sp11_feedback_active_offset2_zero=1` to both live and installed boot paths while keeping the USB-only `qcom_q6v5_pas` blacklist out of the installed system.
 - Preserves the source image's hybrid ISO/GPT boot layout and updates both ARM64 EFI boot paths.
 - Validates the finished ISO before publishing it.
+- Can place a manifest-tracked Linux ARM64 companion CLI, its corresponding source and catalogues, and an eligible offline IPTSD release on the finished medium.
 - Audits firmware, audio, pen, camera, wireless, Bluetooth, power-profile, and obsolete-workaround state without changing the installed system.
 - Downloads exact, checksum-verified userspace release sets and exposes bounded build and install workflows only for explicitly supported components.
 - Detects a fixed set of legacy Surface Pro 11 workarounds and can apply and reverse an exact reviewed clean-up plan with durable receipts.
 
 ## Requirements
 
-- Go 1.26 or newer to build from source.
+- Go 1.26 or newer to build the CLI from source, and on the image-building host when `--companion-source-dir` is used.
 - Docker with a running daemon and Linux ARM64 container support.
 - At least 24 GiB of free workspace storage for an image build.
 - Network access when downloading an upstream image, kernel release, or userspace release.
@@ -107,6 +108,56 @@ linux-armer image create \
 ```
 
 `--dry-run` prints the deterministic operation plan without remastering an image. `--keep-workspace` retains intermediate files for troubleshooting.
+
+### Carry the offline companion
+
+An image can carry the exact Linux ARM64 CLI, a deterministic archive of the corresponding maintained source, and validated copies of both catalogues. Add the audited IPTSD release when offline pen and touchscreen installation is useful:
+
+```sh
+linux-armer image create \
+  --source resolute-desktop-arm64+x1e-20260326.iso \
+  --source-sha256 <sha256> \
+  --kernel-release <release-tag> \
+  --companion-source-dir . \
+  --companion-userspace iptsd \
+  --output ../../build/linux-armer/linux-armer-ubuntu-sp11.iso
+```
+
+`--companion-source-dir` must identify a complete `linux-armer` source tree and requires a working host Go toolchain. Keep the image output, its sidecars, and any explicit `--workspace-dir` outside that source tree, as in the example. The source is snapshotted before its binary and archive are built, and a clean Git-backed tree must match the CLI's recorded commit. `--companion-userspace` is repeatable, but the initial offline allow-list accepts only `iptsd`. `recommended`, restricted audio, platform firmware, and experimental camera packages are not accepted for on-media inclusion.
+
+The payload is stored under `/sp11/companion`. The existing `/sp11/linux-armer-manifest.json` and its sidecar remain the only image inventory; their mandatory `companion_bundle` attribute records every companion file. The portable receipt inside an IPTSD release verifies that component's relocatable files and is itself included in the outer inventory. It is not a second image manifest.
+
+The repository currently declares no project-wide redistribution terms for the CLI. A locally requested companion records `project_licence: not-declared` and prints a warning. Do not redistribute that companion image until the copyright holder publishes suitable project terms and the required third-party notices.
+
+After booting the live image, copy the executable from the read-only medium to a writable executable filesystem before using it:
+
+```sh
+COMPANION_ROOT=/cdrom/sp11/companion
+TOOL=/tmp/linux-armer
+
+install -m 0755 \
+  "$COMPANION_ROOT/bin/linux-arm64/linux-armer" \
+  "$TOOL"
+
+"$TOOL" version
+"$TOOL" catalog validate \
+  "$COMPANION_ROOT/catalogues/supported-isos.json"
+"$TOOL" userspace catalog validate \
+  "$COMPANION_ROOT/catalogues/supported-userspace.json"
+"$TOOL" doctor userspace
+```
+
+A non-zero userspace doctor result means support is still missing; it does not by itself mean the companion is damaged. If IPTSD was included, first verify its installation plan and then apply it to the live session:
+
+```sh
+IPTSD_ROOT="$COMPANION_ROOT/userspace/iptsd-v1/sp11-iptsd-v1"
+
+"$TOOL" userspace install iptsd --from "$IPTSD_ROOT" --dry-run
+sudo "$TOOL" userspace install iptsd --from "$IPTSD_ROOT" --yes
+"$TOOL" doctor userspace --feature iptsd
+```
+
+For an installed system mounted at `/target`, add `--root /target` to the install and doctor commands.
 
 ### Why this is a true live-image remaster
 

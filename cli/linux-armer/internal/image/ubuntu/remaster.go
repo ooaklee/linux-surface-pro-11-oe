@@ -17,6 +17,7 @@ import (
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/artifact"
 	imagecontract "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/companion"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/ubuntu/caspermedia"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/plan"
@@ -40,6 +41,12 @@ type Request struct {
 	Bundle kernel.Bundle
 	// ToolVersion is written into the embedded provenance manifest.
 	ToolVersion string
+	// Companion describes an optional generic CLI, source, catalogue, and
+	// userspace payload to stage under the ISO support directory.
+	Companion companion.BuildRequest
+	// CompanionUserspace lists stable component IDs selected for the dry-run or
+	// execution plan without coupling the adapter to manager aliases.
+	CompanionUserspace []string
 	// WorkspaceRoot optionally selects the parent for host-side temporary files.
 	WorkspaceRoot string
 	// KeepWorkspace retains diagnostic host and Docker workspaces after a failure
@@ -65,6 +72,9 @@ type Result struct {
 	// WorkspaceVolume is populated only when the case-sensitive Docker work
 	// volume was retained for diagnostics.
 	WorkspaceVolume string
+	// CompanionBundle repeats the single manifest's optional support inventory
+	// so command callers can report its inclusion and licence status directly.
+	CompanionBundle imagecontract.CompanionBundleRecord
 }
 
 // Remasterer coordinates host artefact handling with isolated Linux image
@@ -74,6 +84,8 @@ type Remasterer struct {
 	Docker *platform.Docker
 	// Out receives concise progress messages and may safely be io.Discard.
 	Out io.Writer
+	// Companions prepares optional distribution-neutral on-media support files.
+	Companions *companion.Builder
 }
 
 // NewRemasterer creates an Ubuntu remaster adapter, supplying safe default
@@ -85,7 +97,7 @@ func NewRemasterer(docker *platform.Docker, out io.Writer) *Remasterer {
 	if out == nil {
 		out = io.Discard
 	}
-	return &Remasterer{Docker: docker, Out: out}
+	return &Remasterer{Docker: docker, Out: out, Companions: companion.NewBuilder(nil)}
 }
 
 // BuildPlan validates the minimum request identity and returns the ordered,
@@ -97,9 +109,18 @@ func BuildPlan(request Request) (plan.Plan, error) {
 	if request.Bundle.ABI == "" {
 		return plan.Plan{}, errors.New("kernel bundle ABI is required")
 	}
+	companionSource := "not-requested"
+	if request.Companion.SourceDirectory != "" {
+		companionSource = request.Companion.SourceDirectory
+	}
+	companionUserspace := "none"
+	if len(request.CompanionUserspace) != 0 {
+		companionUserspace = strings.Join(request.CompanionUserspace, ",")
+	}
 	return plan.New("image.create", []plan.Step{
 		{ID: "verify-source", Kind: "verify", Description: "Verify the Ubuntu Casper source ISO", Inputs: map[string]string{"path": request.SourceISO, "sha256": request.SourceSHA256}},
 		{ID: "verify-kernel", Kind: "verify", Description: "Verify the version-bound kernel bundle", Inputs: map[string]string{"release": request.Bundle.Release, "abi": request.Bundle.ABI}},
+		{ID: "stage-companion", Kind: "companion", Description: "Stage the optional Linux ARM64 CLI, corresponding source, catalogues, and eligible userspace releases", Inputs: map[string]string{"source": companionSource, "userspace": companionUserspace}},
 		{ID: "prepare-tools", Kind: "prepare", Description: "Prepare the isolated ARM64 image-tooling container", Inputs: map[string]string{"adapter": AdapterID}},
 		{ID: "extract-live-root", Kind: "extract", Description: "Validate and extract the Ubuntu Casper layered filesystems"},
 		{ID: "install-kernel", Kind: "kernel", Description: "Register the custom kernel and modules in the live and installed-system root", Inputs: map[string]string{"abi": request.Bundle.ABI}},
@@ -185,6 +206,22 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (result Result
 		return Result{}, err
 	}
 	if err := checkpoint("verify-kernel", packageDigests(request.Bundle)); err != nil {
+		return Result{}, err
+	}
+	companionRecord := companion.Absent(companion.OmissionReasonNotRequested)
+	if request.Companion.SourceDirectory != "" {
+		if r.Companions == nil {
+			return Result{}, errors.New("companion builder is unavailable")
+		}
+		logf(r.Out, "Staging the Linux ARM64 companion bundle")
+		companionRequest := request.Companion
+		companionRequest.DestinationDirectory = workspace
+		companionRecord, err = r.Companions.Build(ctx, companionRequest)
+		if err != nil {
+			return Result{}, fmt.Errorf("stage companion bundle: %w", err)
+		}
+	}
+	if err := checkpoint("stage-companion", companionDigests(companionRecord)); err != nil {
 		return Result{}, err
 	}
 
@@ -340,7 +377,7 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (result Result
 		return Result{}, err
 	}
 
-	bootManifest, err := buildEmbeddedManifest(request, workspace, sourceDigest)
+	bootManifest, err := buildEmbeddedManifest(request, workspace, sourceDigest, companionRecord)
 	if err != nil {
 		return Result{}, err
 	}
@@ -419,6 +456,7 @@ func (r *Remasterer) Create(ctx context.Context, request Request) (result Result
 	return Result{
 		OutputISO: outputAbsolute, ManifestPath: manifestPath, JournalPath: journalPath,
 		SHA256: outputDigest, Size: outputSize, WorkspacePath: resultWorkspace, WorkspaceVolume: resultVolume,
+		CompanionBundle: companionRecord,
 	}, nil
 }
 
@@ -695,7 +733,12 @@ cat "$unpacked/main/conf/uuid.conf"
 
 // buildEmbeddedManifest hashes the staged boot payload and combines it with
 // source and kernel provenance for inclusion in the completed image.
-func buildEmbeddedManifest(request Request, workspace, sourceDigest string) (imagecontract.Manifest, error) {
+func buildEmbeddedManifest(
+	request Request,
+	workspace string,
+	sourceDigest string,
+	companionRecord imagecontract.CompanionBundleRecord,
+) (imagecontract.Manifest, error) {
 	sourceInfo, err := os.Stat(filepath.Join(workspace, "source.iso"))
 	if err != nil {
 		return imagecontract.Manifest{}, err
@@ -746,7 +789,8 @@ func buildEmbeddedManifest(request Request, workspace, sourceDigest string) (ima
 		BootArtifacts: imagecontract.BootArtifactRecord{
 			Kernel: kernelRecord, Initrd: initrdRecord, DTBs: dtbs,
 		},
-		MediaDiscovery: mediaDiscovery,
+		MediaDiscovery:  mediaDiscovery,
+		CompanionBundle: companionRecord,
 		BootArguments: []string{
 			"clk_ignore_unused", "pd_ignore_unused", "arm64.nopauth", "systemd.tpm2_wait=0",
 			"soundwire_qcom.sp11_feedback_active_offset2_zero=1",
@@ -792,7 +836,11 @@ func writeSupportFiles(workspace string, manifest imagecontract.Manifest, abi st
 	if err := writeManifest(filepath.Join(sp11, "linux-armer-manifest.json"), manifest); err != nil {
 		return err
 	}
-	readme := fmt.Sprintf("Linux Armer Surface Pro 11 image\n\nCustom kernel ABI: %s\n\nSecure Boot must be disabled. The USB-safe menu entries temporarily blacklist qcom_q6v5_pas so USB storage remains available in the live session. Kernel packages are included under /sp11/kernel for installed-system setup. Proprietary device firmware is not redistributed.\n", abi)
+	companionNote := "No companion CLI bundle was requested for this image."
+	if manifest.CompanionBundle.Included {
+		companionNote = "A Linux ARM64 linux-armer companion, corresponding source, catalogues, and any declared offline userspace releases are under /sp11/companion. Copy the executable to a writable filesystem before running privileged install operations."
+	}
+	readme := fmt.Sprintf("Linux Armer Surface Pro 11 image\n\nCustom kernel ABI: %s\n\nSecure Boot must be disabled. The USB-safe menu entries temporarily blacklist qcom_q6v5_pas so USB storage remains available in the live session. Kernel packages are included under /sp11/kernel for installed-system setup. Proprietary device firmware is not redistributed.\n\n%s\n", abi, companionNote)
 	if err := os.WriteFile(filepath.Join(sp11, "README.txt"), []byte(readme), 0o644); err != nil {
 		return err
 	}
@@ -801,6 +849,16 @@ func writeSupportFiles(workspace string, manifest imagecontract.Manifest, abi st
 	}
 	diskInfo := fmt.Sprintf("Linux Armer Ubuntu arm64 for Surface Pro 11 (%s)\n", abi)
 	return os.WriteFile(filepath.Join(workspace, "disk-info"), []byte(diskInfo), 0o644)
+}
+
+// companionDigests converts the complete single-manifest companion inventory
+// into journal checkpoint evidence without introducing a second manifest.
+func companionDigests(record imagecontract.CompanionBundleRecord) map[string]string {
+	digests := make(map[string]string)
+	for _, artifactRecord := range companion.FlattenArtifacts(record) {
+		digests[artifactRecord.Path] = artifactRecord.SHA256
+	}
+	return digests
 }
 
 // updatePackageManifest replaces or appends the custom kernel package versions

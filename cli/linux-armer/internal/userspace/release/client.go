@@ -414,6 +414,10 @@ func writeBundleManifest(directory string, bundle Bundle) error {
 	if err != nil {
 		return err
 	}
+	content, err := MarshalPortableReceipt(receipt)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(directory, "linux-armer-userspace-bundle.json")
 	file, err := os.CreateTemp(directory, ".linux-armer-userspace-bundle-*.tmp")
 	if err != nil {
@@ -425,9 +429,7 @@ func writeBundleManifest(directory string, bundle Bundle) error {
 		_ = os.Remove(temporary)
 		return fmt.Errorf("set userspace bundle manifest permissions: %w", err)
 	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	writeErr := encoder.Encode(receipt)
+	_, writeErr := file.Write(content)
 	closeErr := file.Close()
 	if writeErr != nil || closeErr != nil {
 		_ = os.Remove(temporary)

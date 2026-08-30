@@ -338,6 +338,8 @@ func TestImageCreateDryRunIsDeterministic(t *testing.T) {
 		"--kernel-dir", "/inputs/kernel",
 		"--cache-dir", "/cache",
 		"--workspace-dir", "/workspace",
+		"--companion-source-dir", "/inputs/linux-armer",
+		"--companion-userspace", "iptsd",
 		"--output", "/output/linux-armer.iso",
 	}
 	first, firstErrorOutput, err := executeCLI(t, arguments...)
@@ -363,7 +365,7 @@ func TestImageCreateDryRunIsDeterministic(t *testing.T) {
 		t.Fatalf("dry-run plan operation/schema = %q/%d", operationPlan.Operation, operationPlan.SchemaVersion)
 	}
 	wantStepIDs := []string{
-		"verify-source", "verify-kernel", "prepare-tools", "extract-live-root", "install-kernel",
+		"verify-source", "verify-kernel", "stage-companion", "prepare-tools", "extract-live-root", "install-kernel",
 		"assemble-initramfs-root", "build-initramfs", "bind-live-media", "pair-device-trees", "repack-live-root",
 		"replay-hybrid-boot", "validate-output", "publish-output",
 	}
@@ -376,6 +378,8 @@ func TestImageCreateDryRunIsDeterministic(t *testing.T) {
 	}
 	if operationPlan.Steps[0].Inputs["path"] != "/inputs/ubuntu.iso" ||
 		operationPlan.Steps[1].Inputs["release"] != "/inputs/kernel" ||
+		operationPlan.Steps[2].Inputs["source"] != "/inputs/linux-armer" ||
+		operationPlan.Steps[2].Inputs["userspace"] != "iptsd-v1" ||
 		operationPlan.Steps[len(operationPlan.Steps)-1].Inputs["path"] != "/output/linux-armer.iso" {
 		t.Fatalf("dry-run plan inputs = %#v", operationPlan.Steps)
 	}

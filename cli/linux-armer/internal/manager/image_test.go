@@ -5,18 +5,83 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	linuxarmer "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/catalog"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/companion"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/release"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
+	userspacecatalog "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/catalog"
+	userspacemanager "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/manager"
 )
+
+// companionProbeRunner records host-toolchain probes without starting external
+// processes during image-manager tests.
+type companionProbeRunner struct {
+	commands  []platform.Command
+	output    []byte
+	err       error
+	responses map[string][]byte
+}
+
+// Run rejects unexpected streaming commands because companion preflight needs
+// only captured Go version output.
+func (*companionProbeRunner) Run(context.Context, platform.Command) error {
+	return errors.New("unexpected Run call")
+}
+
+// Capture records one probe and returns the configured deterministic result.
+func (r *companionProbeRunner) Capture(_ context.Context, command platform.Command) ([]byte, error) {
+	r.commands = append(r.commands, command)
+	if r.err != nil {
+		return nil, r.err
+	}
+	if response, ok := r.responses[probeCommandKey(command)]; ok {
+		return append([]byte(nil), response...), nil
+	}
+	if r.output == nil {
+		if command.Name == "go" && reflect.DeepEqual(command.Args, []string{"version"}) {
+			return []byte("go version go1.25.0 test/arm64\n"), nil
+		}
+		if command.Name == "git" && slices.Contains(command.Args, "rev-parse") {
+			return []byte(strings.Repeat("a", 40) + "\n"), nil
+		}
+		if command.Name == "git" && slices.Contains(command.Args, "show") {
+			return []byte("2026-08-30T12:00:00Z\n"), nil
+		}
+		if command.Name == "git" && slices.Contains(command.Args, "status") {
+			return []byte{}, nil
+		}
+		return nil, fmt.Errorf("unexpected capture command: %s", probeCommandKey(command))
+	}
+	return append([]byte(nil), r.output...), nil
+}
+
+// probeCommandKey creates a stable test lookup key without shell rendering.
+func probeCommandKey(command platform.Command) string {
+	return command.Name + "\x00" + strings.Join(command.Args, "\x00")
+}
+
+// newCompanionTestManager creates the catalogue and command boundaries needed
+// to resolve a core-only companion without network access.
+func newCompanionTestManager(runner *companionProbeRunner) *ImageManager {
+	return &ImageManager{
+		CompanionRunner: runner,
+		Userspace: userspacemanager.New(
+			userspacecatalog.NewLoader(linuxarmer.UserspaceCatalogFS(), "supported-userspace.json"), nil, nil,
+		),
+	}
+}
 
 // TestImageManagerPlanDefaultsAndDeterminism verifies default source and kernel
 // inputs produce the same ordered, serialisable execution plan on every call.
@@ -50,7 +115,7 @@ func TestImageManagerPlanDefaultsAndDeterminism(t *testing.T) {
 	}
 
 	wantStepIDs := []string{
-		"verify-source", "verify-kernel", "prepare-tools", "extract-live-root", "install-kernel",
+		"verify-source", "verify-kernel", "stage-companion", "prepare-tools", "extract-live-root", "install-kernel",
 		"assemble-initramfs-root", "build-initramfs", "bind-live-media", "pair-device-trees", "repack-live-root",
 		"replay-hybrid-boot", "validate-output", "publish-output",
 	}
@@ -67,6 +132,12 @@ func TestImageManagerPlanDefaultsAndDeterminism(t *testing.T) {
 	if want := release.DefaultRepository + "@latest"; first.Steps[1].Inputs["release"] != want {
 		t.Errorf("kernel input = %q, want %q", first.Steps[1].Inputs["release"], want)
 	}
+	if first.Steps[2].Inputs["source"] != "not-requested" {
+		t.Errorf("companion source = %q, want explicit omission", first.Steps[2].Inputs["source"])
+	}
+	if first.Steps[2].Inputs["userspace"] != "none" {
+		t.Errorf("companion userspace = %q, want explicit omission", first.Steps[2].Inputs["userspace"])
+	}
 	if first.Steps[len(first.Steps)-1].Inputs["path"] != request.Output {
 		t.Errorf("publish path = %q, want %q", first.Steps[len(first.Steps)-1].Inputs["path"], request.Output)
 	}
@@ -78,18 +149,36 @@ func TestImageManagerPlanUsesExplicitLocalInputs(t *testing.T) {
 	t.Parallel()
 
 	operationPlan, err := (&ImageManager{}).Plan(CreateImageRequest{
-		CatalogID:       "custom-catalog-id",
-		Source:          "/inputs/source.iso",
-		KernelDirectory: "/inputs/kernel",
-		Output:          "/output/result.iso",
+		CatalogID:                "custom-catalog-id",
+		Source:                   "/inputs/source.iso",
+		KernelDirectory:          "/inputs/kernel",
+		CompanionSourceDirectory: "/inputs/linux-armer",
+		CompanionUserspace:       []string{"iptsd"},
+		Output:                   "/output/result.iso",
 	})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	if operationPlan.Steps[0].Inputs["path"] != "/inputs/source.iso" ||
 		operationPlan.Steps[1].Inputs["release"] != "/inputs/kernel" ||
+		operationPlan.Steps[2].Inputs["source"] != "/inputs/linux-armer" ||
+		operationPlan.Steps[2].Inputs["userspace"] != companion.IPTSDOfflineComponentID ||
 		operationPlan.Steps[len(operationPlan.Steps)-1].Inputs["path"] != "/output/result.iso" {
 		t.Fatalf("Plan() explicit inputs = %#v", operationPlan.Steps)
+	}
+}
+
+// TestImageManagerPlanRejectsCompanionUserspaceWithoutSource verifies dry runs
+// enforce the same required source relationship as real image creation.
+func TestImageManagerPlanRejectsCompanionUserspaceWithoutSource(t *testing.T) {
+	t.Parallel()
+
+	_, err := (&ImageManager{}).Plan(CreateImageRequest{
+		CompanionUserspace: []string{"iptsd"},
+		Output:             "/output/result.iso",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--companion-source-dir") {
+		t.Fatalf("Plan(companion userspace without source) error = %v", err)
 	}
 }
 
@@ -237,5 +326,181 @@ func TestSafePathComponent(t *testing.T) {
 		if got := safePathComponent(test.input); got != test.want {
 			t.Errorf("safePathComponent(%q) = %q, want %q", test.input, got, test.want)
 		}
+	}
+}
+
+// TestResolveCompanionRequiresSourceForOfflinePayloads verifies userspace files
+// cannot be requested without the CLI and corresponding source that operate them.
+func TestResolveCompanionRequiresSourceForOfflinePayloads(t *testing.T) {
+	t.Parallel()
+
+	_, err := (&ImageManager{}).resolveCompanion(context.Background(), CreateImageRequest{
+		CompanionUserspace: []string{"iptsd"},
+	}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "--companion-source-dir") {
+		t.Fatalf("resolveCompanion() error = %v, want source-directory requirement", err)
+	}
+}
+
+// TestResolveCompanionPreservesBuildIdentity verifies an explicitly selected
+// source tree carries the same version, revision, and date into generic staging.
+func TestResolveCompanionPreservesBuildIdentity(t *testing.T) {
+	t.Parallel()
+
+	runner := &companionProbeRunner{}
+	request, err := newCompanionTestManager(runner).resolveCompanion(context.Background(), CreateImageRequest{
+		CompanionSourceDirectory: ".",
+		Output:                   filepath.Join(t.TempDir(), "linux-armer.iso"),
+		ToolVersion:              "1.2.3",
+		ToolCommit:               "abcdef",
+		ToolBuildDate:            "2026-08-30T12:00:00Z",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSource, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.SourceDirectory != wantSource || request.Version != "1.2.3" ||
+		request.Commit != "abcdef" || request.BuildDate != "2026-08-30T12:00:00Z" {
+		t.Fatalf("resolveCompanion() = %#v", request)
+	}
+	if request.UserspaceCatalog == nil {
+		t.Fatal("resolveCompanion() did not load the userspace catalogue for a core-only bundle")
+	}
+	if len(runner.commands) != 1 || runner.commands[0].Name != "go" ||
+		!reflect.DeepEqual(runner.commands[0].Args, []string{"version"}) {
+		t.Fatalf("toolchain probes = %#v", runner.commands)
+	}
+}
+
+// TestResolveCompanionDerivesLocalGitIdentity verifies an untagged development
+// CLI records the selected source revision and canonical UTC commit timestamp.
+func TestResolveCompanionDerivesLocalGitIdentity(t *testing.T) {
+	t.Parallel()
+
+	const revision = "0123456789abcdef0123456789abcdef01234567"
+	source := "/source/linux-armer"
+	runner := &companionProbeRunner{responses: map[string][]byte{
+		probeCommandKey(platform.Command{
+			Name: "git", Args: []string{"-C", source, "rev-parse", "HEAD"},
+		}): []byte(revision + "\n"),
+		probeCommandKey(platform.Command{
+			Name: "git", Args: []string{"-C", source, "show", "-s", "--format=%cI", revision},
+		}): []byte("2026-08-30T14:30:00+01:00\n"),
+		probeCommandKey(platform.Command{
+			Name: "git", Args: []string{"-C", source, "status", "--porcelain=v1", "--untracked-files=all", "--", "."},
+		}): []byte{},
+	}}
+	request, err := newCompanionTestManager(runner).resolveCompanion(context.Background(), CreateImageRequest{
+		CompanionSourceDirectory: source,
+		Output:                   filepath.Join(t.TempDir(), "linux-armer.iso"),
+		ToolVersion:              "dev",
+		ToolCommit:               "unknown",
+		ToolBuildDate:            "unknown",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Commit != revision || request.BuildDate != "2026-08-30T13:30:00Z" {
+		t.Fatalf("derived companion identity = %q/%q", request.Commit, request.BuildDate)
+	}
+}
+
+// TestResolveCompanionKeepsGeneratedPathsOutsideSource verifies the image,
+// sidecars, and explicit workspace cannot dirty the source before snapshotting.
+func TestResolveCompanionKeepsGeneratedPathsOutsideSource(t *testing.T) {
+	t.Parallel()
+
+	source := t.TempDir()
+	outside := t.TempDir()
+	imageManager := newCompanionTestManager(&companionProbeRunner{})
+	base := CreateImageRequest{
+		CompanionSourceDirectory: source,
+		Output:                   filepath.Join(outside, "linux-armer.iso"),
+	}
+	if _, err := imageManager.resolveCompanion(context.Background(), base, outside); err != nil {
+		t.Fatalf("resolveCompanion(outside paths) error = %v", err)
+	}
+
+	insideOutput := base
+	insideOutput.Output = filepath.Join(source, "linux-armer.iso")
+	if _, err := imageManager.resolveCompanion(context.Background(), insideOutput, outside); err == nil ||
+		!strings.Contains(err.Error(), "output and its sidecars must be outside") {
+		t.Fatalf("resolveCompanion(inside output) error = %v", err)
+	}
+
+	insideWorkspace := base
+	insideWorkspace.WorkspaceRoot = filepath.Join(source, "work")
+	if _, err := imageManager.resolveCompanion(context.Background(), insideWorkspace, outside); err == nil ||
+		!strings.Contains(err.Error(), "--workspace-dir must be outside") {
+		t.Fatalf("resolveCompanion(inside workspace) error = %v", err)
+	}
+}
+
+// TestResolveCompanionUsesCompiledOfflineAllowlist verifies editable catalogue
+// policy alone cannot authorise a component for redistribution on image media.
+func TestResolveCompanionUsesCompiledOfflineAllowlist(t *testing.T) {
+	t.Parallel()
+
+	imageManager := newCompanionTestManager(&companionProbeRunner{})
+	for _, selector := range []string{"audio", "camera"} {
+		_, err := imageManager.resolveCompanion(context.Background(), CreateImageRequest{
+			CompanionSourceDirectory: "/source/linux-armer",
+			CompanionUserspace:       []string{selector},
+		}, t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "not approved for offline companion inclusion") {
+			t.Errorf("resolveCompanion(%s) error = %v", selector, err)
+		}
+	}
+}
+
+// TestResolveCompanionRejectsRecommendedExpansion verifies offline inclusion is
+// reviewed component by component instead of inheriting an install convenience set.
+func TestResolveCompanionRejectsRecommendedExpansion(t *testing.T) {
+	t.Parallel()
+
+	imageManager := newCompanionTestManager(&companionProbeRunner{})
+	_, err := imageManager.resolveCompanion(context.Background(), CreateImageRequest{
+		CompanionSourceDirectory: "/source/linux-armer",
+		CompanionUserspace:       []string{"recommended"},
+	}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "must name each") {
+		t.Fatalf("resolveCompanion(recommended) error = %v", err)
+	}
+}
+
+// TestResolveCompanionRejectsDuplicateAliasesBeforeDownloads verifies aliases
+// cannot cause the same offline release to be fetched twice.
+func TestResolveCompanionRejectsDuplicateAliasesBeforeDownloads(t *testing.T) {
+	t.Parallel()
+
+	_, err := newCompanionTestManager(&companionProbeRunner{}).resolveCompanion(
+		context.Background(),
+		CreateImageRequest{
+			CompanionSourceDirectory: "/source/linux-armer",
+			CompanionUserspace:       []string{"iptsd", userspacemanager.IPTSDComponent},
+		},
+		t.TempDir(),
+	)
+	if err == nil || !strings.Contains(err.Error(), "duplicate companion userspace component") {
+		t.Fatalf("resolveCompanion(duplicate aliases) error = %v", err)
+	}
+}
+
+// TestResolveCompanionRequiresWorkingGo verifies the optional source workflow
+// reports its additional host prerequisite before catalogue or download work.
+func TestResolveCompanionRequiresWorkingGo(t *testing.T) {
+	t.Parallel()
+
+	runner := &companionProbeRunner{err: errors.New("go executable not found")}
+	_, err := (&ImageManager{CompanionRunner: runner}).resolveCompanion(
+		context.Background(),
+		CreateImageRequest{CompanionSourceDirectory: "/source/linux-armer"},
+		t.TempDir(),
+	)
+	if err == nil || !strings.Contains(err.Error(), "working Go toolchain") {
+		t.Fatalf("resolveCompanion(missing Go) error = %v", err)
 	}
 }

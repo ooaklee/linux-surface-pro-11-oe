@@ -10,13 +10,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/artifact"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/catalog"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/companion"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/ubuntu"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel/release"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/plan"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
+	userspacecatalog "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/catalog"
+	userspacemanager "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/userspace/manager"
 )
 
 // DefaultCatalogID selects the first source image whose adapter is implemented
@@ -52,6 +57,18 @@ type CreateImageRequest struct {
 	KeepWorkspace bool
 	// ToolVersion is embedded in image provenance.
 	ToolVersion string
+	// ToolCommit identifies the source revision represented by the companion.
+	ToolCommit string
+	// ToolBuildDate records the CLI build timestamp represented by the companion.
+	ToolBuildDate string
+	// CompanionSourceDirectory selects the complete linux-armer source tree to
+	// archive and cross-build for use from the live medium.
+	CompanionSourceDirectory string
+	// CompanionUserspace selects verified, redistribution-eligible release bundles
+	// to carry for offline installation.
+	CompanionUserspace []string
+	// UserspaceCatalogPath optionally overrides the embedded userspace catalogue.
+	UserspaceCatalogPath string
 }
 
 // CreateImageResult returns the resolved catalogue and kernel inputs together with
@@ -76,16 +93,22 @@ type ImageManager struct {
 	Releases *release.Client
 	// Remaster performs the distribution-specific image transformation.
 	Remaster *ubuntu.Remasterer
+	// Userspace resolves optional verified offline companion releases.
+	Userspace *userspacemanager.Manager
+	// CompanionRunner probes the host Go toolchain needed only when the caller
+	// asks to build a companion executable from source.
+	CompanionRunner platform.Runner
 }
 
 // NewImageManager constructs an image workflow with production resolvers and a
 // caller-provided catalogue loader and progress writer.
 func NewImageManager(loader catalog.Loader, out io.Writer) *ImageManager {
 	return &ImageManager{
-		Catalogs:  loader,
-		Artifacts: artifact.NewResolver(nil),
-		Releases:  release.NewClient(nil),
-		Remaster:  ubuntu.NewRemasterer(nil, out),
+		Catalogs:        loader,
+		Artifacts:       artifact.NewResolver(nil),
+		Releases:        release.NewClient(nil),
+		Remaster:        ubuntu.NewRemasterer(nil, out),
+		CompanionRunner: platform.ExecRunner{},
 	}
 }
 
@@ -96,6 +119,22 @@ func (m *ImageManager) Plan(request CreateImageRequest) (plan.Plan, error) {
 	request = imageDefaults(request)
 	if strings.TrimSpace(request.Output) == "" {
 		return plan.Plan{}, errors.New("output ISO path is required")
+	}
+	componentIDs, err := resolveOfflineCompanionComponentIDs(request.CompanionUserspace)
+	if err != nil {
+		return plan.Plan{}, err
+	}
+	if strings.TrimSpace(request.CompanionSourceDirectory) == "" && len(componentIDs) != 0 {
+		return plan.Plan{}, errors.New("companion userspace releases require --companion-source-dir")
+	}
+	if strings.TrimSpace(request.CompanionSourceDirectory) != "" {
+		sourceDirectory, err := filepath.Abs(request.CompanionSourceDirectory)
+		if err != nil {
+			return plan.Plan{}, fmt.Errorf("resolve companion source directory: %w", err)
+		}
+		if err := validateCompanionGeneratedPaths(request, sourceDirectory); err != nil {
+			return plan.Plan{}, err
+		}
 	}
 	kernelInput := request.KernelDirectory
 	if kernelInput == "" {
@@ -113,6 +152,8 @@ func (m *ImageManager) Plan(request CreateImageRequest) (plan.Plan, error) {
 			Release: kernelInput,
 			ABI:     "resolved-at-execution",
 		},
+		Companion:          companion.BuildRequest{SourceDirectory: request.CompanionSourceDirectory},
+		CompanionUserspace: componentIDs,
 	})
 }
 
@@ -146,6 +187,10 @@ func (m *ImageManager) Create(ctx context.Context, request CreateImageRequest) (
 		return CreateImageResult{}, fmt.Errorf("create cache directory: %w", err)
 	}
 
+	companionRequest, err := m.resolveCompanion(ctx, request, cacheDirectory)
+	if err != nil {
+		return CreateImageResult{}, err
+	}
 	bundle, err := m.resolveBundle(ctx, request, cacheDirectory)
 	if err != nil {
 		return CreateImageResult{}, err
@@ -155,18 +200,218 @@ func (m *ImageManager) Create(ctx context.Context, request CreateImageRequest) (
 		return CreateImageResult{}, err
 	}
 	result, err := m.Remaster.Create(ctx, ubuntu.Request{
-		SourceISO:     sourcePath,
-		SourceSHA256:  sourceDigest,
-		OutputISO:     request.Output,
-		Bundle:        bundle,
-		ToolVersion:   request.ToolVersion,
-		WorkspaceRoot: request.WorkspaceRoot,
-		KeepWorkspace: request.KeepWorkspace,
+		SourceISO:          sourcePath,
+		SourceSHA256:       sourceDigest,
+		OutputISO:          request.Output,
+		Bundle:             bundle,
+		ToolVersion:        request.ToolVersion,
+		Companion:          companionRequest,
+		CompanionUserspace: companionBundleComponentIDs(companionRequest),
+		WorkspaceRoot:      request.WorkspaceRoot,
+		KeepWorkspace:      request.KeepWorkspace,
 	})
 	if err != nil {
 		return CreateImageResult{}, err
 	}
 	return CreateImageResult{CatalogEntry: entry, KernelBundle: bundle, Image: result}, nil
+}
+
+// resolveCompanion prepares generic staging inputs and downloads only explicitly
+// selected userspace releases whose validated catalogue policy permits inclusion.
+func (m *ImageManager) resolveCompanion(
+	ctx context.Context,
+	request CreateImageRequest,
+	cacheDirectory string,
+) (companion.BuildRequest, error) {
+	if strings.TrimSpace(request.CompanionSourceDirectory) == "" {
+		if len(request.CompanionUserspace) != 0 {
+			return companion.BuildRequest{}, errors.New("companion userspace releases require --companion-source-dir")
+		}
+		return companion.BuildRequest{}, nil
+	}
+	componentIDs, err := resolveOfflineCompanionComponentIDs(request.CompanionUserspace)
+	if err != nil {
+		return companion.BuildRequest{}, err
+	}
+	sourceDirectory, err := filepath.Abs(request.CompanionSourceDirectory)
+	if err != nil {
+		return companion.BuildRequest{}, fmt.Errorf("resolve companion source directory: %w", err)
+	}
+	if err := validateCompanionGeneratedPaths(request, sourceDirectory); err != nil {
+		return companion.BuildRequest{}, err
+	}
+	runner := m.CompanionRunner
+	if runner == nil {
+		runner = platform.ExecRunner{}
+	}
+	goVersion, err := runner.Capture(ctx, platform.Command{Name: "go", Args: []string{"version"}})
+	if err != nil {
+		return companion.BuildRequest{}, fmt.Errorf("companion source requires a working Go toolchain on the host: %w", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(goVersion)), "go version go") {
+		return companion.BuildRequest{}, fmt.Errorf("companion source requires a working Go toolchain on the host: unexpected go version output %q", strings.TrimSpace(string(goVersion)))
+	}
+	toolCommit, toolBuildDate, err := resolveCompanionToolIdentity(
+		ctx, runner, sourceDirectory, request.ToolCommit, request.ToolBuildDate,
+	)
+	if err != nil {
+		return companion.BuildRequest{}, err
+	}
+	if m.Userspace == nil {
+		return companion.BuildRequest{}, errors.New("userspace catalogue manager is unavailable for companion validation")
+	}
+	componentCatalog, err := m.Userspace.LoadCatalog(request.UserspaceCatalogPath)
+	if err != nil {
+		return companion.BuildRequest{}, err
+	}
+	buildRequest := companion.BuildRequest{
+		SourceDirectory:  sourceDirectory,
+		Version:          request.ToolVersion,
+		Commit:           toolCommit,
+		BuildDate:        toolBuildDate,
+		UserspaceCatalog: componentCatalog,
+	}
+	if len(componentIDs) == 0 {
+		return buildRequest, nil
+	}
+	for _, componentID := range componentIDs {
+		component, ok := componentCatalog.Get(componentID)
+		if !ok {
+			return companion.BuildRequest{}, fmt.Errorf("userspace component %q is not in the catalog", componentID)
+		}
+		if component.Redistribution != userspacecatalog.RedistributionAllowed &&
+			component.Redistribution != userspacecatalog.RedistributionSourceRequired {
+			return companion.BuildRequest{}, fmt.Errorf(
+				"userspace component %q has redistribution policy %q and cannot be included offline",
+				componentID, component.Redistribution)
+		}
+	}
+	for _, componentID := range componentIDs {
+		bundles, err := m.Userspace.Pull(ctx, request.UserspaceCatalogPath, componentID,
+			filepath.Join(cacheDirectory, "userspace"))
+		if err != nil {
+			return companion.BuildRequest{}, fmt.Errorf("resolve offline userspace component %s: %w", componentID, err)
+		}
+		if len(bundles) != 1 || bundles[0].Component != componentID {
+			return companion.BuildRequest{}, fmt.Errorf("userspace component %q resolved an unexpected bundle set", componentID)
+		}
+		buildRequest.UserspaceBundles = append(buildRequest.UserspaceBundles, bundles[0])
+	}
+	return buildRequest, nil
+}
+
+// resolveOfflineCompanionComponentIDs applies the compiled selector policy
+// without loading catalogues or contacting release services.
+func resolveOfflineCompanionComponentIDs(selectors []string) ([]string, error) {
+	seen := make(map[string]bool, len(selectors))
+	componentIDs := make([]string, 0, len(selectors))
+	for _, selector := range selectors {
+		if strings.EqualFold(strings.TrimSpace(selector), "recommended") {
+			return nil, errors.New("offline companion userspace must name each redistribution-eligible component explicitly")
+		}
+		componentID, err := userspacemanager.ResolveComponentID(selector)
+		if err != nil {
+			return nil, err
+		}
+		if componentID != companion.IPTSDOfflineComponentID {
+			return nil, fmt.Errorf("userspace component %q is not approved for offline companion inclusion", componentID)
+		}
+		if seen[componentID] {
+			return nil, fmt.Errorf("duplicate companion userspace component %q", componentID)
+		}
+		seen[componentID] = true
+		componentIDs = append(componentIDs, componentID)
+	}
+	return componentIDs, nil
+}
+
+// companionBundleComponentIDs returns the stable component IDs represented by
+// already verified bundles for the execution journal's deterministic plan.
+func companionBundleComponentIDs(request companion.BuildRequest) []string {
+	componentIDs := make([]string, 0, len(request.UserspaceBundles))
+	for _, bundle := range request.UserspaceBundles {
+		componentIDs = append(componentIDs, bundle.Component)
+	}
+	return componentIDs
+}
+
+// validateCompanionGeneratedPaths keeps outputs, sidecars, and temporary image
+// data from changing the source tree before its immutable snapshot is taken.
+func validateCompanionGeneratedPaths(request CreateImageRequest, sourceDirectory string) error {
+	outputPath, err := filepath.Abs(request.Output)
+	if err != nil {
+		return fmt.Errorf("resolve companion image output: %w", err)
+	}
+	if pathIsWithin(outputPath, sourceDirectory) {
+		return errors.New("companion image output and its sidecars must be outside --companion-source-dir")
+	}
+	if strings.TrimSpace(request.WorkspaceRoot) == "" {
+		return nil
+	}
+	workspaceRoot, err := filepath.Abs(request.WorkspaceRoot)
+	if err != nil {
+		return fmt.Errorf("resolve companion workspace directory: %w", err)
+	}
+	if pathIsWithin(workspaceRoot, sourceDirectory) {
+		return errors.New("--workspace-dir must be outside --companion-source-dir")
+	}
+	return nil
+}
+
+// resolveCompanionToolIdentity fills missing local-build metadata from the
+// selected clean Git source rather than mislabelling it as an unknown revision.
+func resolveCompanionToolIdentity(
+	ctx context.Context,
+	runner platform.Runner,
+	sourceDirectory string,
+	commit string,
+	buildDate string,
+) (string, string, error) {
+	commit = strings.TrimSpace(commit)
+	buildDate = strings.TrimSpace(buildDate)
+	needsCommit := commit == "" || commit == "unknown"
+	needsBuildDate := buildDate == "" || buildDate == "unknown"
+	if needsCommit || needsBuildDate {
+		revision, err := runner.Capture(ctx, platform.Command{
+			Name: "git", Args: []string{"-C", sourceDirectory, "rev-parse", "HEAD"},
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("resolve companion source identity from Git: %w", err)
+		}
+		resolvedCommit := strings.TrimSpace(string(revision))
+		if resolvedCommit == "" || strings.ContainsAny(resolvedCommit, "\r\n") {
+			return "", "", errors.New("resolve companion source identity from Git: revision is empty or malformed")
+		}
+		if needsCommit {
+			commit = resolvedCommit
+		} else if commit != resolvedCommit {
+			return "", "", fmt.Errorf("linux-armer source revision is %s, requested companion commit is %s", resolvedCommit, commit)
+		}
+		if needsBuildDate {
+			commitTime, err := runner.Capture(ctx, platform.Command{
+				Name: "git", Args: []string{"-C", sourceDirectory, "show", "-s", "--format=%cI", resolvedCommit},
+			})
+			if err != nil {
+				return "", "", fmt.Errorf("resolve companion source timestamp from Git: %w", err)
+			}
+			parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(string(commitTime)))
+			if err != nil {
+				return "", "", fmt.Errorf("parse companion source timestamp from Git: %w", err)
+			}
+			buildDate = parsed.UTC().Format(time.RFC3339)
+		}
+		status, err := runner.Capture(ctx, platform.Command{
+			Name: "git",
+			Args: []string{"-C", sourceDirectory, "status", "--porcelain=v1", "--untracked-files=all", "--", "."},
+		})
+		if err != nil {
+			return "", "", fmt.Errorf("inspect companion source status: %w", err)
+		}
+		if strings.TrimSpace(string(status)) != "" {
+			return "", "", errors.New("git-backed linux-armer source is dirty; commit or remove changes before building a companion image")
+		}
+	}
+	return commit, buildDate, nil
 }
 
 // resolveBundle chooses a caller-supplied local bundle or downloads an exact
@@ -275,4 +520,14 @@ func safePathComponent(value string) string {
 		return "latest"
 	}
 	return value
+}
+
+// pathIsWithin reports whether candidate is root itself or a lexical descendant
+// after both paths have been resolved to absolute, clean host paths.
+func pathIsWithin(candidate, root string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }

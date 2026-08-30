@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"reflect"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 
 // ManifestSchemaVersion identifies the on-media manifest contract understood by
 // this version of linux-armer.
-const ManifestSchemaVersion = 2
+const ManifestSchemaVersion = 3
 
 // MaximumManifestSize bounds untrusted on-media JSON before decoding it.
 const MaximumManifestSize = 1 << 20
@@ -42,6 +43,72 @@ type BootArtifactRecord struct {
 	Initrd ArtifactRecord `json:"initrd"`
 	// DTBs records every hardware device tree shipped with the kernel set.
 	DTBs []ArtifactRecord `json:"device_trees"`
+}
+
+// ToolIdentityRecord identifies the exact CLI build represented by a companion
+// executable and its corresponding source archive.
+type ToolIdentityRecord struct {
+	// Version is the semantic release or development version of linux-armer.
+	Version string `json:"version"`
+	// Commit is the source revision reported by the build.
+	Commit string `json:"commit"`
+	// BuildDate is the UTC build timestamp reported by the build.
+	BuildDate string `json:"build_date"`
+}
+
+// ExecutableArtifactRecord describes an executable artefact together with the
+// platform and mode required to use it after mounting the image.
+type ExecutableArtifactRecord struct {
+	// Artifact records the immutable executable bytes and ISO-relative path.
+	Artifact ArtifactRecord `json:"artifact"`
+	// OperatingSystem is the Go target operating system expected by the binary.
+	OperatingSystem string `json:"operating_system"`
+	// Architecture is the Go target architecture expected by the binary.
+	Architecture string `json:"architecture"`
+	// Format identifies the executable container format, such as ELF.
+	Format string `json:"format"`
+	// Mode is the four-digit octal permission mode required on extracted media.
+	Mode string `json:"mode"`
+}
+
+// OfflineUserspaceRecord groups one verified, relocatable userspace release
+// that is deliberately available without network access from the image.
+type OfflineUserspaceRecord struct {
+	// Component is the stable userspace catalogue identifier.
+	Component string `json:"component"`
+	// Release is the exact immutable component release tag.
+	Release string `json:"release"`
+	// Redistribution records the catalogue policy permitting offline inclusion.
+	Redistribution string `json:"redistribution"`
+	// Root is the ISO-relative directory containing this complete release bundle.
+	Root string `json:"root"`
+	// Artifacts records the portable receipt and every release payload file.
+	Artifacts []ArtifactRecord `json:"artifacts"`
+}
+
+// CompanionBundleRecord inventories the optional self-support payload carried
+// under one reserved ISO directory and tracked by the outer image manifest.
+type CompanionBundleRecord struct {
+	// Included reports whether any companion files are present on this image.
+	Included bool `json:"included"`
+	// Root is the reserved ISO-relative companion directory.
+	Root string `json:"root"`
+	// Reason explains why the optional bundle was omitted.
+	Reason string `json:"reason,omitempty"`
+	// Tool identifies the CLI binary and source when the bundle is included.
+	Tool *ToolIdentityRecord `json:"tool,omitempty"`
+	// ProjectLicence states whether this repository declares redistribution terms.
+	ProjectLicence string `json:"project_licence,omitempty"`
+	// Executable is the Linux ARM64 companion CLI.
+	Executable *ExecutableArtifactRecord `json:"executable,omitempty"`
+	// SourceArchive contains the corresponding linux-armer source tree.
+	SourceArchive *ArtifactRecord `json:"source_archive,omitempty"`
+	// Catalogues contains the exact image and userspace catalogues used by the CLI.
+	Catalogues []ArtifactRecord `json:"catalogues,omitempty"`
+	// Licences records project and dependency notices when they are available.
+	Licences []ArtifactRecord `json:"licences,omitempty"`
+	// Userspace inventories redistribution-eligible offline component releases.
+	Userspace []OfflineUserspaceRecord `json:"userspace"`
 }
 
 // MediaDiscoveryEvidence records one adapter-defined fact used to prove that a
@@ -91,6 +158,8 @@ type Manifest struct {
 	BootArtifacts BootArtifactRecord `json:"boot_artifacts"`
 	// MediaDiscovery records the live-initramfs and physical-media agreement.
 	MediaDiscovery MediaDiscoveryRecord `json:"media_discovery"`
+	// CompanionBundle inventories optional CLI, source, catalogue, and userspace files.
+	CompanionBundle CompanionBundleRecord `json:"companion_bundle"`
 	// BootArguments lists device-specific kernel arguments added by the adapter.
 	BootArguments []string `json:"boot_arguments"`
 	// SecureBoot states the media's Secure Boot requirement for the operator.
@@ -110,6 +179,9 @@ func DecodeManifest(reader io.Reader) (Manifest, error) {
 	if len(data) > MaximumManifestSize {
 		return Manifest{}, fmt.Errorf("image manifest exceeds %d bytes", MaximumManifestSize)
 	}
+	if err := validateManifestJSONShape(data); err != nil {
+		return Manifest{}, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var manifest Manifest
@@ -124,6 +196,195 @@ func DecodeManifest(reader io.Reader) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("decode image manifest JSON after first value: %w", err)
 	}
 	return manifest, nil
+}
+
+// validateManifestJSONShape requires exact, duplicate-free keys and every
+// non-optional field throughout the complete image-manifest object graph.
+func validateManifestJSONShape(data []byte) error {
+	return validateJSONValueShape(data, reflect.TypeOf(Manifest{}), "image manifest")
+}
+
+// validateJSONValueShape recursively checks an untrusted JSON value against the
+// exact field names and container shapes declared by target.
+func validateJSONValueShape(data []byte, target reflect.Type, location string) error {
+	trimmed := bytes.TrimSpace(data)
+	for target.Kind() == reflect.Pointer {
+		if bytes.Equal(trimmed, []byte("null")) {
+			return nil
+		}
+		target = target.Elem()
+	}
+	if target.Kind() == reflect.Struct && implementsJSONMarshaler(target) {
+		return nil
+	}
+	switch target.Kind() {
+	case reflect.Struct:
+		return validateJSONObjectShape(trimmed, target, location)
+	case reflect.Slice, reflect.Array:
+		return validateJSONArrayShape(trimmed, target.Elem(), location)
+	case reflect.Map:
+		return validateJSONMapShape(trimmed, target.Elem(), location)
+	default:
+		return nil
+	}
+}
+
+// validateJSONObjectShape rejects unknown, mis-cased, duplicate, and missing
+// fields while recursively checking every recognised field value.
+func validateJSONObjectShape(data []byte, target reflect.Type, location string) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("decode %s JSON object: %w", location, err)
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return fmt.Errorf("decode %s JSON: value must be an object", location)
+	}
+	fields := make(map[string]reflect.StructField)
+	required := make(map[string]bool)
+	for index := 0; index < target.NumField(); index++ {
+		field := target.Field(index)
+		if field.PkgPath != "" {
+			continue
+		}
+		name, optional, ignored := jsonFieldContract(field)
+		if ignored {
+			continue
+		}
+		fields[name] = field
+		if !optional {
+			required[name] = true
+		}
+	}
+	seen := make(map[string]bool)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("decode %s JSON field: %w", location, err)
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("decode %s JSON: object field name is not a string", location)
+		}
+		if seen[key] {
+			return fmt.Errorf("decode %s JSON: duplicate field %q", location, key)
+		}
+		seen[key] = true
+		field, found := fields[key]
+		if !found {
+			return fmt.Errorf("decode %s JSON: unknown or mis-cased field %q", location, key)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return fmt.Errorf("decode %s JSON field %q: %w", location, key, err)
+		}
+		if err := validateJSONValueShape(value, field.Type, location+"."+key); err != nil {
+			return err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return fmt.Errorf("decode %s JSON object end: %w", location, err)
+	}
+	for name := range required {
+		if !seen[name] {
+			return fmt.Errorf("decode %s JSON: required field %q is missing", location, name)
+		}
+	}
+	return nil
+}
+
+// validateJSONArrayShape checks that a field is an array and applies the exact
+// element contract recursively to every member.
+func validateJSONArrayShape(data []byte, element reflect.Type, location string) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("decode %s JSON array: %w", location, err)
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '[' {
+		return fmt.Errorf("decode %s JSON: value must be an array", location)
+	}
+	index := 0
+	for decoder.More() {
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return fmt.Errorf("decode %s JSON array member: %w", location, err)
+		}
+		if err := validateJSONValueShape(value, element, fmt.Sprintf("%s[%d]", location, index)); err != nil {
+			return err
+		}
+		index++
+	}
+	if _, err := decoder.Token(); err != nil {
+		return fmt.Errorf("decode %s JSON array end: %w", location, err)
+	}
+	return nil
+}
+
+// validateJSONMapShape rejects duplicate map keys and recursively checks map
+// values; the current manifest uses this only as a safe future extension path.
+func validateJSONMapShape(data []byte, element reflect.Type, location string) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("decode %s JSON map: %w", location, err)
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return fmt.Errorf("decode %s JSON: value must be an object", location)
+	}
+	seen := make(map[string]bool)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("decode %s JSON map key: %w", location, err)
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("decode %s JSON: map key is not a string", location)
+		}
+		if seen[key] {
+			return fmt.Errorf("decode %s JSON: duplicate map key %q", location, key)
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return fmt.Errorf("decode %s JSON map value %q: %w", location, key, err)
+		}
+		if err := validateJSONValueShape(value, element, location+"."+key); err != nil {
+			return err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return fmt.Errorf("decode %s JSON map end: %w", location, err)
+	}
+	return nil
+}
+
+// jsonFieldContract derives the exact public name and optionality used by the
+// standard encoder for one exported structure field.
+func jsonFieldContract(field reflect.StructField) (name string, optional bool, ignored bool) {
+	tag := field.Tag.Get("json")
+	parts := strings.Split(tag, ",")
+	if len(parts) > 0 && parts[0] == "-" {
+		return "", false, true
+	}
+	name = field.Name
+	if len(parts) > 0 && parts[0] != "" {
+		name = parts[0]
+	}
+	for _, option := range parts[1:] {
+		if option == "omitempty" {
+			optional = true
+		}
+	}
+	return name, optional, false
+}
+
+// implementsJSONMarshaler identifies structure types such as time.Time whose
+// JSON representation is scalar rather than an object of exported fields.
+func implementsJSONMarshaler(target reflect.Type) bool {
+	marshaler := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	return target.Implements(marshaler) || reflect.PointerTo(target).Implements(marshaler)
 }
 
 // ValidateArtifactRecord checks that one manifest artefact has a canonical
