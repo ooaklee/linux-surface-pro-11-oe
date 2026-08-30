@@ -19,6 +19,8 @@ const (
 	FeatureBluetooth Feature = "bluetooth"
 	// FeatureAudio selects ALSA endpoint and desktop audio-session state.
 	FeatureAudio Feature = "audio"
+	// FeatureTouchscreen selects loaded device-tree, SPI, input, firmware, and kernel-log state.
+	FeatureTouchscreen Feature = "touchscreen"
 )
 
 // orderedFeatures fixes both combined-report and help-text ordering.
@@ -26,6 +28,7 @@ var orderedFeatures = []Feature{
 	FeatureWiFi,
 	FeatureBluetooth,
 	FeatureAudio,
+	FeatureTouchscreen,
 }
 
 // EvidenceKind identifies what one check can establish.
@@ -61,8 +64,12 @@ const (
 	defaultProbeTimeout = 2 * time.Second
 	// maximumProbeTimeout prevents callers from turning a diagnostic into a long wait.
 	maximumProbeTimeout = 10 * time.Second
-	// maximumProbeOutput bounds output accepted from either a real or injected runner.
+	// maximumProbeOutput bounds ordinary output accepted from either a real or injected runner.
 	maximumProbeOutput int64 = 32 << 10
+	// maximumKernelLogProbeOutput accommodates a bounded current-boot kernel log.
+	maximumKernelLogProbeOutput int64 = 512 << 10
+	// maximumRunnerProbeOutput is the largest output cap accepted by the process boundary.
+	maximumRunnerProbeOutput = maximumKernelLogProbeOutput
 )
 
 // Check is one deterministic, redacted hardware diagnostic result.
@@ -85,7 +92,7 @@ type Check struct {
 
 // Options controls one read-only live hardware inspection.
 type Options struct {
-	// Features limits the report; an empty slice selects Wi-Fi, Bluetooth, and audio.
+	// Features limits the report; an empty slice selects every maintained hardware check.
 	Features []Feature
 	// ProbeTimeout bounds each external command; zero selects the safe default.
 	ProbeTimeout time.Duration

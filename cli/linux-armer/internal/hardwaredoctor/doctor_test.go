@@ -135,7 +135,7 @@ func (runner *testProbeRunner) Run(ctx context.Context, probe Probe, _ int64) (P
 
 // healthyTestFileSystem creates a current sp11v19 live-state fixture.
 func healthyTestFileSystem() *testFileSystem {
-	return &testFileSystem{
+	filesystem := &testFileSystem{
 		files: map[string][]byte{
 			"/proc/device-tree/model":                       []byte("Microsoft Surface Pro 11th Edition (OLED)\x00"),
 			"/proc/device-tree/compatible":                  []byte("microsoft,denali-oled\x00microsoft,denali\x00qcom,x1e80100\x00"),
@@ -173,6 +173,23 @@ func healthyTestFileSystem() *testFileSystem {
 		},
 		failures: map[string]error{},
 	}
+	addHealthyTouchscreenFixture(filesystem)
+	return filesystem
+}
+
+// addHealthyTouchscreenFixture adds maintained in-tree touchscreen evidence to
+// the shared healthy live-state fixture without obscuring its other features.
+func addHealthyTouchscreenFixture(filesystem *testFileSystem) {
+	filesystem.files["/proc/bus/input/devices"] = []byte("I: Bus=001c Vendor=045e Product=0001 Version=0001\nN: Name=\"Microsoft Surface G6 Touch\"\n")
+	filesystem.files["/sys/bus/spi/devices/spi10.0/modalias"] = []byte("of:NtouchscreenT(null)Cmicrosoft,mshw0485\n")
+	filesystem.files["/sys/firmware/devicetree/base/soc@0/geniqup@ac0000/spi@a88000/status"] = []byte("okay\x00")
+	filesystem.files["/sys/firmware/devicetree/base/soc@0/geniqup@ac0000/spi@a88000/touchscreen@0/compatible"] = []byte("microsoft,mshw0485\x00")
+	filesystem.directories["/sys/firmware/devicetree/base/soc@0"] = []PathInfo{{Name: "geniqup@ac0000", Kind: PathDirectory}, {Name: "pci@1c08000", Kind: PathDirectory}}
+	filesystem.directories["/sys/firmware/devicetree/base/soc@0/geniqup@ac0000"] = []PathInfo{{Name: "spi@a88000", Kind: PathDirectory}}
+	filesystem.directories["/sys/firmware/devicetree/base/soc@0/geniqup@ac0000/spi@a88000"] = []PathInfo{{Name: "status", Kind: PathRegular}, {Name: "touchscreen@0", Kind: PathDirectory}}
+	filesystem.directories["/sys/firmware/devicetree/base/soc@0/geniqup@ac0000/spi@a88000/touchscreen@0"] = []PathInfo{{Name: "compatible", Kind: PathRegular}}
+	filesystem.directories["/sys/bus/spi/devices"] = []PathInfo{{Name: "spi10.0", Kind: PathSymlink}}
+	filesystem.stats["/lib/firmware/qcom/x1e80100/qupv3fw.elf.zst"] = PathInfo{Name: "qupv3fw.elf.zst", Kind: PathRegular}
 }
 
 // healthyTestRunner creates successful probes containing deliberately private text.
@@ -181,6 +198,7 @@ func healthyTestRunner() *testProbeRunner {
 		ProbeBluetoothService: {result: ProbeResult{ExitCode: 0}},
 		ProbeBlueZControllers: {result: ProbeResult{ExitCode: 0, Output: []byte("Controller 20:11:22:33:44:55 Private Headset Host\n")}},
 		ProbeAudioSession:     {result: ProbeResult{ExitCode: 0, Output: []byte("User Name: private-user\nServer Name: private-host\n")}},
+		ProbeKernelLogDmesg:   {result: ProbeResult{ExitCode: 0, Output: []byte("private serial: SECRET-DEVICE-ID\ntouch controller initialized path=hardware recoveries=1 resets=0\n")}},
 	}}
 }
 
@@ -202,7 +220,7 @@ func TestParseFeatureAndSelection(t *testing.T) {
 	if err != nil || feature != FeatureBluetooth {
 		t.Fatalf("ParseFeature() = %q, %v", feature, err)
 	}
-	if _, err := ParseFeature("camera"); err == nil || !strings.Contains(err.Error(), "wifi, bluetooth, audio") {
+	if _, err := ParseFeature("camera"); err == nil || !strings.Contains(err.Error(), "wifi, bluetooth, audio, touchscreen") {
 		t.Fatalf("ParseFeature(camera) error = %v", err)
 	}
 	selected, err := selectedFeatures([]Feature{FeatureAudio, FeatureWiFi, FeatureAudio})
@@ -239,6 +257,9 @@ func TestInspectHealthyCombinedReport(t *testing.T) {
 		"wifi-device-tree-rfkill-policy", "wifi-rfkill-state", "wifi-network-interface",
 		"bluetooth-hci-controller", "bluetooth-address-quality", "bluetooth-bluez-controller",
 		"audio-alsa-surface-card", "audio-alsa-playback", "audio-session-server",
+		"touchscreen-qup-firmware", "touchscreen-device-tree-controller",
+		"touchscreen-device-tree-client", "touchscreen-spi-client",
+		"touchscreen-input-device", "touchscreen-kernel-runtime",
 	} {
 		if check := findCheck(t, report, id); check.State != StatePass {
 			t.Errorf("%s state = %s, detail = %s", id, check.State, check.Detail)
@@ -254,7 +275,7 @@ func TestInspectHealthyCombinedReport(t *testing.T) {
 	calls := append([]Probe(nil), runner.calls...)
 	deadlines := append([]bool(nil), runner.deadlines...)
 	runner.mu.Unlock()
-	wantCalls := []Probe{ProbeBluetoothService, ProbeBlueZControllers, ProbeAudioSession}
+	wantCalls := []Probe{ProbeBluetoothService, ProbeBlueZControllers, ProbeAudioSession, ProbeKernelLogDmesg}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("probe calls = %#v, want %#v", calls, wantCalls)
 	}
@@ -284,6 +305,7 @@ func TestReportDoesNotExposePrivateRuntimeValues(t *testing.T) {
 	for _, privateValue := range []string{
 		"20:11:22:33:44:55", "Private Headset Host", "private-user", "private-host",
 		"wl-private-interface", "0004:01:00.0",
+		"SECRET-DEVICE-ID",
 	} {
 		if strings.Contains(combined, privateValue) {
 			t.Errorf("report exposed private value %q", privateValue)
@@ -305,7 +327,7 @@ func TestFeatureSelectionAvoidsUnselectedProbes(t *testing.T) {
 	if !report.Ready || !reflect.DeepEqual(report.Features, []Feature{FeatureWiFi}) {
 		t.Fatalf("Wi-Fi report = %#v", report)
 	}
-	if len(report.ChecksFor(FeatureBluetooth)) != 0 || len(report.ChecksFor(FeatureAudio)) != 0 {
+	if len(report.ChecksFor(FeatureBluetooth)) != 0 || len(report.ChecksFor(FeatureAudio)) != 0 || len(report.ChecksFor(FeatureTouchscreen)) != 0 {
 		t.Fatalf("unselected checks were included: %#v", report.Checks)
 	}
 	if len(runner.calls) != 0 {

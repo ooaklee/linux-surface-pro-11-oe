@@ -21,6 +21,10 @@ const (
 	ProbeBlueZControllers Probe = "bluez-controllers"
 	// ProbeAudioSession asks whether the PulseAudio-compatible session is reachable.
 	ProbeAudioSession Probe = "audio-session"
+	// ProbeKernelLogDmesg reads the current boot's kernel ring buffer.
+	ProbeKernelLogDmesg Probe = "kernel-log-dmesg"
+	// ProbeKernelLogJournal reads the current boot's kernel journal as a fallback.
+	ProbeKernelLogJournal Probe = "kernel-log-journal"
 )
 
 // ProbeResult is the bounded process result retained for private parsing.
@@ -69,7 +73,7 @@ func (ExecProbeRunner) Run(ctx context.Context, probe Probe, outputLimit int64) 
 	if err := ctx.Err(); err != nil {
 		return ProbeResult{}, err
 	}
-	if outputLimit < 1 || outputLimit > maximumProbeOutput {
+	if outputLimit < 1 || outputLimit > maximumRunnerProbeOutput {
 		return ProbeResult{}, fmt.Errorf("invalid hardware probe output limit")
 	}
 	command, err := commandForProbe(probe)
@@ -121,7 +125,7 @@ func (writer *cappedWriter) Write(content []byte) (int, error) {
 	return originalLength, nil
 }
 
-// commandForProbe resolves only the three reviewed, non-mutating commands.
+// commandForProbe resolves only the reviewed, non-mutating commands.
 func commandForProbe(probe Probe) (probeCommand, error) {
 	switch probe {
 	case ProbeBluetoothService:
@@ -130,6 +134,10 @@ func commandForProbe(probe Probe) (probeCommand, error) {
 		return probeCommand{name: "bluetoothctl", args: []string{"list"}, captureOutput: true}, nil
 	case ProbeAudioSession:
 		return probeCommand{name: "pactl", args: []string{"info"}}, nil
+	case ProbeKernelLogDmesg:
+		return probeCommand{name: "dmesg", args: []string{"--color=never"}, captureOutput: true}, nil
+	case ProbeKernelLogJournal:
+		return probeCommand{name: "journalctl", args: []string{"-k", "-b", "--no-pager", "--output=cat"}, captureOutput: true}, nil
 	default:
 		return probeCommand{}, fmt.Errorf("unsupported hardware probe %q", probe)
 	}

@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -67,6 +70,7 @@ func readyHardwareReport() hardwaredoctor.Report {
 			hardwaredoctor.FeatureWiFi,
 			hardwaredoctor.FeatureBluetooth,
 			hardwaredoctor.FeatureAudio,
+			hardwaredoctor.FeatureTouchscreen,
 		},
 		Checks: []hardwaredoctor.Check{
 			{
@@ -98,6 +102,14 @@ func readyHardwareReport() hardwaredoctor.Report {
 				Evidence: hardwaredoctor.EvidenceHardwareTest,
 				State:    hardwaredoctor.StateNotProven,
 				Detail:   "physical playback remains a manual test",
+			},
+			{
+				ID:       "touchscreen-input-device",
+				Feature:  hardwaredoctor.FeatureTouchscreen,
+				Evidence: hardwaredoctor.EvidenceRuntime,
+				State:    hardwaredoctor.StatePass,
+				Required: true,
+				Detail:   "the expected input device is registered",
 			},
 		},
 	}
@@ -150,6 +162,19 @@ func executeHardwareDoctorCommand(t *testing.T, factory hardwareDoctorFactory, a
 	root.SetArgs(append([]string{"hardware"}, args...))
 	err := root.ExecuteContext(context.Background())
 	return output.String(), errorOutput.String(), err
+}
+
+// writeAlternateHardwareFile creates one regular fixture file below a
+// temporary alternate Linux runtime root.
+func writeAlternateHardwareFile(t *testing.T, root, logicalPath, content string) {
+	t.Helper()
+	target := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(logicalPath, "/")))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestHardwareDoctorHumanCombinedDelivery verifies the empty selector uses the
@@ -238,13 +263,57 @@ func TestHardwareDoctorHumanFailureWritesCompleteReport(t *testing.T) {
 	}
 }
 
+// TestHardwareDoctorTouchscreenSelection verifies the dedicated selector is
+// delivered without implicitly selecting unrelated hardware features.
+func TestHardwareDoctorTouchscreenSelection(t *testing.T) {
+	report := readyHardwareReport()
+	report.Features = []hardwaredoctor.Feature{hardwaredoctor.FeatureTouchscreen}
+	report.Checks = []hardwaredoctor.Check{
+		{
+			ID:       "touchscreen-input-device",
+			Feature:  hardwaredoctor.FeatureTouchscreen,
+			Evidence: hardwaredoctor.EvidenceRuntime,
+			State:    hardwaredoctor.StatePass,
+			Required: true,
+			Detail:   "the expected input device is registered",
+		},
+	}
+	stub := &hardwareDoctorStub{report: report}
+	factory := &hardwareDoctorFactoryRecorder{workflow: stub}
+	output, errorOutput, err := executeHardwareDoctorCommand(t, factory.New, "touchscreen")
+	if err != nil {
+		t.Fatalf("touchscreen doctor error = %v", err)
+	}
+	if errorOutput != "" {
+		t.Fatalf("stderr = %q, want empty", errorOutput)
+	}
+	if want := []hardwaredoctor.Feature{hardwaredoctor.FeatureTouchscreen}; !reflect.DeepEqual(stub.options.Features, want) {
+		t.Fatalf("selected features = %#v, want %#v", stub.options.Features, want)
+	}
+	if !strings.Contains(output, "touchscreen-input-device") || strings.Contains(output, "wifi-radio-block") {
+		t.Fatalf("touchscreen-only output is incorrect:\n%s", output)
+	}
+}
+
+// TestHardwareDoctorHelpAdvertisesTouchscreen verifies discovery and shell
+// completion expose the maintained touchscreen selector.
+func TestHardwareDoctorHelpAdvertisesTouchscreen(t *testing.T) {
+	command := (&application{out: &bytes.Buffer{}}).newHardwareDoctorCommand(nil)
+	if !strings.Contains(command.Use, "touchscreen") {
+		t.Fatalf("hardware command use = %q", command.Use)
+	}
+	if !reflect.DeepEqual(command.ValidArgs, []string{"wifi", "bluetooth", "audio", "touchscreen"}) {
+		t.Fatalf("hardware command valid arguments = %#v", command.ValidArgs)
+	}
+}
+
 // TestHardwareDoctorRejectsUnknownFeatureBeforeConstruction verifies invalid
 // positional selectors never open files or start probes.
 func TestHardwareDoctorRejectsUnknownFeatureBeforeConstruction(t *testing.T) {
 	stub := &hardwareDoctorStub{report: readyHardwareReport()}
 	factory := &hardwareDoctorFactoryRecorder{workflow: stub}
 	output, errorOutput, err := executeHardwareDoctorCommand(t, factory.New, "camera")
-	if err == nil || !strings.Contains(err.Error(), "wifi, bluetooth, audio") {
+	if err == nil || !strings.Contains(err.Error(), "wifi, bluetooth, audio, touchscreen") {
 		t.Fatalf("error = %v, want closed feature vocabulary", err)
 	}
 	if factory.calls != 0 || stub.called {
@@ -287,13 +356,70 @@ func TestDoctorCommandPreservesNestedCommands(t *testing.T) {
 // is unavailable for an offline procfs or sysfs snapshot and honours cancellation.
 func TestAlternateRootProbeRunnerNeverQueriesHost(t *testing.T) {
 	runner := alternateRootProbeRunner{}
-	if _, err := runner.Run(context.Background(), hardwaredoctor.ProbeAudioSession, 1024); err == nil || !strings.Contains(err.Error(), "alternate root") {
-		t.Fatalf("alternate-root probe error = %v", err)
+	for _, probe := range []hardwaredoctor.Probe{
+		hardwaredoctor.ProbeAudioSession,
+		hardwaredoctor.ProbeKernelLogDmesg,
+		hardwaredoctor.ProbeKernelLogJournal,
+	} {
+		if _, err := runner.Run(context.Background(), probe, 1024); err == nil || !strings.Contains(err.Error(), "alternate root") {
+			t.Fatalf("alternate-root probe %q error = %v", probe, err)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := runner.Run(ctx, hardwaredoctor.ProbeAudioSession, 1024); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled alternate-root probe error = %v", err)
+	}
+}
+
+// TestAlternateRootTouchscreenInspectionDoesNotStartHostProbes verifies the
+// factory couples an offline filesystem snapshot only to the rejecting runner.
+func TestAlternateRootTouchscreenInspectionDoesNotStartHostProbes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixed fake executable uses a POSIX test script")
+	}
+	root := t.TempDir()
+	writeAlternateHardwareFile(t, root, "/proc/device-tree/model", "Microsoft Surface Pro 11th Edition (OLED)\x00")
+	writeAlternateHardwareFile(t, root, "/proc/device-tree/compatible", "microsoft,denali\x00qcom,x1e80100\x00")
+	writeAlternateHardwareFile(t, root, "/proc/sys/kernel/osrelease", "7.2.0-jg-0sp11v19-qcom-x1e\n")
+	writeAlternateHardwareFile(t, root, "/lib/firmware/qcom/x1e80100/qupv3fw.elf.zst", "bounded firmware fixture")
+	writeAlternateHardwareFile(t, root, "/sys/firmware/devicetree/base/soc@0/geniqup@ac0000/spi@a88000/status", "okay\x00")
+	writeAlternateHardwareFile(t, root, "/sys/firmware/devicetree/base/soc@0/geniqup@ac0000/spi@a88000/touchscreen@0/compatible", "microsoft,mshw0485\x00")
+	writeAlternateHardwareFile(t, root, "/sys/bus/spi/devices/spi10.0/modalias", "of:NtouchscreenT(null)Cmicrosoft,mshw0485\n")
+	writeAlternateHardwareFile(t, root, "/proc/bus/input/devices", "N: Name=\"Microsoft Surface G6 Touch\"\n")
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "host-probe-ran")
+	probeScript := "#!/bin/sh\nprintf invoked > \"$TOUCH_PROBE_MARKER\"\n"
+	for _, name := range []string{"dmesg", "journalctl"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(probeScript), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("TOUCH_PROBE_MARKER", marker)
+	workflow, err := newHardwareDoctorWorkflow(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := workflow.Inspect(context.Background(), hardwaredoctor.Options{Features: []hardwaredoctor.Feature{hardwaredoctor.FeatureTouchscreen}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Ready {
+		t.Fatalf("alternate-root touchscreen report = %#v", report)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("alternate-root inspection started a current-host probe: %v", err)
+	}
+	var kernelCheck *hardwaredoctor.Check
+	for index := range report.Checks {
+		if report.Checks[index].ID == "touchscreen-kernel-runtime" {
+			kernelCheck = &report.Checks[index]
+			break
+		}
+	}
+	if kernelCheck == nil || kernelCheck.State != hardwaredoctor.StateUnavailable || kernelCheck.Required {
+		t.Fatalf("alternate-root kernel-log check = %#v", kernelCheck)
 	}
 }
 

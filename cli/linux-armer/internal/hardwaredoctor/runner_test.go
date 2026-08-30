@@ -20,6 +20,8 @@ func TestCommandForProbeUsesFixedReadOnlyArguments(t *testing.T) {
 		{name: "service", probe: ProbeBluetoothService, want: probeCommand{name: "systemctl", args: []string{"--quiet", "is-active", "bluetooth.service"}}},
 		{name: "controllers", probe: ProbeBlueZControllers, want: probeCommand{name: "bluetoothctl", args: []string{"list"}, captureOutput: true}},
 		{name: "audio session", probe: ProbeAudioSession, want: probeCommand{name: "pactl", args: []string{"info"}}},
+		{name: "kernel ring", probe: ProbeKernelLogDmesg, want: probeCommand{name: "dmesg", args: []string{"--color=never"}, captureOutput: true}},
+		{name: "kernel journal", probe: ProbeKernelLogJournal, want: probeCommand{name: "journalctl", args: []string{"-k", "-b", "--no-pager", "--output=cat"}, captureOutput: true}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -75,7 +77,7 @@ func TestExecProbeRunnerRejectsUnknownProbeAndUnsafeLimit(t *testing.T) {
 	if _, err := runner.Run(context.Background(), Probe("unknown"), maximumProbeOutput); err == nil {
 		t.Fatal("unknown probe unexpectedly ran")
 	}
-	if _, err := runner.Run(context.Background(), ProbeAudioSession, maximumProbeOutput+1); err == nil {
+	if _, err := runner.Run(context.Background(), ProbeAudioSession, maximumRunnerProbeOutput+1); err == nil {
 		t.Fatal("oversized output limit unexpectedly ran")
 	}
 	cancelled, cancel := context.WithCancel(context.Background())

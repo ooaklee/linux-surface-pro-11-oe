@@ -125,6 +125,14 @@ func (doctor *Doctor) Inspect(ctx context.Context, options Options) (Report, err
 			for _, check := range checks {
 				add(check)
 			}
+		case FeatureTouchscreen:
+			checks, inspectErr := doctor.inspectTouchscreen(ctx, probeTimeout)
+			if inspectErr != nil {
+				return Report{}, inspectErr
+			}
+			for _, check := range checks {
+				add(check)
+			}
 		}
 		if err := ctx.Err(); err != nil {
 			return Report{}, err
@@ -230,9 +238,14 @@ func (doctor *Doctor) inspectKernel(ctx context.Context) (Check, int) {
 
 // runProbe executes one fixed process with a fresh per-probe deadline.
 func (doctor *Doctor) runProbe(ctx context.Context, probe Probe, timeout time.Duration) (ProbeResult, probeOutcome, error) {
+	return doctor.runProbeWithLimit(ctx, probe, timeout, maximumProbeOutput)
+}
+
+// runProbeWithLimit executes one fixed process with a feature-specific output cap.
+func (doctor *Doctor) runProbeWithLimit(ctx context.Context, probe Probe, timeout time.Duration, outputLimit int64) (ProbeResult, probeOutcome, error) {
 	probeContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	result, err := doctor.runner.Run(probeContext, probe, maximumProbeOutput)
+	result, err := doctor.runner.Run(probeContext, probe, outputLimit)
 	if ctx.Err() != nil {
 		return ProbeResult{}, probeCancelled, ctx.Err()
 	}
@@ -242,7 +255,7 @@ func (doctor *Doctor) runProbe(ctx context.Context, probe Probe, timeout time.Du
 	if err != nil {
 		return ProbeResult{}, probeUnavailable, nil
 	}
-	if int64(len(result.Output)) > maximumProbeOutput {
+	if int64(len(result.Output)) > outputLimit {
 		return ProbeResult{}, probeOversized, nil
 	}
 	return result, probeCompleted, nil
@@ -274,6 +287,8 @@ func hardwareLimitation(feature Feature) Check {
 		detail = "discovery, pairing, profiles, peripherals, audio, cold-boot behaviour, and suspend behaviour were not exercised"
 	case FeatureAudio:
 		detail = "speaker playback, left/right channel routing, clipping or crackle, microphone recording quality, and suspend behaviour were not exercised"
+	case FeatureTouchscreen:
+		detail = "touch contact accuracy, multi-touch gestures, pen input, cold-boot behaviour, and suspend behaviour were not exercised"
 	}
 	return Check{
 		ID:       string(feature) + "-hardware-test",

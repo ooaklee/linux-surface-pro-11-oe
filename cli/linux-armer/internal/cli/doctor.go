@@ -77,8 +77,9 @@ func (a *application) newHardwareDoctorCommand(factory hardwareDoctorFactory) *c
 	var root string
 	var asJSON bool
 	command := &cobra.Command{
-		Use:   "hardware [wifi|bluetooth|audio ...]",
-		Short: "Report redacted live Surface Pro 11 hardware state",
+		Use:       "hardware [wifi|bluetooth|audio|touchscreen ...]",
+		Short:     "Report redacted live Surface Pro 11 hardware state",
+		ValidArgs: []string{"wifi", "bluetooth", "audio", "touchscreen"},
 		Long: "Report bounded, read-only live hardware evidence without changing devices, radio blocks, services, networking, or audio routing. " +
 			"An alternate root supplies filesystem evidence only; process-based checks are reported unavailable rather than querying the current host.",
 		Args: cobra.ArbitraryArgs,
