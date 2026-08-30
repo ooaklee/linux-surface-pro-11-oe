@@ -5,6 +5,12 @@ title: "ADR0036: Right Speaker Audio via PipeWire audio.position Reorder"
 description: Architecture Decision Record (ADR) for mapping PipeWire channels onto the Surface Pro 11 four-slot speaker PCM.
 ---
 
+> **Current operator notice (2026-08-30):** The former PipeWire reorder and WSA
+> helper commands below are retained as dated audio evidence, not current
+> instructions. Use `userspace audio release prepare`,
+> `userspace audio release validate`, `userspace install audio`, `doctor hardware audio`, and `clean`; see
+> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+
 # ADR0036: Right Speaker Audio via PipeWire audio.position Reorder
 
 ## Status

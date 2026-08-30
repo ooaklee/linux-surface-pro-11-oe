@@ -5,6 +5,14 @@ title: "ADR0038: Split Compressed Live Image Release Assets"
 description: Architecture Decision Record (ADR) for publishing Surface Pro 11 live USB raw images as split compressed GitHub Release assets.
 ---
 
+> **Current operator notice (2026-08-30):** This raw-image release flow and
+> every former builder or preparation command below are historical,
+> non-prescriptive evidence. Current operators use `image create`,
+> `image validate`, `image write`, `image release prepare`, and
+> `image release validate`; see
+> [CLI ADR017](../../cli/linux-armer/docs/adr/adr-017-native-image-release-preparation.md).
+> Structural and reconstructed-byte proof does not assert a successful hardware boot.
+
 # ADR0038: Split Compressed Live Image Release Assets
 
 ## Status
@@ -236,4 +244,4 @@ decompressed raw image hash matched the manifest.
 
 - [ADR026: Prebuilt Kernel Release Artifacts](adr-0026-prebuilt-kernel-release-artifacts.md)
 - [ADR037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1](adr-0037-jglathe-qcom-7-1-1-stubble-paths.md)
-- [Prepare Surface Pro 11 live USB image release assets](../../scripts/prepare-sp11-image-release-assets.sh)
+- [CLI ADR017: Native image release preparation](../../cli/linux-armer/docs/adr/adr-017-native-image-release-preparation.md)

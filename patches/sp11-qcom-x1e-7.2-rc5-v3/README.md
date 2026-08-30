@@ -1,55 +1,23 @@
-# Surface Pro 11 qcom-x1e 7.2-rc5 v3 patches
+# Archived Surface Pro 11 qcom-x1e 7.2-rc5 v3 patch set
 
-This patch set enables the Surface Pro 11 OLED touchscreen (Microsoft
-MSHW0485) in the 7.2-rc5 build, retains the validated 2.4 MHz Denali DMIC
-clock, and gives the result the distinct Debian version
-`7.2-rc5-jg-0sp11v3`.
+> [!IMPORTANT]
+> This patch set and its out-of-tree touchscreen-module pairing are superseded
+> historical evidence. Do not build, install or validate them on a current
+> system.
 
-The upstream `jg/ubuntu-qcom-x1e-7.2rc` branch sets `qcom,dmic-sample-rate`
-to 4.8 MHz, which reintroduces the continuous broadband microphone static
-previously eliminated on the 7.1.3 v2 kernel. These patches restore the
-validated 2.4 MHz clock.
+The experiment enabled the MSHW0485 OLED touchscreen over SE2 QSPI, retained
+the 2.4 MHz Denali DMIC clock and used the distinct
+`7.2-rc5-jg-0sp11v3-qcom-x1e` ABI. At that point runtime support depended on
+higher-priority out-of-tree GPI, SPI and touchscreen module overrides.
 
-The touchscreen runs over the SE2 QSPI controller at `0xa88000` (spi10).
-`hamoa.dtsi` already defines the hardware as both i2c10 and spi10 (both
-disabled) plus the `qup_spi10_data_clk` / `qup_spi10_cs` pinctrl states.
-The v3 DTS patch enables GPI DMA instance 1, keeps i2c10 disabled, adds the
-QSPI data pins GPIO 49/50 (`qup1_se2`), and attaches the touchscreen child
-with GPIO 48 reset, GPIO 51 interrupt, and GPIO 64 power. Runtime QSPI
-support is provided by the paired out-of-tree `gpi`, `spi-geni-qcom`, and
-`mshw0485_touch` modules from the geocausa phase 91 baseline, installed as
-higher-priority `/lib/modules/<release>/updates/` overrides. Use
-`scripts/build-sp11-touchscreen-modules.sh --install`; it pins the Phase 91
-source, targets the exact v3 ABI, rebuilds the initramfs, and verifies that the
-three overrides—not the stock SPI/GPI modules—are embedded. See ADR-0050 for
-the clean-install failure retrospective.
+The maintained custom kernel now carries the touchscreen stack in-tree and
+rejects the retired v3 release contract. Build it with
+`linux-armer kernel build`; use `linux-armer doctor hardware touchscreen` for
+bounded runtime evidence and `linux-armer userspace status` to report stale
+module overrides for manual review. No current command installs the historical
+modules.
 
-Apply it after `patches/jglathe-qcom-x1e-7.2-rc5` so the annotations
-compatibility fix is established before the Surface Pro 11 version signature
-is updated:
-
-```bash
-./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-  --source git \
-  --git-url https://github.com/jglathe/linux_ms_dev_kit.git \
-  --git-branch jg/ubuntu-qcom-x1e-7.2rc \
-  --image ubuntu:26.04 \
-  --patch-dirs "patches/jglathe-qcom-x1e-7.2-rc5 patches/sp11-qcom-x1e-7.2-rc5-v3" \
-  --build-target "binary-indep binary-qcom-x1e" \
-  --work-dir build/docker-sp11-qcom-x1e-kernel-jg-7.2rc-sp11-v3 \
-  --linux-work-volume sp11-qcom-x1e-kernel-build-jg-7.2rc-sp11-v3 \
-  --copy-to-payload \
-  --reset-source \
-  --jobs 8
-```
-
-The output is a matching four-package set:
-
-- `linux-image-7.2-rc5-jg-0sp11v3-qcom-x1e`
-- `linux-modules-7.2-rc5-jg-0sp11v3-qcom-x1e`
-- `linux-headers-7.2-rc5-jg-0sp11v3-qcom-x1e`
-- `linux-qcom-x1e-headers-7.2-rc5-jg-0sp11v3`
-
-Device testing found that 2.4 MHz eliminated the continuous microphone
-feedback/static and made recorded speech dramatically clearer. See
-[ADR-0046](https://github.com/ooaklee/linux-surface-pro-11-oe/blob/main/docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md).
+See [ADR-0049](../../docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
+for the original build evidence and
+[ADR-0050](../../docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
+for the clean-install retrospective.

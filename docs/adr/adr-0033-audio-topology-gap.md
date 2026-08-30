@@ -5,6 +5,14 @@ title: "ADR0033: Surface Pro 11 Audio Topology Gap"
 description: Architecture Decision Record (ADR) for the missing X1E80100-Microsoft-Surface-Pro-11-tplg.bin topology file that prevents ALSA sound card instantiation.
 ---
 
+> **Current operator notice (2026-08-30):** Former manual sink and topology
+> commands below are historical evidence and are non-prescriptive. Use
+> `userspace audio release prepare`, `userspace audio release validate`,
+> `userspace install audio`, `userspace status`, `doctor hardware audio`, and
+> `doctor userspace`; see
+> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+> These checks do not replace listening, recording, or suspend testing.
+
 # ADR0033: Surface Pro 11 Audio Topology Gap
 
 ## Status

@@ -5,6 +5,12 @@ title: "ADR0048: JG 7.2-rc5-jg-0sp11v2 Kernel Build"
 description: Architecture Decision Record (ADR) for the Surface Pro 11 v2 (2.4 MHz DMIC) build of Johan G.'s qcom-x1e 7.2-rc5-jg-0 kernel, and the installer DTB-selection fix that makes it authoritative.
 ---
 
+> **Current operator notice (2026-08-30):** Former builder and broad support
+> helper references below are retained as dated evidence and are
+> non-prescriptive. Use `kernel build`, `kernel preflight`, `kernel install`,
+> `kernel release prepare`, and `kernel release validate`; see
+> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+
 # ADR0048: JG 7.2-rc5-jg-0sp11v2 Kernel Build
 
 ## Status

@@ -5,6 +5,13 @@ title: "ADR028: Bounded Bluetooth Management Hook"
 description: Architecture Decision Record (ADR) for bounding Surface Pro 11 Bluetooth btmgmt commands in the automatic public-address hook.
 ---
 
+> **Current operator notice (2026-08-30):** This hook design and its former
+> helper name are historical, non-prescriptive evidence. Current private input
+> and recoverable application use `handoff import`, `handoff apply`, and
+> `handoff restore`; current
+> read-only evidence uses `doctor hardware bluetooth`. See
+> [CLI ADR013](../../cli/linux-armer/docs/adr/adr-013-private-handoff-application-transactions.md).
+
 ## Context
 
 [ADR027](adr-0027-bluetooth-public-address.md) chose a Windows-sourced

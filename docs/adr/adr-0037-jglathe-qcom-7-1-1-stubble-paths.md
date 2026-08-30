@@ -5,6 +5,13 @@ title: "ADR0037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1"
 description: Architecture Decision Record (ADR) for patching Johan G.'s qcom-x1e 7.1.1 Ubuntu packaging to use the stubble paths provided by Ubuntu 26.04 packages.
 ---
 
+> **Current operator notice (2026-08-30):** The build excerpt below records a
+> dated package experiment and is not a current instruction. Use `kernel build`,
+> `kernel preflight`, `kernel install`, `kernel release prepare`, and
+> `kernel release validate`;
+> see [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> Preserve the reported hardware observation separately from native structural proof.
+
 # ADR0037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1
 
 ## Status

@@ -14,13 +14,25 @@ The original live-image release helper prepared a raw disk image through a shell
 
 Hosted release services impose a per-asset size limit below the size of a complete installation image. The image therefore needs deterministic compression and ordered splitting. Reviewers and users must be able to verify the exact closed release directory, reconstruct the original ISO digest, and understand the kernel, device-tree, media-discovery, companion, and structural-validation evidence without trusting a release-provided executable script.
 
-The adjacent operation journal records useful creation evidence but includes a local output path. Copying it unchanged into a public release would disclose a builder path. Preparation must retain its evidential value without publishing workstation-specific data. It must also remain distinct from remote publication: creating local assets does not authorise a tag, release, upload, or any other remote mutation.
+The adjacent operation journal records useful creation evidence and is
+published in the same fresh, no-replace output set as the ISO and manifest
+sidecar, but it includes a local output path. Copying it unchanged into a public
+release would disclose a builder path. Preparation must retain its evidential
+value without publishing workstation-specific data. It must also remain
+distinct from remote publication: creating local assets does not authorise a
+tag, release, upload, or any other remote mutation.
 
 ## Decision
 
 The image domain will own `image release prepare` and `image release validate` through a compiled feature package. Preparation accepts only one bounded, regular `.iso` beneath an explicit repository root, the exact adjacent image-manifest sidecar, and the exact adjacent native creation journal. It rejects symbolic-link routes, unsafe names, incomplete or out-of-order journal steps, mismatched output identities, existing output directories, and output anywhere except a fresh `build/release/<release-name>` child.
 
-The adapter-owned image validator must pass before release preparation. Its image digest, size, layout, adapter and kernel ABI must agree with the ISO sidecars. The release manifest stores only stable check names and pass states; local diagnostic paths and free-form details are not published.
+The adapter-owned image validator must pass before release preparation. Its
+image digest, size, layout, adapter and kernel ABI must agree with the ISO and
+sidecar. The SHA-256 and size of the manifest bytes extracted from the ISO must
+also match the adjacent sidecar exactly, and the complete `companion_bundle`
+record must pass the same compiled policy used by image creation. The release
+manifest stores only stable check names and pass states; local diagnostic paths
+and free-form details are not published.
 
 The zstd executable is invoked directly with argument separation, a fixed compression level, one worker and content checksums. No shell or repository script is executed. The encoder version and settings are recorded because different encoder versions need not produce identical compressed bytes. The source ISO is hashed while it is fed to the encoder, and the compressed stream is divided by the Go workflow into zero-padded parts. Every part is opened exclusively, flushed, hashed and kept below the hosted asset limit.
 

@@ -5,6 +5,13 @@ title: "ADR027: Bluetooth Public Address"
 description: Architecture Decision Record (ADR) for setting the Surface Pro 11 Bluetooth public address from a trusted Windows source.
 ---
 
+> **Current operator notice (2026-08-30):** The former address helper below is
+> retained as evidence of this Bluetooth gate, not as a current instruction.
+> Use private `handoff import`, `handoff apply`, and `handoff restore`, then
+> `doctor hardware bluetooth`; see
+> [CLI ADR013](../../cli/linux-armer/docs/adr/adr-013-private-handoff-application-transactions.md).
+> The address must remain private, and structural validation does not prove cold-boot reliability.
+
 ## Context
 
 After the patched qcom-x1e Wi-Fi rfkill path succeeded, Bluetooth firmware also

@@ -5,6 +5,15 @@ title: "ADR0066: SP11 IMX681 libcamera Simple IPA Integration"
 description: Architecture Decision Record (ADR) for integrating the Surface Pro 11 standalone IMX681 with libcamera's simple IPA through reciprocal Sony gain semantics, hardware-derived sensor metadata, evidence-gated tuning, and a coherently signed Ubuntu package build.
 ---
 
+> **Current operator notice (2026-08-30):** Former camera build, validation,
+> and publication helpers below are historical, non-prescriptive evidence. Use
+> `userspace build camera`, `userspace install camera`,
+> `userspace camera capture`, `userspace camera render`, `userspace camera release prepare`, and
+> `userspace camera release validate`; see
+> [CLI ADR015](../../cli/linux-armer/docs/adr/adr-015-native-imx681-package-and-release-contracts.md)
+> and [CLI ADR018](../../cli/linux-armer/docs/adr/adr-018-native-imx681-runtime-validation.md).
+> Native package and capture checks do not close the remaining physical gates.
+
 # ADR0066: SP11 IMX681 libcamera Simple IPA Integration
 
 ## Status

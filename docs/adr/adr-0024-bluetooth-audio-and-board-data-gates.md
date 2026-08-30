@@ -5,6 +5,13 @@ title: "ADR024: Bluetooth, Audio, and Board-Data Bring-Up Gates"
 description: Architecture Decision Record (ADR) for separating Surface Pro 11 Wi-Fi board data, Bluetooth MAC handling, and audio topology diagnostics from the Wi-Fi rfkill kernel patch.
 ---
 
+> **Current operator notice (2026-08-30):** Former diagnostic and address
+> helper names below are historical and non-prescriptive. Use
+> `doctor hardware wifi bluetooth audio`, private `handoff import` and `handoff apply`,
+> `userspace install`, `userspace status`, `userspace audio release prepare`,
+> `userspace audio release validate`, and `clean`.
+> See [CLI ADR010](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md).
+
 ## Context
 
 [ADR005](adr-0005-wifi-board-fixup.md) installs a narrow WCN7850 `board.bin`

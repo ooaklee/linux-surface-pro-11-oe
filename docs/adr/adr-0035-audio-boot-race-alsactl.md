@@ -5,6 +5,13 @@ title: "ADR0035: Audio Boot Race — superseded diagnosis"
 description: Superseded Surface Pro 11 audio boot-race diagnosis, retained for historical test context.
 ---
 
+> **Current operator notice (2026-08-30):** All former fix, routing, sink, and
+> service helper references below are non-prescriptive historical evidence.
+> Use `userspace audio release prepare`, `userspace audio release validate`,
+> `userspace install audio`, `doctor hardware audio`, `doctor userspace`, and
+> `clean`; see
+> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+
 # ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load
 
 ## Status

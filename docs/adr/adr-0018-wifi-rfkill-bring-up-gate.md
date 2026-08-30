@@ -5,6 +5,13 @@ title: "ADR018: Wi-Fi rfkill Bring-Up Gate"
 description: Architecture Decision Record (ADR) for treating Surface Pro 11 Wi-Fi bring-up as blocked on ath12k rfkill handling rather than firmware or board-file installation.
 ---
 
+> **Current operator notice (2026-08-30):** This ADR preserves the original
+> Wi-Fi investigation and former helper name as historical evidence. Its helper
+> command is non-prescriptive and superseded. Use `kernel build`,
+> `kernel preflight`, `kernel install`, and `doctor hardware wifi`; see
+> [CLI ADR010](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md).
+> Read-only or structural success does not by itself qualify Wi-Fi on hardware.
+
 ## Context
 
 [ADR004](adr-0004-firmware-extraction-policy.md) covers platform firmware

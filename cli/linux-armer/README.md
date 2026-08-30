@@ -92,7 +92,7 @@ linux-armer userspace audio release validate <release-directory>
 linux-armer userspace camera capture --dry-run
 linux-armer userspace camera render <capture.raw> <preview.png>
 linux-armer userspace camera release prepare --help
-linux-armer userspace camera release validate <release-directory>
+linux-armer userspace camera release validate <release-directory> --authority-sha256 <sha256>
 
 linux-armer clean scan
 linux-armer clean plan --output linux-armer-cleanup-plan.json
@@ -148,7 +148,16 @@ linux-armer image create \
 
 `--companion-source-dir` must identify a complete `linux-armer` source tree and requires a working host Go toolchain. Keep the image output, its sidecars, and any explicit `--workspace-dir` outside that source tree, as in the example. The source is snapshotted before its binary and archive are built, and a clean Git-backed tree must match the CLI's recorded commit. `--companion-userspace` is repeatable, but the initial offline allow-list accepts only `iptsd`. `recommended`, restricted audio, platform firmware, and experimental camera packages are not accepted for on-media inclusion.
 
-The payload is stored under `/sp11/companion`. The existing `/sp11/linux-armer-manifest.json` and its sidecar remain the only image inventory; their mandatory `companion_bundle` attribute records every companion file. The deterministic source archive includes the strict Windows hand-off collector at `linux-armer/tools/collect-sp11-windows-handoff.ps1`; it never contains collected device data. The portable receipt inside an IPTSD release verifies that component's relocatable files and is itself included in the outer inventory. It is not a second image manifest.
+The payload is stored under `/sp11/companion`. The embedded
+`/sp11/linux-armer-manifest.json` and the ISO-adjacent
+`*.iso.manifest.json` sidecar are byte-identical copies of the only image
+inventory; their mandatory `companion_bundle` attribute records every
+companion file. The deterministic
+source archive includes the strict Windows hand-off collector at
+`linux-armer/tools/collect-sp11-windows-handoff.ps1`; it never contains
+collected device data. The portable receipt inside an IPTSD release verifies
+that component's relocatable files and is itself included in the outer
+inventory. It is not a second image manifest.
 
 The repository currently declares no project-wide redistribution terms for the CLI. A locally requested companion records `project_licence: not-declared` and prints a warning. Do not redistribute that companion image until the copyright holder publishes suitable project terms and the required third-party notices.
 
@@ -186,7 +195,9 @@ For an installed system mounted at `/target`, add `--root /target` to the instal
 
 Copying kernel packages beside an untouched installer does not change the kernel used by the live environment. The Ubuntu adapter instead unpacks the Casper filesystem, installs the custom runtime packages, rebuilds the initramfs, replaces `/casper/vmlinuz` and `/casper/initrd`, adds the paired device trees, and repacks the filesystem.
 
-The source image is hybrid boot media: it contains ISO boot metadata and an appended GPT EFI System Partition. The adapter replays that layout and installs direct GRUB in both the ISO filesystem and appended EFI partition. Ubuntu's initramfs generation creates a Casper media UUID, so the adapter writes that same value to `.disk/casper-uuid-generic` and records the discovery contract in the image manifest. Output validation checks exact UUID agreement, Casper's default boot and live-layer declarations, the boot records, kernel, initramfs, module tree, device trees, manifests, and both EFI locations before the output is atomically published.
+The source image is hybrid boot media: it contains ISO boot metadata and an appended GPT EFI System Partition. The adapter replays that layout and installs direct GRUB in both the ISO filesystem and appended EFI partition. Ubuntu's initramfs generation creates a Casper media UUID, so the adapter writes that same value to `.disk/casper-uuid-generic` and records the discovery contract in the image manifest. Output validation checks exact UUID agreement, Casper's default boot and live-layer declarations, the boot records, kernel, initramfs, module tree, device trees, manifests, and both EFI locations before descriptor-bound no-replace publication writes the manifest and journal first, then the ISO as the final commit marker.
+
+If publication fails, the CLI reports every recoverable transaction path and does not remove anything through a mutable pathname. Inspect the reported final and hidden staging entries before removing them; the absence of the requested ISO means the output set was not committed.
 
 Directly written hybrid media and a nested ISO stored on an outer filesystem are different strategies. The direct ISO does not use `iso-scan/filename`; that argument belongs to the labelled outer-disk loopback workflow. All live-USB entries keep the temporary aDSP blacklist because enabling the DSP while the live root remains on USB can reset or disconnect the medium. Installed-system entries do not carry that blacklist.
 
@@ -200,7 +211,13 @@ Compressed raw disk images use a different partition and boot model. Catalogue e
 
 ### Prepare local image release assets
 
-`image release prepare` first validates one completed linux-armer ISO and its existing adjacent `*.iso.manifest.json`, then produces deterministic split zstd parts, checksums, release notes, and a path-free release manifest in a fresh local directory. It preserves that one ISO manifest—including its `companion_bundle` attribute—rather than introducing another image inventory. The command never uploads files or changes a remote release.
+`image release prepare` first validates one completed linux-armer ISO, proves
+that its embedded manifest bytes equal the existing adjacent
+`*.iso.manifest.json`, and then produces deterministic split zstd parts,
+checksums, release notes, and a path-free release manifest in a fresh local
+directory. It preserves that one ISO manifest—including its
+`companion_bundle` attribute—rather than introducing another image inventory.
+The command never uploads files or changes a remote release.
 
 ```sh
 linux-armer image release prepare linux-armer-ubuntu-sp11.iso \
@@ -458,7 +475,7 @@ linux-armer userspace build camera
 
 Source builds invoke only compiled, component-specific adapters with bounded arguments. Catalogue content is never interpreted as a shell command. The current camera package build requires a native ARM64 Linux host; users on other hosts can still pull and verify the published experimental package set.
 
-Both userspace source-build adapters use compiled Go policy and do not invoke repository scripts. They require the complete OE checkout because the native builders authenticate their tracked component inputs; pass `--repository-root <oe-checkout>` when it cannot be detected from the current directory. Pull, status, doctor, and verified installation workflows do not have that checkout requirement.
+Both userspace source-build adapters use compiled Go policy and do not invoke repository scripts. They require the complete OE checkout because the native builders authenticate their tracked component inputs; pass `--repository-root <oe-checkout>` when it cannot be detected from the current directory. Pull, status, doctor, and installation from a downloaded immutable release do not have that checkout requirement. A successful native camera build prints an independent authority SHA-256 for its final receipt. Retain it separately from the directory. Installing a native camera build or prepared local camera release repeats static Git-backed provenance proof and therefore requires both the explicit repository root and the corresponding independently retained authority digest.
 
 Review an install before granting elevated access. A real install requires both effective root privileges and `--yes`; the CLI does not elevate itself. `--root` may select an alternate target filesystem where the component supports it.
 
@@ -466,11 +483,19 @@ Review an install before granting elevated access. A real install requires both 
 linux-armer userspace install recommended --from <userspace-cache> --dry-run
 sudo linux-armer userspace install recommended --from <userspace-cache> --yes
 
-linux-armer userspace install camera --from <verified-camera-release> --dry-run
-sudo linux-armer userspace install camera --from <verified-camera-release> --yes
+linux-armer userspace install camera \
+  --from <native-camera-build-or-local-release> \
+  --repository-root <oe-checkout> \
+  --camera-authority-sha256 <matching-build-or-release-authority-sha256> \
+  --dry-run
+sudo linux-armer userspace install camera \
+  --from <native-camera-build-or-local-release> \
+  --repository-root <oe-checkout> \
+  --camera-authority-sha256 <matching-build-or-release-authority-sha256> \
+  --yes
 ```
 
-The installer verifies release contents again before mutation and uses compiled component rules for destination paths and transactions. Installing support never invokes legacy clean-up implicitly. Use the separate `clean` commands to inspect and remove only recognised obsolete workarounds with backups and receipts.
+The camera installer also retains compatibility with the downloaded, checksum-pinned camera release and does not accept the native-only repository or authority options for that input shape. Native camera input is selected only by its structured build or local-release authority; mixed authority files are rejected. Static validation never executes a supplied package member. The installer verifies every package again while privately staging the confirmed `apt-get` transaction. Installing support never invokes legacy clean-up implicitly. Use the separate `clean` commands to inspect and remove only recognised obsolete workarounds with backups and receipts.
 
 ### Prepare local userspace releases
 
@@ -491,10 +516,11 @@ linux-armer userspace camera release prepare \
   --tag <camera-release-tag> \
   --kernel-tag <kernel-release-tag> \
   --kernel-abi <kernel-abi> \
+  --build-authority-sha256 <native-build-authority-sha256> \
   --dry-run
 ```
 
-Remove `--dry-run` only after reviewing the complete plan, then run the corresponding `release validate` command against the newly prepared directory. The resulting manifests make provenance and kernel pairing explicit without claiming hardware qualification.
+Remove `--dry-run` only after reviewing the complete plan. Successful camera preparation prints a release authority SHA-256; retain it separately, then pass it to `camera release validate --authority-sha256` against the newly prepared directory. The resulting manifests make provenance and kernel pairing explicit without claiming hardware qualification.
 
 ### Inspect the experimental camera
 

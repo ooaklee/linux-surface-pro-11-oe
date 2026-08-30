@@ -5,6 +5,12 @@ title: "ADR0047: JG 7.2-rc5-jg-0 Kernel Build"
 description: Architecture Decision Record (ADR) for building Johan G.'s qcom-x1e 7.2-rc5-jg-0 kernel (branch jg/ubuntu-qcom-x1e-7.2rc) with this repository's Docker kernel builder.
 ---
 
+> **Current operator notice (2026-08-30):** The former build and annotations
+> commands below are historical evidence. Use `kernel build`,
+> `kernel preflight`, `kernel install`, `kernel release prepare`, and
+> `kernel release validate`; annotation regeneration remains kernel-source maintainer work. See
+> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+
 # ADR0047: JG 7.2-rc5-jg-0 Kernel Build
 
 ## Status

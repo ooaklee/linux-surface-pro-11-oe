@@ -5,6 +5,12 @@ title: "ADR0043: Reproducible JG 7.1.3-jg-1 Kernel Builds"
 description: Architecture Decision Record (ADR) for regenerating tag-specific qcom-x1e annotations and reusing Git source checkouts reliably when building Johan G.'s 7.1.3-jg-1 kernel.
 ---
 
+> **Current operator notice (2026-08-30):** Former repository-helper commands
+> below are retained as build evidence, not current instructions. Use
+> `kernel build`, `kernel preflight`, `kernel install`, `kernel release prepare`,
+> and `kernel release validate`; annotation regeneration is rehomed to kernel-source
+> maintainers. See [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+
 # ADR0043: Reproducible JG 7.1.3-jg-1 Kernel Builds
 
 ## Status
@@ -205,6 +211,6 @@ Surface Pro 11.
 - [ADR-0023: Docker Kernel Build Case-Sensitive Work Volume](adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
 - [ADR-0037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1](adr-0037-jglathe-qcom-7-1-1-stubble-paths.md)
 - [ADR-0040: Multiple Patch Directories for Kernel Build Scripts](adr-0040-multi-patch-dirs.md)
-- [`scripts/build-sp11-qcom-x1e-kernel.sh`](../../scripts/build-sp11-qcom-x1e-kernel.sh)
-- [`scripts/regenerate-qcom-x1e-annotations.sh`](../../scripts/regenerate-qcom-x1e-annotations.sh)
+- [CLI ADR016: Native kernel release preparation](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md)
+- [CLI ADR010: Native CLI workflow migration](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md)
 - [`patches/jglathe-qcom-x1e-7.1.3/README.md`](../../patches/jglathe-qcom-x1e-7.1.3/README.md)

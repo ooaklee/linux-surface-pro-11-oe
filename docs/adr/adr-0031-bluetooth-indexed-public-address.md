@@ -5,6 +5,14 @@ title: "ADR031: Bluetooth Indexed Public Address and Cold-Boot Polling"
 description: Architecture Decision Record (ADR) correcting the Surface Pro 11 Bluetooth public-address method after field testing showed the btmgmt batch is a no-op on BlueZ 5.85 and the cold-boot timing requires a stop-bluez / poll / apply / restart sequence.
 ---
 
+> **Current operator notice (2026-08-30):** The indexed helper flow below is a
+> dated field-test record and is non-prescriptive. Current private input and
+> recoverable application use `handoff import`, `handoff apply`, and
+> `handoff restore`; current diagnosis
+> uses `doctor hardware bluetooth`. See
+> [CLI ADR013](../../cli/linux-armer/docs/adr/adr-013-private-handoff-application-transactions.md).
+> Native checks do not replace the cold-boot and suspend gates recorded here.
+
 ## Context
 
 [ADR030](adr-0030-bluetooth-btmgmt-batch-sequence.md) chose a scripted `btmgmt`

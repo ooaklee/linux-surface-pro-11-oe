@@ -5,6 +5,14 @@ title: "ADR0065: SP11 Front Camera C-PHY Integration"
 description: Architecture Decision Record (ADR) for integrating the Surface Pro 11 Sony IMX681 front camera using a hardware-validated standalone 3840x2640 sensor profile, the observed 2.406-Gsymbol/s X1E C-PHY lifecycle, reversible kernel packaging, and evidence-gated userspace enablement.
 ---
 
+> **Current operator notice (2026-08-30):** The former RAW renderer helper
+> reference below is retained as historical evidence and is non-prescriptive.
+> Use `userspace camera capture`, `userspace camera render`,
+> `userspace camera release prepare`, `userspace camera release validate`, and
+> `userspace install camera`; see
+> [CLI ADR018](../../cli/linux-armer/docs/adr/adr-018-native-imx681-runtime-validation.md).
+> Privacy LED, suspend, calibration, and repeated application gates remain explicit.
+
 # ADR0065: SP11 Front Camera C-PHY Integration
 
 ## Status

@@ -5,6 +5,13 @@ title: "ADR032: Raw mgmt-Socket Bluetooth Cold-Boot Solution"
 description: Architecture Decision Record (ADR) replacing btmgmt-based Bluetooth public-address bring-up with a raw mgmt-socket C helper that avoids D-state hangs entirely and runs before bluetoothd.
 ---
 
+> **Current operator notice (2026-08-30):** Former Bash and manual helper paths
+> below are preserved as cold-boot evidence, not current instructions. Use
+> private `handoff import`, `handoff apply`, `handoff restore`, and
+> `doctor hardware bluetooth`; see
+> [CLI ADR013](../../cli/linux-armer/docs/adr/adr-013-private-handoff-application-transactions.md).
+> The historical hardware result remains narrower than general Bluetooth qualification.
+
 ## Context
 
 [ADR031](adr-0031-bluetooth-indexed-public-address.md) concluded that

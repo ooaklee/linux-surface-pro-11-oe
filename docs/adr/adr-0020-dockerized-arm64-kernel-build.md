@@ -5,6 +5,12 @@ title: "ADR020: Dockerized ARM64 Kernel Build"
 description: Architecture Decision Record (ADR) for building patched Surface Pro 11 qcom-x1e kernel packages inside a Docker ARM64 Linux container.
 ---
 
+> **Current operator notice (2026-08-30):** The three-part shell workflow below
+> is historical and non-prescriptive. `kernel build` now owns container policy
+> and immutable provenance; `kernel preflight`, `kernel install`,
+> `kernel release prepare`, and `kernel release validate` own target and release checks. See
+> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+
 ## Context
 
 [ADR019](adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md) introduced a

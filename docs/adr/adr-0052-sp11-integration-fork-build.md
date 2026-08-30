@@ -5,6 +5,13 @@ title: "ADR0052: Build from the SP11 Integration Kernel Fork"
 description: Architecture Decision Record (ADR) for building the Surface Pro 11 kernel from the ooaklee/linux_ms_dev_kit-sp11 integration fork (sp11/integration-7.2-rc5) instead of cloning the upstream jglathe tree directly.
 ---
 
+> **Current operator notice (2026-08-30):** Former builder and out-of-tree
+> touchscreen commands below are retained as historical evidence and are
+> non-prescriptive. Use `kernel build`, `kernel preflight`, `kernel install`,
+> `kernel release prepare`, `kernel release validate`, and
+> `doctor hardware touchscreen`; the current touchscreen stack is in-tree. See
+> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+
 # ADR0052: Build from the SP11 Integration Kernel Fork
 
 ## Status

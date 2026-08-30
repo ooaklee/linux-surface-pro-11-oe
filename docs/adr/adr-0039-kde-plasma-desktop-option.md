@@ -5,6 +5,13 @@ title: "ADR0039: KDE Plasma Desktop Option"
 description: Architecture Decision Record (ADR) for shipping and installing KDE Plasma on the Surface Pro 11 instead of GNOME, since Kubuntu has no official ARM64 ISO.
 ---
 
+> **Current operator notice (2026-08-30):** The former desktop payload and
+> raw-image remaster commands below are historical and non-prescriptive. Use
+> `image create` and `image validate` for supported installation media. Optional
+> desktop replacement is rehomed to distribution package-management guidance
+> and is not part of the hardware companion API; see
+> [CLI ADR004](../../cli/linux-armer/docs/adr/adr-004-ubuntu-hybrid-iso-remaster.md).
+
 # ADR0039: KDE Plasma Desktop Option
 
 ## Status
@@ -111,5 +118,5 @@ opt-in.
 
 - [ADR0002: Boot Shim Image Strategy](adr-0002-boot-shim-image-strategy.md)
 - [ADR0007: Auto DTB Extraction and Debug Entries](adr-0007-auto-dtb-extraction-and-debug-entries.md)
-- [Install KDE Plasma desktop (payload script)](../../scripts/sp11-install-kde-desktop.sh)
-- [Build live USB image (builder)](../../scripts/build-sp11-live-usb-image.sh)
+- [CLI ADR004: Ubuntu hybrid-ISO remaster](../../cli/linux-armer/docs/adr/adr-004-ubuntu-hybrid-iso-remaster.md)
+- [CLI ADR010: Native CLI workflow migration](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md)

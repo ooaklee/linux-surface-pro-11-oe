@@ -20,7 +20,20 @@ The repository does not currently declare project-wide redistribution terms for 
 
 A distribution-neutral `image/companion` package will own the fixed companion layout, immutable source snapshot, static Linux ARM64 cross-build, catalogue validation, optional offline userspace staging, and payload validation. The image manager will resolve requests and enforce compiled redistribution policy. Distribution adapters will only place the completed directory on their media and attach its inventory to the existing image manifest.
 
-The sole ISO inventory remains `sp11/linux-armer-manifest.json`, with the same document published as the ISO sidecar. Manifest schema v3 adds a mandatory `companion_bundle` attribute; no companion-level manifest will be created. A portable `linux-armer-userspace-bundle.json` receipt may remain inside a userspace release because the existing installer uses it to verify relocatable component files. That receipt is payload evidence, not an ISO inventory, and `companion_bundle` records its digest and size like every other companion file.
+The sole ISO inventory remains `sp11/linux-armer-manifest.json`, with the same
+bytes published as the adjacent `*.iso.manifest.json` sidecar. Manifest schema
+v3 adds a mandatory `companion_bundle` attribute; no companion-level manifest
+will be created. Image publication stages the ISO, those exact manifest bytes,
+and the completed execution journal as one fresh output set. Descriptor-bound,
+no-replace renames publish the metadata first and the ISO last as the commit
+marker, with exact post-rename and complete-set verification. Because Linux and
+macOS do not provide conditional unlink-by-inode, a failure retains recoverable
+transaction entries and reports their paths instead of risking a pathname-based
+rollback. The journal is execution evidence, not another manifest. A portable
+`linux-armer-userspace-bundle.json` receipt may remain inside a userspace
+release because the existing installer uses it to verify relocatable component
+files. That receipt is payload evidence, not an ISO inventory, and
+`companion_bundle` records its digest and size like every other companion file.
 
 The canonical included layout is:
 

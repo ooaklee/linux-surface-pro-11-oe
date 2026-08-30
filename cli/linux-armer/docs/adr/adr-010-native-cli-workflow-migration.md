@@ -6,7 +6,12 @@ description: Architecture decision for replacing legacy repository scripts with 
 
 ## Status
 
-Accepted on 2026-08-30.
+Accepted on 2026-08-30. Implementation remains in progress while the legacy
+files and their workflow references still exist. The register below records
+the intended native owner, explicit retirement, or specialist rehoming outcome
+for the historical 39-file inventory. One file has already been removed and
+38 remain; the register is not a claim that removal or every physical hardware
+gate has completed.
 
 ## Context
 
@@ -20,39 +25,99 @@ Historical ADRs and dated hardware reports explain how the current support was d
 
 ## Decision
 
-Maintained workflows will be implemented as typed Go domains and orchestrated by managers. Cobra commands and the Bubble Tea wizard will parse input, call managers, and render results; they will not contain hardware policy or reproduce orchestration. The project will not introduce a generic script-runner abstraction.
+Maintained workflows are implemented as typed Go domains and orchestrated by
+managers. Cobra commands and the Bubble Tea wizard parse input, call managers,
+and render results; they do not contain hardware policy or reproduce
+orchestration. The project has not introduced a generic script-runner
+abstraction.
 
-The command roots are `catalog`, `kernel`, `image`, `userspace`, `handoff`, `doctor`, `clean`, and `wizard`. New behaviour will be placed under the domain that owns its outcome:
+The command roots are `catalog`, `kernel`, `image`, `userspace`, `handoff`,
+`doctor`, `clean`, and `wizard`. Behaviour is placed under the domain that owns
+its outcome:
 
 - `kernel` owns source resolution, building, bundle inspection, guarded installation, preflight checks, and release preparation or validation;
 - `image` owns creation, structural validation, removable-device discovery, writing, and read-back verification;
-- `userspace` owns component acquisition, building, receipt-backed installation or removal, and installed support status;
+- `userspace` owns component acquisition, building, receipt-backed installation and rollback, and installed support status;
 - `handoff` owns private, device-bound import and application of Windows-collected platform firmware and Bluetooth evidence;
 - `doctor` owns read-only host, kernel, hardware, and userspace evidence, with sensitive values redacted by default;
-- `clean` owns only recognised, reversible removal of retired workarounds and explicitly managed build caches;
+- `clean` owns only recognised, reversible removal of retired workarounds;
 - `wizard` remains a terminal interface over the same managers and policies as non-interactive commands.
 
-Distribution-neutral packages will own kernel bundles, companion payloads, userspace receipts, Windows hand-offs, removable media, plans, journals, and platform process boundaries. Each distribution adapter will continue to own its bootloader, initramfs, installer, and live-media discovery contract. Ubuntu therefore retains its Casper UUID contract without making Casper concepts part of the removable-media writer or future Fedora and Debian adapters.
+Distribution-neutral packages own kernel bundles, companion payloads,
+userspace receipts, Windows hand-offs, removable media, plans, journals, and
+platform process boundaries. Each distribution adapter owns its bootloader,
+initramfs, installer, and live-media discovery contract. Ubuntu therefore
+retains its Casper UUID contract without making Casper concepts part of the
+removable-media writer or future Fedora and Debian adapters.
 
-Every mutating workflow will support a deterministic preview. System mutations will use explicit target roots, exact allow-lists, precondition revalidation, private backups where restoration is possible, and a receipt or journal. A command operating on the running root may accept `/` only when that mode is explicitly part of its contract and the caller has already obtained the required privilege; an alternate-root command will never silently fall back to `/`.
+Destructive device and system-mutation workflows support a deterministic
+preview. They use explicit target roots, exact allow-lists, precondition
+revalidation, private backups where restoration is possible, and a receipt or
+journal. A command operating on the running root accepts `/` only when that
+mode is explicitly part of its contract and the caller has already obtained
+the required privilege; an alternate-root command never silently falls back
+to `/`. Build commands instead publish into fresh destinations through their
+own transaction contracts; the native IPTSD build does not currently provide a
+dry run.
 
-Writing installation media is irreversible and receives a stronger boundary. Device discovery will issue an opaque identity bound to the whole external removable USB device. A write plan will bind the canonical source path, image size and SHA-256 digest to that identity. Execution will require the exact confirmation phrase from the plan, re-inspect the device, reject identity drift, system storage, read-only or undersized devices, and an image stored on the target. After confirmation and privilege checks, the manager may unmount observed target filesystems; it must then perform another inspection and reject any remaining mount before opening the raw device. Success requires a flushed write and SHA-256 read-back of exactly the source length; an operating-system command reporting that bytes were copied is not sufficient evidence.
+Writing installation media is irreversible and receives a stronger boundary.
+Device discovery issues an opaque identity bound to the whole external
+removable USB device. A write plan binds the canonical source path, image size,
+and SHA-256 digest to that identity. Execution requires the exact confirmation
+phrase from the plan, re-inspects the device, and rejects identity drift,
+system storage, read-only or undersized devices, and an image stored on the
+target. After confirmation and privilege checks, the manager may unmount
+observed target filesystems; it then performs another inspection and rejects
+any remaining mount before opening the raw device. Success requires a flushed
+write and SHA-256 read-back of exactly the source length; an operating-system
+command reporting that bytes were copied is not sufficient evidence.
 
-Windows collectors will emit a single JSON document with a versioned envelope, a fixed kind, collection time, producer identity, privacy classification, and a kind-specific payload. Device binding will use a fresh random salt and a domain-separated digest of that salt and the canonical SMBIOS system UUID. This lets the target re-derive and compare the binding without exporting the UUID or making separate hand-offs trivially linkable. The Go decoder will reject unknown fields, unsupported versions, malformed hardware addresses, duplicate or contradictory candidates, and data that does not match the selected Surface model. Sensitive Bluetooth addresses will be accepted from a mode-restricted file or standard input, never required on the command line, and redacted in ordinary output.
+Windows collectors emit a single JSON document with a versioned envelope, a
+fixed kind, collection time, producer identity, privacy classification, and a
+kind-specific payload. Device binding uses a fresh random salt and a
+domain-separated digest of that salt and the canonical SMBIOS system UUID.
+This lets the target re-derive and compare the binding without exporting the
+UUID or making separate hand-offs trivially linkable. The Go decoder rejects
+unknown fields, unsupported versions, malformed hardware addresses, duplicate
+or contradictory candidates, and data that does not match the selected
+Surface model. Sensitive Bluetooth addresses are accepted from a
+mode-restricted file or standard input, never required on the command line,
+and redacted in ordinary output.
 
-A Windows hand-off is private device data, not an image or userspace-release manifest. The whole document and payload are private, including firmware provenance, times, device binding, and the Bluetooth address. `handoff import` will store it through a content-addressed, mode-restricted transaction, `handoff apply` will revalidate it before mutation, and `handoff purge` will provide confirmed retention control. The hand-off will never be embedded in a redistributable ISO, and image validation will test that exclusion. The Windows collector itself may be included as an ordinary, manifest-tracked companion file because it contains no collected device data. Wi-Fi board firmware remains owned by the distribution's Linux firmware package and is not inferred from Windows network-adapter data.
+A Windows hand-off is private device data, not an image or userspace-release
+manifest. The whole document and payload are private, including firmware
+provenance, times, device binding, and the Bluetooth address. `handoff import`
+stores it through a content-addressed, mode-restricted transaction;
+`handoff apply` revalidates it before mutation; and `handoff purge` provides
+confirmed retention control. The companion builder admits only its fixed
+source snapshot, catalogues, binary, and explicitly allowed portable userspace
+artefacts, so collected hand-off data cannot enter a redistributable ISO. The
+Windows collector itself may be included as an ordinary, manifest-tracked
+companion file because it contains no collected device data. Wi-Fi board
+firmware remains owned by the distribution's Linux firmware package and is not
+inferred from Windows network-adapter data.
 
-Release preparation and publication remain separate operations. Preparation will create a closed, checksummed, policy-checked artefact set without changing a remote service. Any future publication command must use an additional explicit confirmation, preserve draft-first recovery, re-download and validate the published assets, and refuse content whose redistribution terms are not declared. Implementing preparation does not authorise the CLI or an automation to publish a release.
+Release preparation and publication remain separate operations. Preparation
+creates a closed, checksummed, policy-checked artefact set without changing a
+remote service. Any future publication command must use an additional explicit
+confirmation, preserve draft-first recovery, re-download and validate the
+published assets, and refuse content whose redistribution terms are not
+declared. Implementing preparation does not authorise the CLI or an automation
+to publish a release.
 
-The 39 files in the legacy `scripts` directory are divided by evidence rather than by extension:
+The historical 39-file inventory, including one file already removed from the
+legacy `scripts` directory, is assigned one of three outcomes: maintained
+behaviour moves into a typed native domain, an obsolete workaround is retired,
+or specialist work is rehomed outside the hardware companion API. A command
+that merely invokes Bash is not accepted as a native port.
 
-1. Sixteen superseded implementations will stop appearing in current how-to paths and will be deleted after focused current-kernel, image, installed-boot, and cleanup checks pass.
-2. Twenty-one maintained behaviours will be ported and parity-tested before their helpers are deleted. A command that still invokes Bash does not satisfy this gate.
-3. Two specialist behaviours, annotation regeneration and optional Ubuntu desktop replacement, will be rehomed with their appropriate maintainer or example ownership rather than promoted into the hardware companion API.
+Current how-to documentation uses the CLI. Dated reports and ADRs retain former
+commands only as historical evidence, with an explicit non-prescriptive notice
+and a current native owner. Links to files selected for retirement are removed
+before deletion so the change cannot break the documentation.
 
-Current how-to documentation will be rewritten around the CLI as each native contract lands. Dated test reports will retain their observations and commands but gain a prominent historical, non-prescriptive notice and a link to the current command. Existing ADRs will retain their original decision record and may gain a superseded-status note or a link to this decision.
-
-A legacy helper may be removed only when all of the following are true:
+Each port or retirement is accepted only after the applicable software gates
+below pass:
 
 - the replacement has unit tests for its policy and hostile inputs;
 - CLI integration tests cover preview, success, and failure delivery;
@@ -60,51 +125,55 @@ A legacy helper may be removed only when all of the following are true:
 - the respective current documentation uses the replacement command;
 - no production Go path invokes the helper or a generic shell wrapper;
 - relevant cross-platform builds, race tests, static checks, doc-comment checks, and British-English checks pass;
-- required hardware behaviour that cannot be simulated is recorded as an outstanding hardware gate rather than claimed from structural tests.
+- required hardware behaviour that cannot be simulated is recorded as an
+  outstanding hardware gate rather than claimed from structural tests.
 
-The following register records the initial disposition of every file in the legacy directory. It is an architectural scope record, not a claim that a port or hardware gate has already completed.
+The following register records the intended disposition of every file in the
+legacy directory. A native owner means the CLI owns the maintained software
+contract; it is not proof that the legacy file has already been removed or a
+blanket hardware-qualification statement.
 
-| Legacy file | Initial decision | Maintained owner or retirement evidence |
+| Legacy file | Intended outcome | Native owner, retirement, or rehoming evidence |
 | --- | --- | --- |
-| `build-sp11-imx681-libcamera-docker.sh` | Port | Native camera build domain and coherent-package validation |
-| `build-sp11-iptsd-docker.sh` | Port | Native IPTSD build domain and portable release receipt |
-| `build-sp11-live-usb-image.sh` | Retire | Direct hybrid-ISO creation and validation |
-| `build-sp11-qcom-x1e-kernel-docker.sh` | Port | Native containerised kernel-build manager |
-| `build-sp11-qcom-x1e-kernel.sh` | Port | Kernel source, package, preflight, and install domains |
-| `build-sp11-touchscreen-modules.sh` | Retire | Current in-tree touchscreen stack and stale-module cleanup |
-| `collect-sp11-kernel-source-metadata.sh` | Retire | Immutable Git revision provenance |
-| `finish-sp11-installed-system.sh` | Port by decomposition | Image hand-off plus focused firmware, Bluetooth, and status domains |
-| `install-sp11-iptsd.sh` | Port | Receipt-backed atomic IPTSD installer and rollback |
-| `install-sp11-support.sh` | Retire | Focused current installers; no broad legacy support bundle |
-| `install-sp11-touchscreen.sh` | Retire | Current in-tree touchscreen stack and reviewed cleanup |
-| `preflight-sp11-kernel-test.sh` | Port | `kernel preflight` policy and recovery evidence |
-| `prepare-sp11-audio-release-assets.sh` | Retire | Current FullIO audio release contract |
-| `prepare-sp11-image-release-assets.sh` | Retire | Current ISO, manifest, and journal release contract |
-| `prepare-sp11-installed-system.sh` | Retire | Adapter-owned installed-system hand-off |
-| `prepare-sp11-kernel-release-assets.sh` | Port | `kernel release prepare` and closed-set validation |
-| `publish-sp11-audio-release.sh` | Port | Policy-gated userspace release preparation and explicit publication boundary |
-| `publish-sp11-imx681-libcamera-release.sh` | Port | Coherent camera release preparation and validation |
-| `regenerate-qcom-x1e-annotations.sh` | Rehome | Kernel-source maintainer tooling, outside the companion API |
-| `render-sp11-imx681-raw.py` | Port | Camera RAW parser and deterministic preview domain |
-| `sp11-audio-migrate-to-native.sh` | Retire | Current FullIO installer and legacy cleanup |
-| `sp11-audio-topology.sh` | Retire | Current FullIO topology and UCM contract |
-| `sp11-bluetooth-mac.sh` | Port | Private hand-off, configuration, apply, and removal transaction |
-| `sp11-enable-wsa-routing.sh` | Retire | Native FullIO routing and recognised cleanup |
-| `sp11-fix-audio-boot-race.sh` | Retire | Current kernel audio sequencing and recognised cleanup |
-| `sp11-grab-fw.sh` | Port | Strict Windows hand-off import and firmware transaction |
-| `sp11-install-kde-desktop.sh` | Rehome | Optional Ubuntu example, outside hardware enablement |
-| `sp11-pipewire-speaker-sink.sh` | Retire | Native FullIO PipeWire exposure and user-scoped cleanup |
-| `sp11-wifi-board-fixup.sh` | Port conditionally | Pinned board-data inspection; apply only with exact hardware evidence |
-| `systemd/sp11-pipewire-restart.service` | Retire | Native FullIO startup and exact cleanup recognition |
-| `systemd/sp11-wsa-routing.service` | Retire | Native FullIO routing and exact cleanup recognition |
-| `troubleshoot-sp11-audio.sh` | Port | Redacted, bounded audio doctor evidence |
-| `troubleshoot-sp11-bluetooth.sh` | Port | Redacted, timeout-bounded Bluetooth doctor evidence |
-| `troubleshoot-sp11-touchscreen.sh` | Retire | Current in-tree touchscreen doctor; discard obsolete success criteria |
-| `troubleshoot-sp11-wifi-rfkill.sh` | Port | Read-only Wi-Fi and kernel doctor evidence |
-| `validate-sp11-imx681-raw.sh` | Port | Camera graph, capture, privacy, and RAW validation domain |
-| `validate-sp11-iptsd-payload.sh` | Port | Native closed-set IPTSD release validator |
-| `validate-sp11-touchscreen-release.sh` | Port in part | Generic kernel release validation; discard out-of-tree requirements |
-| `write-image-to-macos-disk.sh` | Port | Cross-platform device discovery, write, flush, and read-back verification |
+| `build-sp11-imx681-libcamera-docker.sh` | Native | `userspace build camera`, `userspace camera release prepare`, and `userspace camera release validate` own coherent camera packages |
+| `build-sp11-iptsd-docker.sh` | Native | `userspace build iptsd` owns the pinned build and portable receipt |
+| `build-sp11-live-usb-image.sh` | Retired | `image create` and `image validate` own the direct hybrid-ISO contract |
+| `build-sp11-qcom-x1e-kernel-docker.sh` | Native | `kernel build` owns the containerised kernel build policy |
+| `build-sp11-qcom-x1e-kernel.sh` | Native | `kernel build`, `kernel preflight`, and `kernel install` own source, package, and guarded-install behaviour |
+| `build-sp11-touchscreen-modules.sh` | Retired | The touchscreen stack is in-tree; `userspace status` reports stale module overrides for manual review |
+| `collect-sp11-kernel-source-metadata.sh` | Retired | Native kernel build and release manifests record immutable source provenance |
+| `finish-sp11-installed-system.sh` | Native by decomposition | `kernel install`, `userspace install`, `userspace status`, `handoff apply`, and `doctor` own its maintained outcomes |
+| `install-sp11-iptsd.sh` | Native | `userspace install iptsd` owns receipt-backed installation and rollback |
+| `install-sp11-support.sh` | Retired | Focused native installers, `handoff`, and `doctor` replace the broad legacy bundle |
+| `install-sp11-touchscreen.sh` | Retired | The in-tree stack needs no override installer; `userspace status` reports stale module overrides for manual review |
+| `preflight-sp11-kernel-test.sh` | Native | `kernel preflight` owns read-only installation and recovery evidence |
+| `prepare-sp11-audio-release-assets.sh` | Retired | `userspace audio release prepare` and `userspace audio release validate` own the current FullIO v19c release contract |
+| `prepare-sp11-image-release-assets.sh` | Native replacement completed | `image release prepare` and `image release validate` own the ISO, manifest, journal, split, and reconstruction contract |
+| `prepare-sp11-installed-system.sh` | Retired | Adapter-owned `image create` output and the focused installed-system commands replace this broad mutation |
+| `prepare-sp11-kernel-release-assets.sh` | Native | `kernel release prepare` and `kernel release validate` own closed local release directories |
+| `publish-sp11-audio-release.sh` | Native local half; remote half retired | `userspace audio release prepare` and `userspace audio release validate` are local-only; remote publication remains an explicit external maintainer action |
+| `publish-sp11-imx681-libcamera-release.sh` | Native local half; remote half retired | `userspace camera release prepare` and `userspace camera release validate` own local proof; the CLI does not publish remotely |
+| `regenerate-qcom-x1e-annotations.sh` | Rehomed | Annotation regeneration belongs to kernel-source maintainer tooling, outside the companion API |
+| `render-sp11-imx681-raw.py` | Native | `userspace camera render` owns bounded deterministic RAW10 preview generation |
+| `sp11-audio-migrate-to-native.sh` | Retired | `userspace install audio`, `userspace status`, and `clean` own installation and recognised cleanup |
+| `sp11-audio-topology.sh` | Retired | The checksum-pinned FullIO topology and UCM release replaces generated fallback content |
+| `sp11-bluetooth-mac.sh` | Native | `handoff import`, `handoff apply`, and `handoff restore` own private address input and recoverable application |
+| `sp11-enable-wsa-routing.sh` | Retired | Current FullIO UCM owns routing; `clean` recognises the workaround |
+| `sp11-fix-audio-boot-race.sh` | Retired | Current kernel and FullIO sequencing replace the disproved boot-race workaround |
+| `sp11-grab-fw.sh` | Native | `handoff import`, `handoff apply`, and `handoff restore` own strict private Windows material transactions |
+| `sp11-install-kde-desktop.sh` | Rehomed | Optional desktop replacement belongs to Ubuntu package-management guidance, not hardware enablement |
+| `sp11-pipewire-speaker-sink.sh` | Retired | Current FullIO UCM exposes the speaker path; `clean` recognises user-scoped remnants |
+| `sp11-wifi-board-fixup.sh` | Retired | Distribution firmware owns board data; `doctor hardware wifi` reports evidence without mutating it |
+| `systemd/sp11-pipewire-restart.service` | Retired | Current FullIO startup no longer needs it; `clean` recognises the unit |
+| `systemd/sp11-wsa-routing.service` | Retired | Current FullIO UCM owns routing; `clean` recognises the unit |
+| `troubleshoot-sp11-audio.sh` | Native | `doctor hardware audio` and `doctor userspace` own bounded redacted evidence |
+| `troubleshoot-sp11-bluetooth.sh` | Native | `doctor hardware bluetooth` owns bounded redacted evidence |
+| `troubleshoot-sp11-touchscreen.sh` | Native current part; obsolete criteria retired | `doctor hardware touchscreen`, `kernel preflight`, and `doctor userspace` report current software state without obsolete out-of-tree success criteria |
+| `troubleshoot-sp11-wifi-rfkill.sh` | Native | `doctor hardware wifi` owns bounded read-only evidence |
+| `validate-sp11-imx681-raw.sh` | Native | `userspace camera capture` owns graph, transport, sampled-content, and emitted-error gates; physical checks stay explicit |
+| `validate-sp11-iptsd-payload.sh` | Native | `userspace build iptsd` receipts and `userspace install iptsd` repeat the closed-set proof |
+| `validate-sp11-touchscreen-release.sh` | Native generic part; obsolete part retired | `kernel release validate` owns generic package proof; out-of-tree touchscreen requirements are rejected |
+| `write-image-to-macos-disk.sh` | Native | `image devices` and `image write` own identity-bound write, flush, and read-back verification |
 
 ## Consequences
 
@@ -114,5 +183,7 @@ The following register records the initial disposition of every file in the lega
 - Destructive writes and installed-system changes become previewable, identity-bound, revalidated, and evidenced.
 - Windows-derived values have an auditable interchange format and a private import boundary.
 - Maintainer publication remains possible without conflating local artefact preparation with authority to change a remote release.
-- Migration requires temporary duplication while each native implementation proves parity; scripts remain until their individual gates pass.
+- Migration temporarily retains legacy files while their native coverage,
+  unique tests, workflow references, and explicit retirement decisions are
+  completed.
 - Structural and simulated checks cannot replace cold-boot, suspend, pen, wireless, Bluetooth, camera, audio, installation, or removable-media tests on actual Surface hardware, so those gates remain explicit.

@@ -5,6 +5,13 @@ title: "ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cac
 description: Architecture Decision Record (ADR) for the right speaker silence on the Surface Pro 11.
 ---
 
+> **Current operator notice (2026-08-30):** Former WSA-routing and manual-sink
+> helper names below are retained only as investigation evidence. Current
+> operators use the reviewed FullIO release through
+> `userspace audio release prepare`, `userspace audio release validate`, `userspace install audio`,
+> `doctor hardware audio`, and `clean`; see
+> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+
 # ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cache
 
 ## Status

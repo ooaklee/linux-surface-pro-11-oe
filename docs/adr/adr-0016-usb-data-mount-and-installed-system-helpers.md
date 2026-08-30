@@ -5,6 +5,14 @@ title: "ADR016: USB Data Mount and Installed-System Helpers"
 description: Architecture Decision Record (ADR) for explicitly mounting the SP11DATA USB partition and replacing fragile installed-system copy-paste commands with support helpers.
 ---
 
+> **Current operator notice (2026-08-30):** The installed-system helpers below
+> describe the former raw-image workflow and are retained only as historical
+> evidence. Current operators use `image create`, `image validate`,
+> `kernel preflight`, `kernel install`, `userspace install`, `userspace status`,
+> `handoff`, `doctor`, and `clean`; see
+> [CLI ADR007](../../cli/linux-armer/docs/adr/adr-007-installed-system-handoff.md).
+> Native structural checks do not claim a successful USB-free hardware boot.
+
 ## Context
 
 [ADR015](adr-0015-direct-live-desktop-and-install-gate.md) allows cautious

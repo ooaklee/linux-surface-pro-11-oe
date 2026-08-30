@@ -5,6 +5,14 @@ title: "ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Kernel Build"
 description: Architecture Decision Record (ADR) for the Surface Pro 11 v3 build of Johan G.'s qcom-x1e 7.2-rc5-jg-0 kernel that enables the MSHW0485 OLED touchscreen over SE2 QSPI, and the out-of-tree geocausa modules that provide runtime QSPI support.
 ---
 
+> **Current operator notice (2026-08-30):** The v3 out-of-tree module and
+> builder commands below are historical, non-prescriptive evidence. Current
+> kernels carry the touchscreen stack in-tree. Use `kernel build`,
+> `kernel preflight`, `kernel install`, `kernel release prepare`,
+> `kernel release validate`, `doctor hardware touchscreen`, `doctor userspace`,
+> and `clean`; see
+> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+
 # ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Kernel Build
 
 ## Status
