@@ -25,3 +25,12 @@ Notable changes to `linux-armer` are documented here. The project follows [Keep 
 - Deterministic installed-system hand-off with exact dpkg registration, a non-Casper initramfs, paired versioned device trees, explicit X1E/X1P GRUB entries, and bounded kernel lifecycle hooks.
 - Repository-wide documentation quality gates covering all Go declarations, including tests, and British-English comments and public prose.
 - Cross-platform GoReleaser configuration for Linux and macOS on AMD64 and ARM64.
+- Adapter-owned live-media discovery metadata with exact Casper initramfs and ISO UUID synchronisation.
+
+### Changed
+
+- Removed the unsafe live-USB aDSP menu entry; every live entry now retains the USB-protection blacklist while installed systems remain unaffected.
+
+### Fixed
+
+- Corrected Ubuntu live-media discovery so a regenerated Casper initramfs cannot be published with a stale ISO UUID marker.

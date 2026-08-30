@@ -364,7 +364,7 @@ func TestImageCreateDryRunIsDeterministic(t *testing.T) {
 	}
 	wantStepIDs := []string{
 		"verify-source", "verify-kernel", "prepare-tools", "extract-live-root", "install-kernel",
-		"assemble-initramfs-root", "build-initramfs", "pair-device-trees", "repack-live-root",
+		"assemble-initramfs-root", "build-initramfs", "bind-live-media", "pair-device-trees", "repack-live-root",
 		"replay-hybrid-boot", "validate-output", "publish-output",
 	}
 	gotStepIDs := make([]string, 0, len(operationPlan.Steps))

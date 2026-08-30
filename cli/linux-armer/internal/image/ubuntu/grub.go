@@ -48,13 +48,6 @@ menuentry "Ubuntu for Surface Pro 11 X1P/LCD (%s, hardware qualification pending
     initrd /casper/initrd
 }
 
-menuentry "Ubuntu for Surface Pro 11 X1E/OLED (allow aDSP)" {
-    set gfxpayload=keep
-    linux /casper/vmlinuz $cmdline --- quiet splash console=tty0
-    devicetree /sp11/dtb/x1e80100-microsoft-denali-oled.dtb
-    initrd /casper/initrd
-}
-
 menuentry "Ubuntu for Surface Pro 11 X1E/OLED (text diagnostics)" {
     set gfxpayload=keep
     linux /casper/vmlinuz $cmdline modprobe.blacklist=qcom_q6v5_pas debug systemd.unit=multi-user.target plymouth.enable=0 --- console=tty0

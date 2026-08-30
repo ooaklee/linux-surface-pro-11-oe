@@ -1,8 +1,8 @@
 package ubuntu
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/artifact"
 	imagecontract "github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image"
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/image/ubuntu/caspermedia"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/kernel"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/platform"
 )
@@ -104,6 +105,7 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		"-extract", "/sp11/linux-armer-manifest.json", "/work/manifest.json",
 		"-extract", "/casper/vmlinuz", "/work/vmlinuz",
 		"-extract", "/casper/initrd", "/work/initrd",
+		"-extract", "/.disk/casper-uuid-generic", "/work/casper-uuid-generic",
 		"-extract", "/casper/minimal.squashfs", "/work/minimal.squashfs",
 		"-extract", "/sp11/dtb/x1e80100-microsoft-denali-oled.dtb", "/work/x1e.dtb",
 		"-extract", "/sp11/dtb/x1p64100-microsoft-denali.dtb", "/work/x1p.dtb",
@@ -115,14 +117,14 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		report.Valid = false
 		return report, fmt.Errorf("ISO validation failed: required members cannot be extracted")
 	}
-	addCheck("required-iso-members", true, "kernel, initramfs, live root, paired DTBs, manifest, and GRUB files are present")
+	addCheck("required-iso-members", true, "kernel, initramfs, Casper identity, live root, paired DTBs, manifest, and GRUB files are present")
 
 	manifestBytes, err := os.ReadFile(filepath.Join(workspace, "manifest.json"))
 	if err != nil {
 		return report, err
 	}
-	var manifest imagecontract.Manifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+	manifest, err := imagecontract.DecodeManifest(bytes.NewReader(manifestBytes))
+	if err != nil {
 		addCheck("embedded-manifest", false, err.Error())
 		return report, fmt.Errorf("decode embedded manifest: %w", err)
 	}
@@ -131,9 +133,11 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		report.DeviceTrees = append(report.DeviceTrees, dtb.Device)
 	}
 	abiSafe := safeKernelABI(manifest.KernelBundle.ABI)
+	manifestMediaContract, markerRecord, manifestMediaErr := caspermedia.FromDiscoveryRecord(manifest.MediaDiscovery)
 	manifestOK := manifest.SchemaVersion == imagecontract.ManifestSchemaVersion &&
 		manifest.Adapter == AdapterID &&
 		manifest.KernelBundle.SchemaVersion == kernel.BundleSchemaVersion &&
+		manifestMediaErr == nil &&
 		abiSafe
 	addCheck("embedded-manifest", manifestOK, fmt.Sprintf("schema=%d adapter=%s abi=%s", manifest.SchemaVersion, manifest.Adapter, manifest.KernelBundle.ABI))
 	if !abiSafe {
@@ -151,11 +155,22 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		{"x1e-dtb-digest", "x1e.dtb", findArtifact(manifest.BootArtifacts.DTBs, "x1e80100-microsoft-denali-oled.dtb")},
 		{"x1p-dtb-digest", "x1p.dtb", findArtifact(manifest.BootArtifacts.DTBs, "x1p64100-microsoft-denali.dtb")},
 	} {
-		actual, hashErr := artifact.HashFile(filepath.Join(workspace, expected.path))
-		passed := hashErr == nil && expected.record.SHA256 != "" && actual == expected.record.SHA256
-		details := fmt.Sprintf("expected=%s actual=%s", expected.record.SHA256, actual)
+		artifactPath := filepath.Join(workspace, expected.path)
+		actual, hashErr := artifact.HashFile(artifactPath)
+		artifactInfo, statErr := os.Stat(artifactPath)
+		recordErr := imagecontract.ValidateArtifactRecord(expected.record)
+		passed := hashErr == nil && statErr == nil && recordErr == nil &&
+			actual == expected.record.SHA256 && artifactInfo.Size() == expected.record.Size
+		details := fmt.Sprintf("expected_sha256=%s actual_sha256=%s expected_size=%d",
+			expected.record.SHA256, actual, expected.record.Size)
 		if hashErr != nil {
 			details = hashErr.Error()
+		} else if statErr != nil {
+			details = statErr.Error()
+		} else if recordErr != nil {
+			details = recordErr.Error()
+		} else {
+			details += fmt.Sprintf(" actual_size=%d", artifactInfo.Size())
 		}
 		addCheck(expected.name, passed, details)
 	}
@@ -172,6 +187,58 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		casperPassed := strings.Contains(listing, "scripts/casper") && strings.Contains(listing, "scripts/casper-bottom/")
 		addCheck("casper-live-initramfs", casperPassed, "expected Casper boot and live-session scripts")
 	}
+
+	markerPath := filepath.Join(workspace, "casper-uuid-generic")
+	markerBytes, markerErr := os.ReadFile(markerPath)
+	markerDigest, markerHashErr := artifact.HashFile(markerPath)
+	markerInfo, markerStatErr := os.Stat(markerPath)
+	markerPassed := markerErr == nil && markerHashErr == nil && markerStatErr == nil && markerRecord.SHA256 != "" &&
+		markerDigest == markerRecord.SHA256 && markerInfo.Size() == markerRecord.Size
+	markerDetails := fmt.Sprintf("expected=%s actual=%s", markerRecord.SHA256, markerDigest)
+	if markerErr != nil {
+		markerDetails = markerErr.Error()
+	} else if markerHashErr != nil {
+		markerDetails = markerHashErr.Error()
+	} else if markerStatErr != nil {
+		markerDetails = markerStatErr.Error()
+	}
+	addCheck("casper-media-identity-digest", markerPassed, markerDetails)
+
+	unpackedInitrd := filepath.Join(workspace, "initrd-unpacked")
+	unpackErr := v.Docker.RunInWorkspace(ctx, toolsImage, workspace,
+		"unmkinitramfs", "/work/initrd", "/work/initrd-unpacked")
+	initrdIdentityPath := filepath.Join(unpackedInitrd, "main", filepath.FromSlash(caspermedia.InitramfsIdentityPath))
+	initrdIdentity, identityReadErr := os.ReadFile(initrdIdentityPath)
+	mediaContract, identityErr := caspermedia.Matches(markerBytes, initrdIdentity)
+	identityPassed := unpackErr == nil && markerErr == nil && identityReadErr == nil && identityErr == nil &&
+		mediaContract.UUID == manifestMediaContract.UUID
+	identityDetails := fmt.Sprintf("medium=%q initramfs=%q manifest=%q",
+		strings.TrimSpace(string(markerBytes)), strings.TrimSpace(string(initrdIdentity)), manifestMediaContract.UUID)
+	if unpackErr != nil {
+		identityDetails = unpackErr.Error()
+	} else if identityReadErr != nil {
+		identityDetails = identityReadErr.Error()
+	} else if identityErr != nil {
+		identityDetails = identityErr.Error()
+	}
+	addCheck("casper-media-uuid", identityPassed, identityDetails)
+
+	defaultBoot, defaultBootErr := os.ReadFile(filepath.Join(unpackedInitrd, "main", "conf", "conf.d", "default-boot-to-casper.conf"))
+	defaultLayer, defaultLayerErr := os.ReadFile(filepath.Join(unpackedInitrd, "main", "conf", "conf.d", "default-layer.conf"))
+	bootDefaultPassed := unpackErr == nil && defaultBootErr == nil && strings.Contains(string(defaultBoot), "export BOOT=casper")
+	addCheck("casper-default-boot", bootDefaultPassed, "initramfs defaults an otherwise unset BOOT value to casper")
+	layerName := strings.TrimPrefix(strings.TrimSpace(string(defaultLayer)), "LAYERFS_PATH=")
+	layerOutput, layerMemberErr := v.Docker.CaptureInWorkspace(ctx, toolsImage, workspace,
+		"xorriso", "-indev", "/work/image.iso", "-ls", "/casper/"+layerName)
+	layerPassed := unpackErr == nil && defaultLayerErr == nil && layerName == "minimal.standard.live.squashfs" &&
+		layerMemberErr == nil && strings.Contains(string(layerOutput), "/casper/"+layerName)
+	layerDetails := fmt.Sprintf("LAYERFS_PATH=%s", layerName)
+	if defaultLayerErr != nil {
+		layerDetails = defaultLayerErr.Error()
+	} else if layerMemberErr != nil {
+		layerDetails = layerMemberErr.Error()
+	}
+	addCheck("casper-default-layer", layerPassed, layerDetails)
 
 	moduleProbe := "usr/lib/modules/" + manifest.KernelBundle.ABI + "/modules.dep"
 	moduleErr := v.Docker.RunInWorkspace(ctx, toolsImage, workspace,
@@ -199,7 +266,14 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		strings.Contains(grubText, "devicetree /sp11/dtb/x1p64100-microsoft-denali.dtb") &&
 		strings.Contains(grubText, "modprobe.blacklist=qcom_q6v5_pas") &&
 		strings.Contains(grubText, "soundwire_qcom.sp11_feedback_active_offset2_zero=1")
-	addCheck("surface-grub-menu", grubPassed, "X1E/X1P DTBs, the audio argument, and USB-safe live entries")
+	for _, line := range strings.Split(grubText, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "linux /casper/vmlinuz") && !strings.Contains(line, "modprobe.blacklist=qcom_q6v5_pas") {
+			grubPassed = false
+		}
+	}
+	grubPassed = grubPassed && !strings.Contains(grubText, "allow aDSP")
+	addCheck("surface-grub-menu", grubPassed, "X1E/X1P DTBs, the audio argument, and aDSP-safe live entries")
 	selfLocationPassed := strings.Contains(grubText, "insmod part_gpt") &&
 		strings.Contains(grubText, "insmod iso9660") &&
 		strings.Contains(grubText, "insmod search") &&
@@ -207,6 +281,8 @@ func (v *Validator) Validate(ctx context.Context, isoPath string) (imagecontract
 		strings.Contains(grubText, "search --no-floppy --file --set=iso_root /casper/vmlinuz") &&
 		strings.Contains(grubText, "set root=$iso_root")
 	addCheck("grub-iso-self-location", selfLocationPassed, "partition, ISO 9660, and file-search modules select the ISO containing /casper/vmlinuz")
+	directDiscoveryPassed := !strings.Contains(grubText, "iso-scan/filename=") && !strings.Contains(grubText, "ignore_uuid")
+	addCheck("grub-direct-media-discovery", directDiscoveryPassed, "direct hybrid media relies on paired Casper UUIDs without nested-ISO or identity-bypass arguments")
 
 	directISO, directErr := sameDigest(filepath.Join(workspace, "iso-bootaa64.efi"), filepath.Join(workspace, "iso-grubaa64.efi"))
 	addCheck("direct-grub-iso-path", directErr == nil && directISO, "EFI/boot/bootaa64.efi matches grubaa64.efi")

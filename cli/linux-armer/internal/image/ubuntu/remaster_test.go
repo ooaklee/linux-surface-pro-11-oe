@@ -116,6 +116,10 @@ sources:
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(workspace, "source-casper-uuid-generic"),
+		[]byte("7bda4398-0498-4564-acfe-e90dcc1c75f2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := validateSourceLayout(workspace); err != nil {
 		t.Fatalf("validateSourceLayout() error = %v", err)
@@ -134,6 +138,83 @@ func TestValidateSourceLayoutRejectsNonLayeredSource(t *testing.T) {
 	err := validateSourceLayout(workspace)
 	if err == nil || !strings.Contains(err.Error(), "fsimage-layered") {
 		t.Fatalf("validateSourceLayout() error = %v, want layered-layout error", err)
+	}
+}
+
+// TestValidateSourceLayoutRejectsMalformedCasperIdentity verifies the adapter
+// will not remaster source media whose live-initramfs binding is not canonical.
+func TestValidateSourceLayoutRejectsMalformedCasperIdentity(t *testing.T) {
+	workspace := t.TempDir()
+	configuration := `kernel:
+  default: linux-qcom-x1e
+sources:
+- path: minimal.squashfs
+  type: fsimage-layered
+- path: minimal.standard.squashfs
+  type: fsimage-layered
+`
+	if err := os.WriteFile(filepath.Join(workspace, "install-sources.yaml"), []byte(configuration), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"minimal.squashfs", "minimal.standard.squashfs", "minimal.standard.live.squashfs"} {
+		if err := os.WriteFile(filepath.Join(workspace, name), []byte("squashfs"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "source-casper-uuid-generic"), []byte("not-a-uuid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := validateSourceLayout(workspace)
+	if err == nil || !strings.Contains(err.Error(), "Casper UUID") {
+		t.Fatalf("validateSourceLayout() error = %v, want Casper UUID error", err)
+	}
+}
+
+// TestUpdateMD5ManifestTracksCasperIdentity verifies Ubuntu's compatibility
+// checksum list records the newly generated medium UUID rather than the source value.
+func TestUpdateMD5ManifestTracksCasperIdentity(t *testing.T) {
+	workspace := t.TempDir()
+	files := map[string]string{
+		"remastered.squashfs": "root",
+		"minimal.manifest":    "manifest",
+		"minimal.size":        "4\n",
+		"casper-vmlinuz":      "kernel",
+		"casper-initrd":       "initrd",
+		"casper-uuid-generic": "c5ef1897-ed0f-490e-b6d8-961dc41124b2\n",
+		"grub.cfg":            "grub",
+		"grubaa64.efi":        "efi",
+		"disk-info":           "info",
+		"sp11/README.txt":     "support",
+	}
+	for name, contents := range files {
+		path := filepath.Join(workspace, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "md5sum.txt"),
+		[]byte(strings.Repeat("0", 32)+"  ./.disk/casper-uuid-generic\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := updateMD5Manifest(workspace); err != nil {
+		t.Fatalf("updateMD5Manifest() error = %v", err)
+	}
+	digest, err := md5File(filepath.Join(workspace, "casper-uuid-generic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := os.ReadFile(filepath.Join(workspace, "md5sum.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := digest + "  ./.disk/casper-uuid-generic"
+	if !strings.Contains(string(manifest), want) {
+		t.Fatalf("md5sum.txt does not contain %q:\n%s", want, manifest)
 	}
 }
 
@@ -221,6 +302,15 @@ func TestGrubConfigPairsDeviceTreesWithBootEntries(t *testing.T) {
 			t.Errorf("grubConfig() does not contain %q", want)
 		}
 	}
+	if strings.Contains(config, "allow aDSP") {
+		t.Fatal("grubConfig() exposes the unsafe live-USB aDSP entry")
+	}
+	for _, line := range strings.Split(config, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "linux /casper/vmlinuz") && !strings.Contains(line, "modprobe.blacklist=qcom_q6v5_pas") {
+			t.Errorf("live kernel line does not protect USB media from aDSP reset: %q", line)
+		}
+	}
 }
 
 // TestSafeKernelABI verifies only a non-empty, path-safe kernel ABI can be used
@@ -304,9 +394,10 @@ func TestCreateErrorReportsRetainedDiagnosticVolume(t *testing.T) {
 func TestEmbeddedManifestContainsOnlyPortableKernelPaths(t *testing.T) {
 	workspace := t.TempDir()
 	for path, content := range map[string]string{
-		"source.iso":     "source",
-		"casper-vmlinuz": "kernel",
-		"casper-initrd":  "initrd",
+		"source.iso":          "source",
+		"casper-vmlinuz":      "kernel",
+		"casper-initrd":       "initrd",
+		"casper-uuid-generic": "c5ef1897-ed0f-490e-b6d8-961dc41124b2\n",
 		"sp11/dtb/x1e80100-microsoft-denali-oled.dtb": "x1e",
 		"sp11/dtb/x1p64100-microsoft-denali.dtb":      "x1p",
 	} {
@@ -340,6 +431,14 @@ func TestEmbeddedManifestContainsOnlyPortableKernelPaths(t *testing.T) {
 		if pkg.Path != want {
 			t.Fatalf("package path = %q, want %q", pkg.Path, want)
 		}
+	}
+	if manifest.MediaDiscovery.Strategy != "direct-hybrid" ||
+		manifest.MediaDiscovery.Protocol != "casper" ||
+		len(manifest.MediaDiscovery.Evidence) != 2 ||
+		manifest.MediaDiscovery.Evidence[0].Value != "c5ef1897-ed0f-490e-b6d8-961dc41124b2" ||
+		manifest.MediaDiscovery.Evidence[0].Artifact == nil ||
+		manifest.MediaDiscovery.Evidence[0].Artifact.Path != ".disk/casper-uuid-generic" {
+		t.Fatalf("media discovery = %#v", manifest.MediaDiscovery)
 	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
