@@ -1,8 +1,10 @@
 # Changelog
 
-Notable changes to `linux-armer` are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Notable changes to `linux-armer` are documented here. The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+The current unreleased version is `0.1.0`. Before `1.0.0`, each release containing new features advances the minor version, while a release containing fixes only advances the patch version.
+
+## [0.1.0] - Unreleased
 
 ### Added
 
