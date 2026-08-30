@@ -21,6 +21,13 @@ The current verified target is:
 > Warning: this is not an official Ubuntu, Microsoft, or linux-surface release.
 > Keep Windows installed, keep a recovery USB nearby, and expect regressions.
 
+> **Current workflow:** use the Go-based [`linux-armer` CLI](cli/linux-armer/README.md)
+> for new Ubuntu Concept media, kernel bundles, installed-system hand-off,
+> userspace diagnosis, and reversible legacy clean-up. The older script-driven
+> bring-up notes remain below as historical engineering evidence; several of
+> their audio, out-of-tree touchscreen, and post-install workarounds are retired
+> and must not be applied to current kernels.
+
 ## Prerequisites
 
 - Surface Pro 11 with Snapdragon X Elite (`X1E80100`) — not Surface Laptop 7/Romulus or Intel Surface devices
@@ -57,7 +64,28 @@ list for the upstream Arch status.
 | Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
 
-## Quick Start
+## Current CLI quick start
+
+Build `linux-armer` from the complete checkout, verify the host, and create a
+structurally validated Ubuntu Concept ISO:
+
+```bash
+cd cli/linux-armer
+go build -o bin/linux-armer ./cmd/linux-armer
+./bin/linux-armer doctor
+./bin/linux-armer image create --output linux-armer-ubuntu-sp11.iso
+./bin/linux-armer image validate linux-armer-ubuntu-sp11.iso
+```
+
+See the [CLI guide](cli/linux-armer/README.md) for pinned source images, local
+or released kernel bundles, the userspace doctor, clean-up plans and restore,
+and the exact hardware-validation boundary.
+
+## Historical script workflow
+
+> **Do not use this section as the current installation path.** It documents
+> earlier bring-up iterations and can install workarounds that the maintained
+> kernel and `linux-armer clean` now classify as obsolete.
 
 The custom live-USB builder creates a small ARM64 GRUB boot shim, stores the
 Ubuntu Snapdragon X concept ISO on a Linux data partition, and injects the
@@ -212,7 +240,7 @@ Build the matching pinned ARM64 iptsd payload before creating a pen test image:
 ```
 
 The builder verifies the exact upstream source and emits binaries, hashes,
-licenses, and corresponding source under `payload/iptsd-sp11`. See
+licences, and corresponding source under `payload/iptsd-sp11`. See
 [Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md).
 
 ### 2. Build the USB image
@@ -364,7 +392,7 @@ sudo depmod -a $REL
 sudo update-initramfs -u -k $REL
 ```
 
-The captured Windows controller initialization is intentionally not the
+The captured Windows controller initialisation is intentionally not the
 default. If the diagnostic proves that the correct modules are loaded and the
 Linux-integrated path still fails on a cold boot, reinstall explicitly with
 `--windows-se-init` as an A/B recovery test and retain the known-good kernel

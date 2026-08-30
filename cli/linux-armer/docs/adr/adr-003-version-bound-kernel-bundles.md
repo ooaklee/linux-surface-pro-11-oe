@@ -16,7 +16,7 @@ Kernel release assets are downloaded independently and can be replaced or corrup
 
 ## Decision
 
-Kernel inputs will be normalized into a `KernelBundle`. A bundle records its source release and repository, architecture, ABI, package version, selected Debian packages, package SHA-256 digests, and expected Surface Pro 11 device-tree paths.
+Kernel inputs will be normalised into a `KernelBundle`. A bundle records its source release and repository, architecture, ABI, package version, selected Debian packages, package SHA-256 digests, and expected Surface Pro 11 device-tree paths.
 
 Every image build requires one kernel image package and one modules package. The CLI will derive roles, ABI, and package version from the filenames and reject missing runtime packages, duplicate roles, mixed ABIs, mixed versions, or absent digests. Local package contents must match their recorded SHA-256 values immediately before use.
 
