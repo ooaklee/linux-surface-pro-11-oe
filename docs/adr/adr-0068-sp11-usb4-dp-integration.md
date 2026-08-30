@@ -9,13 +9,15 @@ description: Architecture Decision Record (ADR) for starting the Surface Pro 11 
 
 ## Status
 
-Accepted for the source/static portion and the controlled procedure for an
-explicitly selected top-port retimer qualification boot at the
-`7.2.0-jg-0sp11v20` implementation milestone on 2026-08-30. The clean
-same-version package rebuild and packaged-image inspection passed; guarded and
-experimental runtime results remain pending. Full USB4 enablement is not
-accepted: the production Denali device tree still disables USB4 at both PS8830
-retimers, and this branch enables no host-router consumer.
+Accepted for the source/static portion and the controlled top-port retimer
+qualification at the `7.2.0-jg-0sp11v20` implementation milestone on
+2026-08-30. The clean same-version rebuild, packaged-image inspection, guarded
+control attach, top-port experimental attach, and guarded rollback passed for
+their intended scope. Full USB4 enablement is not accepted: the experimental
+attach reached the top-port PS8830 USB4 configuration path, but no active
+host-router PHY consumer or USB4 domain/router was present, and no dock
+USB/Thunderbolt enumeration appeared. The production tree and normal rollback
+image retain both PS8830 guards.
 
 ### Kernel integration record
 
@@ -262,9 +264,14 @@ isolation are validated statically at
 | Alternate Stubble construction | Pass in the Ubuntu 26.04 qualification package: ARM64 PE image, exactly one `.dtbauto`, and extracted experimental model/guard count verified |
 | Experimental full qcom-x1e package rebuild | Pass at exact source head `70ddec100fe9`: `binary-indep binary-qcom-x1e` completed with no local patches; four version-`7.2.0-jg-0sp11v20` packages exported and their six-file checksum manifest verified strictly |
 | Packaged Stubble isolation | Pass: the normal ARM64 PE image contains 38 `.dtbauto` sections and no experimental marker; the alternate contains exactly one `.dtbauto`; no experimental path exists under `/boot` and no loose experimental DTB is packaged |
-| Linux USB4 domain/router runtime | Not run — production USB4 is disabled |
-| USB3, PCIe, or DisplayPort tunnel runtime | Not run — production USB4 is disabled |
-| Direct DisplayPort regression and automatic runtime-PM qualification | Not run; required before either production guard or runtime-PM policy changes |
+| Guarded v20 regressions | Partial pass: ordinary OLED model and two live guards; one-, two-, and three-finger touch, pen inking/pressure/barrel button, and a direct USB3 device passed. Direct USB-C DisplayPort Alt Mode was not run because no suitable test device or adapter was available |
+| Guarded TS4 control attach | Pass for the production safety boundary: the top-port attach encountered the DT policy rejection; no dock USB/Thunderbolt device or USB4 domain appeared in this session |
+| Top-port experimental boot | Pass: exact experimental model, alternate `BOOT_IMAGE`, and only the bottom-port guard remained |
+| Top-port experimental TS4 attach | Pass for the retimer-only scope: the PS8830 driver completed its USB4 configuration writes without error, then QMP reported no active host-router PHY consumer; no dock USB/Thunderbolt device or USB4 domain appeared |
+| Guarded rollback | Pass: a cold boot of the normal unedited v20 image restored the ordinary OLED model and both live guards |
+| Linux USB4 domain/router runtime | Observed negative as designed: no domain or router appeared; QMP had no active host-router PHY consumer when the mux request arrived |
+| USB3, PCIe, or DisplayPort tunnel runtime | Not established: no dock USB/Thunderbolt enumeration or USB4 domain appeared; direct USB3 success is not tunnel evidence |
+| Direct DisplayPort regression and automatic runtime-PM qualification | Not run; suitable direct-DP test hardware was unavailable, and both gates remain required before any production guard or runtime-PM change |
 
 ### Reproducible package evidence
 
@@ -342,6 +349,49 @@ are identical at SHA-256
 only their embedded DTB sets differ. The packaged production OLED DTB is
 byte-identical to the installed guarded v20 DTB at SHA-256
 `b65e0b97e3cd8ce2454000d9d14ff27bd8863c0730cde27a2b42b8fff4809efa`.
+
+### Controlled top-port runtime evidence
+
+The 2026-08-30 qualification first booted the normal v20 image with the
+ordinary OLED model and both live PS8830 guards. One-, two-, and three-finger
+touch, pen inking with pressure variation, the barrel button, and a direct
+USB3 device passed. Direct USB-C DisplayPort Alt Mode was not run because no
+suitable test device or adapter was available; the existing project support
+claim was therefore not requalified by this run.
+
+The guarded TS4 control attach produced the expected policy rejection and no
+dock topology. After a cold power cycle, the alternate image booted with exact
+model `Microsoft Surface Pro 11th Edition (OLED, top-port USB4 retimer
+experiment)` and only the bottom-port guard. A single attach of the matched
+CalDigit TS4 and bundled 40 Gb/s cable changed the labelled top Type-C port to
+normal orientation, host data role, USB Power Delivery, and a PD-capable
+partner. The two publishable driver lines were:
+
+```text
+ps883x_retimer 5-0008: USB4 mode accepted by retimer; host-router state not established
+qcom-qmp-combo-phy fda000.phy: USB4/TBT mux request ignored: no active host-router PHY consumer
+```
+
+The first line is emitted only after the driver completes its USB4
+configuration writes without error. It does not prove that the silicon formed
+a USB4 link or trained at 40 Gb/s. The second establishes that a USB4 PHY
+object existed but had no active host-router PHY consumer when the mux request
+arrived; it does not establish why that initialization was absent or that one
+consumer is the only remaining blocker.
+
+There was no change in USB topology, PCI enumeration, DRM connectors,
+Thunderbolt devices, or USB4 domains. The result validates removal of the
+retimer-side policy rejection for this scoped top-port experiment. It does not
+validate a USB4 link, a working dock, or any USB3, PCIe, or DisplayPort tunnel.
+
+The ignored local baseline and attached snapshots started at
+`2026-08-30T10:55:47Z` and `2026-08-30T10:57:08Z`. Each passed strict
+verification; their checksum-manifest SHA-256 values are respectively
+`d05b9aa87e0fab5db13fb2fe52a105111e5921bd208e43f51acbc89667fb0039`
+and `a60b835f3c81010dd8909f68d66f7960f3368ca4c9b0930a2a9553093d7ca92f`.
+The raw snapshots remain private because their full logs and inventories can
+contain host identifiers. A subsequent cold boot of the normal unedited v20
+image restored the ordinary OLED model and both live guards.
 
 Before removing the fallback from any production DTB, hardware evidence must
 show all of the following:

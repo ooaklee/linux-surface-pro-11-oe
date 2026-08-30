@@ -216,7 +216,39 @@ The ABI must be v20 and the model must be the ordinary OLED model, without
 - a direct USB3 device; and
 - Direct USB-C DisplayPort Alt Mode.
 
-Disconnect all test devices and shut down completely after these regressions.
+**Qualification result (2026-08-30):** One-, two-, and three-finger touch, pen
+inking with pressure variation, the barrel button, and a direct USB3 device
+passed on the clean v20 rebuild. Direct USB-C DisplayPort Alt Mode was not run
+because no suitable test device or adapter was available; do not count it as a
+regression pass.
+
+### Capture the guarded attach control
+
+Before selecting the experiment, confirm that the live production tree has two
+guards:
+
+```bash
+test "$(find /sys/firmware/devicetree/base \
+  -type f -name 'parade,disable-usb4' -print | wc -l)" -eq 2
+```
+
+Attach the matched TS4 once to the physical top port and wait 15 seconds. The
+guarded control must reject USB4 mode and must not create a Thunderbolt device
+or USB4 domain. An ordinary USB fallback function may still enumerate; record
+the USB topology instead of treating that as a failure. Use only passive
+evidence:
+
+```bash
+sudo journalctl -k -b --no-pager | \
+  grep -E 'ps883.*USB4 disabled via DT|USB4|thunderbolt'
+lsusb -t
+find /sys/bus/thunderbolt/devices -mindepth 1 -maxdepth 1 -print 2>/dev/null
+```
+
+The 2026-08-30 control session observed the DT policy rejection and no dock
+topology. This is the expected production safety result, not evidence of a bad
+dock or cable. Disconnect all test devices and shut down completely before the
+experimental boot.
 
 ## Prepare the one-boot experimental image
 
@@ -224,6 +256,7 @@ After package installation has completed its `update-grub`, copy the alternate
 EFI image under a distinct filename:
 
 ```bash
+abi=7.2.0-jg-0sp11v20-qcom-x1e
 sudo install -m 0600 \
   "/usr/lib/linux-image-$abi/sp11-usb4-top-experimental.efi" \
   "/boot/vmlinuz-$abi-usb4-top-experimental"
@@ -251,15 +284,18 @@ Leave the command line and `initrd` line unchanged. Do not edit or add a
 
 ## Verify the live experiment before attachment
 
-With the TS4 still disconnected, require both the ABI and live model:
+With the TS4 still disconnected, require the ABI, live model, and one remaining
+guard:
 
 ```bash
 expected_model='Microsoft Surface Pro 11th Edition (OLED, top-port USB4 retimer experiment)'
 test "$(uname -r)" = '7.2.0-jg-0sp11v20-qcom-x1e'
 test "$(tr -d '\0' </proc/device-tree/model)" = "$expected_model"
+test "$(find /sys/firmware/devicetree/base \
+  -type f -name 'parade,disable-usb4' -print | wc -l)" -eq 1
 ```
 
-If either test fails, stop and do not attach the dock.
+If any check fails, stop and do not attach the dock.
 
 ## Collect the one-attach comparison
 
@@ -295,21 +331,47 @@ qmp-combo: USB4/TBT mux request ignored: no active host-router PHY consumer
 ```
 
 The first line means the former PS8830 device-tree rejection was bypassed and
-retimer programming completed. The second is the expected next blocker: no
-Linux Qualcomm host-router consumer initialized the USB4 PHY. Charging without
-a USB4 domain remains a valid result for this increment. If a domain or router
-appears unexpectedly, collect it passively; do not rebind or probe registers.
+the driver completed its USB4 configuration writes without error. It does not
+prove link training or a negotiated USB4 rate. The second means that no active
+host-router PHY consumer existed when the mux request arrived; it does not say
+why initialization was absent or prove that one consumer is the only remaining
+blocker. Charging without a USB4 domain remains a valid result for this
+increment. If a domain or router appears unexpectedly, collect it passively;
+do not rebind or probe registers.
+
+**Observed on 2026-08-30:**
+
+```text
+ps883x_retimer 5-0008: USB4 mode accepted by retimer; host-router state not established
+qcom-qmp-combo-phy fda000.phy: USB4/TBT mux request ignored: no active host-router PHY consumer
+```
+
+The UCSI top-port partner appeared, but USB, PCI, DRM, Thunderbolt, and USB4
+domain snapshots showed no dock topology. This is a pass for the retimer-only
+qualification and a negative result for link, domain, and tunnel establishment.
 
 Disconnect the dock and power off. On the next boot, use the normal unedited
 v20 entry. Then remove the temporary copy before any future `update-grub`:
 
 ```bash
+abi=7.2.0-jg-0sp11v20-qcom-x1e
 sudo rm -- "/boot/vmlinuz-$abi-usb4-top-experimental"
 ```
 
 The packaged source remains available at
 `/usr/lib/linux-image-$abi/sp11-usb4-top-experimental.efi`, so the temporary
-copy is recoverable.
+copy is recoverable. Verify the guarded rollback:
+
+```bash
+test "$(uname -r)" = '7.2.0-jg-0sp11v20-qcom-x1e'
+test "$(tr -d '\0' </proc/device-tree/model)" = \
+  'Microsoft Surface Pro 11th Edition (OLED)'
+test "$(find /sys/firmware/devicetree/base \
+  -type f -name 'parade,disable-usb4' -print | wc -l)" -eq 2
+```
+
+The 2026-08-30 rollback passed those three checks. It did not repeat the manual
+touch, pen, USB3, or direct-DisplayPort regressions after rollback.
 
 ## Interpret against the Windows oracle
 
