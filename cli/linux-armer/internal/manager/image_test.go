@@ -83,12 +83,18 @@ func newCompanionTestManager(runner *companionProbeRunner) *ImageManager {
 	}
 }
 
+// newImagePlanTestManager supplies the shipped catalogue and production adapter
+// wiring needed for side-effect-free image planning tests.
+func newImagePlanTestManager() *ImageManager {
+	return NewImageManager(catalog.NewLoader(linuxarmer.CatalogFS(), "supported-isos.json"), io.Discard)
+}
+
 // TestImageManagerPlanDefaultsAndDeterminism verifies default source and kernel
 // inputs produce the same ordered, serialisable execution plan on every call.
 func TestImageManagerPlanDefaultsAndDeterminism(t *testing.T) {
 	t.Parallel()
 
-	manager := &ImageManager{}
+	manager := newImagePlanTestManager()
 	request := CreateImageRequest{Output: "/output/linux-armer.iso"}
 	first, err := manager.Plan(request)
 	if err != nil {
@@ -144,12 +150,12 @@ func TestImageManagerPlanDefaultsAndDeterminism(t *testing.T) {
 }
 
 // TestImageManagerPlanUsesExplicitLocalInputs verifies user-provided source,
-// kernel directory, catalogue identifier, and output replace all plan defaults.
+// kernel directory, and output replace their plan defaults after catalogue selection.
 func TestImageManagerPlanUsesExplicitLocalInputs(t *testing.T) {
 	t.Parallel()
 
-	operationPlan, err := (&ImageManager{}).Plan(CreateImageRequest{
-		CatalogID:                "custom-catalog-id",
+	operationPlan, err := newImagePlanTestManager().Plan(CreateImageRequest{
+		CatalogID:                DefaultCatalogID,
 		Source:                   "/inputs/source.iso",
 		KernelDirectory:          "/inputs/kernel",
 		CompanionSourceDirectory: "/inputs/linux-armer",
@@ -165,6 +171,68 @@ func TestImageManagerPlanUsesExplicitLocalInputs(t *testing.T) {
 		operationPlan.Steps[2].Inputs["userspace"] != companion.IPTSDOfflineComponentID ||
 		operationPlan.Steps[len(operationPlan.Steps)-1].Inputs["path"] != "/output/result.iso" {
 		t.Fatalf("Plan() explicit inputs = %#v", operationPlan.Steps)
+	}
+}
+
+// TestImageManagerPlanValidatesCatalogueSelection verifies dry runs reject the
+// same missing, unsupported, and invalid catalogue inputs as real creation.
+func TestImageManagerPlanValidatesCatalogueSelection(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing entry", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := newImagePlanTestManager().Plan(CreateImageRequest{CatalogID: "missing-image", Output: "/output/result.iso"})
+		if err == nil || !strings.Contains(err.Error(), `catalog entry "missing-image" was not found`) {
+			t.Fatalf("Plan(missing entry) error = %v", err)
+		}
+	})
+
+	t.Run("catalogue-only entry", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := newImagePlanTestManager().Plan(CreateImageRequest{CatalogID: "debian-13-6-0-dvd-1", Output: "/output/result.iso"})
+		if err == nil || !strings.Contains(err.Error(), "catalog-only and cannot yet be created") {
+			t.Fatalf("Plan(catalogue-only entry) error = %v", err)
+		}
+	})
+
+	t.Run("invalid override", func(t *testing.T) {
+		t.Parallel()
+
+		overridePath := filepath.Join(t.TempDir(), "invalid-catalog.json")
+		if err := os.WriteFile(overridePath, []byte(`{"schema_version":99,"description":"","entries":[]}`), 0o600); err != nil {
+			t.Fatalf("os.WriteFile() error = %v", err)
+		}
+		_, err := newImagePlanTestManager().Plan(CreateImageRequest{CatalogPath: overridePath, Output: "/output/result.iso"})
+		if err == nil || !strings.Contains(err.Error(), "schema_version") {
+			t.Fatalf("Plan(invalid override) error = %v", err)
+		}
+	})
+}
+
+// TestEffectiveSourceSHA256 verifies image planning and execution share caller
+// precedence, publisher fallback, normalisation, and the unpinned case.
+func TestEffectiveSourceSHA256(t *testing.T) {
+	t.Parallel()
+
+	publisherDigest := strings.Repeat("a", 64)
+	callerDigest := strings.Repeat("B", 64)
+	tests := []struct {
+		name     string
+		request  CreateImageRequest
+		checksum *catalog.Checksum
+		want     string
+	}{
+		{name: "caller overrides publisher", request: CreateImageRequest{SourceSHA256: "  " + callerDigest + "  "}, checksum: &catalog.Checksum{Algorithm: "sha256", Value: publisherDigest}, want: strings.ToLower(callerDigest)},
+		{name: "publisher fallback", checksum: &catalog.Checksum{Algorithm: "sha256", Value: publisherDigest}, want: publisherDigest},
+		{name: "incompatible publisher digest", checksum: &catalog.Checksum{Algorithm: "sha512", Value: strings.Repeat("c", 128)}},
+		{name: "unpinned"},
+	}
+	for _, test := range tests {
+		if got := effectiveSourceSHA256(test.request, catalog.Entry{Checksum: test.checksum}); got != test.want {
+			t.Errorf("effectiveSourceSHA256(%s) = %q, want %q", test.name, got, test.want)
+		}
 	}
 }
 

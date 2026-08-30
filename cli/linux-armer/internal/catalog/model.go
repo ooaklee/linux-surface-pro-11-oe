@@ -36,6 +36,17 @@ const (
 	AdapterUbuntuCasper Adapter = "ubuntu-casper"
 )
 
+// AdapterSupportsArtifact reports whether an implemented adapter can safely
+// consume the declared upstream artefact format.
+func AdapterSupportsArtifact(adapter Adapter, kind ArtifactKind) bool {
+	switch adapter {
+	case AdapterUbuntuCasper:
+		return kind == ArtifactKindISO
+	default:
+		return false
+	}
+}
+
 // SupportLevel describes whether linux-armer can currently prepare an entry.
 type SupportLevel string
 

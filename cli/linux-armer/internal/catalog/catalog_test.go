@@ -193,6 +193,14 @@ func TestSemanticValidationRules(t *testing.T) {
 			wantText:  "must not be empty",
 		},
 		{
+			name: "description control character",
+			mutate: func(document map[string]any) {
+				document["description"] = "Unsafe\nheading"
+			},
+			wantField: "description",
+			wantText:  "control or invisible formatting characters",
+		},
+		{
 			name: "entries",
 			mutate: func(document map[string]any) {
 				document["entries"] = []any{}
@@ -224,6 +232,22 @@ func TestSemanticValidationRules(t *testing.T) {
 			},
 			wantField: "entries[0].name",
 			wantText:  "must not be empty",
+		},
+		{
+			name: "name terminal escape",
+			mutate: func(document map[string]any) {
+				firstEntry(document)["name"] = "Unsafe\x1b[31m name"
+			},
+			wantField: "entries[0].name",
+			wantText:  "control or invisible formatting characters",
+		},
+		{
+			name: "name byte limit",
+			mutate: func(document map[string]any) {
+				firstEntry(document)["name"] = strings.Repeat("a", maximumHumanTextBytes+1)
+			},
+			wantField: "entries[0].name",
+			wantText:  "at most 4096 bytes",
 		},
 		{
 			name: "distribution",
@@ -343,6 +367,17 @@ func TestSemanticValidationRules(t *testing.T) {
 			wantText:  "ubuntu-casper",
 		},
 		{
+			name: "adapter artefact capability",
+			mutate: func(document map[string]any) {
+				entry := firstEntry(document)
+				entry["artifact_kind"] = "raw-xz"
+				entry["filename"] = "zulu.raw.xz"
+				entry["url"] = "https://downloads.example.test/zulu.raw.xz"
+			},
+			wantField: "entries[0].adapter",
+			wantText:  "does not support artifact_kind \"raw-xz\"",
+		},
+		{
 			name: "support level enum",
 			mutate: func(document map[string]any) {
 				firstEntry(document)["support_level"] = "ready"
@@ -421,6 +456,26 @@ func TestSemanticValidationRules(t *testing.T) {
 			},
 			wantField: "entries[0].compatibility_notes[0]",
 			wantText:  "must not be empty",
+		},
+		{
+			name: "compatibility note formatting control",
+			mutate: func(document map[string]any) {
+				firstEntry(document)["compatibility_notes"] = []any{"safe-looking\u202eright-to-left"}
+			},
+			wantField: "entries[0].compatibility_notes[0]",
+			wantText:  "control or invisible formatting characters",
+		},
+		{
+			name: "compatibility note count",
+			mutate: func(document map[string]any) {
+				notes := make([]any, maximumCompatibilityNotes+1)
+				for index := range notes {
+					notes[index] = "Bounded note"
+				}
+				firstEntry(document)["compatibility_notes"] = notes
+			},
+			wantField: "entries[0].compatibility_notes",
+			wantText:  "at most 64 notes",
 		},
 		{
 			name: "last verified date",
@@ -528,6 +583,120 @@ func TestDecodeFailures(t *testing.T) {
 
 	if _, err := Load(nil); err == nil || !strings.Contains(err.Error(), "reader is nil") {
 		t.Fatalf("Load(nil) error = %v, want nil reader error", err)
+	}
+}
+
+// TestExactJSONShape rejects duplicate and mis-cased keys at each object depth
+// instead of allowing encoding/json's case folding or last-value-wins behaviour.
+func TestExactJSONShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "duplicate document key",
+			input: strings.Replace(validCatalogJSON, `"schema_version": 2,`, `"schema_version": 2, "schema_version": 2,`, 1),
+			want:  `catalog: duplicate field "schema_version"`,
+		},
+		{
+			name:  "mis-cased document key",
+			input: strings.Replace(validCatalogJSON, `"schema_version": 2`, `"Schema_Version": 2`, 1),
+			want:  `field "Schema_Version" must be spelt "schema_version"`,
+		},
+		{
+			name:  "duplicate entry key",
+			input: strings.Replace(validCatalogJSON, `"id": "zulu-image",`, `"id": "zulu-image", "id": "other-image",`, 1),
+			want:  `entries[0]: duplicate field "id"`,
+		},
+		{
+			name:  "mis-cased entry key",
+			input: strings.Replace(validCatalogJSON, `"artifact_kind": "iso"`, `"Artifact_Kind": "iso"`, 1),
+			want:  `field "Artifact_Kind" must be spelt "artifact_kind"`,
+		},
+		{
+			name:  "duplicate checksum key",
+			input: strings.Replace(validCatalogJSON, `"algorithm": "sha256",`, `"algorithm": "sha256", "algorithm": "sha512",`, 1),
+			want:  `entries[0].checksum: duplicate field "algorithm"`,
+		},
+		{
+			name:  "mis-cased checksum key",
+			input: strings.Replace(validCatalogJSON, `"algorithm": "sha256"`, `"Algorithm": "sha256"`, 1),
+			want:  `field "Algorithm" must be spelt "algorithm"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := LoadBytes([]byte(test.input))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("LoadBytes() error = %v, want text %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestCatalogueResourceBounds rejects oversized documents and entry arrays
+// before semantic validation can allocate or render unbounded data.
+func TestCatalogueResourceBounds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("document bytes", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := LoadBytes([]byte(strings.Repeat(" ", maximumCatalogueBytes+1)))
+		if err == nil || !strings.Contains(err.Error(), "document exceeds") {
+			t.Fatalf("LoadBytes(oversized document) error = %v", err)
+		}
+	})
+
+	t.Run("entry count", func(t *testing.T) {
+		t.Parallel()
+
+		entries := make([]string, maximumCatalogueEntries+1)
+		for index := range entries {
+			entries[index] = "{}"
+		}
+		input := `{"schema_version":2,"description":"Bounded","entries":[` + strings.Join(entries, ",") + `]}`
+		_, err := LoadBytes([]byte(input))
+		if err == nil || !strings.Contains(err.Error(), "at most 256 entries") {
+			t.Fatalf("LoadBytes(too many entries) error = %v", err)
+		}
+	})
+
+	t.Run("invalid UTF-8", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := LoadBytes([]byte{'{', 0xff, '}'})
+		if err == nil || !strings.Contains(err.Error(), "not valid UTF-8") {
+			t.Fatalf("LoadBytes(invalid UTF-8) error = %v", err)
+		}
+	})
+}
+
+// TestAdapterSupportsArtifact documents the explicit artefact capabilities used
+// by both catalogue validation and image-adapter dispatch.
+func TestAdapterSupportsArtifact(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		adapter Adapter
+		kind    ArtifactKind
+		want    bool
+	}{
+		{adapter: AdapterUbuntuCasper, kind: ArtifactKindISO, want: true},
+		{adapter: AdapterUbuntuCasper, kind: ArtifactKindRawXZ, want: false},
+		{adapter: AdapterNone, kind: ArtifactKindISO, want: false},
+		{adapter: Adapter("future"), kind: ArtifactKindISO, want: false},
+	}
+	for _, test := range tests {
+		if got := AdapterSupportsArtifact(test.adapter, test.kind); got != test.want {
+			t.Errorf("AdapterSupportsArtifact(%q, %q) = %v, want %v", test.adapter, test.kind, got, test.want)
+		}
 	}
 }
 

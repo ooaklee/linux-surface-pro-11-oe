@@ -7,6 +7,23 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+)
+
+const (
+	// maximumHumanTextBytes bounds each human-facing catalogue string before it
+	// can reach terminal or structured output.
+	maximumHumanTextBytes = 4096
+	// maximumIdentifierBytes bounds stable IDs and other short machine values.
+	maximumIdentifierBytes = 128
+	// maximumFilenameBytes matches the common portable filesystem component
+	// limit while leaving room for release naming conventions.
+	maximumFilenameBytes = 255
+	// maximumURLBytes permits long signed publisher URLs without unbounded input.
+	maximumURLBytes = 4096
+	// maximumCompatibilityNotes bounds validation work and displayed caveats for
+	// each catalogue entry.
+	maximumCompatibilityNotes = 64
 )
 
 var (
@@ -22,9 +39,9 @@ var (
 // Issue is one actionable catalogue validation problem.
 type Issue struct {
 	// Field is the JSON-style path to the invalid value.
-	Field string
+	Field string `json:"field"`
 	// Message explains how the value violates the catalogue contract.
-	Message string
+	Message string `json:"message"`
 }
 
 // ValidationError reports every semantic problem found in a decoded catalogue.
@@ -75,9 +92,7 @@ func validate(raw document, entries []Entry) error {
 	if raw.SchemaVersion != CurrentSchemaVersion {
 		add("schema_version", "must be %d, got %d", CurrentSchemaVersion, raw.SchemaVersion)
 	}
-	if strings.TrimSpace(raw.Description) == "" {
-		add("description", "must not be empty")
-	}
+	validateHumanText(add, "description", raw.Description)
 	if len(raw.Entries) == 0 {
 		add("entries", "must contain at least one entry")
 	}
@@ -87,7 +102,8 @@ func validate(raw document, entries []Entry) error {
 		entry := entries[index]
 		prefix := fmt.Sprintf("entries[%d]", index)
 
-		if !stableIDPattern.MatchString(entry.ID) {
+		idLengthOK := validateByteLength(add, prefix+".id", entry.ID, maximumIdentifierBytes)
+		if idLengthOK && !stableIDPattern.MatchString(entry.ID) {
 			add(prefix+".id", "must be a stable lowercase kebab-case identifier beginning with a letter")
 		}
 		if first, exists := firstIDIndex[entry.ID]; exists {
@@ -96,46 +112,62 @@ func validate(raw document, entries []Entry) error {
 			firstIDIndex[entry.ID] = index
 		}
 
-		requireText(add, prefix+".name", entry.Name)
-		requireText(add, prefix+".distribution", entry.Distribution)
-		requireText(add, prefix+".release", entry.Release)
+		validateHumanText(add, prefix+".name", entry.Name)
+		validateHumanText(add, prefix+".distribution", entry.Distribution)
+		validateHumanText(add, prefix+".release", entry.Release)
 		validateFilename(add, prefix+".filename", entry.Filename, entry.ArtifactKind)
 
-		if _, err := NormalizeArchitecture(rawEntry.Architecture); err != nil {
-			add(prefix+".architecture", "%v; got %q", err, rawEntry.Architecture)
+		architectureLengthOK := validateByteLength(add, prefix+".architecture", rawEntry.Architecture, maximumIdentifierBytes)
+		if architectureLengthOK {
+			if _, err := NormalizeArchitecture(rawEntry.Architecture); err != nil {
+				add(prefix+".architecture", "%v; got %q", err, rawEntry.Architecture)
+			}
 		}
 
-		switch entry.ArtifactKind {
-		case ArtifactKindISO, ArtifactKindRawXZ:
-		default:
-			add(prefix+".artifact_kind", "must be %q or %q, got %q", ArtifactKindISO, ArtifactKindRawXZ, entry.ArtifactKind)
+		artifactKindValid := false
+		if validateByteLength(add, prefix+".artifact_kind", string(entry.ArtifactKind), maximumIdentifierBytes) {
+			switch entry.ArtifactKind {
+			case ArtifactKindISO, ArtifactKindRawXZ:
+				artifactKindValid = true
+			default:
+				add(prefix+".artifact_kind", "must be %q or %q, got %q", ArtifactKindISO, ArtifactKindRawXZ, entry.ArtifactKind)
+			}
 		}
 
 		artifactURL := validateHTTPSURL(add, prefix+".url", entry.URL)
 		validateHTTPSURL(add, prefix+".homepage", entry.Homepage)
-		if artifactURL != nil {
+		if artifactURL != nil && len(entry.Filename) <= maximumFilenameBytes {
 			if got := path.Base(artifactURL.Path); got != entry.Filename {
 				add(prefix+".url", "final path segment %q must equal filename %q", got, entry.Filename)
 			}
 		}
 
-		switch entry.Adapter {
-		case AdapterNone, AdapterUbuntuCasper:
-		default:
-			add(prefix+".adapter", "must be %q or %q, got %q", AdapterNone, AdapterUbuntuCasper, entry.Adapter)
+		adapterValid := false
+		if validateByteLength(add, prefix+".adapter", string(entry.Adapter), maximumIdentifierBytes) {
+			switch entry.Adapter {
+			case AdapterNone, AdapterUbuntuCasper:
+				adapterValid = true
+			default:
+				add(prefix+".adapter", "must be %q or %q, got %q", AdapterNone, AdapterUbuntuCasper, entry.Adapter)
+			}
+		}
+		if adapterValid && artifactKindValid && entry.Adapter != AdapterNone && !AdapterSupportsArtifact(entry.Adapter, entry.ArtifactKind) {
+			add(prefix+".adapter", "does not support artifact_kind %q", entry.ArtifactKind)
 		}
 
-		switch entry.SupportLevel {
-		case SupportLevelImplemented:
-			if entry.Adapter == AdapterNone {
-				add(prefix+".adapter", "must name an implemented adapter when support_level is %q", SupportLevelImplemented)
+		if validateByteLength(add, prefix+".support_level", string(entry.SupportLevel), maximumIdentifierBytes) {
+			switch entry.SupportLevel {
+			case SupportLevelImplemented:
+				if entry.Adapter == AdapterNone {
+					add(prefix+".adapter", "must name an implemented adapter when support_level is %q", SupportLevelImplemented)
+				}
+			case SupportLevelCatalogOnly:
+				if entry.Adapter != AdapterNone {
+					add(prefix+".adapter", "must be %q when support_level is %q", AdapterNone, SupportLevelCatalogOnly)
+				}
+			default:
+				add(prefix+".support_level", "must be %q or %q, got %q", SupportLevelImplemented, SupportLevelCatalogOnly, entry.SupportLevel)
 			}
-		case SupportLevelCatalogOnly:
-			if entry.Adapter != AdapterNone {
-				add(prefix+".adapter", "must be %q when support_level is %q", AdapterNone, SupportLevelCatalogOnly)
-			}
-		default:
-			add(prefix+".support_level", "must be %q or %q, got %q", SupportLevelImplemented, SupportLevelCatalogOnly, entry.SupportLevel)
 		}
 
 		if rawEntry.Experimental == nil {
@@ -149,14 +181,17 @@ func validate(raw document, entries []Entry) error {
 		if len(entry.CompatibilityNotes) == 0 {
 			add(prefix+".compatibility_notes", "must contain at least one note")
 		}
-		for noteIndex, note := range entry.CompatibilityNotes {
-			if strings.TrimSpace(note) == "" {
-				add(fmt.Sprintf("%s.compatibility_notes[%d]", prefix, noteIndex), "must not be empty")
-			}
+		if len(entry.CompatibilityNotes) > maximumCompatibilityNotes {
+			add(prefix+".compatibility_notes", "must contain at most %d notes", maximumCompatibilityNotes)
+		}
+		for noteIndex, note := range entry.CompatibilityNotes[:min(len(entry.CompatibilityNotes), maximumCompatibilityNotes)] {
+			validateHumanText(add, fmt.Sprintf("%s.compatibility_notes[%d]", prefix, noteIndex), note)
 		}
 
-		if _, err := time.Parse("2006-01-02", entry.LastVerified); err != nil {
-			add(prefix+".last_verified", "must be a real calendar date in YYYY-MM-DD format, got %q", entry.LastVerified)
+		if validateByteLength(add, prefix+".last_verified", entry.LastVerified, maximumIdentifierBytes); len(entry.LastVerified) <= maximumIdentifierBytes {
+			if _, err := time.Parse("2006-01-02", entry.LastVerified); err != nil {
+				add(prefix+".last_verified", "must be a real calendar date in YYYY-MM-DD format, got %q", entry.LastVerified)
+			}
 		}
 	}
 
@@ -167,19 +202,56 @@ func validate(raw document, entries []Entry) error {
 	return nil
 }
 
-// requireText records an issue when a required text field is blank.
-func requireText(add func(string, string, ...any), field, value string) {
+// validateHumanText requires bounded, single-line display text without terminal
+// controls, invisible formatting controls, or surrounding whitespace.
+func validateHumanText(add func(string, string, ...any), field, value string) {
+	if !validateByteLength(add, field, value, maximumHumanTextBytes) {
+		return
+	}
 	if strings.TrimSpace(value) == "" {
 		add(field, "must not be empty")
+		return
 	}
+	if value != strings.TrimSpace(value) {
+		add(field, "must not have leading or trailing whitespace")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) || character == '\u2028' || character == '\u2029' {
+			add(field, "must not contain control or invisible formatting characters")
+			return
+		}
+	}
+}
+
+// validateByteLength records an issue when a string exceeds its field-specific
+// byte limit and reports whether further validation is safe.
+func validateByteLength(add func(string, string, ...any), field, value string, maximum int) bool {
+	if len(value) <= maximum {
+		return true
+	}
+	add(field, "must contain at most %d bytes", maximum)
+	return false
 }
 
 // validateHTTPSURL checks that a URL is absolute, credential-free HTTPS and
 // returns the parsed value for additional format-specific validation.
 func validateHTTPSURL(add func(string, string, ...any), field, value string) *url.URL {
+	if !validateByteLength(add, field, value, maximumURLBytes) {
+		return nil
+	}
 	if strings.TrimSpace(value) == "" {
 		add(field, "must not be empty")
 		return nil
+	}
+	if value != strings.TrimSpace(value) {
+		add(field, "must not have leading or trailing whitespace")
+		return nil
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) || character == '\u2028' || character == '\u2029' {
+			add(field, "must not contain control or invisible formatting characters")
+			return nil
+		}
 	}
 
 	parsed, err := url.Parse(value)
@@ -206,6 +278,9 @@ func validateHTTPSURL(add func(string, string, ...any), field, value string) *ur
 // validateFilename ensures the explicit upstream name is portable and agrees
 // with the declared artefact format.
 func validateFilename(add func(string, string, ...any), field, filename string, kind ArtifactKind) {
+	if !validateByteLength(add, field, filename, maximumFilenameBytes) {
+		return
+	}
 	if strings.TrimSpace(filename) == "" {
 		add(field, "must not be empty")
 		return
@@ -231,6 +306,13 @@ func validateFilename(add func(string, string, ...any), field, filename string, 
 // lengths, and hexadecimal encoding.
 func validateChecksum(add func(string, string, ...any), field string, checksum *Checksum) {
 	if checksum == nil {
+		return
+	}
+
+	if !validateByteLength(add, field+".algorithm", checksum.Algorithm, maximumIdentifierBytes) {
+		return
+	}
+	if !validateByteLength(add, field+".value", checksum.Value, 128) {
 		return
 	}
 

@@ -100,6 +100,88 @@ type ImageManager struct {
 	CompanionRunner platform.Runner
 }
 
+// imageAdapter is the distribution-neutral planning and execution boundary
+// selected from validated catalogue metadata.
+type imageAdapter interface {
+	// Plan renders the adapter's deterministic workflow without external work.
+	Plan(imageAdapterRequest) (plan.Plan, error)
+	// Create executes the adapter with already resolved and verified inputs.
+	Create(context.Context, imageAdapterRequest) (ubuntu.Result, error)
+}
+
+// imageAdapterRequest carries common image inputs across the manager-to-adapter
+// boundary without exposing catalogue lookup policy to an adapter.
+type imageAdapterRequest struct {
+	// Source is a catalogue selector, override, or resolved local artefact path.
+	Source string
+	// SourceSHA256 is the effective caller or publisher SHA-256 pin.
+	SourceSHA256 string
+	// Output is the requested published image path.
+	Output string
+	// Bundle is the planned or fully resolved kernel payload.
+	Bundle kernel.Bundle
+	// ToolVersion is written into image provenance.
+	ToolVersion string
+	// Companion describes the optional on-media CLI and support payload.
+	Companion companion.BuildRequest
+	// CompanionUserspace lists stable component IDs selected for inclusion.
+	CompanionUserspace []string
+	// WorkspaceRoot optionally selects the temporary workspace parent.
+	WorkspaceRoot string
+	// KeepWorkspace retains adapter diagnostics when requested.
+	KeepWorkspace bool
+}
+
+// ubuntuCasperImageAdapter binds the generic manager boundary to the Ubuntu
+// Casper implementation selected by catalogue.AdapterUbuntuCasper.
+type ubuntuCasperImageAdapter struct {
+	// remasterer performs real Ubuntu ISO creation and may be nil for planning.
+	remasterer *ubuntu.Remasterer
+}
+
+// Plan delegates generic image planning through the selected Ubuntu adapter.
+func (a ubuntuCasperImageAdapter) Plan(request imageAdapterRequest) (plan.Plan, error) {
+	return ubuntu.BuildPlan(ubuntuAdapterRequest(request))
+}
+
+// Create delegates verified inputs through the same Ubuntu adapter selected
+// during planning.
+func (a ubuntuCasperImageAdapter) Create(ctx context.Context, request imageAdapterRequest) (ubuntu.Result, error) {
+	if a.remasterer == nil {
+		return ubuntu.Result{}, errors.New("image manager dependencies are incomplete")
+	}
+	return a.remasterer.Create(ctx, ubuntuAdapterRequest(request))
+}
+
+// ubuntuAdapterRequest translates distribution-neutral manager inputs into the
+// existing Ubuntu Casper adapter contract in one place.
+func ubuntuAdapterRequest(request imageAdapterRequest) ubuntu.Request {
+	return ubuntu.Request{
+		SourceISO:          request.Source,
+		SourceSHA256:       request.SourceSHA256,
+		OutputISO:          request.Output,
+		Bundle:             request.Bundle,
+		ToolVersion:        request.ToolVersion,
+		Companion:          request.Companion,
+		CompanionUserspace: request.CompanionUserspace,
+		WorkspaceRoot:      request.WorkspaceRoot,
+		KeepWorkspace:      request.KeepWorkspace,
+	}
+}
+
+// imageOperation holds one validated catalogue selection and the adapter route
+// shared by dry-run planning and real image creation.
+type imageOperation struct {
+	// request is the defaulted manager request used for input resolution.
+	request CreateImageRequest
+	// entry is the exact validated catalogue record selected by the caller.
+	entry catalog.Entry
+	// adapter is the distribution implementation selected from entry.
+	adapter imageAdapter
+	// adapterRequest contains the common planned inputs for that implementation.
+	adapterRequest imageAdapterRequest
+}
+
 // NewImageManager constructs an image workflow with production resolvers and a
 // caller-provided catalogue loader and progress writer.
 func NewImageManager(loader catalog.Loader, out io.Writer) *ImageManager {
@@ -116,68 +198,24 @@ func NewImageManager(loader catalog.Loader, out io.Writer) *ImageManager {
 // mutating anything. The adapter later produces a more detailed execution
 // plan after the exact kernel ABI is known.
 func (m *ImageManager) Plan(request CreateImageRequest) (plan.Plan, error) {
-	request = imageDefaults(request)
-	if strings.TrimSpace(request.Output) == "" {
-		return plan.Plan{}, errors.New("output ISO path is required")
-	}
-	componentIDs, err := resolveOfflineCompanionComponentIDs(request.CompanionUserspace)
+	operation, err := m.prepareImageOperation(request)
 	if err != nil {
 		return plan.Plan{}, err
 	}
-	if strings.TrimSpace(request.CompanionSourceDirectory) == "" && len(componentIDs) != 0 {
-		return plan.Plan{}, errors.New("companion userspace releases require --companion-source-dir")
-	}
-	if strings.TrimSpace(request.CompanionSourceDirectory) != "" {
-		sourceDirectory, err := filepath.Abs(request.CompanionSourceDirectory)
-		if err != nil {
-			return plan.Plan{}, fmt.Errorf("resolve companion source directory: %w", err)
-		}
-		if err := validateCompanionGeneratedPaths(request, sourceDirectory); err != nil {
-			return plan.Plan{}, err
-		}
-	}
-	kernelInput := request.KernelDirectory
-	if kernelInput == "" {
-		kernelInput = request.KernelRepository + "@" + request.KernelRelease
-	}
-	sourceInput := request.Source
-	if sourceInput == "" {
-		sourceInput = "catalog:" + request.CatalogID
-	}
-	return ubuntu.BuildPlan(ubuntu.Request{
-		SourceISO:    sourceInput,
-		SourceSHA256: request.SourceSHA256,
-		OutputISO:    request.Output,
-		Bundle: kernel.Bundle{
-			Release: kernelInput,
-			ABI:     "resolved-at-execution",
-		},
-		Companion:          companion.BuildRequest{SourceDirectory: request.CompanionSourceDirectory},
-		CompanionUserspace: componentIDs,
-	})
+	return operation.adapter.Plan(operation.adapterRequest)
 }
 
 // Create resolves and verifies every external input, invokes the supported
 // distribution adapter, and returns only after the image is validated and published.
 func (m *ImageManager) Create(ctx context.Context, request CreateImageRequest) (CreateImageResult, error) {
-	request = imageDefaults(request)
-	if _, err := m.Plan(request); err != nil {
-		return CreateImageResult{}, err
-	}
 	if m.Artifacts == nil || m.Releases == nil || m.Remaster == nil {
 		return CreateImageResult{}, errors.New("image manager dependencies are incomplete")
 	}
-	mediaCatalog, err := m.Catalogs.Load(request.CatalogPath)
+	operation, err := m.prepareImageOperation(request)
 	if err != nil {
 		return CreateImageResult{}, err
 	}
-	entry, ok := mediaCatalog.Get(request.CatalogID)
-	if !ok {
-		return CreateImageResult{}, fmt.Errorf("catalog entry %q was not found", request.CatalogID)
-	}
-	if entry.SupportLevel != catalog.SupportLevelImplemented || entry.Adapter != catalog.AdapterUbuntuCasper {
-		return CreateImageResult{}, fmt.Errorf("catalog entry %q is %s and cannot yet be created", entry.ID, entry.SupportLevel)
-	}
+	request = operation.request
 
 	cacheDirectory, err := resolveCacheDirectory(request.CacheDirectory)
 	if err != nil {
@@ -195,25 +233,111 @@ func (m *ImageManager) Create(ctx context.Context, request CreateImageRequest) (
 	if err != nil {
 		return CreateImageResult{}, err
 	}
-	sourcePath, sourceDigest, err := m.resolveSource(ctx, request, entry, cacheDirectory)
+	sourcePath, sourceDigest, err := m.resolveSource(ctx, request, operation.entry, cacheDirectory)
 	if err != nil {
 		return CreateImageResult{}, err
 	}
-	result, err := m.Remaster.Create(ctx, ubuntu.Request{
-		SourceISO:          sourcePath,
-		SourceSHA256:       sourceDigest,
-		OutputISO:          request.Output,
-		Bundle:             bundle,
-		ToolVersion:        request.ToolVersion,
-		Companion:          companionRequest,
-		CompanionUserspace: companionBundleComponentIDs(companionRequest),
-		WorkspaceRoot:      request.WorkspaceRoot,
-		KeepWorkspace:      request.KeepWorkspace,
-	})
+	adapterRequest := operation.adapterRequest
+	adapterRequest.Source = sourcePath
+	adapterRequest.SourceSHA256 = sourceDigest
+	adapterRequest.Bundle = bundle
+	adapterRequest.Companion = companionRequest
+	adapterRequest.CompanionUserspace = companionBundleComponentIDs(companionRequest)
+	result, err := operation.adapter.Create(ctx, adapterRequest)
 	if err != nil {
 		return CreateImageResult{}, err
 	}
-	return CreateImageResult{CatalogEntry: entry, KernelBundle: bundle, Image: result}, nil
+	return CreateImageResult{CatalogEntry: operation.entry, KernelBundle: bundle, Image: result}, nil
+}
+
+// prepareImageOperation validates local relationships, resolves one catalogue
+// entry, and selects the adapter route used by both Plan and Create.
+func (m *ImageManager) prepareImageOperation(request CreateImageRequest) (imageOperation, error) {
+	request = imageDefaults(request)
+	if strings.TrimSpace(request.Output) == "" {
+		return imageOperation{}, errors.New("output ISO path is required")
+	}
+	componentIDs, err := resolveOfflineCompanionComponentIDs(request.CompanionUserspace)
+	if err != nil {
+		return imageOperation{}, err
+	}
+	if strings.TrimSpace(request.CompanionSourceDirectory) == "" && len(componentIDs) != 0 {
+		return imageOperation{}, errors.New("companion userspace releases require --companion-source-dir")
+	}
+	if strings.TrimSpace(request.CompanionSourceDirectory) != "" {
+		sourceDirectory, err := filepath.Abs(request.CompanionSourceDirectory)
+		if err != nil {
+			return imageOperation{}, fmt.Errorf("resolve companion source directory: %w", err)
+		}
+		if err := validateCompanionGeneratedPaths(request, sourceDirectory); err != nil {
+			return imageOperation{}, err
+		}
+	}
+
+	mediaCatalog, err := m.Catalogs.Load(request.CatalogPath)
+	if err != nil {
+		return imageOperation{}, err
+	}
+	entry, ok := mediaCatalog.Get(request.CatalogID)
+	if !ok {
+		return imageOperation{}, fmt.Errorf("catalog entry %q was not found", request.CatalogID)
+	}
+	adapter, err := m.adapterForEntry(entry)
+	if err != nil {
+		return imageOperation{}, err
+	}
+
+	kernelInput := request.KernelDirectory
+	if kernelInput == "" {
+		kernelInput = request.KernelRepository + "@" + request.KernelRelease
+	}
+	sourceInput := request.Source
+	if sourceInput == "" {
+		sourceInput = "catalog:" + entry.ID
+	}
+	return imageOperation{
+		request: request,
+		entry:   entry,
+		adapter: adapter,
+		adapterRequest: imageAdapterRequest{
+			Source:             sourceInput,
+			SourceSHA256:       effectiveSourceSHA256(request, entry),
+			Output:             request.Output,
+			Bundle:             kernel.Bundle{Release: kernelInput, ABI: "resolved-at-execution"},
+			ToolVersion:        request.ToolVersion,
+			Companion:          companion.BuildRequest{SourceDirectory: request.CompanionSourceDirectory},
+			CompanionUserspace: componentIDs,
+			WorkspaceRoot:      request.WorkspaceRoot,
+			KeepWorkspace:      request.KeepWorkspace,
+		},
+	}, nil
+}
+
+// adapterForEntry enforces support and format capabilities before returning
+// the concrete distribution adapter selected by catalogue metadata.
+func (m *ImageManager) adapterForEntry(entry catalog.Entry) (imageAdapter, error) {
+	if entry.SupportLevel != catalog.SupportLevelImplemented {
+		return nil, fmt.Errorf("catalog entry %q is %s and cannot yet be created", entry.ID, entry.SupportLevel)
+	}
+	if !catalog.AdapterSupportsArtifact(entry.Adapter, entry.ArtifactKind) {
+		return nil, fmt.Errorf("catalog entry %q adapter %q cannot consume artifact kind %q", entry.ID, entry.Adapter, entry.ArtifactKind)
+	}
+	switch entry.Adapter {
+	case catalog.AdapterUbuntuCasper:
+		return ubuntuCasperImageAdapter{remasterer: m.Remaster}, nil
+	default:
+		return nil, fmt.Errorf("catalog entry %q selects unavailable adapter %q", entry.ID, entry.Adapter)
+	}
+}
+
+// effectiveSourceSHA256 selects an explicit caller pin before a compatible
+// publisher checksum so planning and execution describe the same integrity rule.
+func effectiveSourceSHA256(request CreateImageRequest, entry catalog.Entry) string {
+	expected := strings.ToLower(strings.TrimSpace(request.SourceSHA256))
+	if expected == "" && entry.Checksum != nil && strings.EqualFold(entry.Checksum.Algorithm, "sha256") {
+		expected = strings.ToLower(entry.Checksum.Value)
+	}
+	return expected
 }
 
 // resolveCompanion prepares generic staging inputs and downloads only explicitly
@@ -435,10 +559,7 @@ func (m *ImageManager) resolveSource(ctx context.Context, request CreateImageReq
 	if location == "" {
 		location = entry.URL
 	}
-	expected := strings.ToLower(strings.TrimSpace(request.SourceSHA256))
-	if expected == "" && entry.Checksum != nil && strings.EqualFold(entry.Checksum.Algorithm, "sha256") {
-		expected = strings.ToLower(entry.Checksum.Value)
-	}
+	expected := effectiveSourceSHA256(request, entry)
 	parsed, err := url.Parse(location)
 	if err != nil {
 		return "", "", fmt.Errorf("parse source image location: %w", err)

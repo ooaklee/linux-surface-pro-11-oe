@@ -8,6 +8,16 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
+	"unicode/utf8"
+)
+
+const (
+	// maximumCatalogueBytes bounds memory use before any catalogue JSON is
+	// decoded or retained for validation.
+	maximumCatalogueBytes = 1 << 20
+	// maximumCatalogueEntries keeps validation and user-facing output bounded.
+	maximumCatalogueEntries = 256
 )
 
 // document mirrors the top-level JSON shape before architecture normalisation
@@ -96,7 +106,21 @@ func Load(reader io.Reader) (*Catalog, error) {
 		return nil, errors.New("decode catalog: reader is nil")
 	}
 
-	decoder := json.NewDecoder(reader)
+	data, err := io.ReadAll(io.LimitReader(reader, maximumCatalogueBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read catalog JSON: %w", err)
+	}
+	if len(data) > maximumCatalogueBytes {
+		return nil, fmt.Errorf("decode catalog JSON: document exceeds %d bytes", maximumCatalogueBytes)
+	}
+	if !utf8.Valid(data) {
+		return nil, errors.New("decode catalog JSON: document is not valid UTF-8")
+	}
+	if err := validateDocumentShape(data); err != nil {
+		return nil, fmt.Errorf("decode catalog JSON: %w", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 
 	var raw document
@@ -113,6 +137,166 @@ func Load(reader io.Reader) (*Catalog, error) {
 	}
 
 	return build(raw)
+}
+
+// validateDocumentShape rejects ambiguous object keys and excessive entry
+// counts before the document is decoded into Go structs.
+func validateDocumentShape(data []byte) error {
+	documentFields, err := decodeExactObject(data, "catalog", []string{
+		"schema_version", "description", "entries",
+	})
+	if err != nil {
+		return err
+	}
+
+	entriesData, ok := documentFields["entries"]
+	if !ok {
+		return nil
+	}
+	entries, err := decodeBoundedArray(entriesData, "entries", maximumCatalogueEntries)
+	if err != nil {
+		return err
+	}
+	for index, entryData := range entries {
+		entryPath := fmt.Sprintf("entries[%d]", index)
+		entryFields, err := decodeExactObject(entryData, entryPath, []string{
+			"id", "name", "distribution", "release", "filename", "architecture",
+			"artifact_kind", "url", "homepage", "adapter", "support_level",
+			"experimental", "mutable", "checksum", "compatibility_notes", "last_verified",
+		})
+		if err != nil {
+			return err
+		}
+		checksumData, ok := entryFields["checksum"]
+		if !ok || bytes.Equal(bytes.TrimSpace(checksumData), []byte("null")) {
+			continue
+		}
+		if _, err := decodeExactObject(checksumData, entryPath+".checksum", []string{"algorithm", "value"}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// decodeExactObject returns raw field values after requiring one JSON object
+// with exact, uniquely spelt keys from the supplied allow-list.
+func decodeExactObject(data []byte, objectPath string, allowed []string) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	opening, ok := token.(json.Delim)
+	if !ok || opening != '{' {
+		return nil, fmt.Errorf("%s must be a JSON object", objectPath)
+	}
+
+	fields := make(map[string]json.RawMessage, len(allowed))
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s contains a non-string field name", objectPath)
+		}
+		canonical, err := exactFieldName(key, allowed)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", objectPath, err)
+		}
+		if _, exists := fields[canonical]; exists {
+			return nil, fmt.Errorf("%s: duplicate field %q", objectPath, canonical)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		fields[canonical] = value
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
+	if delimiter, ok := closing.(json.Delim); !ok || delimiter != '}' {
+		return nil, fmt.Errorf("%s has an invalid object terminator", objectPath)
+	}
+	if err := requireJSONEnd(decoder); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+// exactFieldName accepts a field only when its spelling exactly matches the
+// allow-list and gives a targeted diagnostic for case-only mistakes.
+func exactFieldName(field string, allowed []string) (string, error) {
+	for _, candidate := range allowed {
+		if field == candidate {
+			return candidate, nil
+		}
+	}
+	for _, candidate := range allowed {
+		if strings.EqualFold(field, candidate) {
+			return "", fmt.Errorf("field %q must be spelt %q", field, candidate)
+		}
+	}
+	return "", fmt.Errorf("unknown field %q", field)
+}
+
+// decodeBoundedArray decodes one raw JSON array while rejecting an entry count
+// above maximum before further object validation takes place.
+func decodeBoundedArray(data []byte, arrayPath string, maximum int) ([]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	opening, ok := token.(json.Delim)
+	if !ok || opening != '[' {
+		return nil, fmt.Errorf("%s must be a JSON array", arrayPath)
+	}
+
+	values := make([]json.RawMessage, 0)
+	for decoder.More() {
+		if len(values) == maximum {
+			return nil, fmt.Errorf("%s must contain at most %d entries", arrayPath, maximum)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return nil, err
+	}
+	if delimiter, ok := closing.(json.Delim); !ok || delimiter != ']' {
+		return nil, fmt.Errorf("%s has an invalid array terminator", arrayPath)
+	}
+	if err := requireJSONEnd(decoder); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+// requireJSONEnd rejects a second JSON value after an otherwise valid object
+// or array while permitting trailing JSON whitespace.
+func requireJSONEnd(decoder *json.Decoder) error {
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values are not allowed")
+		}
+		return fmt.Errorf("decode after first value: %w", err)
+	}
+	return nil
 }
 
 // LoadBytes decodes and validates a catalogue from data.

@@ -170,8 +170,13 @@ func TestCatalogListDelivery(t *testing.T) {
 		if errorOutput != "" {
 			t.Fatalf("stderr = %q, want empty", errorOutput)
 		}
-		if !strings.Contains(output, "ID") || !strings.Contains(output, "IMAGE") || !strings.Contains(output, "FORMAT") || !strings.Contains(output, "SUPPORT") {
-			t.Fatalf("catalog table has no expected header:\n%s", output)
+		for _, header := range []string{"ID", "IMAGE", "FORMAT", "SUPPORT", "EXPERIMENTAL", "MUTABLE", "CHECKSUM"} {
+			if !strings.Contains(output, header) {
+				t.Fatalf("catalog table has no %s header:\n%s", header, output)
+			}
+		}
+		if !strings.Contains(output, "ubuntu-concept-resolute-x1e") || !strings.Contains(output, "none") || !strings.Contains(output, "sha256") {
+			t.Fatalf("catalog table does not expose checksum-pin states:\n%s", output)
 		}
 		orderedIDs := []string{
 			"debian-13-6-0-dvd-1",
@@ -234,11 +239,31 @@ func TestCatalogShowDelivery(t *testing.T) {
 			"Architecture: arm64",
 			"Support: implemented",
 			"Adapter: ubuntu-casper",
+			"Experimental: true",
+			"Mutable: false",
+			"Checksum: none (source bytes are not publisher-pinned)",
 			"Canonical does not publish a checksum",
 			"Notes:",
 		} {
 			if !strings.Contains(output, text) {
 				t.Errorf("catalog show output does not contain %q:\n%s", text, output)
+			}
+		}
+	})
+
+	t.Run("pinned entry", func(t *testing.T) {
+		t.Parallel()
+
+		output, _, err := executeCLI(t, "catalog", "show", "fedora-workstation-44-raw")
+		if err != nil {
+			t.Fatalf("catalog show pinned entry error = %v", err)
+		}
+		for _, text := range []string{
+			"Experimental: true", "Mutable: false",
+			"Checksum: sha256:0361c13141e6f57e24d6ee5227066c33a45f7f92a95f41d0bbd343e4fd05da18",
+		} {
+			if !strings.Contains(output, text) {
+				t.Errorf("catalog show pinned output does not contain %q:\n%s", text, output)
 			}
 		}
 	})
@@ -324,6 +349,49 @@ func TestCatalogValidateDelivery(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("invalid override has structured JSON", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "invalid-catalog.json")
+		if err := os.WriteFile(path, []byte(`{"schema_version":99,"description":"","entries":[]}`), 0o600); err != nil {
+			t.Fatalf("os.WriteFile() error = %v", err)
+		}
+		output, _, err := executeCLI(t, "catalog", "validate", path, "--json")
+		if err == nil {
+			t.Fatal("catalog validate invalid override --json error = nil")
+		}
+		var result catalogValidationResult
+		if decodeErr := json.Unmarshal([]byte(output), &result); decodeErr != nil {
+			t.Fatalf("catalog validate invalid JSON result cannot be decoded: %v\n%s", decodeErr, output)
+		}
+		if result.Valid || result.Error == "" || len(result.Issues) != 3 {
+			t.Fatalf("catalog validate invalid JSON result = %#v", result)
+		}
+		for _, field := range []string{"schema_version", "description", "entries"} {
+			found := false
+			for _, issue := range result.Issues {
+				if issue.Field == field {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("catalog validate invalid JSON has no %s issue: %#v", field, result)
+			}
+		}
+	})
+}
+
+// TestImageCreateDryRunValidatesCatalogueSelection verifies CLI dry runs load
+// and dispatch the requested catalogue entry before rendering a workflow plan.
+func TestImageCreateDryRunValidatesCatalogueSelection(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := executeCLI(t, "image", "create", "--dry-run", "--catalog-id", "missing-image")
+	if err == nil || !strings.Contains(err.Error(), `catalog entry "missing-image" was not found`) {
+		t.Fatalf("image create dry-run missing entry error = %v", err)
+	}
 }
 
 // TestImageCreateDryRunIsDeterministic verifies that planning an image build is
