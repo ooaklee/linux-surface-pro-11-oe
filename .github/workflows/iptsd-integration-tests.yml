@@ -1,54 +1,69 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
-name: Test SP11 iptsd integration
+name: Test native SP11 IPTSD integration
 
 on:
   pull_request:
     paths:
       - ".github/workflows/iptsd-integration-tests.yml"
-      - "meta-sp11/recipes-support/iptsd-sp11/**"
-      - "scripts/build-sp11-iptsd-docker.sh"
-      - "scripts/build-sp11-live-usb-image.sh"
-      - "scripts/install-sp11-iptsd.sh"
-      - "scripts/install-sp11-support.sh"
-      - "scripts/validate-sp11-iptsd-payload.sh"
-      - "tests/test-iptsd-integration.sh"
+      - "cli/linux-armer/cmd/**"
+      - "cli/linux-armer/go.mod"
+      - "cli/linux-armer/go.sum"
+      - "cli/linux-armer/internal/cli/**"
+      - "cli/linux-armer/internal/platform/**"
+      - "cli/linux-armer/internal/quality/**"
+      - "cli/linux-armer/internal/userspace/**"
+      - "cli/linux-armer/supported-userspace.json"
       - "userspace/iptsd-sp11/**"
   push:
     branches:
       - main
     paths:
       - ".github/workflows/iptsd-integration-tests.yml"
-      - "meta-sp11/recipes-support/iptsd-sp11/**"
-      - "scripts/build-sp11-iptsd-docker.sh"
-      - "scripts/build-sp11-live-usb-image.sh"
-      - "scripts/install-sp11-iptsd.sh"
-      - "scripts/install-sp11-support.sh"
-      - "scripts/validate-sp11-iptsd-payload.sh"
-      - "tests/test-iptsd-integration.sh"
+      - "cli/linux-armer/cmd/**"
+      - "cli/linux-armer/go.mod"
+      - "cli/linux-armer/go.sum"
+      - "cli/linux-armer/internal/cli/**"
+      - "cli/linux-armer/internal/platform/**"
+      - "cli/linux-armer/internal/quality/**"
+      - "cli/linux-armer/internal/userspace/**"
+      - "cli/linux-armer/supported-userspace.json"
       - "userspace/iptsd-sp11/**"
 
 permissions:
   contents: read
 
+concurrency:
+  group: iptsd-integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   integration:
-    name: Integration policy and templates
+    name: Native policy, contract, and delivery tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli/linux-armer
 
     steps:
       - name: Check out the support repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install integration-test dependency
-        run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes ripgrep
-          fi
+      - name: Set up Go from the CLI module
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: cli/linux-armer/go.mod
+          cache-dependency-path: cli/linux-armer/go.sum
 
-      - name: Run the SP11 iptsd integration checks
-        run: bash tests/test-iptsd-integration.sh
+      - name: Run race-enabled native IPTSD tests
+        run: go test -race -count=1 ./internal/userspace/... ./internal/cli ./internal/quality
+
+      - name: Vet the native IPTSD packages
+        run: go vet ./internal/userspace/... ./internal/cli ./internal/quality
+
+      - name: Compile the native CLI
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${RUNNER_TEMP}/linux-armer" ./cmd/linux-armer

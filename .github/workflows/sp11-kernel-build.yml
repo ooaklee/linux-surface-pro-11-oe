@@ -6,29 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       git-url:
-        description: "Kernel git URL"
+        description: "Kernel Git URL"
         required: true
         default: "https://github.com/ooaklee/linux_ms_dev_kit-sp11.git"
         type: string
       git-branch:
-        description: "Kernel git branch or tag"
+        description: "Kernel Git branch or tag"
         required: true
         default: "sp11/integration-7.2.x"
-        type: string
-      patch-dirs:
-        description: "Space-separated patch directories (relative to repo root); empty for in-tree integration builds"
-        required: false
-        default: ""
-        type: string
-      docker-image:
-        description: "Docker image for the build container"
-        required: false
-        default: "ubuntu:26.04"
-        type: string
-      build-target:
-        description: "Debian build target"
-        required: false
-        default: "binary-indep binary-qcom-x1e"
         type: string
       jobs:
         description: "Parallel build jobs"
@@ -36,18 +21,18 @@ on:
         default: "8"
         type: string
       release:
-        description: "Create a GitHub release after a successful build"
+        description: "Create a GitHub prerelease after a successful build"
         required: false
         default: false
         type: boolean
       release-name:
-        description: "Release tag name (auto-derived if empty)"
+        description: "Release tag name (derived from the ABI when empty)"
         required: false
         default: ""
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: sp11-kernel-build-${{ github.workflow }}-${{ github.ref }}
@@ -58,80 +43,160 @@ jobs:
     name: Build kernel
     runs-on: ubuntu-24.04
     timeout-minutes: 600
+    defaults:
+      run:
+        shell: bash
 
     outputs:
       release-name: ${{ steps.release-assets.outputs.release-name }}
 
     steps:
       - name: Check out the support repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Set up Docker Buildx (for ARM64 emulation)
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Go from the CLI module
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: cli/linux-armer/go.mod
+          cache-dependency-path: cli/linux-armer/go.sum
+
+      - name: Set up ARM64 emulation
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: arm64
 
-      - name: Build the kernel
-        run: |
-          ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
-            --source git \
-            --git-url "${{ inputs.git-url }}" \
-            --git-branch "${{ inputs.git-branch }}" \
-            --image "${{ inputs.docker-image }}" \
-            --patch-dirs "${{ inputs.patch-dirs }}" \
-            --build-target "${{ inputs.build-target }}" \
-            --work-dir build/docker-sp11-kernel \
-            --linux-work-volume sp11-kernel-build-ci \
-            --copy-to-payload \
-            --reset-source \
-            --jobs "${{ inputs.jobs }}"
+      - name: Compile Linux Armer
+        working-directory: cli/linux-armer
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${RUNNER_TEMP}/linux-armer" ./cmd/linux-armer
 
-      - name: Upload .deb artifacts
-        uses: actions/upload-artifact@v4
+      - name: Build the kernel with the native CLI
+        env:
+          KERNEL_GIT_URL: ${{ inputs.git-url }}
+          KERNEL_GIT_BRANCH: ${{ inputs.git-branch }}
+          KERNEL_JOBS: ${{ inputs.jobs }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${KERNEL_JOBS}" =~ ^(0|[1-9][0-9]{0,2})$ ]] ||
+             (( 10#${KERNEL_JOBS} > 512 )); then
+            printf 'Parallel build jobs must be a canonical integer from 0 through 512.\n' >&2
+            exit 1
+          fi
+          "${RUNNER_TEMP}/linux-armer" kernel build \
+            --repository-root "${GITHUB_WORKSPACE}" \
+            --git-url "${KERNEL_GIT_URL}" \
+            --git-branch "${KERNEL_GIT_BRANCH}" \
+            --work-dir build/linux-armer/kernel-build-ci \
+            --output-dir build/linux-armer/kernel-ci \
+            --reset-source \
+            --jobs "${KERNEL_JOBS}"
+
+      - name: Upload kernel package artefacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kernel-debs
-          path: payload/kernel-debs/*.deb
+          path: build/linux-armer/kernel-ci/*.deb
           if-no-files-found: error
           retention-days: 30
 
-      - name: Prepare release assets
+      - name: Prepare and validate release assets
         id: release-assets
         if: ${{ inputs.release }}
+        env:
+          REQUESTED_RELEASE_NAME: ${{ inputs.release-name }}
         run: |
-          patch_args=()
-          for d in ${{ inputs.patch-dirs }}; do
-            patch_args+=(--patch-dir "$d")
-          done
-          ./scripts/prepare-sp11-kernel-release-assets.sh \
-            --kernel-debs-dir payload/kernel-debs \
-            --artifacts-dir build/docker-sp11-kernel/artifacts \
-            "${patch_args[@]}" \
-            --source-url "${{ inputs.git-url }}" \
-            --source-branch "${{ inputs.git-branch }}" \
-            --docker-image "${{ inputs.docker-image }}" \
-            --allow-missing-source \
-            --allow-dirty \
-            ${{ inputs.release-name != '' && format('--release-name "{0}"', inputs.release-name) || '' }}
+          set -euo pipefail
 
-          # Extract the release name that the script derived
-          release_dir="build/release"
-          if [ -d "$release_dir" ]; then
-            release_name="$(find "$release_dir" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' | sort | tail -1)"
-            echo "release-name=$release_name" >> "$GITHUB_OUTPUT"
+          build_dir="build/linux-armer/kernel-ci"
+          provenance_file="${build_dir}/linux-armer-kernel-build-provenance.json"
+          bundle_file="${build_dir}/linux-armer-kernel-bundle.json"
+
+          source_url="$(jq -er '.git_url | strings' "${provenance_file}")"
+          source_ref="$(jq -er '.git_ref | strings' "${provenance_file}")"
+          source_revision="$(jq -er '.revision | strings' "${provenance_file}")"
+          source_tree="$(jq -er '.tree | strings' "${provenance_file}")"
+          if [[ ! "${source_revision}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
+             [[ ! "${source_tree}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+            printf 'Native build provenance contains an invalid Git object identity.\n' >&2
+            exit 1
           fi
 
-      - name: Upload release assets
-        uses: actions/upload-artifact@v4
+          source_checkout="${RUNNER_TEMP}/kernel-release-source"
+          release_inputs="${RUNNER_TEMP}/kernel-release-inputs"
+          mkdir -m 0700 "${source_checkout}" "${release_inputs}"
+          git -C "${source_checkout}" init --quiet
+          git -C "${source_checkout}" remote add origin "${source_url}"
+          git -C "${source_checkout}" fetch --depth=1 --no-tags origin "${source_ref}"
+
+          fetched_revision="$(git -C "${source_checkout}" rev-parse 'FETCH_HEAD^{commit}')"
+          fetched_tree="$(git -C "${source_checkout}" rev-parse "${fetched_revision}^{tree}")"
+          if [[ "${fetched_revision}" != "${source_revision}" ]] ||
+             [[ "${fetched_tree}" != "${source_tree}" ]]; then
+            printf 'Fetched corresponding source differs from the native build provenance.\n' >&2
+            exit 1
+          fi
+
+          source_archive="${release_inputs}/linux-${source_revision}.tar.gz"
+          licence_file="${release_inputs}/COPYING"
+          git -C "${source_checkout}" archive \
+            --format=tar.gz \
+            --prefix="linux-${source_revision}/" \
+            --output="${source_archive}" \
+            "${source_revision}"
+          git -C "${source_checkout}" show "${source_revision}:COPYING" > "${licence_file}"
+          test -s "${source_archive}"
+          test -s "${licence_file}"
+          gzip --test "${source_archive}"
+          tar -xOf "${source_archive}" "linux-${source_revision}/COPYING" |
+            cmp --silent "${licence_file}" -
+
+          release_name="${REQUESTED_RELEASE_NAME}"
+          if [[ -z "${release_name}" ]]; then
+            kernel_abi="$(jq -er '.abi | strings' "${bundle_file}")"
+            release_name="sp11-kernel-${kernel_abi}"
+          fi
+          if [[ ! "${release_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
+             [[ "${release_name}" == *".."* ]]; then
+            printf 'Release name is not a safe tag-like identity.\n' >&2
+            exit 1
+          fi
+
+          release_dir="build/release/${release_name}"
+          "${RUNNER_TEMP}/linux-armer" kernel release prepare \
+            --build-dir "${build_dir}" \
+            --output-dir "${release_dir}" \
+            --release-name "${release_name}" \
+            --source "${source_archive}" \
+            --licence "${licence_file}"
+          "${RUNNER_TEMP}/linux-armer" kernel release validate \
+            --json "${release_dir}" > "${RUNNER_TEMP}/kernel-release-validation.json"
+
+          jq -e --arg release_name "${release_name}" \
+            '.release_name == $release_name and
+             .experimental == true and
+             .hardware_qualified == false and
+             ([.assets[].kind] | index("source") != null) and
+             ([.assets[].kind] | index("licence") != null)' \
+            "${RUNNER_TEMP}/kernel-release-validation.json" >/dev/null
+          (
+            cd "${release_dir}"
+            sha256sum --check SHA256SUMS
+          )
+
+          printf 'release-name=%s\n' "${release_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload validated release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ inputs.release && steps.release-assets.outputs.release-name != '' }}
         with:
           name: release-assets
           path: build/release/${{ steps.release-assets.outputs.release-name }}/*
+          if-no-files-found: error
           retention-days: 90
 
   release:
-    name: Create GitHub release
+    name: Create GitHub prerelease
     runs-on: ubuntu-24.04
     needs: build
     if: ${{ inputs.release && needs.build.outputs.release-name != '' }}
@@ -141,38 +206,38 @@ jobs:
       contents: write
 
     steps:
-      - name: Check out the support repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Download release assets
-        uses: actions/download-artifact@v4
+      - name: Download validated release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-assets
           path: release-assets
 
-      - name: Create GitHub release
+      - name: Recheck and create the GitHub prerelease
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ needs.build.outputs.release-name }}
         run: |
-          release_name="${{ needs.build.outputs.release-name }}"
-          target_commit="${{ github.sha }}"
+          set -euo pipefail
           release_dir="release-assets"
+          notes_file="${release_dir}/RELEASE-NOTES.md"
+          test -s "${notes_file}"
+          (
+            cd "${release_dir}"
+            sha256sum --check SHA256SUMS
+          )
 
-          # Find RELEASE-NOTES.md and the asset files
-          notes_file=""
-          assets=()
-          for f in "$release_dir"/*; do
-            case "$(basename "$f")" in
-              RELEASE-NOTES.md) notes_file="$f" ;;
-              *.deb|*.ddeb|*.tar.xz|*.manifest|*.sha256|*.txt|SHA256SUMS) assets+=("$f") ;;
-            esac
-          done
-
-          args=(--target "$target_commit" --prerelease --title "$release_name")
-          if [ -n "$notes_file" ]; then
-            args+=(--notes-file "$notes_file")
+          mapfile -d '' -t assets < <(
+            find "${release_dir}" -mindepth 1 -maxdepth 1 -type f -print0 |
+              sort -z
+          )
+          if (( ${#assets[@]} == 0 )); then
+            printf 'Validated release directory contains no uploadable assets.\n' >&2
+            exit 1
           fi
 
-          gh release create "$release_name" "${args[@]}" "${assets[@]}"
+          gh release create "${RELEASE_NAME}" \
+            --target "${GITHUB_SHA}" \
+            --prerelease \
+            --title "${RELEASE_NAME}" \
+            --notes-file "${notes_file}" \
+            "${assets[@]}"
