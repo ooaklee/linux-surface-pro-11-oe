@@ -1,0 +1,55 @@
+version: 2
+
+project_name: linux-armer
+
+builds:
+  - id: linux-armer
+    main: ./cmd/linux-armer
+    binary: linux-armer
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/version.Version={{ .Version }}
+        -X github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/version.Commit={{ .FullCommit }}
+        -X github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/version.Date={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: release-archives
+    ids:
+      - linux-armer
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    files:
+      - README.md
+      - CHANGELOG.md
+      - supported-isos.json
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  draft: true

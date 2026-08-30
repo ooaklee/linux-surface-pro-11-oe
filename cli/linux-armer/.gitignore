@@ -1,0 +1,9 @@
+/bin/
+/linux-armer
+/*.iso
+/*.img
+/*.raw
+/*.partial
+/*.journal.json
+/*.manifest.json
+/.linux-armer-remaster-*/

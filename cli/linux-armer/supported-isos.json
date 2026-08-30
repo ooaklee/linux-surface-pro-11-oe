@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "description": "Curated ARM64 installation media that linux-armer can present to Surface Pro 11 users. An entry marked catalog-only is discoverable but does not yet have an image adapter.",
+  "entries": [
+    {
+      "id": "debian-13-6-0-dvd-1",
+      "name": "Debian 13.6.0 DVD 1",
+      "distribution": "Debian",
+      "release": "13.6.0",
+      "architecture": "arm64",
+      "artifact_kind": "iso",
+      "url": "https://cdimage.debian.org/debian-cd/current/arm64/iso-dvd/debian-13.6.0-arm64-DVD-1.iso",
+      "homepage": "https://cdimage.debian.org/debian-cd/current/arm64/iso-dvd/",
+      "adapter": "none",
+      "support_level": "catalog-only",
+      "experimental": true,
+      "mutable": true,
+      "compatibility_notes": [
+        "No linux-armer image adapter is implemented yet.",
+        "The current release directory is mutable; re-check the filename and checksum before use."
+      ],
+      "last_verified": "2026-08-30"
+    },
+    {
+      "id": "elementary-os-8-1-20260219",
+      "name": "elementary OS 8.1 ARM64",
+      "distribution": "elementary OS",
+      "release": "8.1 (2026-02-19)",
+      "architecture": "arm64",
+      "artifact_kind": "iso",
+      "url": "https://ams3.dl.elementary.io/download/MTc4ODA3NzI1Mg==/elementaryos-8.1-stable-arm64.20260219.iso",
+      "homepage": "https://elementary.io/",
+      "adapter": "none",
+      "support_level": "catalog-only",
+      "experimental": true,
+      "mutable": false,
+      "compatibility_notes": [
+        "No linux-armer image adapter is implemented yet.",
+        "The download URL is release-specific but should still be verified against the publisher before use."
+      ],
+      "last_verified": "2026-08-30"
+    },
+    {
+      "id": "fedora-workstation-44-raw",
+      "name": "Fedora Workstation 44 Raw Disk Image",
+      "distribution": "Fedora",
+      "release": "44 (1.7)",
+      "architecture": "aarch64",
+      "artifact_kind": "raw-xz",
+      "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/images/Fedora-Workstation-Disk-44-1.7.aarch64.raw.xz",
+      "homepage": "https://fedoraproject.org/workstation/download/",
+      "adapter": "none",
+      "support_level": "catalog-only",
+      "experimental": true,
+      "mutable": false,
+      "compatibility_notes": [
+        "No linux-armer image adapter is implemented yet.",
+        "This is a compressed raw disk image, not an ISO, and requires a raw-image-specific workflow."
+      ],
+      "last_verified": "2026-08-30"
+    },
+    {
+      "id": "fedora-workstation-live-44",
+      "name": "Fedora Workstation Live 44",
+      "distribution": "Fedora",
+      "release": "44 (1.7)",
+      "architecture": "aarch64",
+      "artifact_kind": "iso",
+      "url": "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-Live-44-1.7.aarch64.iso",
+      "homepage": "https://fedoraproject.org/workstation/download/",
+      "adapter": "none",
+      "support_level": "catalog-only",
+      "experimental": true,
+      "mutable": false,
+      "compatibility_notes": [
+        "No linux-armer image adapter is implemented yet.",
+        "Surface Pro 11 boot and device-tree integration have not yet been automated for this image."
+      ],
+      "last_verified": "2026-08-30"
+    },
+    {
+      "id": "pop-os-24-04-arm64-generic-3",
+      "name": "Pop!_OS 24.04 ARM64 Generic 3",
+      "distribution": "Pop!_OS",
+      "release": "24.04 (generic 3)",
+      "architecture": "arm64",
+      "artifact_kind": "iso",
+      "url": "https://iso.pop-os.org/24.04/arm64/generic/3/pop-os_24.04_arm64_generic_3.iso",
+      "homepage": "https://system76.com/download-pop/",
+      "adapter": "none",
+      "support_level": "catalog-only",
+      "experimental": true,
+      "mutable": false,
+      "compatibility_notes": [
+        "No linux-armer image adapter is implemented yet.",
+        "Surface Pro 11 boot and device-tree integration have not yet been automated for this image."
+      ],
+      "last_verified": "2026-08-30"
+    },
+    {
+      "id": "ubuntu-concept-resolute-x1e",
+      "name": "Ubuntu Concept Resolute Desktop for X1E",
+      "distribution": "Ubuntu",
+      "release": "Resolute concept image",
+      "architecture": "arm64",
+      "artifact_kind": "iso",
+      "url": "https://people.canonical.com/~platform/images/ubuntu-concept/resolute-desktop-arm64+x1e.iso",
+      "homepage": "https://people.canonical.com/~platform/images/ubuntu-concept/",
+      "adapter": "ubuntu-casper",
+      "support_level": "implemented",
+      "experimental": true,
+      "mutable": true,
+      "compatibility_notes": [
+        "This is the first image supported by the linux-armer image creation workflow.",
+        "The concept-image URL is mutable; pin or record a checksum for reproducible builds."
+      ],
+      "last_verified": "2026-08-30"
+    }
+  ]
+}
