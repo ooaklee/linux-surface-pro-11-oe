@@ -8,6 +8,9 @@ description: Architecture decision for authenticated native camera builds, coher
 
 Accepted on 2026-08-30.
 
+ADR020 refines transferred-build and release validation with independent
+authority digests and a non-executable static proof.
+
 ## Context
 
 Surface Pro 11 camera support needs a downstream libcamera patch, matching IMX681 tuning data, Ubuntu source packaging, and five runtime packages whose Simple IPA signature must match the libcamera core from the same build. Installing only one package or mixing build versions can cause IPA authentication to fail even when each Debian package is individually well formed.
@@ -45,10 +48,13 @@ The package and release APIs remain separate from Cobra and userspace orchestrat
 ## Consequences
 
 - Camera source and local modifications are bound to one support commit and cannot silently drift between planning, building, and release preparation.
-- All five runtime packages come from one build version and carry an independently repeated IPA signature and tuning identity proof.
+- All five runtime packages come from one build version and pass the trusted build workflow's same-build IPA signature and tuning identity proof; transferred bundles repeat static identity proof under ADR020.
 - The public bundle has structured, machine-readable source, licence, builder, and output provenance without exposing a local filesystem path.
 - Release preparation is recoverable, collision-safe, and strictly local; it does not imply permission to publish.
-- ARM64 package execution is an honest platform gate. Other platforms can inspect a deterministic dry-run but cannot claim a completed build or release proof.
+- ARM64 package execution remains an honest build-time platform gate. Other
+  platforms can inspect a deterministic build dry run and can perform the
+  later digest-pinned static release proof, but cannot claim the trusted
+  builder's executable same-build IPA proof.
 - The original Debian changes record can mention additional outputs, but every entry is accounted for and no unselected output enters the bounded runtime bundle.
 - The old camera builder and publisher scripts are no longer runtime dependencies and may be retired once CLI wiring, current documentation, and the repository-wide migration gates are complete.
 - Structural package proof does not establish camera graph operation, privacy indication, image quality, browser capture, suspend recovery, or repeated raw transport on a Surface Pro 11. Those remain explicit hardware tests.
