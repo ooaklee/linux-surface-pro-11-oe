@@ -4,7 +4,18 @@ on:
   pull_request:
     paths:
       - "cli/linux-armer/**"
+      - "**/*.md"
+      - "**/*.json"
+      - ".gitignore"
+      - "LICENCE*"
+      - "LICENSE*"
+      - "COPYING*"
+      - "THIRD_PARTY_NOTICES.md"
+      - "**/sp11-linux-checks/**"
+      - "**/sp11-linux-checks-*.zip"
+      - "**/report-*/**"
       - ".github/workflows/linux-armer.yml"
+      - ".github/workflows/sp11-kernel-build.yml"
   push:
     branches:
       - "**"
@@ -12,7 +23,18 @@ on:
       - "linux-armer/v*"
     paths:
       - "cli/linux-armer/**"
+      - "**/*.md"
+      - "**/*.json"
+      - ".gitignore"
+      - "LICENCE*"
+      - "LICENSE*"
+      - "COPYING*"
+      - "THIRD_PARTY_NOTICES.md"
+      - "**/sp11-linux-checks/**"
+      - "**/sp11-linux-checks-*.zip"
+      - "**/report-*/**"
       - ".github/workflows/linux-armer.yml"
+      - ".github/workflows/sp11-kernel-build.yml"
   workflow_dispatch:
 
 permissions:
@@ -42,6 +64,14 @@ jobs:
           go-version-file: cli/linux-armer/.tool-versions
           cache-dependency-path: cli/linux-armer/go.sum
 
+      - name: Reject tracked legacy diagnostic output
+        run: |
+          tracked_diagnostics="$(git -C ../.. ls-files -- ':(glob)**/sp11-linux-checks/**' ':(glob)**/sp11-linux-checks-*.zip' ':(glob)**/report-*/**')"
+          if [[ -n "$tracked_diagnostics" ]]; then
+            printf 'Private legacy diagnostic output is tracked:\n%s\n' "$tracked_diagnostics" >&2
+            exit 1
+          fi
+
       - name: Check formatting
         run: |
           unformatted="$(gofmt -l .)"
@@ -59,14 +89,61 @@ jobs:
       - name: Build Linux amd64 binary without CGO
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${RUNNER_TEMP}/linux-armer-linux-amd64" ./cmd/linux-armer
 
+      - name: Verify the immutable published IPTSD release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cache_root="${RUNNER_TEMP}/iptsd-cache"
+          extract_root="${RUNNER_TEMP}/iptsd-extracted"
+          target_root="${RUNNER_TEMP}/iptsd-target"
+          mkdir -p "$extract_root" "$target_root"
+
+          "${RUNNER_TEMP}/linux-armer-linux-amd64" userspace pull iptsd --cache-dir "$cache_root"
+          bundle_root="${cache_root}/iptsd-v1/sp11-iptsd-v1"
+          archive_path="${bundle_root}/sp11-iptsd-3.1.0-sp11.1-arm64.tar.xz"
+          tar -xJf "$archive_path" -C "$extract_root"
+          release_root="${extract_root}/sp11-iptsd-v1"
+
+          LINUX_ARMER_TEST_IPTSD_RELEASE_ROOT="$release_root" \
+            go test ./internal/userspace/iptsd -run '^TestPinnedReleaseFixture$' -count=1
+          "${RUNNER_TEMP}/linux-armer-linux-amd64" userspace install iptsd \
+            --from "$bundle_root" \
+            --root "$target_root" \
+            --dry-run
+
       - name: Build Linux arm64 binary without CGO
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o "${RUNNER_TEMP}/linux-armer-linux-arm64" ./cmd/linux-armer
+
+  windows-contract:
+    name: Windows hand-off contract
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run collector self-test with Windows PowerShell
+        shell: powershell
+        run: >-
+          & .\cli\linux-armer\tools\collect-sp11-windows-handoff.ps1 -SelfTest
+
+      - name: Install pinned Pester and run collector contract tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+          Import-Module Pester -RequiredVersion 5.7.1
+          Invoke-Pester -Path .\cli\linux-armer\tools\tests\collect-sp11-windows-handoff.Tests.ps1 -CI
 
   release:
     name: Publish CLI release
     if: startsWith(github.ref, 'refs/tags/linux-armer/v')
     needs:
       - quality
+      - windows-contract
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -86,6 +163,32 @@ jobs:
         with:
           go-version-file: cli/linux-armer/.tool-versions
           cache-dependency-path: cli/linux-armer/go.sum
+
+      - name: Require publishable project licensing documents
+        run: |
+          set -euo pipefail
+          licence_document=""
+          for candidate in LICENCE LICENCE.md LICENCE.txt LICENSE LICENSE.md LICENSE.txt COPYING COPYING.md COPYING.txt; do
+            if [[ -f "${GITHUB_WORKSPACE}/${candidate}" && ! -L "${GITHUB_WORKSPACE}/${candidate}" && -s "${GITHUB_WORKSPACE}/${candidate}" ]]; then
+              licence_document="${GITHUB_WORKSPACE}/${candidate}"
+              break
+            fi
+          done
+          if [[ -z "$licence_document" ]]; then
+            printf 'CLI publication is blocked: add a non-empty project licence or copying document at the repository root.\n' >&2
+            exit 1
+          fi
+          if [[ ! -f "${GITHUB_WORKSPACE}/THIRD_PARTY_NOTICES.md" || -L "${GITHUB_WORKSPACE}/THIRD_PARTY_NOTICES.md" || ! -s "${GITHUB_WORKSPACE}/THIRD_PARTY_NOTICES.md" ]]; then
+            printf 'CLI publication is blocked: add a non-empty THIRD_PARTY_NOTICES.md at the repository root.\n' >&2
+            exit 1
+          fi
+          licence_basename="$(basename "$licence_document")"
+          {
+            printf 'LINUX_ARMER_LICENCE_DOCUMENT=%s\n' "$licence_basename"
+            printf 'LINUX_ARMER_LICENCE_BASENAME=%s\n' "$licence_basename"
+            printf 'LINUX_ARMER_THIRD_PARTY_NOTICES_DOCUMENT=THIRD_PARTY_NOTICES.md\n'
+          } >> "$GITHUB_ENV"
+          printf 'Release licensing documents are present: %s and THIRD_PARTY_NOTICES.md\n' "$(basename "$licence_document")"
 
       - name: Prepare namespaced release tag
         id: release-version
@@ -118,21 +221,57 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.18.0
-          args: release --clean --skip=publish
-          workdir: cli/linux-armer
+          args: release --clean --skip=publish --config cli/linux-armer/.goreleaser.yaml
+          workdir: .
+
+      - name: Verify every archive carries legal documents
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/*.tar.gz)
+          if [[ ${#archives[@]} -ne 4 ]]; then
+            printf 'Expected four platform archives, found %d.\n' "${#archives[@]}" >&2
+            exit 1
+          fi
+          licence_sha256="$(sha256sum "${GITHUB_WORKSPACE}/${LINUX_ARMER_LICENCE_BASENAME}" | awk '{ print $1 }')"
+          notices_sha256="$(sha256sum "${GITHUB_WORKSPACE}/THIRD_PARTY_NOTICES.md" | awk '{ print $1 }')"
+          for archive in "${archives[@]}"; do
+            listing="$(tar -tzf "$archive" | sed 's#^\./##')"
+            for required in "$LINUX_ARMER_LICENCE_BASENAME" THIRD_PARTY_NOTICES.md; do
+              count="$(awk -v required="$required" '$0 == required { count++ } END { print count + 0 }' <<< "$listing")"
+              if [[ "$count" -ne 1 ]]; then
+                printf '%s contains %s copies of required legal document %s; expected exactly one.\n' "$archive" "$count" "$required" >&2
+                exit 1
+              fi
+              actual_sha256="$(tar -xOzf "$archive" "$required" | sha256sum | awk '{ print $1 }')"
+              if [[ "$required" == "$LINUX_ARMER_LICENCE_BASENAME" ]]; then
+                expected_sha256="$licence_sha256"
+              else
+                expected_sha256="$notices_sha256"
+              fi
+              if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+                printf '%s contains altered legal document %s.\n' "$archive" "$required" >&2
+                exit 1
+              fi
+            done
+          done
 
       - name: Publish namespaced GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Markdown backticks are intentional literals in the generated notes.
           notes_file="${RUNNER_TEMP}/linux-armer-release-notes.md"
           {
             printf '# Linux Armer %s\n\n' "$LINUX_ARMER_VERSION"
-            printf 'Each platform archive contains the Linux Armer binary, both supported-component catalogues, and the user documentation. Verify downloads with `checksums.txt`.\n\n'
+            # shellcheck disable=SC2016
+            printf 'Each platform archive contains the Linux Armer binary, both supported-component catalogues, the Windows hand-off collector, user documentation, the project licence, and third-party notices. Verify downloads with `checksums.txt`.\n\n'
             printf '## Changes\n\n'
             if [[ -n "${PREVIOUS_LINUX_ARMER_TAG:-}" ]]; then
+              # shellcheck disable=SC2016
               git log --format='- %s (`%h`)' "${PREVIOUS_LINUX_ARMER_TAG}..${GITHUB_SHA}" -- .
             else
+              # shellcheck disable=SC2016
               git log --format='- %s (`%h`)' "$GITHUB_SHA" -- .
             fi
           } > "$notes_file"

@@ -1,9 +1,14 @@
 version: 2
 
 project_name: linux-armer
+dist: cli/linux-armer/dist
+
+gomod:
+  dir: cli/linux-armer
 
 builds:
   - id: linux-armer
+    dir: cli/linux-armer
     main: ./cmd/linux-armer
     binary: linux-armer
     env:
@@ -36,10 +41,20 @@ archives:
       {{- .Os }}_
       {{- .Arch }}
     files:
-      - README.md
-      - CHANGELOG.md
-      - supported-isos.json
-      - supported-userspace.json
+      - src: cli/linux-armer/README.md
+        strip_parent: true
+      - src: cli/linux-armer/CHANGELOG.md
+        strip_parent: true
+      - src: cli/linux-armer/supported-isos.json
+        strip_parent: true
+      - src: cli/linux-armer/supported-userspace.json
+        strip_parent: true
+      - src: cli/linux-armer/tools/collect-sp11-windows-handoff.ps1
+        strip_parent: true
+      - src: "{{ .Env.LINUX_ARMER_LICENCE_DOCUMENT }}"
+        strip_parent: true
+      - src: "{{ .Env.LINUX_ARMER_THIRD_PARTY_NOTICES_DOCUMENT }}"
+        strip_parent: true
 
 checksum:
   name_template: checksums.txt

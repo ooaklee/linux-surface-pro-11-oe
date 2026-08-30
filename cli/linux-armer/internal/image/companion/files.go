@@ -41,6 +41,23 @@ var (
 		"internal": ".go",
 		"tools":    ".ps1",
 	}
+	// projectDocumentKinds is the closed set of conventional root legal
+	// documents that may be inventoried or used to declare redistribution terms.
+	projectDocumentKinds = map[string]string{
+		"copying":                "copying",
+		"copying.md":             "copying",
+		"copying.txt":            "copying",
+		"licence":                "licence",
+		"licence.md":             "licence",
+		"licence.txt":            "licence",
+		"license":                "licence",
+		"license.md":             "licence",
+		"license.txt":            "licence",
+		"notice":                 "notice",
+		"notice.md":              "notice",
+		"notice.txt":             "notice",
+		"third_party_notices.md": "notice",
+	}
 )
 
 // collectSourceFiles returns a deterministic allow-listed source tree while
@@ -140,11 +157,17 @@ func collectSourceFiles(sourceRoot string) ([]sourceFile, error) {
 }
 
 // discoverLicenceFiles finds only direct project-level licence, copying, and
-// notice documents and records whether any file actually declares terms.
+// notice documents at the authoritative Git root, or at the source root when
+// the development source is not Git-backed. It records whether any file
+// actually declares redistribution terms.
 func discoverLicenceFiles(sourceRoot string) ([]sourceFile, string, error) {
-	entries, err := os.ReadDir(sourceRoot)
+	documentRoot, err := projectDocumentRoot(sourceRoot)
 	if err != nil {
-		return nil, "", fmt.Errorf("read linux-armer source directory: %w", err)
+		return nil, "", err
+	}
+	entries, err := os.ReadDir(documentRoot)
+	if err != nil {
+		return nil, "", fmt.Errorf("read authoritative project document directory: %w", err)
 	}
 	files := make([]sourceFile, 0)
 	declared := false
@@ -156,8 +179,8 @@ func discoverLicenceFiles(sourceRoot string) ([]sourceFile, string, error) {
 		if err := validateFlatName(entry.Name(), "project licence or notice filename"); err != nil {
 			return nil, "", err
 		}
-		absolutePath := filepath.Join(sourceRoot, entry.Name())
-		if err := validateRegularFile(absolutePath, "project licence or notice file"); err != nil {
+		absolutePath := filepath.Join(documentRoot, entry.Name())
+		if err := validateNonEmptyRegularFile(absolutePath, "project licence or notice file"); err != nil {
 			return nil, "", err
 		}
 		files = append(files, sourceFile{absolutePath: absolutePath, portablePath: entry.Name()})
@@ -174,30 +197,28 @@ func discoverLicenceFiles(sourceRoot string) ([]sourceFile, string, error) {
 	return files, projectLicenceNotDeclared, nil
 }
 
-// projectDocumentKind recognises conventional project-level redistribution and
-// notice filenames without treating similarly prefixed words as documents.
-func projectDocumentKind(name string) (string, bool) {
-	lower := strings.ToLower(name)
-	for _, candidate := range []struct {
-		prefix string
-		kind   string
-	}{
-		{prefix: "license", kind: "licence"},
-		{prefix: "licence", kind: "licence"},
-		{prefix: "copying", kind: "copying"},
-		{prefix: "notice", kind: "notice"},
-	} {
-		if lower == candidate.prefix {
-			return candidate.kind, true
-		}
-		if strings.HasPrefix(lower, candidate.prefix) && len(lower) > len(candidate.prefix) {
-			switch lower[len(candidate.prefix)] {
-			case '.', '-', '_':
-				return candidate.kind, true
-			}
-		}
+// projectDocumentRoot chooses the repository root as the sole legal-document
+// authority for Git-backed source and otherwise retains the explicit source
+// root used by a working-tree development bundle.
+func projectDocumentRoot(sourceRoot string) (string, error) {
+	repositoryRoot, controlled, err := findGitRoot(sourceRoot)
+	if err != nil {
+		return "", err
 	}
-	return "", false
+	if controlled {
+		if err := validateDirectory(repositoryRoot, "authoritative project document directory"); err != nil {
+			return "", err
+		}
+		return repositoryRoot, nil
+	}
+	return sourceRoot, nil
+}
+
+// projectDocumentKind recognises the closed set of conventional project-level
+// redistribution and notice filenames shared with the publication policy.
+func projectDocumentKind(name string) (string, bool) {
+	kind, recognised := projectDocumentKinds[strings.ToLower(name)]
+	return kind, recognised
 }
 
 // validateCanonicalAbsolutePath rejects ambiguous host paths before they are
@@ -237,6 +258,22 @@ func validateRegularFile(value, label string) error {
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a regular non-symlink file: %s", label, value)
+	}
+	return nil
+}
+
+// validateNonEmptyRegularFile requires a regular non-link file containing at
+// least one byte so an empty placeholder cannot become legal authority.
+func validateNonEmptyRegularFile(value, label string) error {
+	if err := validateRegularFile(value, label); err != nil {
+		return err
+	}
+	info, err := os.Lstat(value)
+	if err != nil {
+		return fmt.Errorf("inspect %s size: %w", label, err)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("%s must not be empty: %s", label, value)
 	}
 	return nil
 }

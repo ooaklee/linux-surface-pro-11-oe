@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/bluetoothmgmt"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/handoff"
 )
 
@@ -220,12 +221,40 @@ func TestApplyBluetoothInstallsPrivateRuntimeIntegration(t *testing.T) {
 	if err != nil || link != bluetoothWantsTarget {
 		t.Fatalf("Bluetooth dependency link = %q, %v", link, err)
 	}
-	address, controller, err := ReadBluetoothRuntimeConfig(context.Background(), fixture.targetRoot)
-	if err != nil || controller != 0 || address.String() != "<redacted>" {
-		t.Fatalf("ReadBluetoothRuntimeConfig() = %s, %d, %v", address, controller, err)
+	address, selector, err := ReadBluetoothRuntimeConfig(context.Background(), fixture.targetRoot)
+	if err != nil || selector != bluetoothmgmt.SurfacePro11WCN7850UART || address.String() != "<redacted>" {
+		t.Fatalf("ReadBluetoothRuntimeConfig() = %s, %q, %v", address, selector, err)
 	}
 	assertApplicationJSONRedacted(t, plan, fixture)
 	assertApplicationJSONRedacted(t, result, fixture)
+}
+
+// TestReadBluetoothRuntimeConfigRejectsIndexAndUnknownSelector verifies a
+// private file cannot restore boot-order hci0 selection or choose a new radio.
+func TestReadBluetoothRuntimeConfigRejectsIndexAndUnknownSelector(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		content string
+	}{
+		{name: "retired controller index", content: `{"schema_version":1,"controller_index":0,"address":"10:20:30:40:50:60"}`},
+		{name: "unknown selector", content: `{"schema_version":2,"controller_selector":"external-radio","address":"10:20:30:40:50:60"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			configPath := filepath.Join(root, filepath.FromSlash(BluetoothConfigPath))
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ReadBluetoothRuntimeConfig(context.Background(), root); err == nil {
+				t.Fatal("ReadBluetoothRuntimeConfig() accepted an unsafe controller selection")
+			}
+		})
+	}
 }
 
 // TestApplyBluetoothRejectsIncompatibleHostExceptDuringPlanning verifies that
@@ -508,7 +537,7 @@ func TestTargetConfinementAndReceiptValidationRejectHostilePaths(t *testing.T) {
 // replacing each firmware identity with deterministic private test bytes.
 func newApplicationFixture(t *testing.T) applicationFixture {
 	t.Helper()
-	golden, err := os.Open(filepath.Join("..", "testdata", "windows-handoff-v1.golden.json"))
+	golden, err := os.Open(filepath.Join("..", "testdata", "windows-handoff-v2.golden.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +661,7 @@ func assertCommittedReceipt(t *testing.T, targetRoot, receiptID string) {
 }
 
 // assertApplicationJSONRedacted verifies public values contain no reusable
-// Bluetooth, SMBIOS, salt, or adapter-binding material.
+// Bluetooth, SMBIOS, binding, or salt material.
 func assertApplicationJSONRedacted(t *testing.T, value any, fixture applicationFixture) {
 	t.Helper()
 	encoded, err := json.Marshal(value)
@@ -648,7 +677,6 @@ func assertTextRedacted(t *testing.T, output string, fixture applicationFixture)
 	privateValues := []string{
 		testProductUUID, testPrivateAddress, fixture.contract.Device.BindingSalt,
 		fixture.contract.Device.SMBIOSProductUUIDBindingSHA256,
-		*fixture.contract.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256,
 	}
 	for _, privateValue := range privateValues {
 		if strings.Contains(output, privateValue) {

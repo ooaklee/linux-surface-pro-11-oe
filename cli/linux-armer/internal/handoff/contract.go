@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	// SchemaVersion identifies the only Windows hand-off contract understood by
-	// this implementation.
-	SchemaVersion = 1
+	// SchemaVersion identifies the only current Windows hand-off contract
+	// accepted for import and application by this implementation.
+	SchemaVersion = 2
 	// ContractKind distinguishes this private interchange document from image
 	// manifests, userspace receipts, and diagnostic archives.
 	ContractKind = "linux-armer.windows-handoff"
@@ -22,12 +22,12 @@ const (
 	// DeviceBindingDomain is prepended to every salted SMBIOS UUID binding. The
 	// terminating NUL prevents concatenation with any future textual domain.
 	DeviceBindingDomain = "linux-armer.windows-handoff/device-binding/v1\x00"
-	// BluetoothAdapterBindingDomain is prepended to every salted Windows adapter
-	// instance binding and includes a terminating NUL separator.
-	BluetoothAdapterBindingDomain = "linux-armer.windows-handoff/bluetooth-adapter-binding/v1\x00"
 	// CollectorName identifies the canonical PowerShell exporter permitted to
 	// claim this contract shape.
 	CollectorName = "collect-sp11-windows-handoff.ps1"
+	// CollectorVersion identifies the sole exporter release permitted to claim
+	// the current schema's exact collection and provenance semantics.
+	CollectorVersion = "2.0.0"
 	// PlatformID identifies the hardware family to which the compiled mappings
 	// and Bluetooth policy apply.
 	PlatformID = "microsoft-surface-pro-11"
@@ -114,7 +114,7 @@ type Contract struct {
 type CollectorRecord struct {
 	// Name is the canonical PowerShell collector filename.
 	Name string `json:"name"`
-	// Version is the collector's three-component numeric release version.
+	// Version is the exact collector release compiled for this schema.
 	Version string `json:"version"`
 }
 
@@ -178,6 +178,9 @@ type WindowsSourceRecord struct {
 	DriverStorePath string `json:"driver_store_path"`
 	// PublishedINF is the active Windows published driver name, such as oem42.inf.
 	PublishedINF string `json:"published_inf"`
+	// OriginalINF is the canonical original INF basename compiled into the
+	// firmware policy, independent of Windows' mutable oemN.inf alias.
+	OriginalINF string `json:"original_inf"`
 	// DriverVersion is the bounded numeric Windows driver version.
 	DriverVersion string `json:"driver_version"`
 	// CatalogueSHA256 is the lowercase digest of the associated Windows driver
@@ -202,10 +205,6 @@ type BluetoothPublicAddressSection struct {
 	// Source is required only when Included is true and identifies the Windows
 	// evidence selected without deriving an address from Wi-Fi.
 	Source *BluetoothSource `json:"source,omitempty"`
-	// AdapterInstanceIDBindingSHA256 is the domain-separated binding of the
-	// canonical Windows adapter instance identifier using Device.BindingSalt,
-	// never the raw identifier or its linkable bare digest.
-	AdapterInstanceIDBindingSHA256 *string `json:"adapter_instance_id_binding_sha256,omitempty"`
 }
 
 // Summary is the deliberately non-sensitive view suitable for command output

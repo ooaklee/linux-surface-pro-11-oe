@@ -1,8 +1,5 @@
 /build/
 
-# Temporary scripts (local fixes, one-off helpers).
-scripts/tmp/
-
 # Local payload and firmware artifacts.
 payload/iptsd-sp11/
 payload/**/*.bin
@@ -57,9 +54,9 @@ sp11-kernel-source.env
 
 # Local diagnostics and captured reports.
 sp11-linux-checks/
+sp11-linux-checks-*.zip
 report-*/
 *.log
-sp11-bt-set-addr
 
 !payload/audio/
 !payload/audio/*.bin

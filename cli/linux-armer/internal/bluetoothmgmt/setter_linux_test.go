@@ -25,6 +25,8 @@ type scriptedSocketOperations struct {
 	closeCount int
 	// requests retains exact raw request bytes for protocol assertions.
 	requests [][]byte
+	// afterRead observes an event after the fake releases its mutex.
+	afterRead func(int, []byte)
 }
 
 // Open allocates one deterministic fake descriptor.
@@ -56,14 +58,20 @@ func (operations *scriptedSocketOperations) Write(_ int, content []byte) (int, e
 // Read returns the next scripted event for one fake descriptor.
 func (operations *scriptedSocketOperations) Read(descriptor int, buffer []byte) (int, error) {
 	operations.mutex.Lock()
-	defer operations.mutex.Unlock()
 	events := operations.responses[descriptor]
 	if len(events) == 0 {
+		operations.mutex.Unlock()
 		return 0, errors.New("scripted receive timeout")
 	}
 	event := events[0]
 	operations.responses[descriptor] = events[1:]
-	return copy(buffer, event), nil
+	afterRead := operations.afterRead
+	operations.mutex.Unlock()
+	read := copy(buffer, event)
+	if afterRead != nil {
+		afterRead(descriptor, append([]byte(nil), event...))
+	}
+	return read, nil
 }
 
 // Close records release of one fake descriptor.
@@ -74,21 +82,20 @@ func (operations *scriptedSocketOperations) Close(int) error {
 	return nil
 }
 
-// TestSetWithOperationsSendsFixedRequestAndRetries verifies exact protocol
-// encoding, unrelated-event filtering, fresh sockets, and status retry.
+// TestSetWithOperationsSendsFixedRequestAndRetries verifies bdaddr_t wire
+// ordering, unrelated-event filtering, fresh sockets, and status retry.
 func TestSetWithOperationsSendsFixedRequestAndRetries(t *testing.T) {
 	t.Parallel()
 	controllerRoot := t.TempDir()
-	if err := os.Mkdir(filepath.Join(controllerRoot, "hci7"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeControllerCompatibility(t, controllerRoot, "hci0", "usb,external-radio")
+	writeControllerCompatibility(t, controllerRoot, "hci7", surfacePro11BluetoothCompatible)
 	operations := &scriptedSocketOperations{responses: map[int][][]byte{
 		1: {managementEvent(0x9999, 7, nil), managementStatusEvent(7, 0x0b)},
 		2: {managementCompleteEvent(7, managementSuccess)},
 	}}
 	address := Address{0x10, 0x20, 0x30, 0x40, 0x50, 0x60}
 	err := setWithOperations(context.Background(), address, Options{
-		ControllerIndex: 7, ControllerRoot: controllerRoot,
+		ControllerSelector: SurfacePro11WCN7850UART, ControllerRoot: controllerRoot,
 		ControllerWait: time.Second, PollInterval: time.Millisecond,
 		Attempts: 2, RetryDelay: time.Nanosecond, ReadTimeout: time.Second,
 	}, operations)
@@ -98,11 +105,50 @@ func TestSetWithOperationsSendsFixedRequestAndRetries(t *testing.T) {
 	if operations.openCount != 2 || operations.closeCount != 2 || len(operations.requests) != 2 {
 		t.Fatalf("socket lifecycle = opens %d closes %d requests %d", operations.openCount, operations.closeCount, len(operations.requests))
 	}
-	want := []byte{0x39, 0x00, 0x07, 0x00, 0x06, 0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60}
+	want := []byte{0x39, 0x00, 0x07, 0x00, 0x06, 0x00, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10}
 	for _, request := range operations.requests {
 		if string(request) != string(want) {
 			t.Fatalf("management request bytes = %v, want %v", request, want)
 		}
+	}
+}
+
+// TestSetWithOperationsReselectsControllerBeforeRetry verifies a retry cannot
+// reuse a stale HCI index after the built-in radio re-enumerates.
+func TestSetWithOperationsReselectsControllerBeforeRetry(t *testing.T) {
+	t.Parallel()
+	controllerRoot := t.TempDir()
+	writeControllerCompatibility(t, controllerRoot, "hci7", surfacePro11BluetoothCompatible)
+	operations := &scriptedSocketOperations{responses: map[int][][]byte{
+		1: {managementStatusEvent(7, 0x0b)},
+		2: {managementCompleteEvent(3, managementSuccess)},
+	}}
+	operations.afterRead = func(descriptor int, _ []byte) {
+		if descriptor != 1 {
+			return
+		}
+		if err := os.RemoveAll(filepath.Join(controllerRoot, "hci7")); err != nil {
+			t.Fatal(err)
+		}
+		writeControllerCompatibility(t, controllerRoot, "hci3", surfacePro11BluetoothCompatible)
+	}
+	address := Address{0x10, 0x20, 0x30, 0x40, 0x50, 0x60}
+	err := setWithOperations(context.Background(), address, Options{
+		ControllerSelector: SurfacePro11WCN7850UART, ControllerRoot: controllerRoot,
+		ControllerWait: time.Second, PollInterval: time.Millisecond,
+		Attempts: 2, RetryDelay: time.Nanosecond, ReadTimeout: time.Second,
+	}, operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.requests) != 2 {
+		t.Fatalf("management request count = %d, want 2", len(operations.requests))
+	}
+	if first := binary.LittleEndian.Uint16(operations.requests[0][2:4]); first != 7 {
+		t.Fatalf("first management index = %d, want 7", first)
+	}
+	if second := binary.LittleEndian.Uint16(operations.requests[1][2:4]); second != 3 {
+		t.Fatalf("second management index = %d, want 3", second)
 	}
 }
 
@@ -113,11 +159,64 @@ func TestSetWithOperationsBoundsControllerWait(t *testing.T) {
 	address := Address{0x10, 0x20, 0x30, 0x40, 0x50, 0x60}
 	operations := &scriptedSocketOperations{responses: make(map[int][][]byte)}
 	err := setWithOperations(context.Background(), address, Options{
-		ControllerRoot: t.TempDir(), ControllerWait: 5 * time.Millisecond,
+		ControllerSelector: SurfacePro11WCN7850UART,
+		ControllerRoot:     t.TempDir(), ControllerWait: 5 * time.Millisecond,
 		PollInterval: time.Millisecond, Attempts: 1, ReadTimeout: time.Millisecond,
 	}, operations)
 	if err == nil || operations.openCount != 0 {
 		t.Fatalf("absent-controller result = %v, opens %d", err, operations.openCount)
+	}
+}
+
+// TestSetWithOperationsRejectsAmbiguousBuiltInControllers verifies controller
+// numbering can never choose between duplicate matching physical evidence.
+func TestSetWithOperationsRejectsAmbiguousBuiltInControllers(t *testing.T) {
+	t.Parallel()
+	controllerRoot := t.TempDir()
+	writeControllerCompatibility(t, controllerRoot, "hci2", surfacePro11BluetoothCompatible)
+	writeControllerCompatibility(t, controllerRoot, "hci9", surfacePro11BluetoothCompatible)
+	operations := &scriptedSocketOperations{responses: make(map[int][][]byte)}
+	address := Address{0x10, 0x20, 0x30, 0x40, 0x50, 0x60}
+	err := setWithOperations(context.Background(), address, Options{
+		ControllerSelector: SurfacePro11WCN7850UART,
+		ControllerRoot:     controllerRoot, ControllerWait: time.Second,
+		PollInterval: time.Millisecond, Attempts: 1, ReadTimeout: time.Millisecond,
+	}, operations)
+	if err == nil || operations.openCount != 0 {
+		t.Fatalf("ambiguous-controller result = %v, opens %d", err, operations.openCount)
+	}
+}
+
+// TestSelectControllerRequiresExactNULTerminatedCompatibleToken verifies a
+// substring or malformed property cannot claim the built-in radio selector.
+func TestSelectControllerRequiresExactNULTerminatedCompatibleToken(t *testing.T) {
+	t.Parallel()
+	controllerRoot := t.TempDir()
+	writeControllerCompatibility(t, controllerRoot, "hci1", "vendor,"+surfacePro11BluetoothCompatible)
+	writeControllerCompatibility(t, controllerRoot, "hci3", surfacePro11BluetoothCompatible+"-external")
+	path := filepath.Join(controllerRoot, "hci4", "device", "of_node")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "compatible"), []byte(surfacePro11BluetoothCompatible), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if index, found, err := selectController(controllerRoot, SurfacePro11WCN7850UART); err != nil || found {
+		t.Fatalf("selectController() = %d, %t, %v; want no match", index, found, err)
+	}
+}
+
+// writeControllerCompatibility creates one synthetic sysfs controller with a
+// NUL-terminated device-tree compatibility token.
+func writeControllerCompatibility(t *testing.T, root, name, compatible string) {
+	t.Helper()
+	directory := filepath.Join(root, name, "device", "of_node")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "compatible"), append([]byte(compatible), 0), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

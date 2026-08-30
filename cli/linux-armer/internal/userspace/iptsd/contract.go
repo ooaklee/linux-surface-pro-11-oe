@@ -60,17 +60,26 @@ type fileSpec struct {
 	size   int64
 }
 
-// integrationFiles is the exact checked-in and released integration file set.
+// integrationFiles is the exact current checked-in integration file set.
 var integrationFiles = []fileSpec{
 	{path: "LICENSE.integration", sha256: "f8126478d63d42239b27e3364ac188d56b5abb0716c021271c1265c556ceed65", size: 1067},
 	{path: "PAYLOAD.sha256", sha256: payloadManifestDigest, size: payloadManifestSize},
-	{path: "README.md", sha256: "81276a49753bc6c2f548c5593d752d2f9ef02b7201232f86962012f91e0eb626", size: 3575},
+	{path: "README.md", sha256: "bbe4bbc0306636dadfa1679b349b2f79059de51f35cab95db15347b605d776c3", size: 3575},
 	{path: "SOURCE.env", sha256: "1ff7395738b95a0ef4ffd780a9b6415733e7003040ae0b56b4b984c3bcd25278", size: 336},
 	{path: "config/surface-pro-11-0c80.conf", sha256: "e629f67248df412d69952accc874b848e3e45ad3d8b31cbec4626f85c12c8c34", size: 98},
 	{path: "config/surface-pro-11-0c83.conf", sha256: "358953d2171b36879043dc46084cc9344ea2c28cc718ff75690acd479214bf59", size: 98},
 	{path: "packaging/70-sp11-iptsd.rules.in", sha256: "256c30e4b8b931ea04dc235e132d005645e1cb70e4a56f330e8c29e25289d95b", size: 685},
 	{path: "packaging/sp11-iptsd-restart.in", sha256: "12ce4e484da438fd3b1aa842488764bec27242c50bb081cbce6236b07b9d6382", size: 2779},
 	{path: "packaging/sp11-iptsd@.service.in", sha256: "7c30ee0d7aba247fc96cda0289da5385f0a876c5a7974ed0df3f314b2edbecaa", size: 340},
+}
+
+// legacyIntegrationAlternatives records reviewed, non-operational documentation
+// from the immutable published v1 archive. Operational configurations, templates,
+// provenance, and payload authority still have one exact accepted identity.
+var legacyIntegrationAlternatives = map[string][]fileSpec{
+	"README.md": {
+		{path: "README.md", sha256: "69a92f448f64f3d16b59770869bb7a5411470dd153770765fce97f68c41bd687", size: 3204},
+	},
 }
 
 // payloadTopLevelFiles is the exact non-directory payload root file set.
@@ -155,7 +164,8 @@ func ValidateRelease(archiveRoot string) (Release, error) {
 	}
 	payloadRoot := filepath.Join(archiveRoot, filepath.FromSlash(PayloadRelative))
 	integrationRoot := filepath.Join(archiveRoot, filepath.FromSlash(IntegrationRelative))
-	if err := ValidateIntegration(integrationRoot); err != nil {
+	integrationManifest, err := validateIntegration(integrationRoot)
+	if err != nil {
 		return Release{}, err
 	}
 	manifest, err := ValidatePayload(payloadRoot, integrationRoot)
@@ -166,16 +176,23 @@ func ValidateRelease(archiveRoot string) (Release, error) {
 	if err != nil {
 		return Release{}, err
 	}
-	files := installFiles(payloadRoot, integrationRoot, manifest, rendered)
+	files := installFiles(payloadRoot, integrationRoot, manifest, integrationManifest, rendered)
 	return Release{PayloadRoot: payloadRoot, IntegrationRoot: integrationRoot, Files: files}, nil
 }
 
 // ValidateIntegration checks the exact fixed configuration and template tree
 // against the published sp11-iptsd-v1 release contract.
 func ValidateIntegration(root string) error {
+	_, err := validateIntegration(root)
+	return err
+}
+
+// validateIntegration checks the closed integration tree and returns the exact
+// approved file identities present in it for later transaction planning.
+func validateIntegration(root string) (map[string]fileSpec, error) {
 	root, err := cleanRegularDirectory(root)
 	if err != nil {
-		return fmt.Errorf("validate IPTSD integration: %w", err)
+		return nil, fmt.Errorf("validate IPTSD integration: %w", err)
 	}
 	expected := make(map[string]fileSpec, len(integrationFiles))
 	for _, spec := range integrationFiles {
@@ -183,17 +200,24 @@ func ValidateIntegration(root string) error {
 	}
 	actual, err := exactRegularFiles(root, len(expected), maximumMetadataBytes)
 	if err != nil {
-		return fmt.Errorf("validate IPTSD integration: %w", err)
+		return nil, fmt.Errorf("validate IPTSD integration: %w", err)
 	}
 	if err := validateExactSet(actual, expected); err != nil {
-		return fmt.Errorf("validate IPTSD integration: %w", err)
+		return nil, fmt.Errorf("validate IPTSD integration: %w", err)
 	}
+	validated := make(map[string]fileSpec, len(expected))
 	for relative, spec := range expected {
-		if err := validateFile(filepath.Join(root, filepath.FromSlash(relative)), spec); err != nil {
-			return fmt.Errorf("validate IPTSD integration %s: %w", relative, err)
+		alternatives := append([]fileSpec{spec}, legacyIntegrationAlternatives[relative]...)
+		matched, err := validateFileAlternatives(filepath.Join(root, filepath.FromSlash(relative)), alternatives)
+		if err != nil {
+			return nil, fmt.Errorf("validate IPTSD integration %s: %w", relative, err)
 		}
+		validated[relative] = matched
 	}
-	return validateSourceIdentity(filepath.Join(root, "SOURCE.env"))
+	if err := validateSourceIdentity(filepath.Join(root, "SOURCE.env")); err != nil {
+		return nil, err
+	}
+	return validated, nil
 }
 
 // ValidatePayload checks the exact closed payload file set, all recorded
@@ -291,13 +315,13 @@ func RenderIntegration(root string) (map[string][]byte, error) {
 
 // installFiles projects validated sources and rendered integration into the
 // exact writable system topology.
-func installFiles(payloadRoot, integrationRoot string, manifest map[string]fileSpec, rendered map[string][]byte) []InstallFile {
+func installFiles(payloadRoot, integrationRoot string, manifest, integrationManifest map[string]fileSpec, rendered map[string][]byte) []InstallFile {
 	files := []InstallFile{
 		payloadInstallFile(payloadRoot, manifest, "bin/sp11-iptsd", "usr/local/libexec/sp11-iptsd", 0o755),
 		payloadInstallFile(payloadRoot, manifest, "bin/sp11-iptsd-check-device", "usr/local/libexec/sp11-iptsd-check-device", 0o755),
-		integrationInstallFile(integrationRoot, "config/surface-pro-11-0c80.conf", "usr/local/share/iptsd/surface-pro-11-0c80.conf", 0o644),
-		integrationInstallFile(integrationRoot, "config/surface-pro-11-0c83.conf", "usr/local/share/iptsd/surface-pro-11-0c83.conf", 0o644),
-		integrationInstallFile(integrationRoot, "README.md", "usr/local/share/doc/sp11-iptsd/README.md", 0o644),
+		integrationInstallFile(integrationRoot, integrationManifest, "config/surface-pro-11-0c80.conf", "usr/local/share/iptsd/surface-pro-11-0c80.conf", 0o644),
+		integrationInstallFile(integrationRoot, integrationManifest, "config/surface-pro-11-0c83.conf", "usr/local/share/iptsd/surface-pro-11-0c83.conf", 0o644),
+		integrationInstallFile(integrationRoot, integrationManifest, "README.md", "usr/local/share/doc/sp11-iptsd/README.md", 0o644),
 		payloadInstallFile(payloadRoot, manifest, "SOURCE.env", "usr/local/share/doc/sp11-iptsd/SOURCE.env", 0o644),
 		payloadInstallFile(payloadRoot, manifest, "BUILD.env", "usr/local/share/doc/sp11-iptsd/BUILD.env", 0o644),
 		payloadInstallFile(payloadRoot, manifest, "SHA256SUMS", "usr/local/share/doc/sp11-iptsd/SHA256SUMS", 0o644),
@@ -330,14 +354,8 @@ func payloadInstallFile(root string, manifest map[string]fileSpec, source, targe
 }
 
 // integrationInstallFile constructs one pinned integration-backed record.
-func integrationInstallFile(root, source, target string, mode fs.FileMode) InstallFile {
-	var selected fileSpec
-	for _, spec := range integrationFiles {
-		if spec.path == source {
-			selected = spec
-			break
-		}
-	}
+func integrationInstallFile(root string, manifest map[string]fileSpec, source, target string, mode fs.FileMode) InstallFile {
+	selected := manifest[source]
 	return InstallFile{
 		Source: filepath.Join(root, filepath.FromSlash(source)), SourceLabel: "archive:" + IntegrationRelative + "/" + source,
 		Target: target, Mode: mode, SHA256: selected.sha256, Size: selected.size,
@@ -486,6 +504,23 @@ func validateFile(path string, spec fileSpec) error {
 		return fmt.Errorf("SHA-256 is %s, expected %s", got, spec.sha256)
 	}
 	return nil
+}
+
+// validateFileAlternatives accepts one exact reviewed identity and returns the
+// matched specification so later copies remain bound to the validated bytes.
+func validateFileAlternatives(path string, alternatives []fileSpec) (fileSpec, error) {
+	data, err := readRegularBounded(path, maximumMetadataBytes)
+	if err != nil {
+		return fileSpec{}, err
+	}
+	size := int64(len(data))
+	digest := digestBytes(data)
+	for _, alternative := range alternatives {
+		if size == alternative.size && digest == alternative.sha256 {
+			return alternative, nil
+		}
+	}
+	return fileSpec{}, fmt.Errorf("size %d and SHA-256 %s do not match an approved contract", size, digest)
 }
 
 // validateAArch64ELF checks the exact executable mode and ELF identity needed

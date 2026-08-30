@@ -120,16 +120,37 @@ type storedArtifact struct {
 	Mode fs.FileMode
 }
 
-// validatedStoreEntry is the private result of a complete stored-copy audit.
-type validatedStoreEntry struct {
-	// contract is the strict decoded private contract.
-	contract Contract
+// storedPayloadRecord contains only the identity fields needed to audit one
+// declared payload without granting application authority to its contract.
+type storedPayloadRecord struct {
+	// ID is the stable policy identifier used in redacted errors.
+	ID string
+	// PayloadPath is the canonical entry-relative file path.
+	PayloadPath string
+	// SHA256 is the expected lowercase digest of the payload bytes.
+	SHA256 string
+	// Size is the expected positive payload length.
+	Size int64
+}
+
+// auditedStoreEntry is the schema-neutral result of a complete private closed-
+// set audit and is sufficient only for inventory and deletion.
+type auditedStoreEntry struct {
 	// summary is the only contract view exposed by public store APIs.
 	summary Summary
 	// scan is the final closed-set snapshot.
 	scan closedScan
-	// artifacts contains every verified file in canonical path order.
+	// artifacts holds every verified file in canonical path order.
 	artifacts []storedArtifact
+}
+
+// validatedStoreEntry is the private result of a complete current-schema audit
+// and retains the version 2 contract required by application workflows.
+type validatedStoreEntry struct {
+	// contract is the strict decoded version 2 private contract.
+	contract Contract
+	// auditedStoreEntry contains the schema-neutral verified inventory.
+	auditedStoreEntry
 }
 
 // contextReader stops a streaming read promptly after cancellation.
@@ -294,8 +315,8 @@ func importWithHooks(ctx context.Context, sourceDirectory, storeRoot string, hoo
 	return ImportResult{ID: identifier, Path: finalPath, Existing: false, Summary: validated.summary}, nil
 }
 
-// List validates every direct store entry and returns only redacted summaries in
-// content-address order.
+// List validates every current or exact retained version 1 direct store entry
+// and returns only redacted summaries in content-address order.
 func List(ctx context.Context, storeRoot string) ([]StoredSummary, error) {
 	if ctx == nil {
 		return nil, errors.New("list Windows hand-offs: context is nil")
@@ -321,7 +342,7 @@ func List(ctx context.Context, storeRoot string) ([]StoredSummary, error) {
 		if err != nil {
 			return nil, err
 		}
-		validated, err := validateStoredEntry(ctx, entryPath, identifier)
+		validated, err := validateStoredEntryForMaintenance(ctx, entryPath, identifier)
 		if err != nil {
 			return nil, fmt.Errorf("validate stored Windows hand-off %s: %w", identifier, err)
 		}
@@ -368,21 +389,35 @@ func readManifest(ctx context.Context, root string) ([]byte, fileSnapshot, error
 // buildExpectedLayout derives the complete file and parent-directory allow-list
 // from a semantically validated contract.
 func buildExpectedLayout(contract Contract) expectedLayout {
+	return buildExpectedPayloadLayout(storedPayloads(contract.PlatformFirmware.Files))
+}
+
+// buildExpectedPayloadLayout derives the complete private file and parent-
+// directory allow-list from already validated payload records.
+func buildExpectedPayloadLayout(payloads []storedPayloadRecord) expectedLayout {
 	layout := expectedLayout{
 		directories: map[string]bool{".": true},
 		files:       map[string]bool{ManifestFilename: true},
 	}
-	if !contract.PlatformFirmware.Included {
-		return layout
-	}
-	for index := range contract.PlatformFirmware.Files {
-		record := contract.PlatformFirmware.Files[index]
+	for _, record := range payloads {
 		layout.files[record.PayloadPath] = true
 		for parent := filepath.ToSlash(filepath.Dir(record.PayloadPath)); parent != "."; parent = filepath.ToSlash(filepath.Dir(parent)) {
 			layout.directories[parent] = true
 		}
 	}
 	return layout
+}
+
+// storedPayloads projects current-schema firmware records into the smaller
+// schema-neutral identity needed by private-store auditing.
+func storedPayloads(records []FirmwareFileRecord) []storedPayloadRecord {
+	payloads := make([]storedPayloadRecord, 0, len(records))
+	for _, record := range records {
+		payloads = append(payloads, storedPayloadRecord{
+			ID: record.ID, PayloadPath: record.PayloadPath, SHA256: record.SHA256, Size: record.Size,
+		})
+	}
+	return payloads
 }
 
 // scanClosedDirectory rejects every undeclared, missing, linked, special,
@@ -486,6 +521,14 @@ func verifySourcePayloads(ctx context.Context, sourceRoot string, contract Contr
 // inspectVerifiedFile checks one no-follow regular source file, optional fault
 // hook, fixed byte length, digest, and before/after filesystem identity.
 func inspectVerifiedFile(ctx context.Context, sourceRoot string, record FirmwareFileRecord, expected fileSnapshot, hooks importHooks) (storedArtifact, error) {
+	return inspectVerifiedPayload(ctx, sourceRoot, storedPayloadRecord{
+		ID: record.ID, PayloadPath: record.PayloadPath, SHA256: record.SHA256, Size: record.Size,
+	}, expected, hooks)
+}
+
+// inspectVerifiedPayload checks one schema-neutral payload through a no-follow
+// descriptor, fixed identity, optional fault hook, and before/after snapshots.
+func inspectVerifiedPayload(ctx context.Context, sourceRoot string, record storedPayloadRecord, expected fileSnapshot, hooks importHooks) (storedArtifact, error) {
 	file, err := openRegularNoFollow(sourceRoot, record.PayloadPath)
 	if err != nil {
 		return storedArtifact{}, fmt.Errorf("open hand-off payload %s: %w", record.ID, err)
@@ -667,38 +710,57 @@ func validateStoredEntry(ctx context.Context, entryPath, expectedID string) (val
 	if err != nil {
 		return validatedStoreEntry{}, err
 	}
-	layout := buildExpectedLayout(contract)
-	initialScan, err := scanClosedDirectory(ctx, entryPath, layout, true)
+	audited, err := auditStoredEntry(ctx, entryPath, expectedID, manifestBytes, manifestSnapshot, contract.Summary(), storedPayloads(contract.PlatformFirmware.Files))
 	if err != nil {
 		return validatedStoreEntry{}, err
 	}
+	return validatedStoreEntry{contract: contract, auditedStoreEntry: audited}, nil
+}
+
+// auditStoredEntry enforces the private closed layout, rehashes every declared
+// payload, and detects concurrent drift without retaining executable contract
+// authority.
+func auditStoredEntry(
+	ctx context.Context,
+	entryPath string,
+	expectedID string,
+	manifestBytes []byte,
+	manifestSnapshot fileSnapshot,
+	summary Summary,
+	payloads []storedPayloadRecord,
+) (auditedStoreEntry, error) {
+	layout := buildExpectedPayloadLayout(payloads)
+	initialScan, err := scanClosedDirectory(ctx, entryPath, layout, true)
+	if err != nil {
+		return auditedStoreEntry{}, err
+	}
 	if err := requireSameSnapshot(manifestSnapshot, initialScan.entries[ManifestFilename].snapshot, "stored manifest changed before closed-set scan"); err != nil {
-		return validatedStoreEntry{}, err
+		return auditedStoreEntry{}, err
 	}
 	artifacts := []storedArtifact{{
 		Path: ManifestFilename, SHA256: expectedID, Size: int64(len(manifestBytes)), Mode: privateFileMode,
 	}}
-	for _, record := range contract.PlatformFirmware.Files {
-		artifact, err := inspectVerifiedFile(ctx, entryPath, record, initialScan.entries[record.PayloadPath].snapshot, importHooks{})
+	for _, record := range payloads {
+		artifact, err := inspectVerifiedPayload(ctx, entryPath, record, initialScan.entries[record.PayloadPath].snapshot, importHooks{})
 		if err != nil {
-			return validatedStoreEntry{}, err
+			return auditedStoreEntry{}, err
 		}
 		if artifact.Mode != privateFileMode {
-			return validatedStoreEntry{}, fmt.Errorf("private Windows hand-off file %q must have mode 0600", artifact.Path)
+			return auditedStoreEntry{}, fmt.Errorf("private Windows hand-off file %q must have mode 0600", artifact.Path)
 		}
 		artifacts = append(artifacts, artifact)
 	}
 	finalScan, err := scanClosedDirectory(ctx, entryPath, layout, true)
 	if err != nil {
-		return validatedStoreEntry{}, err
+		return auditedStoreEntry{}, err
 	}
 	if err := compareClosedScans(initialScan, finalScan, "stored entry changed during validation"); err != nil {
-		return validatedStoreEntry{}, err
+		return auditedStoreEntry{}, err
 	}
 	sort.Slice(artifacts, func(left, right int) bool {
 		return artifacts[left].Path < artifacts[right].Path
 	})
-	return validatedStoreEntry{contract: contract, summary: contract.Summary(), scan: finalScan, artifacts: artifacts}, nil
+	return auditedStoreEntry{summary: summary, scan: finalScan, artifacts: artifacts}, nil
 }
 
 // snapshotFileInfo converts a filesystem observation into a comparable security

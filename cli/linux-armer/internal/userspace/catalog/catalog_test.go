@@ -159,6 +159,14 @@ func TestSemanticValidationRules(t *testing.T) {
 			wantText:  "must not be empty",
 		},
 		{
+			name: "description byte limit",
+			mutate: func(document map[string]any) {
+				document["description"] = strings.Repeat("a", maximumHumanTextBytes+1)
+			},
+			wantField: "description",
+			wantText:  "at most 4096 bytes",
+		},
+		{
 			name: "components",
 			mutate: func(document map[string]any) {
 				document["components"] = []any{}
@@ -173,6 +181,14 @@ func TestSemanticValidationRules(t *testing.T) {
 			},
 			wantField: "components[0].id",
 			wantText:  "lowercase kebab-case",
+		},
+		{
+			name: "stable ID byte limit",
+			mutate: func(document map[string]any) {
+				firstComponent(document)["id"] = strings.Repeat("a", maximumIdentifierBytes+1)
+			},
+			wantField: "components[0].id",
+			wantText:  "at most 128 bytes",
 		},
 		{
 			name: "duplicate ID",
@@ -333,6 +349,14 @@ func TestSemanticValidationRules(t *testing.T) {
 			wantText:  "path must be",
 		},
 		{
+			name: "release URL byte limit",
+			mutate: func(document map[string]any) {
+				firstRelease(document)["url"] = "https://github.com/" + strings.Repeat("a", maximumURLBytes)
+			},
+			wantField: "components[0].release.url",
+			wantText:  "at most 4096 bytes",
+		},
+		{
 			name: "release assets required",
 			mutate: func(document map[string]any) {
 				firstRelease(document)["asset_allowlist"] = []any{}
@@ -347,6 +371,14 @@ func TestSemanticValidationRules(t *testing.T) {
 			},
 			wantField: "components[0].release.asset_allowlist[0]",
 			wantText:  "safe flat asset filename",
+		},
+		{
+			name: "release asset byte limit",
+			mutate: func(document map[string]any) {
+				firstRelease(document)["asset_allowlist"] = []any{strings.Repeat("a", maximumAssetNameBytes+1), "SHA256SUMS"}
+			},
+			wantField: "components[0].release.asset_allowlist[0]",
+			wantText:  "at most 255 bytes",
 		},
 		{
 			name: "release asset unique",
@@ -379,6 +411,14 @@ func TestSemanticValidationRules(t *testing.T) {
 			},
 			wantField: "components[0].notes[0]",
 			wantText:  "must not be empty",
+		},
+		{
+			name: "note byte limit",
+			mutate: func(document map[string]any) {
+				firstComponent(document)["notes"] = []any{strings.Repeat("a", maximumHumanTextBytes+1)}
+			},
+			wantField: "components[0].notes[0]",
+			wantText:  "at most 4096 bytes",
 		},
 		{
 			name: "remediation required",
@@ -500,6 +540,157 @@ func TestStrictDecodeFailures(t *testing.T) {
 	if _, err := Load(nil); err == nil || !strings.Contains(err.Error(), "reader is nil") {
 		t.Fatalf("Load(nil) error = %v", err)
 	}
+}
+
+// TestExactJSONShape rejects duplicate and mis-cased keys at every userspace
+// policy depth instead of accepting case folding or last-value-wins behaviour.
+func TestExactJSONShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "duplicate document key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"schema_version": 2,`, `"schema_version": 2, "schema_version": 2,`, 1),
+			want:  `userspace catalog: duplicate field "schema_version"`,
+		},
+		{
+			name:  "mis-cased document key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"schema_version": 2`, `"Schema_Version": 2`, 1),
+			want:  `field "Schema_Version" must be spelt "schema_version"`,
+		},
+		{
+			name:  "duplicate component key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"id": "zulu-component",`, `"id": "zulu-component", "id": "other-component",`, 1),
+			want:  `components[0]: duplicate field "id"`,
+		},
+		{
+			name:  "mis-cased component key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"compatibility_evidence": "exact_pair"`, `"Compatibility_Evidence": "exact_pair"`, 1),
+			want:  `field "Compatibility_Evidence" must be spelt "compatibility_evidence"`,
+		},
+		{
+			name:  "duplicate action key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"status": true,`, `"status": true, "status": false,`, 1),
+			want:  `components[0].support_actions: duplicate field "status"`,
+		},
+		{
+			name:  "mis-cased action key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"install": true`, `"Install": true`, 1),
+			want:  `field "Install" must be spelt "install"`,
+		},
+		{
+			name:  "duplicate release key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"tag": "component-v1",`, `"tag": "component-v1", "tag": "other-v1",`, 1),
+			want:  `components[0].release: duplicate field "tag"`,
+		},
+		{
+			name:  "mis-cased release key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"asset_allowlist": [`, `"Asset_Allowlist": [`, 1),
+			want:  `field "Asset_Allowlist" must be spelt "asset_allowlist"`,
+		},
+		{
+			name:  "duplicate compatibility key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"summary": "This component requires sp11v12 and is tested through sp11v19."`, `"summary": "This component requires sp11v12 and is tested through sp11v19.", "summary": "other"`, 1),
+			want:  `components[0].kernel_compatibility: duplicate field "summary"`,
+		},
+		{
+			name:  "mis-cased compatibility key",
+			input: strings.Replace(validUserspaceCatalogJSON, `"minimum_sp11_generation": 12`, `"Minimum_SP11_Generation": 12`, 1),
+			want:  `field "Minimum_SP11_Generation" must be spelt "minimum_sp11_generation"`,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := LoadBytes([]byte(test.input))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("LoadBytes() error = %v, want text %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestCatalogueResourceBounds rejects oversized documents, component arrays,
+// and nested lists before semantic validation allocates or renders them.
+func TestCatalogueResourceBounds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("document bytes", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := LoadBytes([]byte(strings.Repeat(" ", maximumCatalogueBytes+1)))
+		if err == nil || !strings.Contains(err.Error(), "document exceeds") {
+			t.Fatalf("LoadBytes(oversized document) error = %v", err)
+		}
+	})
+
+	t.Run("component count", func(t *testing.T) {
+		t.Parallel()
+
+		components := make([]string, maximumCatalogueComponents+1)
+		for index := range components {
+			components[index] = "{}"
+		}
+		input := `{"schema_version":2,"description":"Bounded","components":[` + strings.Join(components, ",") + `]}`
+		_, err := LoadBytes([]byte(input))
+		if err == nil || !strings.Contains(err.Error(), "at most 256 entries") {
+			t.Fatalf("LoadBytes(too many components) error = %v", err)
+		}
+	})
+
+	t.Run("note count", func(t *testing.T) {
+		t.Parallel()
+
+		document := decodeUserspaceDocument(t, validUserspaceCatalogJSON)
+		notes := make([]any, maximumComponentNotes+1)
+		for index := range notes {
+			notes[index] = "Bounded note."
+		}
+		firstComponent(document)["notes"] = notes
+		data, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = LoadBytes(data)
+		if err == nil || !strings.Contains(err.Error(), "components[0].notes must contain at most 64 entries") {
+			t.Fatalf("LoadBytes(too many notes) error = %v", err)
+		}
+	})
+
+	t.Run("release asset count", func(t *testing.T) {
+		t.Parallel()
+
+		document := decodeUserspaceDocument(t, validUserspaceCatalogJSON)
+		assets := make([]any, maximumReleaseAssets+1)
+		for index := range assets {
+			assets[index] = "asset.deb"
+		}
+		firstRelease(document)["asset_allowlist"] = assets
+		data, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = LoadBytes(data)
+		if err == nil || !strings.Contains(err.Error(), "components[0].release.asset_allowlist must contain at most 256 entries") {
+			t.Fatalf("LoadBytes(too many release assets) error = %v", err)
+		}
+	})
+
+	t.Run("invalid UTF-8", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := LoadBytes([]byte{'{', 0xff, '}'})
+		if err == nil || !strings.Contains(err.Error(), "not valid UTF-8") {
+			t.Fatalf("LoadBytes(invalid UTF-8) error = %v", err)
+		}
+	})
 }
 
 // TestLoaderEmbeddedAndOverride verifies that the loader uses bundled data by

@@ -23,15 +23,9 @@ const (
 	maximumFirmwareFileSize int64 = 512 << 20
 	// maximumFirmwareTotalSize bounds the complete eleven-file payload set.
 	maximumFirmwareTotalSize int64 = 1 << 30
-	// maximumWindowsInstanceIDLength bounds the private derivation input before
-	// hashing without storing or reporting it.
-	maximumWindowsInstanceIDLength = 512
 )
 
 var (
-	// collectorVersionPattern accepts a deterministic three-component numeric
-	// collector release.
-	collectorVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 	// driverVersionPattern accepts the numeric Windows driver versions observed
 	// in signed DriverStore packages.
 	driverVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}$`)
@@ -42,12 +36,15 @@ var (
 	portableSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~-]*$`)
 	// canonicalBluetoothAddressPattern requires uppercase colon-separated octets.
 	canonicalBluetoothAddressPattern = regexp.MustCompile(`^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$`)
+	// originalINFPattern accepts a canonical lowercase original Windows INF
+	// basename before the exact compiled policy comparison.
+	originalINFPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._+~-]*\.inf$`)
 	// canonicalSMBIOSUUIDPattern accepts the lowercase, hyphenated UUID text used
 	// as input to the device-binding derivation.
 	canonicalSMBIOSUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
-// Validate checks the exact v1 envelope, device binding, strict union states,
+// Validate checks the exact v2 envelope, device binding, strict union states,
 // compiled firmware mappings, provenance shapes, and private address policy.
 func Validate(contract Contract) error {
 	if contract.SchemaVersion != SchemaVersion {
@@ -89,14 +86,14 @@ func validateCreatedAt(value string) error {
 	return nil
 }
 
-// validateCollector checks the canonical exporter name and bounded release
-// version without elevating either field into an authenticity claim.
+// validateCollector checks the canonical exporter name and the sole exact
+// release version permitted to claim the current schema's semantics.
 func validateCollector(record CollectorRecord) error {
 	if record.Name != CollectorName {
 		return fmt.Errorf("Windows hand-off collector name must be %q", CollectorName)
 	}
-	if len(record.Version) > 32 || !collectorVersionPattern.MatchString(record.Version) {
-		return errors.New("Windows hand-off collector version must contain three numeric components")
+	if record.Version != CollectorVersion {
+		return fmt.Errorf("Windows hand-off collector version must be %q", CollectorVersion)
 	}
 	return nil
 }
@@ -138,51 +135,6 @@ func DeriveDeviceBinding(bindingSalt, canonicalSMBIOSUUID string) (string, error
 	_, _ = digest.Write(salt)
 	_, _ = digest.Write([]byte(canonicalSMBIOSUUID))
 	return hex.EncodeToString(digest.Sum(nil)), nil
-}
-
-// DeriveBluetoothAdapterBinding returns lowercase SHA-256 over
-// BluetoothAdapterBindingDomain, followed by the raw 32-byte device salt,
-// followed by the canonical Windows instance-ID ASCII bytes. PowerShell must
-// trim the identifier, convert ASCII letters to uppercase, retain backslash
-// separators, and reject non-ASCII or empty path components before calling it.
-func DeriveBluetoothAdapterBinding(bindingSalt, canonicalInstanceID string) (string, error) {
-	salt, err := decodeBindingSalt(bindingSalt)
-	if err != nil {
-		return "", err
-	}
-	if err := validateCanonicalWindowsInstanceID(canonicalInstanceID); err != nil {
-		return "", err
-	}
-	digest := sha256.New()
-	_, _ = digest.Write([]byte(BluetoothAdapterBindingDomain))
-	_, _ = digest.Write(salt)
-	_, _ = digest.Write([]byte(canonicalInstanceID))
-	return hex.EncodeToString(digest.Sum(nil)), nil
-}
-
-// validateCanonicalWindowsInstanceID requires trimmed, printable ASCII,
-// uppercase Windows instance-ID text with two or more non-empty backslash-
-// separated components and never includes the private value in an error.
-func validateCanonicalWindowsInstanceID(value string) error {
-	if len(value) < 3 || len(value) > maximumWindowsInstanceIDLength || strings.TrimSpace(value) != value ||
-		strings.ToUpper(value) != value || strings.Contains(value, "/") {
-		return errors.New("Windows adapter instance ID is not canonical trimmed uppercase ASCII")
-	}
-	for _, character := range []byte(value) {
-		if character < 0x21 || character > 0x7e {
-			return errors.New("Windows adapter instance ID is not canonical trimmed uppercase ASCII")
-		}
-	}
-	components := strings.Split(value, "\\")
-	if len(components) < 2 {
-		return errors.New("Windows adapter instance ID requires backslash-separated components")
-	}
-	for _, component := range components {
-		if component == "" {
-			return errors.New("Windows adapter instance ID requires non-empty components")
-		}
-	}
-	return nil
 }
 
 // decodeBindingSalt validates and decodes one fresh lowercase 32-byte salt
@@ -288,6 +240,12 @@ func validateWindowsSource(record WindowsSourceRecord, policy FirmwarePolicy) er
 	if len(record.PublishedINF) > 32 || !publishedINFPattern.MatchString(record.PublishedINF) {
 		return fmt.Errorf("Windows source for %s has a non-canonical published_inf", policy.ID)
 	}
+	if len(record.OriginalINF) > 128 || !originalINFPattern.MatchString(record.OriginalINF) {
+		return fmt.Errorf("Windows source for %s has a non-canonical original_inf", policy.ID)
+	}
+	if record.OriginalINF != policy.SourceINF {
+		return fmt.Errorf("Windows source for %s original_inf must match compiled policy", policy.ID)
+	}
 	if len(record.DriverVersion) > 64 || !driverVersionPattern.MatchString(record.DriverVersion) {
 		return fmt.Errorf("Windows source for %s has a non-canonical driver_version", policy.ID)
 	}
@@ -307,7 +265,7 @@ func validateBluetoothPublicAddress(section BluetoothPublicAddressSection) error
 		if section.Reason == nil {
 			return errors.New("absent bluetooth_public_address requires reason")
 		}
-		if section.Address != nil || section.Source != nil || section.AdapterInstanceIDBindingSHA256 != nil {
+		if section.Address != nil || section.Source != nil {
 			return errors.New("absent bluetooth_public_address must not contain private address evidence")
 		}
 		return validateAbsentReason(*section.Reason, "bluetooth_public_address")
@@ -315,8 +273,8 @@ func validateBluetoothPublicAddress(section BluetoothPublicAddressSection) error
 	if section.Reason != nil {
 		return errors.New("included bluetooth_public_address must not contain reason")
 	}
-	if section.Address == nil || section.Source == nil || section.AdapterInstanceIDBindingSHA256 == nil {
-		return errors.New("included bluetooth_public_address requires address, source, and adapter instance digest")
+	if section.Address == nil || section.Source == nil {
+		return errors.New("included bluetooth_public_address requires address and source")
 	}
 	if err := validateBluetoothAddress(*section.Address); err != nil {
 		return err
@@ -324,7 +282,7 @@ func validateBluetoothPublicAddress(section BluetoothPublicAddressSection) error
 	if *section.Source != BluetoothSourcePermanentAddress && *section.Source != BluetoothSourceBTHPORT {
 		return errors.New("Bluetooth public address source is not an allowed Windows evidence type")
 	}
-	return validateSHA256(*section.AdapterInstanceIDBindingSHA256, "Bluetooth adapter instance binding")
+	return nil
 }
 
 // validateBluetoothAddress checks canonical formatting, unicast semantics, and
@@ -359,7 +317,7 @@ func validateBluetoothAddress(address BluetoothAddress) error {
 	return nil
 }
 
-// validateAbsentReason permits only the two explicit v1 absence explanations.
+// validateAbsentReason permits only the two explicit absence explanations.
 func validateAbsentReason(reason AbsentReason, section string) error {
 	if reason != AbsentReasonNotRequested && reason != AbsentReasonUnavailable {
 		return fmt.Errorf("%s reason is not allowed", section)

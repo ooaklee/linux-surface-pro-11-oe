@@ -3,7 +3,7 @@
 Collects a private Surface Pro 11 Windows hand-off for linux-armer.
 
 .DESCRIPTION
-Creates the strict version 1 Windows hand-off directory consumed by
+Creates the strict version 2 Windows hand-off directory consumed by
 `linux-armer handoff import`. The collector can include the complete audited
 eleven-file platform firmware set, the same-device Bluetooth public address,
 or both. It never exports Windows Wi-Fi firmware.
@@ -14,9 +14,12 @@ when available, a Bluetooth public address. Keep it on trusted storage, do not
 publish it, and purge it when it is no longer required.
 
 .PARAMETER OutputDirectory
-Specifies a new directory to create. The parent directory must already exist,
-must not be a reparse point, and the destination must not already exist. The
-collector never overwrites or merges an existing directory.
+Specifies a new directory to create beneath a pre-provisioned private parent.
+The parent must be on local NTFS, have a protected DACL owned by Local System
+or Administrators, and grant inheritable full control only to those two
+principals. Every ancestor must be non-reparse and protected against
+medium-integrity redirection. The destination must not exist. Collect locally,
+then copy the completed private directory to trusted removable storage.
 
 .PARAMETER Components
 Chooses Both, PlatformFirmware or Bluetooth. A deliberately excluded section
@@ -24,22 +27,23 @@ is recorded as not-requested. A requested but unavailable section is recorded
 as unavailable only when the other section can still make a valid hand-off.
 
 .PARAMETER UseBTHPORTRegistry
-Explicitly confirms that the sole local BTHPORT controller-address key has been
-checked against the physical Bluetooth device. Use this only when the preferred
-Bluetooth network-adapter PermanentAddress is unavailable. The raw adapter
-instance identifier is never written to disk or displayed.
+Explicitly requires the sole local BTHPORT controller-address key to agree with
+the built-in radio's independently correlated network-adapter PermanentAddress.
+An uncorrelated registry value is never accepted. The raw adapter instance
+identifier is never written to disk or displayed.
 
 .PARAMETER SelfTest
-Runs the pinned device and Bluetooth binding vectors without collecting device
-data. This parameter set does not require Windows or administrator privileges.
+Runs the pinned device-binding, manifest, file-copy and encoding checks without
+collecting device data. This parameter set does not require Windows or
+administrator privileges.
 
 .EXAMPLE
-powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory E:\sp11-handoff
+powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory C:\ProgramData\linux-armer-private\sp11-handoff
 
 Collects both supported sections into a new directory.
 
 .EXAMPLE
-powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory E:\sp11-handoff -Components PlatformFirmware
+powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -OutputDirectory C:\ProgramData\linux-armer-private\sp11-handoff -Components PlatformFirmware
 
 Collects only the complete platform firmware set and records Bluetooth as not
 requested.
@@ -47,8 +51,8 @@ requested.
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File .\collect-sp11-windows-handoff.ps1 -SelfTest
 
-Checks that this script's domain-separated hash implementation matches the Go
-contract's pinned vectors.
+Checks that this script's contract implementation matches the Go contract's
+pinned values and strict version 2 manifest shape.
 #>
 [CmdletBinding(DefaultParameterSetName = 'Collect')]
 param(
@@ -72,13 +76,191 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $script:CollectorName = 'collect-sp11-windows-handoff.ps1'
-$script:CollectorVersion = '1.0.0'
+$script:CollectorVersion = '2.0.0'
 $script:ManifestFilename = 'linux-armer-windows-handoff.json'
 $script:DeviceBindingDomain = 'linux-armer.windows-handoff/device-binding/v1'
-$script:BluetoothAdapterBindingDomain = 'linux-armer.windows-handoff/bluetooth-adapter-binding/v1'
 $script:MaximumManifestBytes = 1MB
 $script:MaximumFirmwareFileBytes = 512MB
 $script:MaximumFirmwareTotalBytes = 1GB
+$script:AdministratorsSID = 'S-1-5-32-544'
+$script:SystemSID = 'S-1-5-18'
+$script:TrustedInstallerSID = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+$script:BuiltInBluetoothHardwareID = 'QCA_SHB\UART_H4_HMT'
+$script:BuiltInBluetoothTransportHardwareID = 'ACPI\QCOM0D04'
+
+<#
+.SYNOPSIS
+Loads the Windows file-identity reader used at privileged path boundaries.
+
+.DESCRIPTION
+Compiles one small Windows API wrapper on first use. The wrapper opens the
+named object itself with reparse-point traversal disabled and returns its
+volume serial number, file identifier and attributes. This gives the
+PowerShell 5.1 collector a stable object identity rather than trusting a path
+string across privileged operations.
+#>
+function Initialize-WindowsFileIdentityReader {
+    [CmdletBinding()]
+    param()
+
+    if ($env:OS -cne 'Windows_NT') {
+        throw 'Windows file-object identity is available only on Windows.'
+    }
+    if ($null -ne ('LinuxArmer.WindowsFileIdentityReader' -as [type])) {
+        return
+    }
+
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace LinuxArmer
+{
+    /// <summary>Describes one opened Windows filesystem object without exposing a mutable path as identity.</summary>
+    public sealed class WindowsFileIdentity
+    {
+        /// <summary>Gets the volume-and-file identifier used for equality checks.</summary>
+        public string Token { get; private set; }
+
+        /// <summary>Gets the attributes observed on the no-follow object handle.</summary>
+        public FileAttributes Attributes { get; private set; }
+
+        /// <summary>Creates one immutable file-identity result.</summary>
+        public WindowsFileIdentity(string token, FileAttributes attributes)
+        {
+            Token = token;
+            Attributes = attributes;
+        }
+    }
+
+    /// <summary>Reads Windows file identities through no-follow object handles.</summary>
+    public static class WindowsFileIdentityReader
+    {
+        private const uint OpenExisting = 3;
+        private const uint FileFlagBackupSemantics = 0x02000000;
+        private const uint FileFlagOpenReparsePoint = 0x00200000;
+        private const uint FileShareRead = 0x00000001;
+        private const uint FileShareWrite = 0x00000002;
+        private const uint FileShareDelete = 0x00000004;
+
+        /// <summary>Contains the stable metadata returned for an opened filesystem object.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        /// <summary>Opens a path while retaining the final reparse point rather than following it.</summary>
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        /// <summary>Reads stable object metadata from an already opened handle.</summary>
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle file,
+            out ByHandleFileInformation information);
+
+        /// <summary>Opens one existing object without following its final reparse point and returns its identity.</summary>
+        public static WindowsFileIdentity Read(string path)
+        {
+            using (SafeFileHandle handle = CreateFile(
+                path,
+                0,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagBackupSemantics | FileFlagOpenReparsePoint,
+                IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not open a Windows filesystem object for an identity check.");
+                }
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not read a Windows filesystem object identity.");
+                }
+                string token = String.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "{0:x8}:{1:x8}{2:x8}",
+                    information.VolumeSerialNumber,
+                    information.FileIndexHigh,
+                    information.FileIndexLow);
+                return new WindowsFileIdentity(token, (FileAttributes)information.FileAttributes);
+            }
+        }
+    }
+}
+'@
+}
+
+<#
+.SYNOPSIS
+Returns one no-follow Windows filesystem-object identity.
+
+.DESCRIPTION
+Opens the final path component without traversing a reparse point and rejects
+any reparse object. The returned token combines the volume serial number and
+the filesystem file identifier and is safe to compare but not persisted.
+#>
+function Get-WindowsFileObjectIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    Initialize-WindowsFileIdentityReader
+    $identity = [LinuxArmer.WindowsFileIdentityReader]::Read([System.IO.Path]::GetFullPath($Path))
+    if (($identity.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'A privileged Windows hand-off path became a reparse point.'
+    }
+    return $identity.Token
+}
+
+<#
+.SYNOPSIS
+Reports whether one security identifier is trusted for privileged storage.
+
+.DESCRIPTION
+Recognises only Local System, the built-in Administrators group and, for
+already existing ancestor directories, the Windows Modules Installer service.
+The hand-off output parent itself uses only System and Administrators.
+#>
+function Test-TrustedStorageSID {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SID,
+
+        [switch]$AllowTrustedInstaller
+    )
+
+    return $SID -ceq $script:SystemSID -or
+        $SID -ceq $script:AdministratorsSID -or
+        ($AllowTrustedInstaller -and $SID -ceq $script:TrustedInstallerSID)
+}
 
 <#
 .SYNOPSIS
@@ -209,11 +391,11 @@ function Get-DomainSeparatedBinding {
 
 <#
 .SYNOPSIS
-Runs the contract's pinned derivation vectors.
+Runs the contract's pinned device-binding derivation vector.
 
 .DESCRIPTION
-Proves that the PowerShell byte order, NUL separator, salt decoding and ASCII
-normalisation produce the exact values pinned by the Go implementation.
+Proves that the PowerShell byte order, NUL separator, salt decoding and UUID
+normalisation produce the exact value pinned by the Go implementation.
 #>
 function Assert-BindingSelfTest {
     [CmdletBinding()]
@@ -224,11 +406,6 @@ function Assert-BindingSelfTest {
         $device = Get-DomainSeparatedBinding -Domain $script:DeviceBindingDomain -Salt $salt -CanonicalValue '12345678-1234-5678-9abc-def012345678'
         if ($device -cne '094fb62588717c3c117b6a5ce3ada6a3d2c247c306239cd0f62f432ea688f600') {
             throw 'The device-binding self-test did not match the Go contract.'
-        }
-
-        $adapter = Get-DomainSeparatedBinding -Domain $script:BluetoothAdapterBindingDomain -Salt $salt -CanonicalValue 'BTH\MS_BTHPAN\7&12345678&0&2'
-        if ($adapter -cne '1c160571108944ea6d3bd4f45f65133cea74a9a4097d3f75eb315ac138a99f70') {
-            throw 'The Bluetooth adapter-binding self-test did not match the Go contract.'
         }
     } finally {
         [Array]::Clear($salt, 0, $salt.Length)
@@ -265,6 +442,22 @@ function Assert-PortableFileSelfTest {
         if ($bytes.Length -ne 3 -or $bytes[0] -ne 0x7B -or $bytes[1] -ne 0x7D -or $bytes[2] -ne 0x0A) {
             throw 'The BOM-less UTF-8 self-test did not write the pinned bytes.'
         }
+
+        $manifest = New-HandoffManifest `
+            -CreatedAt '2026-08-30T12:00:00Z' `
+            -BindingSalt ('01' * 32) `
+            -DeviceBinding ('02' * 32) `
+            -PlatformFirmware ([ordered]@{ included = $false; reason = 'not-requested' }) `
+            -BluetoothPublicAddress ([ordered]@{ included = $true; address = '10:20:30:40:50:60'; source = 'net-adapter-permanent-address' })
+        if (($manifest.Keys -join '|') -cne 'schema_version|kind|privacy_classification|created_at|collector|device|platform_firmware|bluetooth_public_address' -or
+            $manifest.schema_version -ne 2 -or $manifest.collector.version -cne '2.0.0' -or
+            ($manifest.bluetooth_public_address.Keys -join '|') -cne 'included|address|source') {
+            throw 'The strict version 2 manifest-shape self-test did not match its pinned fields.'
+        }
+        $manifestJSON = $manifest | ConvertTo-Json -Depth 12
+        if ($manifestJSON.IndexOf('adapter_instance_id_binding_sha256', [System.StringComparison]::Ordinal) -ge 0) {
+            throw 'The strict version 2 manifest-shape self-test found a retired field.'
+        }
     } finally {
         if ([System.IO.Directory]::Exists($temporaryRoot)) {
             [System.IO.Directory]::Delete($temporaryRoot, $true)
@@ -300,6 +493,9 @@ Checks the Windows host and required structured cmdlets.
 .DESCRIPTION
 Rejects non-Windows hosts, non-administrator sessions and hosts missing the
 PowerShell interfaces used for device, driver, adapter and signature evidence.
+It also requires the elevated token's default owner to be Administrators or
+System, so every newly created descendant has a trusted owner from its first
+filesystem-visible moment.
 #>
 function Assert-CollectorHost {
     [CmdletBinding()]
@@ -312,9 +508,20 @@ function Assert-CollectorHost {
         throw 'Run the Windows hand-off collector from an Administrator PowerShell session.'
     }
 
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try {
+        $ownerSID = $identity.Owner.Value
+    } finally {
+        $identity.Dispose()
+    }
+    if (-not (Test-TrustedStorageSID -SID $ownerSID)) {
+        throw 'The elevated Windows token must use Local System or Administrators as its default filesystem owner.'
+    }
+
     foreach ($commandName in @(
         'Get-CimInstance',
         'Get-PnpDevice',
+        'Get-PnpDeviceProperty',
         'Get-NetAdapter',
         'Get-WindowsDriver',
         'Get-AuthenticodeSignature'
@@ -330,26 +537,27 @@ function Assert-CollectorHost {
 Returns the exact ordered platform firmware policy.
 
 .DESCRIPTION
-Keeps the PowerShell collector's identifiers, source filenames, payload paths
-and Linux destinations byte-for-byte aligned with the Go contract. Windows
-Wi-Fi firmware is intentionally absent from this closed allow-list.
+Keeps the PowerShell collector's identifiers, source filenames, authoritative
+original INF basenames, payload paths and Linux destinations byte-for-byte
+aligned with the Go contract. Windows Wi-Fi firmware is intentionally absent
+from this closed allow-list.
 #>
 function Get-PlatformFirmwarePolicy {
     [CmdletBinding()]
     param()
 
     return @(
-        [pscustomobject][ordered]@{ ID = 'gpu-main'; SourceName = 'qcdxkmsuc8380.mbn'; PayloadPath = 'payload/platform-firmware/qcdxkmsuc8380.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/qcdxkmsuc8380.mbn' },
-        [pscustomobject][ordered]@{ ID = 'gpu-purwa'; SourceName = 'qcdxkmsucpurwa.mbn'; PayloadPath = 'payload/platform-firmware/qcdxkmsucpurwa.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/qcdxkmsucpurwa.mbn' },
-        [pscustomobject][ordered]@{ ID = 'adsp-dtb'; SourceName = 'adsp_dtbs.elf'; PayloadPath = 'payload/platform-firmware/adsp_dtbs.elf'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adsp_dtb.mbn' },
-        [pscustomobject][ordered]@{ ID = 'adsp-main'; SourceName = 'qcadsp8380.mbn'; PayloadPath = 'payload/platform-firmware/qcadsp8380.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/qcadsp8380.mbn' },
-        [pscustomobject][ordered]@{ ID = 'adsp-resource'; SourceName = 'adspr.jsn'; PayloadPath = 'payload/platform-firmware/adspr.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adspr.jsn' },
-        [pscustomobject][ordered]@{ ID = 'adsp-system'; SourceName = 'adsps.jsn'; PayloadPath = 'payload/platform-firmware/adsps.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adsps.jsn' },
-        [pscustomobject][ordered]@{ ID = 'adsp-user'; SourceName = 'adspua.jsn'; PayloadPath = 'payload/platform-firmware/adspua.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adspua.jsn' },
-        [pscustomobject][ordered]@{ ID = 'battery-manager'; SourceName = 'battmgr.jsn'; PayloadPath = 'payload/platform-firmware/battmgr.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/battmgr.jsn' },
-        [pscustomobject][ordered]@{ ID = 'cdsp-dtb'; SourceName = 'cdsp_dtbs.elf'; PayloadPath = 'payload/platform-firmware/cdsp_dtbs.elf'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/cdsp_dtb.mbn' },
-        [pscustomobject][ordered]@{ ID = 'cdsp-main'; SourceName = 'qccdsp8380.mbn'; PayloadPath = 'payload/platform-firmware/qccdsp8380.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/qccdsp8380.mbn' },
-        [pscustomobject][ordered]@{ ID = 'cdsp-resource'; SourceName = 'cdspr.jsn'; PayloadPath = 'payload/platform-firmware/cdspr.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/cdspr.jsn' }
+        [pscustomobject][ordered]@{ ID = 'gpu-main'; SourceName = 'qcdxkmsuc8380.mbn'; SourceINF = 'qcdx8380.inf'; PayloadPath = 'payload/platform-firmware/qcdxkmsuc8380.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/qcdxkmsuc8380.mbn' },
+        [pscustomobject][ordered]@{ ID = 'gpu-purwa'; SourceName = 'qcdxkmsucpurwa.mbn'; SourceINF = 'qcdx8380.inf'; PayloadPath = 'payload/platform-firmware/qcdxkmsucpurwa.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/qcdxkmsucpurwa.mbn' },
+        [pscustomobject][ordered]@{ ID = 'adsp-dtb'; SourceName = 'adsp_dtbs.elf'; SourceINF = 'surfacepro_ext_adsp8380.inf'; PayloadPath = 'payload/platform-firmware/adsp_dtbs.elf'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adsp_dtb.mbn' },
+        [pscustomobject][ordered]@{ ID = 'adsp-main'; SourceName = 'qcadsp8380.mbn'; SourceINF = 'surfacepro_ext_adsp8380.inf'; PayloadPath = 'payload/platform-firmware/qcadsp8380.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/qcadsp8380.mbn' },
+        [pscustomobject][ordered]@{ ID = 'adsp-resource'; SourceName = 'adspr.jsn'; SourceINF = 'surfacepro_ext_adsp8380.inf'; PayloadPath = 'payload/platform-firmware/adspr.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adspr.jsn' },
+        [pscustomobject][ordered]@{ ID = 'adsp-system'; SourceName = 'adsps.jsn'; SourceINF = 'surfacepro_ext_adsp8380.inf'; PayloadPath = 'payload/platform-firmware/adsps.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adsps.jsn' },
+        [pscustomobject][ordered]@{ ID = 'adsp-user'; SourceName = 'adspua.jsn'; SourceINF = 'surfacepro_ext_adsp8380.inf'; PayloadPath = 'payload/platform-firmware/adspua.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/adspua.jsn' },
+        [pscustomobject][ordered]@{ ID = 'battery-manager'; SourceName = 'battmgr.jsn'; SourceINF = 'surfacepro_ext_adsp8380.inf'; PayloadPath = 'payload/platform-firmware/battmgr.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/battmgr.jsn' },
+        [pscustomobject][ordered]@{ ID = 'cdsp-dtb'; SourceName = 'cdsp_dtbs.elf'; SourceINF = 'qcnspmcdm_ext_cdsp8380.inf'; PayloadPath = 'payload/platform-firmware/cdsp_dtbs.elf'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/cdsp_dtb.mbn' },
+        [pscustomobject][ordered]@{ ID = 'cdsp-main'; SourceName = 'qccdsp8380.mbn'; SourceINF = 'qcnspmcdm_ext_cdsp8380.inf'; PayloadPath = 'payload/platform-firmware/qccdsp8380.mbn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/qccdsp8380.mbn' },
+        [pscustomobject][ordered]@{ ID = 'cdsp-resource'; SourceName = 'cdspr.jsn'; SourceINF = 'qcnspmcdm_ext_cdsp8380.inf'; PayloadPath = 'payload/platform-firmware/cdspr.jsn'; Destination = 'lib/firmware/qcom/x1e80100/microsoft/Denali/cdspr.jsn' }
     )
 }
 
@@ -378,6 +586,149 @@ function ConvertTo-CanonicalAdapterInstanceID {
         throw 'The Windows Bluetooth adapter instance identifier lacks non-empty backslash-separated components.'
     }
     return $canonical
+}
+
+<#
+.SYNOPSIS
+Returns one exact Windows PnP property value.
+
+.DESCRIPTION
+Queries one named property for an in-memory canonical instance identifier and
+requires exactly one successful record. Errors never include either the raw
+identifier or property data.
+#>
+function Get-ExactPnpPropertyData {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstanceID,
+
+        [Parameter(Mandatory = $true)]
+        [string]$KeyName
+    )
+
+    try {
+        $records = @(Get-PnpDeviceProperty -InstanceId $InstanceID -KeyName $KeyName -ErrorAction Stop |
+            Where-Object { ([string]$_.KeyName).Trim() -ieq $KeyName })
+    } catch {
+        throw 'Windows could not read one required Bluetooth PnP property.'
+    }
+    if ($records.Count -ne 1 -or $null -eq $records[0].Data) {
+        throw 'Windows did not provide one exact required Bluetooth PnP property.'
+    }
+    return $records[0].Data
+}
+
+<#
+.SYNOPSIS
+Reports whether one PnP object descends from an exact physical ancestor.
+
+.DESCRIPTION
+Walks the structured DEVPKEY_Device_Parent chain with canonical, cycle-checked
+identifiers and a compiled depth bound. It never relies on friendly names and
+never writes or displays an identifier.
+#>
+function Test-PnpDeviceDescendsFrom {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CandidateInstanceID,
+
+        [Parameter(Mandatory = $true)]
+        [string]$AncestorInstanceID
+    )
+
+    try {
+        $current = ConvertTo-CanonicalAdapterInstanceID -Value $CandidateInstanceID
+        $ancestor = ConvertTo-CanonicalAdapterInstanceID -Value $AncestorInstanceID
+    } catch {
+        return $false
+    }
+    $visited = @{}
+    for ($depth = 0; $depth -lt 32; $depth++) {
+        if ($current -ceq $ancestor) {
+            return $true
+        }
+        if ($visited.ContainsKey($current)) {
+            return $false
+        }
+        $visited[$current] = $true
+        try {
+            $parentData = Get-ExactPnpPropertyData -InstanceID $current -KeyName 'DEVPKEY_Device_Parent'
+            $current = ConvertTo-CanonicalAdapterInstanceID -Value ([string]$parentData)
+        } catch {
+            return $false
+        }
+    }
+    return $false
+}
+
+<#
+.SYNOPSIS
+Finds the exact built-in Surface Pro 11 Bluetooth radio and transport.
+
+.DESCRIPTION
+Requires one present physical Bluetooth radio, the WCN7850-specific
+QCA_SHB\UART_H4_HMT hardware identifier, and its ACPI\QCOM0D04 parent
+transport with matching hardware identity. Any external or ambiguous physical
+radio causes collection to fail closed. Raw PnP identifiers remain in memory.
+#>
+function Get-BuiltInBluetoothRadioEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$PresentPnpDevices
+    )
+
+    $physicalRadios = @{}
+    foreach ($device in $PresentPnpDevices) {
+        if (([string]$device.Class).Trim() -ine 'Bluetooth') {
+            continue
+        }
+        try {
+            $instanceID = ConvertTo-CanonicalAdapterInstanceID -Value ([string]$device.InstanceId)
+        } catch {
+            throw 'Windows exposes a Bluetooth-class object with an unusable physical identity; collection cannot select safely.'
+        }
+        if ($instanceID -match '^(?:BTH|BTHENUM|SWD|ROOT|HTREE)\\' -or
+            $instanceID -match '^\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}\\' -or
+            $instanceID -match ('^' + [regex]::Escape($script:BuiltInBluetoothTransportHardwareID) + '(?:\\|$)')) {
+            continue
+        }
+        # Treat every remaining Bluetooth-class object as physical. Unknown bus
+        # enumerators must increase ambiguity rather than becoming an allow-list
+        # gap through which an attached controller could be silently ignored.
+        $physicalRadios[$instanceID] = $instanceID
+    }
+    $radios = @($physicalRadios.Values)
+    if ($radios.Count -eq 0) {
+        return $null
+    }
+    if ($radios.Count -ne 1 -or
+        $radios[0] -notmatch ('^' + [regex]::Escape($script:BuiltInBluetoothHardwareID) + '(?:\\|$)')) {
+        throw 'Windows exposes an external or ambiguous physical Bluetooth radio; collection cannot select safely.'
+    }
+
+    $radioID = $radios[0]
+    $radioHardwareIDs = @(Get-ExactPnpPropertyData -InstanceID $radioID -KeyName 'DEVPKEY_Device_HardwareIds' |
+        ForEach-Object { ([string]$_).Trim().ToUpperInvariant() })
+    if (@($radioHardwareIDs | Where-Object { $_ -ceq $script:BuiltInBluetoothHardwareID }).Count -ne 1) {
+        throw 'The present Bluetooth radio does not have the compiled Surface Pro 11 hardware identity.'
+    }
+    $transportID = ConvertTo-CanonicalAdapterInstanceID -Value ([string](Get-ExactPnpPropertyData -InstanceID $radioID -KeyName 'DEVPKEY_Device_Parent'))
+    if ($transportID -notmatch ('^' + [regex]::Escape($script:BuiltInBluetoothTransportHardwareID) + '(?:\\|$)')) {
+        throw 'The present Bluetooth radio is not attached to the compiled Surface Pro 11 ACPI transport.'
+    }
+    $transportHardwareIDs = @(Get-ExactPnpPropertyData -InstanceID $transportID -KeyName 'DEVPKEY_Device_HardwareIds' |
+        ForEach-Object { ([string]$_).Trim().ToUpperInvariant() })
+    if (@($transportHardwareIDs | Where-Object { $_ -ceq $script:BuiltInBluetoothTransportHardwareID }).Count -ne 1) {
+        throw 'The present Bluetooth transport does not have the compiled Surface Pro 11 hardware identity.'
+    }
+
+    return [pscustomobject][ordered]@{
+        RadioInstanceID = $radioID
+        TransportInstanceID = $transportID
+    }
 }
 
 <#
@@ -469,12 +820,189 @@ function Get-SupportedDeviceEvidence {
 
 <#
 .SYNOPSIS
-Allocates a safe same-filesystem staging directory for one new output.
+Checks that a directory has the collector's exact private ACL.
 
 .DESCRIPTION
-Resolves the requested path, rejects roots, existing destinations and reparse
-point parents, then creates an unpredictable sibling staging directory. The
-caller can publish it with Directory.Move without crossing filesystems.
+Requires a protected DACL, an Administrators or System owner, and inheritable
+full-control entries for only Administrators and System. A medium-integrity
+process therefore cannot create, replace, relink, delete or take ownership of
+transaction objects beneath this directory.
+#>
+function Assert-PrivateDirectoryACL {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor
+        [System.Security.AccessControl.AccessControlSections]::Owner
+    $security = [System.IO.Directory]::GetAccessControl($Path, $sections)
+    $owner = $security.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    if (-not (Test-TrustedStorageSID -SID $owner)) {
+        throw 'The private output directory owner must be Local System or the built-in Administrators group.'
+    }
+    if (-not $security.AreAccessRulesProtected) {
+        throw 'The private output directory must have inheritance disabled on its DACL.'
+    }
+
+    $fullControl = [long][System.Security.AccessControl.FileSystemRights]::FullControl
+    $requiredInheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    $fullControlBySID = @{}
+    $rules = @($security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    foreach ($rule in $rules) {
+        $sid = $rule.IdentityReference.Value
+        if ($rule.IsInherited -or -not (Test-TrustedStorageSID -SID $sid) -or
+            $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+            ([long]$rule.FileSystemRights -band $fullControl) -ne $fullControl -or
+            ($rule.InheritanceFlags -band $requiredInheritance) -ne $requiredInheritance -or
+            $rule.PropagationFlags -ne [System.Security.AccessControl.PropagationFlags]::None) {
+            throw 'The private output directory DACL must contain only explicit inheritable full-control entries for Local System and Administrators.'
+        }
+        $fullControlBySID[$sid] = $true
+    }
+    if (-not $fullControlBySID.ContainsKey($script:SystemSID) -or
+        -not $fullControlBySID.ContainsKey($script:AdministratorsSID)) {
+        throw 'The private output directory DACL must grant inheritable full control to Local System and Administrators.'
+    }
+}
+
+<#
+.SYNOPSIS
+Applies the collector's exact private ACL to a new transaction directory.
+
+.DESCRIPTION
+Sets the owner to the built-in Administrators group, disables inheritance and
+grants inheritable full control only to Local System and Administrators. The
+directory is created beneath an already verified parent, so there is no
+medium-integrity access window before this ACL is applied.
+#>
+function Set-PrivateDirectoryACL {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $administrators = New-Object System.Security.Principal.SecurityIdentifier($script:AdministratorsSID)
+    $system = New-Object System.Security.Principal.SecurityIdentifier($script:SystemSID)
+    $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    $propagation = [System.Security.AccessControl.PropagationFlags]::None
+    $allow = [System.Security.AccessControl.AccessControlType]::Allow
+    $fullControl = [System.Security.AccessControl.FileSystemRights]::FullControl
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetOwner($administrators)
+    $security.SetAccessRuleProtection($true, $false)
+    [void]$security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($administrators, $fullControl, $inheritance, $propagation, $allow)))
+    [void]$security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system, $fullControl, $inheritance, $propagation, $allow)))
+    [System.IO.Directory]::SetAccessControl($Path, $security)
+    Assert-PrivateDirectoryACL -Path $Path
+}
+
+<#
+.SYNOPSIS
+Checks that ancestors cannot redirect one privileged output path.
+
+.DESCRIPTION
+Walks from the filesystem root down to the output parent, rejecting reparse
+points, untrusted ownership and untrusted delete or security-control rights.
+It reads each object's no-follow identity before and after its ACL so a path
+replacement during verification fails closed. The immediate output parent
+must satisfy the exact private ACL rather than the narrower ancestor policy.
+#>
+function Assert-SecureOutputPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ParentPath
+    )
+
+    $paths = @()
+    $current = New-Object System.IO.DirectoryInfo([System.IO.Path]::GetFullPath($ParentPath))
+    while ($null -ne $current) {
+        $paths = @($current.FullName) + $paths
+        $current = $current.Parent
+    }
+
+    $dangerousAncestorRights = [long](
+        [System.Security.AccessControl.FileSystemRights]::Delete -bor
+        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [System.Security.AccessControl.FileSystemRights]::TakeOwnership -bor
+        [System.Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+        [System.Security.AccessControl.FileSystemRights]::WriteExtendedAttributes)
+    $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor
+        [System.Security.AccessControl.AccessControlSections]::Owner
+    $parentIdentity = $null
+    foreach ($path in $paths) {
+        $beforeIdentity = Get-WindowsFileObjectIdentity -Path $path
+        $security = [System.IO.Directory]::GetAccessControl($path, $sections)
+        $owner = $security.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        if (-not (Test-TrustedStorageSID -SID $owner -AllowTrustedInstaller)) {
+            throw 'The Windows hand-off output path has an ancestor owned by a medium-integrity principal.'
+        }
+        foreach ($rule in @($security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+            $inheritOnly = ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0
+            if (-not $inheritOnly -and
+                $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+                -not (Test-TrustedStorageSID -SID $rule.IdentityReference.Value -AllowTrustedInstaller) -and
+                (([long]$rule.FileSystemRights -band $dangerousAncestorRights) -ne 0)) {
+                throw 'The Windows hand-off output path has an ancestor that a medium-integrity principal can redirect.'
+            }
+        }
+        $afterIdentity = Get-WindowsFileObjectIdentity -Path $path
+        if ($beforeIdentity -cne $afterIdentity) {
+            throw 'A Windows hand-off output ancestor changed during its security check.'
+        }
+        if ($path -ieq [System.IO.Path]::GetFullPath($ParentPath)) {
+            Assert-PrivateDirectoryACL -Path $path
+            $parentIdentity = $afterIdentity
+        }
+    }
+    if ([string]::IsNullOrEmpty($parentIdentity)) {
+        throw 'The Windows hand-off output parent identity could not be retained.'
+    }
+    return $parentIdentity
+}
+
+<#
+.SYNOPSIS
+Reports whether a named immediate directory entry already exists.
+
+.DESCRIPTION
+Enumerates only the verified parent rather than following the candidate path.
+Case-insensitive comparison also catches reparse points with unavailable
+targets and Windows case aliases that ordinary existence helpers may miss.
+#>
+function Test-ImmediateDirectoryEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ParentPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    foreach ($entry in @((Get-Item -LiteralPath $ParentPath -Force).GetFileSystemInfos())) {
+        if ($entry.Name -ieq $Name) {
+            return $true
+        }
+    }
+    return $false
+}
+
+<#
+.SYNOPSIS
+Allocates a protected same-filesystem transaction for one new output.
+
+.DESCRIPTION
+Requires a local NTFS parent with an administrator-only private DACL and a
+non-redirectable ancestor chain. It creates an unpredictable sibling staging
+directory, applies the same private DACL and retains the parent and staging
+filesystem identities for every later sensitive boundary.
 #>
 function New-OutputTransaction {
     [CmdletBinding()]
@@ -485,41 +1013,231 @@ function New-OutputTransaction {
 
     $finalPath = [System.IO.Path]::GetFullPath($RequestedPath)
     $rootPath = [System.IO.Path]::GetPathRoot($finalPath)
-    if ($finalPath.StartsWith('\\', [System.StringComparison]::Ordinal) -or
-        (New-Object System.IO.DriveInfo($rootPath)).DriveType -eq [System.IO.DriveType]::Network) {
-        throw 'The private Windows hand-off output must be on a local or removable filesystem, not a network share.'
+    if ($finalPath.StartsWith('\\', [System.StringComparison]::Ordinal)) {
+        throw 'The private Windows hand-off output must be on a local NTFS filesystem, not a network share.'
+    }
+    $drive = New-Object System.IO.DriveInfo($rootPath)
+    if (-not $drive.IsReady -or
+        ($drive.DriveType -ne [System.IO.DriveType]::Fixed -and $drive.DriveType -ne [System.IO.DriveType]::Removable) -or
+        $drive.DriveFormat -ine 'NTFS') {
+        throw 'The private Windows hand-off output requires a ready local NTFS filesystem.'
     }
     if ($finalPath.TrimEnd('\', '/') -ieq $rootPath.TrimEnd('\', '/')) {
         throw 'The Windows hand-off output must not be a filesystem root.'
-    }
-    if (Test-Path -LiteralPath $finalPath) {
-        throw 'The Windows hand-off output directory already exists; choose a new path.'
     }
 
     $parentInfo = [System.IO.Directory]::GetParent($finalPath)
     if ($null -eq $parentInfo -or -not $parentInfo.Exists) {
         throw 'The Windows hand-off output parent directory must already exist.'
     }
-    $ancestor = $parentInfo
-    while ($null -ne $ancestor) {
-        $ancestorItem = Get-Item -LiteralPath $ancestor.FullName -Force
-        if (($ancestorItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw 'The Windows hand-off output path must not pass through a reparse point.'
-        }
-        $ancestor = $ancestor.Parent
+    $finalName = [System.IO.Path]::GetFileName($finalPath.TrimEnd('\', '/'))
+    if ([string]::IsNullOrWhiteSpace($finalName) -or $finalName.Length -gt 120 -or
+        $finalName.EndsWith('.') -or $finalName -match '[\x00-\x1F<>:"/\\|?*]') {
+        throw 'The Windows hand-off output leaf name is not a safe portable directory name.'
+    }
+
+    $parentIdentity = Assert-SecureOutputPath -ParentPath $parentInfo.FullName
+    if (Test-ImmediateDirectoryEntry -ParentPath $parentInfo.FullName -Name $finalName) {
+        throw 'The Windows hand-off output directory already exists; choose a new path.'
     }
 
     for ($attempt = 0; $attempt -lt 32; $attempt++) {
-        $stagingPath = Join-Path $parentInfo.FullName ('.linux-armer-collecting-' + [guid]::NewGuid().ToString('N'))
-        if (-not (Test-Path -LiteralPath $stagingPath)) {
+        $stagingName = '.linux-armer-collecting-' + [guid]::NewGuid().ToString('N')
+        if (Test-ImmediateDirectoryEntry -ParentPath $parentInfo.FullName -Name $stagingName) {
+            continue
+        }
+        $stagingPath = Join-Path $parentInfo.FullName $stagingName
+        $stagingCreated = $false
+        $stagingIdentity = $null
+        try {
             [void][System.IO.Directory]::CreateDirectory($stagingPath)
-            return [pscustomobject][ordered]@{
-                FinalPath = $finalPath
-                StagingPath = $stagingPath
+            $stagingCreated = $true
+            Set-PrivateDirectoryACL -Path $stagingPath
+            $stagingIdentity = Get-WindowsFileObjectIdentity -Path $stagingPath
+            if ((Get-WindowsFileObjectIdentity -Path $parentInfo.FullName) -cne $parentIdentity) {
+                throw 'The Windows hand-off output parent changed while allocating staging.'
             }
+        } catch {
+            $allocationError = $_
+            if ($stagingCreated) {
+                try {
+                    Remove-ClosedDirectoryNoFollow -Root $stagingPath -ExpectedRootIdentity $stagingIdentity
+                } catch {
+                    Write-Warning "Could not remove a failed private staging allocation: $stagingPath"
+                }
+            }
+            throw $allocationError
+        }
+        return [pscustomobject][ordered]@{
+            ParentPath = $parentInfo.FullName
+            ParentIdentity = $parentIdentity
+            FinalPath = $finalPath
+            FinalName = $finalName
+            StagingPath = $stagingPath
+            StagingName = $stagingName
+            StagingIdentity = $stagingIdentity
         }
     }
     throw 'Could not allocate an unused Windows hand-off staging directory.'
+}
+
+<#
+.SYNOPSIS
+Revalidates the retained identities and ACLs of one output transaction.
+
+.DESCRIPTION
+Checks the protected parent and the staging object before and after each
+sensitive filesystem boundary. After publication, the same staging identity
+must appear at the final path. This rejects object substitution even when a
+path string remains unchanged.
+#>
+function Assert-OutputTransactionBoundary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Transaction,
+
+        [switch]$Published
+    )
+
+    if ((Get-WindowsFileObjectIdentity -Path $Transaction.ParentPath) -cne $Transaction.ParentIdentity) {
+        throw 'The protected Windows hand-off output parent changed during collection.'
+    }
+    Assert-PrivateDirectoryACL -Path $Transaction.ParentPath
+    $activePath = if ($Published) { $Transaction.FinalPath } else { $Transaction.StagingPath }
+    $activeIdentity = Get-WindowsFileObjectIdentity -Path $activePath
+    if ($activeIdentity -cne $Transaction.StagingIdentity) {
+        throw 'The protected Windows hand-off transaction object changed during collection.'
+    }
+    Assert-PrivateDirectoryACL -Path $activePath
+}
+
+<#
+.SYNOPSIS
+Returns an exact no-follow inventory beneath a protected directory.
+
+.DESCRIPTION
+Enumerates one directory level at a time, rejects every reparse point before
+descending and optionally rechecks the retained transaction identity at each
+level. It never uses recursive provider traversal across a mutable path.
+#>
+function Get-ClosedDirectoryEntries {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+
+        [AllowNull()]
+        [object]$Transaction
+    )
+
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($rootPath)
+    $entries = New-Object System.Collections.ArrayList
+    while ($pending.Count -gt 0) {
+        if ($null -ne $Transaction) {
+            Assert-OutputTransactionBoundary -Transaction $Transaction
+        }
+        $directoryPath = $pending.Pop()
+        $directory = Get-Item -LiteralPath $directoryPath -Force
+        if (-not $directory.PSIsContainer -or
+            ($directory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The staged Windows hand-off contains a reparse or non-directory traversal object.'
+        }
+        foreach ($item in @($directory.GetFileSystemInfos())) {
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'The staged Windows hand-off contains a reparse point.'
+            }
+            [void]$entries.Add($item)
+            if (($item.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                $pending.Push($item.FullName)
+            }
+        }
+    }
+    return @($entries)
+}
+
+<#
+.SYNOPSIS
+Deletes one reparse object without visiting its target.
+
+.DESCRIPTION
+Uses non-recursive directory deletion for Windows junctions and symbolic
+directories, with file deletion as the portable symbolic-link fallback used
+by cross-platform tests. Both operations address the link itself.
+#>
+function Remove-ReparseObjectNoFollow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileSystemInfo]$Item
+    )
+
+    try {
+        [System.IO.Directory]::Delete($Item.FullName, $false)
+    } catch [System.IO.IOException] {
+        [System.IO.File]::Delete($Item.FullName)
+    }
+}
+
+<#
+.SYNOPSIS
+Deletes one closed directory tree without following reparse points.
+
+.DESCRIPTION
+Walks one level at a time and removes each file, empty directory or reparse
+object directly. Reparse directories are deleted as links and are never
+entered. An optional retained root identity is checked throughout privileged
+cleanup, so an exchanged transaction path is preserved for manual recovery
+rather than recursively traversed.
+#>
+function Remove-ClosedDirectoryNoFollow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+
+        [AllowNull()]
+        [string]$ExpectedRootIdentity
+    )
+
+    $rootPath = [System.IO.Path]::GetFullPath($Root)
+    if (-not [string]::IsNullOrEmpty($ExpectedRootIdentity) -and
+        (Get-WindowsFileObjectIdentity -Path $rootPath) -cne $ExpectedRootIdentity) {
+        throw 'The private staging identity changed before cleanup.'
+    }
+
+    $removeDirectory = {
+        param([string]$DirectoryPath)
+
+        if (-not [string]::IsNullOrEmpty($ExpectedRootIdentity) -and
+            (Get-WindowsFileObjectIdentity -Path $rootPath) -cne $ExpectedRootIdentity) {
+            throw 'The private staging identity changed during cleanup.'
+        }
+        $directory = Get-Item -LiteralPath $DirectoryPath -Force
+        if (($directory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Remove-ReparseObjectNoFollow -Item $directory
+            return
+        }
+        if (-not $directory.PSIsContainer) {
+            throw 'Private staging cleanup encountered a non-directory traversal object.'
+        }
+        foreach ($item in @($directory.GetFileSystemInfos())) {
+            $isDirectory = ($item.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+            $isReparse = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+            if ($isReparse) {
+                Remove-ReparseObjectNoFollow -Item $item
+            } elseif ($isDirectory) {
+                & $removeDirectory $item.FullName
+            } else {
+                [System.IO.File]::Delete($item.FullName)
+            }
+        }
+        [System.IO.Directory]::Delete($directory.FullName, $false)
+    }
+
+    & $removeDirectory $rootPath
 }
 
 <#
@@ -618,6 +1336,10 @@ function Get-ActiveDriverPackages {
         if (-not [System.IO.File]::Exists($originalINF)) {
             throw "The active $publishedINF DriverStore INF is unavailable."
         }
+        $originalINFName = [System.IO.Path]::GetFileName($originalINF).ToLowerInvariant()
+        if ($originalINFName -notmatch '^[a-z0-9][a-z0-9._+~-]*\.inf$') {
+            throw "The active $publishedINF original INF basename is not canonical and portable."
+        }
         $packageRoot = [System.IO.Path]::GetDirectoryName($originalINF)
         $packageParent = [System.IO.Path]::GetDirectoryName($packageRoot)
         if ($packageParent -ine $fileRepository) {
@@ -633,6 +1355,7 @@ function Get-ActiveDriverPackages {
             PublishedINF = $publishedINF
             DriverVersion = $driverVersion
             OriginalINF = $originalINF
+            OriginalINFName = $originalINFName
             PackageRoot = $packageRoot
         }
         if ($packageByINF.ContainsKey($publishedINF)) {
@@ -648,6 +1371,29 @@ function Get-ActiveDriverPackages {
     }
 
     return @($packageByINF.Values | Sort-Object PublishedINF)
+}
+
+<#
+.SYNOPSIS
+Reports whether an active package is the policy's authoritative original INF.
+
+.DESCRIPTION
+Compares canonical lowercase original INF basenames with ordinal case-sensitive
+semantics. Keeping this decision separate from filename discovery prevents an
+identically named firmware file in another active package from becoming an
+ambiguous or incorrect candidate.
+#>
+function Test-DriverPackageMatchesPolicy {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Package,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Policy
+    )
+
+    return ([string]$Package.OriginalINFName -ceq [string]$Policy.SourceINF)
 }
 
 <#
@@ -822,11 +1568,26 @@ function Copy-VerifiedFirmwareFile {
         [string]$SourcePath,
 
         [Parameter(Mandatory = $true)]
-        [string]$DestinationPath
+        [string]$DestinationPath,
+
+        [AllowNull()]
+        [object]$Transaction
     )
 
     $destinationParent = [System.IO.Path]::GetDirectoryName($DestinationPath)
+    if ($null -ne $Transaction) {
+        Assert-OutputTransactionBoundary -Transaction $Transaction
+        $stagingPrefix = [System.IO.Path]::GetFullPath($Transaction.StagingPath).TrimEnd('\') + '\'
+        $fullDestination = [System.IO.Path]::GetFullPath($DestinationPath)
+        if (-not $fullDestination.StartsWith($stagingPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'A platform firmware destination escaped the protected transaction.'
+        }
+    }
     [void][System.IO.Directory]::CreateDirectory($destinationParent)
+    if ($null -ne $Transaction) {
+        Assert-NoReparsePath -Root $Transaction.StagingPath -Child $destinationParent
+        Assert-OutputTransactionBoundary -Transaction $Transaction
+    }
     if ([System.IO.File]::Exists($DestinationPath)) {
         throw 'A platform firmware staging destination already exists.'
     }
@@ -871,6 +1632,10 @@ function Copy-VerifiedFirmwareFile {
         if ($written.Size -ne $sourceLength -or $written.SHA256 -cne $sourceDigest) {
             throw 'A copied platform firmware file failed its byte-for-byte verification.'
         }
+        if ($null -ne $Transaction) {
+            Assert-NoReparsePath -Root $Transaction.StagingPath -Child $DestinationPath
+            Assert-OutputTransactionBoundary -Transaction $Transaction
+        }
         return $written
     } catch {
         [System.IO.File]::Delete($DestinationPath)
@@ -884,8 +1649,9 @@ Resolves the complete firmware policy to unambiguous active packages.
 
 .DESCRIPTION
 Searches only DriverStore packages bound to present signed devices. Every
-compiled source filename must resolve exactly once, with a valid associated
-catalogue, before any proprietary payload is copied to staging.
+compiled source filename must resolve exactly once from its authoritative
+original INF, with a valid associated catalogue, before any proprietary
+payload is copied to staging.
 #>
 function Resolve-PlatformFirmware {
     [CmdletBinding()]
@@ -902,6 +1668,9 @@ function Resolve-PlatformFirmware {
     foreach ($policy in $Policies) {
         $candidates = @()
         foreach ($package in $ActivePackages) {
+            if (-not (Test-DriverPackageMatchesPolicy -Package $package -Policy $policy)) {
+                continue
+            }
             $matchedFiles = @(Get-ChildItem -LiteralPath $package.PackageRoot -Filter $policy.SourceName -File -Recurse -Force -ErrorAction Stop)
             foreach ($match in $matchedFiles) {
                 Assert-NoReparsePath -Root $package.PackageRoot -Child $match.FullName
@@ -914,6 +1683,7 @@ function Resolve-PlatformFirmware {
                     SourcePath = $match.FullName
                     DriverStorePath = $portablePath
                     PublishedINF = $package.PublishedINF
+                    OriginalINF = $package.OriginalINFName
                     DriverVersion = $package.DriverVersion
                     CatalogueSHA256 = $catalogueCache[$package.PublishedINF].SHA256
                     CatalogueSignature = $catalogueCache[$package.PublishedINF].Signature
@@ -948,7 +1718,10 @@ function New-PlatformFirmwareSection {
         [object]$Resolution,
 
         [Parameter(Mandatory = $true)]
-        [string]$StagingRoot
+        [string]$StagingRoot,
+
+        [AllowNull()]
+        [object]$Transaction
     )
 
     if (-not $Resolution.Available) {
@@ -959,7 +1732,7 @@ function New-PlatformFirmwareSection {
     [long]$totalBytes = 0
     foreach ($candidate in $Resolution.Records) {
         $destinationPath = Join-Path $StagingRoot $candidate.Policy.PayloadPath.Replace('/', '\')
-        $copied = Copy-VerifiedFirmwareFile -SourcePath $candidate.SourcePath -DestinationPath $destinationPath
+        $copied = Copy-VerifiedFirmwareFile -SourcePath $candidate.SourcePath -DestinationPath $destinationPath -Transaction $Transaction
         $totalBytes += $copied.Size
         if ($totalBytes -gt $script:MaximumFirmwareTotalBytes) {
             throw 'The complete platform firmware payload exceeds the contract total-size limit.'
@@ -974,6 +1747,7 @@ function New-PlatformFirmwareSection {
             windows_source = [ordered]@{
                 driver_store_path = $candidate.DriverStorePath
                 published_inf = $candidate.PublishedINF
+                original_inf = $candidate.OriginalINF
                 driver_version = $candidate.DriverVersion
                 catalogue_sha256 = $candidate.CatalogueSHA256
                 catalogue_signature = $candidate.CatalogueSignature
@@ -989,23 +1763,20 @@ function New-PlatformFirmwareSection {
 Finds one trusted Bluetooth PermanentAddress with its private adapter identity.
 
 .DESCRIPTION
-Uses only Bluetooth-labelled network adapters, excludes Wi-Fi and WLAN names,
-requires PermanentAddress rather than a current or Wi-Fi-derived address, and
-fails on ambiguity. The raw adapter instance identifier remains in memory.
+Uses only network adapters whose structured PnP ancestry descends from the
+exact built-in WCN7850 physical radio. It requires PermanentAddress rather
+than a current address and fails on ambiguity. Friendly or localised labels
+never grant authority. Raw PnP identifiers remain in memory.
 #>
 function Get-NetAdapterBluetoothEvidence {
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$BuiltInRadio
+    )
 
     $evidenceByKey = @{}
     foreach ($adapter in @(Get-NetAdapter -IncludeHidden -ErrorAction Stop)) {
-        $name = ([string]$adapter.Name).Trim()
-        $description = ([string]$adapter.InterfaceDescription).Trim()
-        $label = "$name $description"
-        if ($label -notmatch 'Bluetooth' -or $label -match 'Wi-Fi|WiFi|WLAN|802\.11') {
-            continue
-        }
-
         $permanentProperty = $adapter.PSObject.Properties['PermanentAddress']
         $instanceProperty = $adapter.PSObject.Properties['PnPDeviceID']
         if ($null -eq $permanentProperty -or $null -eq $instanceProperty -or
@@ -1017,6 +1788,9 @@ function Get-NetAdapterBluetoothEvidence {
             $address = ConvertTo-CanonicalBluetoothAddress -Value ([string]$permanentProperty.Value)
             $instanceID = ConvertTo-CanonicalAdapterInstanceID -Value ([string]$instanceProperty.Value)
         } catch {
+            continue
+        }
+        if (-not (Test-PnpDeviceDescendsFrom -CandidateInstanceID $instanceID -AncestorInstanceID $BuiltInRadio.RadioInstanceID)) {
             continue
         }
         $key = $address + '|' + $instanceID
@@ -1042,17 +1816,26 @@ function Get-NetAdapterBluetoothEvidence {
 Finds explicitly confirmed BTHPORT controller evidence.
 
 .DESCRIPTION
-Requires exactly one valid local BTHPORT controller-address key and one present
-physical Bluetooth radio instance. Invocation with -UseBTHPORTRegistry is the
-operator's explicit confirmation; neither raw adapter identity nor SMBIOS UUID
-is written or displayed.
+Requires exactly one valid local BTHPORT controller-address key and exact
+agreement with PermanentAddress evidence whose PnP ancestry reaches the
+built-in WCN7850 radio. Invocation with -UseBTHPORTRegistry remains explicit,
+but no uncorrelated registry value is accepted. Raw identifiers are neither
+written nor displayed.
 #>
 function Get-BTHPORTBluetoothEvidence {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [object[]]$PresentPnpDevices
+        [object]$BuiltInRadio,
+
+        [AllowNull()]
+        [object]$CorroboratingEvidence
     )
+
+    if ($null -eq $CorroboratingEvidence -or
+        -not (Test-PnpDeviceDescendsFrom -CandidateInstanceID $CorroboratingEvidence.AdapterInstanceID -AncestorInstanceID $BuiltInRadio.RadioInstanceID)) {
+        return $null
+    }
 
     $registryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Keys'
     if (-not (Test-Path -LiteralPath $registryPath)) {
@@ -1076,34 +1859,14 @@ function Get-BTHPORTBluetoothEvidence {
         throw 'BTHPORT contains more than one eligible local controller address; collection cannot select safely.'
     }
 
-    $radioIDs = @{}
-    foreach ($device in $PresentPnpDevices) {
-        $className = ([string]$device.Class).Trim()
-        $friendlyName = ([string]$device.FriendlyName).Trim()
-        $rawInstanceID = ([string]$device.InstanceId).Trim()
-        if ($className -ine 'Bluetooth' -or $friendlyName -notmatch 'Radio|Qualcomm|FastConnect|WCN|Bluetooth' -or
-            $rawInstanceID -match '^(?:BTH|BTHENUM|SWD|ROOT)\\') {
-            continue
-        }
-        try {
-            $instanceID = ConvertTo-CanonicalAdapterInstanceID -Value $rawInstanceID
-            $radioIDs[$instanceID] = $instanceID
-        } catch {
-            continue
-        }
-    }
-    $instances = @($radioIDs.Values)
-    if ($instances.Count -eq 0) {
-        return $null
-    }
-    if ($instances.Count -ne 1) {
-        throw 'Windows exposes more than one eligible physical Bluetooth radio; collection cannot select safely.'
+    if ($addresses[0] -cne $CorroboratingEvidence.Address) {
+        throw 'The BTHPORT address does not match the built-in radio PermanentAddress evidence.'
     }
 
     return [pscustomobject][ordered]@{
         Address = $addresses[0]
         Source = 'bthport-registry-operator-confirmed'
-        AdapterInstanceID = $instances[0]
+        AdapterInstanceID = $CorroboratingEvidence.AdapterInstanceID
     }
 }
 
@@ -1122,9 +1885,19 @@ function Write-NewUTF8File {
         [string]$Path,
 
         [Parameter(Mandatory = $true)]
-        [string]$Content
+        [string]$Content,
+
+        [AllowNull()]
+        [object]$Transaction
     )
 
+    if ($null -ne $Transaction) {
+        Assert-OutputTransactionBoundary -Transaction $Transaction
+        $stagingPrefix = [System.IO.Path]::GetFullPath($Transaction.StagingPath).TrimEnd('\') + '\'
+        if (-not [System.IO.Path]::GetFullPath($Path).StartsWith($stagingPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'A manifest destination escaped the protected transaction.'
+        }
+    }
     $encoding = New-Object System.Text.UTF8Encoding($false, $true)
     $bytes = $encoding.GetBytes($Content)
     $stream = New-Object System.IO.FileStream(
@@ -1138,6 +1911,60 @@ function Write-NewUTF8File {
         $stream.Flush($true)
     } finally {
         $stream.Dispose()
+    }
+    if ($null -ne $Transaction) {
+        Assert-NoReparsePath -Root $Transaction.StagingPath -Child $Path
+        Assert-OutputTransactionBoundary -Transaction $Transaction
+    }
+}
+
+<#
+.SYNOPSIS
+Creates the exact strict version 2 Windows hand-off manifest envelope.
+
+.DESCRIPTION
+Combines already validated collection evidence into the closed JSON shape
+consumed by linux-armer. The only exported device identity is a freshly salted
+SMBIOS product UUID binding; a Bluetooth adapter instance identifier never
+enters this manifest.
+#>
+function New-HandoffManifest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CreatedAt,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BindingSalt,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DeviceBinding,
+
+        [Parameter(Mandatory = $true)]
+        [object]$PlatformFirmware,
+
+        [Parameter(Mandatory = $true)]
+        [object]$BluetoothPublicAddress
+    )
+
+    return [ordered]@{
+        schema_version = 2
+        kind = 'linux-armer.windows-handoff'
+        privacy_classification = 'private-device-bound'
+        created_at = $CreatedAt
+        collector = [ordered]@{
+            name = $script:CollectorName
+            version = $script:CollectorVersion
+        }
+        device = [ordered]@{
+            platform_id = 'microsoft-surface-pro-11'
+            architecture = 'arm64'
+            binding_salt = $BindingSalt
+            smbios_product_uuid_binding_sha256 = $DeviceBinding
+            wifi_pci_id = '17cb:1107'
+        }
+        platform_firmware = $PlatformFirmware
+        bluetooth_public_address = $BluetoothPublicAddress
     }
 }
 
@@ -1163,7 +1990,10 @@ function Assert-ClosedHandoffDirectory {
         [string]$RawSMBIOSUUID,
 
         [AllowNull()]
-        [string]$RawBluetoothAdapterInstanceID
+        [string]$RawBluetoothAdapterInstanceID,
+
+        [AllowNull()]
+        [object]$Transaction
     )
 
     $expectedFiles = @{}
@@ -1182,10 +2012,7 @@ function Assert-ClosedHandoffDirectory {
 
     $seenFiles = @{}
     $seenDirectories = @{ '.' = $true }
-    foreach ($item in @(Get-ChildItem -LiteralPath $Root -Force -Recurse -ErrorAction Stop)) {
-        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw 'The staged Windows hand-off contains a reparse point.'
-        }
+    foreach ($item in @(Get-ClosedDirectoryEntries -Root $Root -Transaction $Transaction)) {
         $relative = $item.FullName.Substring($Root.TrimEnd('\').Length).TrimStart('\').Replace('\', '/')
         if ($item.PSIsContainer) {
             $seenDirectories[$relative] = $true
@@ -1224,6 +2051,9 @@ function Assert-ClosedHandoffDirectory {
             }
         }
     }
+    if ($null -ne $Transaction) {
+        Assert-OutputTransactionBoundary -Transaction $Transaction
+    }
 }
 
 <#
@@ -1238,22 +2068,21 @@ function Publish-HandoffDirectory {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$StagingPath,
-
-        [Parameter(Mandatory = $true)]
-        [string]$FinalPath
+        [object]$Transaction
     )
 
-    if (Test-Path -LiteralPath $FinalPath) {
+    Assert-OutputTransactionBoundary -Transaction $Transaction
+    if (Test-ImmediateDirectoryEntry -ParentPath $Transaction.ParentPath -Name $Transaction.FinalName) {
         throw 'The Windows hand-off destination appeared during collection; nothing was replaced.'
     }
-    [System.IO.Directory]::Move($StagingPath, $FinalPath)
+    [System.IO.Directory]::Move($Transaction.StagingPath, $Transaction.FinalPath)
+    Assert-OutputTransactionBoundary -Transaction $Transaction -Published
 }
 
 Assert-BindingSelfTest
 if ($SelfTest) {
     Assert-PortableFileSelfTest
-    Write-Host 'Windows hand-off binding self-test passed.'
+    Write-Host 'Windows hand-off contract self-test passed.'
     return
 }
 
@@ -1267,6 +2096,7 @@ $stagingActive = $true
 $salt = $null
 $rawSMBIOSUUID = $null
 $rawAdapterInstanceID = $null
+$builtInBluetoothRadio = $null
 try {
     Write-Host 'Collecting a private, device-bound Windows hand-off.'
     Write-Host 'Do not publish the output or include it in a redistributable image.'
@@ -1284,7 +2114,7 @@ try {
         $policies = @(Get-PlatformFirmwarePolicy)
         $activePackages = @(Get-ActiveDriverPackages -PresentPnpDevices $deviceEvidence.PresentPnpDevices)
         $resolution = Resolve-PlatformFirmware -Policies $policies -ActivePackages $activePackages
-        $firmwareSection = New-PlatformFirmwareSection -Resolution $resolution -StagingRoot $transaction.StagingPath
+        $firmwareSection = New-PlatformFirmwareSection -Resolution $resolution -StagingRoot $transaction.StagingPath -Transaction $transaction
         if (-not $firmwareSection.included) {
             Write-Warning 'The complete eleven-file active signed platform firmware set is unavailable.'
         }
@@ -1293,22 +2123,26 @@ try {
     }
 
     if ($bluetoothRequested) {
-        if ($UseBTHPORTRegistry) {
-            $bluetoothEvidence = Get-BTHPORTBluetoothEvidence -PresentPnpDevices $deviceEvidence.PresentPnpDevices
+        $builtInBluetoothRadio = Get-BuiltInBluetoothRadioEvidence -PresentPnpDevices $deviceEvidence.PresentPnpDevices
+        if ($null -eq $builtInBluetoothRadio) {
+            $bluetoothEvidence = $null
         } else {
-            $bluetoothEvidence = Get-NetAdapterBluetoothEvidence
+            $permanentBluetoothEvidence = Get-NetAdapterBluetoothEvidence -BuiltInRadio $builtInBluetoothRadio
+            if ($UseBTHPORTRegistry) {
+                $bluetoothEvidence = Get-BTHPORTBluetoothEvidence -BuiltInRadio $builtInBluetoothRadio -CorroboratingEvidence $permanentBluetoothEvidence
+            } else {
+                $bluetoothEvidence = $permanentBluetoothEvidence
+            }
         }
         if ($null -eq $bluetoothEvidence) {
             $bluetoothSection = [ordered]@{ included = $false; reason = 'unavailable' }
             Write-Warning 'A trusted same-device Bluetooth public address is unavailable.'
         } else {
             $rawAdapterInstanceID = $bluetoothEvidence.AdapterInstanceID
-            $adapterBinding = Get-DomainSeparatedBinding -Domain $script:BluetoothAdapterBindingDomain -Salt $salt -CanonicalValue $rawAdapterInstanceID
             $bluetoothSection = [ordered]@{
                 included = $true
                 address = $bluetoothEvidence.Address
                 source = $bluetoothEvidence.Source
-                adapter_instance_id_binding_sha256 = $adapterBinding
             }
             $bluetoothEvidence.AdapterInstanceID = $null
             $bluetoothEvidence = $null
@@ -1321,32 +2155,15 @@ try {
         throw 'A valid Windows hand-off must include platform firmware, a Bluetooth public address, or both.'
     }
 
-    $manifest = [ordered]@{
-        schema_version = 1
-        kind = 'linux-armer.windows-handoff'
-        privacy_classification = 'private-device-bound'
-        created_at = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
-        collector = [ordered]@{
-            name = $script:CollectorName
-            version = $script:CollectorVersion
-        }
-        device = [ordered]@{
-            platform_id = 'microsoft-surface-pro-11'
-            architecture = 'arm64'
-            binding_salt = $bindingSalt
-            smbios_product_uuid_binding_sha256 = $deviceBinding
-            wifi_pci_id = '17cb:1107'
-        }
-        platform_firmware = $firmwareSection
-        bluetooth_public_address = $bluetoothSection
-    }
+    $createdAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
+    $manifest = New-HandoffManifest -CreatedAt $createdAt -BindingSalt $bindingSalt -DeviceBinding $deviceBinding -PlatformFirmware $firmwareSection -BluetoothPublicAddress $bluetoothSection
 
     $json = ($manifest | ConvertTo-Json -Depth 12) + "`n"
     $manifestPath = Join-Path $transaction.StagingPath $script:ManifestFilename
-    Write-NewUTF8File -Path $manifestPath -Content $json
-    Assert-ClosedHandoffDirectory -Root $transaction.StagingPath -Manifest $manifest -RawSMBIOSUUID $rawSMBIOSUUID -RawBluetoothAdapterInstanceID $rawAdapterInstanceID
+    Write-NewUTF8File -Path $manifestPath -Content $json -Transaction $transaction
+    Assert-ClosedHandoffDirectory -Root $transaction.StagingPath -Manifest $manifest -RawSMBIOSUUID $rawSMBIOSUUID -RawBluetoothAdapterInstanceID $rawAdapterInstanceID -Transaction $transaction
 
-    Publish-HandoffDirectory -StagingPath $transaction.StagingPath -FinalPath $transaction.FinalPath
+    Publish-HandoffDirectory -Transaction $transaction
     $stagingActive = $false
 
     Write-Host 'Windows hand-off collection complete.'
@@ -1354,9 +2171,9 @@ try {
     Write-Host 'Import it with linux-armer, then purge every unneeded copy.'
 } catch {
     $collectionError = $_
-    if ($stagingActive -and $null -ne $transaction -and (Test-Path -LiteralPath $transaction.StagingPath)) {
+    if ($stagingActive -and $null -ne $transaction) {
         try {
-            Remove-Item -LiteralPath $transaction.StagingPath -Recurse -Force -ErrorAction Stop
+            Remove-ClosedDirectoryNoFollow -Root $transaction.StagingPath -ExpectedRootIdentity $transaction.StagingIdentity
         } catch {
             Write-Warning "Collection failed and the private staging directory could not be removed: $($transaction.StagingPath)"
         }
@@ -1368,4 +2185,5 @@ try {
     }
     $rawSMBIOSUUID = $null
     $rawAdapterInstanceID = $null
+    $builtInBluetoothRadio = $null
 }

@@ -17,7 +17,7 @@ func verifySourceRevision(ctx context.Context, runner platform.Runner, request B
 	if request.Commit == DevelopmentCommit {
 		return nil
 	}
-	controlled, err := hasGitControl(request.SourceDirectory)
+	repositoryRoot, controlled, err := findGitRoot(request.SourceDirectory)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ func verifySourceRevision(ctx context.Context, runner platform.Runner, request B
 	}
 	status, err := runner.Capture(ctx, platform.Command{
 		Name: "git",
-		Args: []string{"-C", request.SourceDirectory, "status", "--porcelain=v1", "--untracked-files=all", "--", "."},
+		Args: []string{"-C", repositoryRoot, "status", "--porcelain=v1", "--untracked-files=all"},
 	})
 	if err != nil {
 		return fmt.Errorf("inspect git-backed companion source status: %w", err)
@@ -50,25 +50,25 @@ func verifySourceRevision(ctx context.Context, runner platform.Runner, request B
 	return nil
 }
 
-// hasGitControl reports whether sourceRoot lies at or beneath a filesystem
-// directory containing a Git control directory or worktree marker.
-func hasGitControl(sourceRoot string) (bool, error) {
+// findGitRoot returns the nearest ancestor containing a regular Git worktree
+// marker so repository-level legal documents share the source revision claim.
+func findGitRoot(sourceRoot string) (string, bool, error) {
 	current := sourceRoot
 	for {
 		control := filepath.Join(current, ".git")
 		info, err := os.Lstat(control)
 		if err == nil {
 			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() && !info.Mode().IsRegular() {
-				return false, fmt.Errorf("Git control path is not a regular file or directory: %s", control)
+				return "", false, fmt.Errorf("Git control path is not a regular file or directory: %s", control)
 			}
-			return true, nil
+			return current, true, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("inspect Git control path: %w", err)
+			return "", false, fmt.Errorf("inspect Git control path: %w", err)
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return false, nil
+			return "", false, nil
 		}
 		current = parent
 	}

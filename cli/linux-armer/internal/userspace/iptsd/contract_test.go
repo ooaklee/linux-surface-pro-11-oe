@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -26,6 +27,46 @@ func TestPinnedReleaseFixture(t *testing.T) {
 		if file.Size <= 0 || len(file.SHA256) != 64 || filepath.IsAbs(file.Target) {
 			t.Fatalf("invalid install file: %+v", file)
 		}
+	}
+}
+
+// TestPublishedV1DocumentationAlternativeRemainsInstallable proves that the
+// immutable release's historical README identity is accepted, propagated into
+// the copy plan, and does not weaken rejection of any unreviewed third variant.
+func TestPublishedV1DocumentationAlternativeRemainsInstallable(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate IPTSD contract test source")
+	}
+	repositoryRoot := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "..", ".."))
+	integrationRoot := copyTree(t, filepath.Join(repositoryRoot, "userspace", "iptsd-sp11"))
+	legacyREADME, err := os.ReadFile(filepath.Join(filepath.Dir(sourceFile), "testdata", "sp11-iptsd-v1-readme.fixture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readmePath := filepath.Join(integrationRoot, "README.md")
+	if err := os.WriteFile(readmePath, legacyREADME, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := validateIntegration(integrationRoot)
+	if err != nil {
+		t.Fatalf("validate published v1 integration: %v", err)
+	}
+	matched := manifest["README.md"]
+	if matched.sha256 != "69a92f448f64f3d16b59770869bb7a5411470dd153770765fce97f68c41bd687" || matched.size != 3204 {
+		t.Fatalf("matched README identity = %+v", matched)
+	}
+	planned := integrationInstallFile(integrationRoot, manifest, "README.md", "usr/local/share/doc/sp11-iptsd/README.md", 0o644)
+	if planned.SHA256 != matched.sha256 || planned.Size != matched.size {
+		t.Fatalf("planned README identity = %s/%d, want %s/%d", planned.SHA256, planned.Size, matched.sha256, matched.size)
+	}
+
+	if err := os.WriteFile(readmePath, append(legacyREADME, '!'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateIntegration(integrationRoot); err == nil || !strings.Contains(err.Error(), "approved contract") {
+		t.Fatalf("unreviewed README error = %v", err)
 	}
 }
 

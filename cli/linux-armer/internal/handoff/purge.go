@@ -124,7 +124,7 @@ func Purge(ctx context.Context, plan PurgePlan, exactConfirmation string) error 
 		return cause
 	}
 
-	isolated, err := validateStoredEntry(ctx, quarantinePath, plan.ID)
+	isolated, err := validateStoredEntryForMaintenance(ctx, quarantinePath, plan.ID)
 	if err != nil {
 		return restore(fmt.Errorf("revalidate isolated Windows hand-off before purge: %w", err))
 	}
@@ -159,7 +159,7 @@ func planPurgeResolved(ctx context.Context, resolvedStoreRoot, identifier string
 	if err != nil {
 		return PurgePlan{}, err
 	}
-	validated, err := validateStoredEntry(ctx, entryPath, identifier)
+	validated, err := validateStoredEntryForMaintenance(ctx, entryPath, identifier)
 	if err != nil {
 		return PurgePlan{}, fmt.Errorf("validate Windows hand-off selected for purge: %w", err)
 	}
@@ -183,7 +183,7 @@ func samePurgePlan(left, right PurgePlan) bool {
 
 // digestClosedSet returns a domain-separated digest over the content address
 // and canonical current inventory of one completely validated store entry.
-func digestClosedSet(identifier string, entry validatedStoreEntry) string {
+func digestClosedSet(identifier string, entry auditedStoreEntry) string {
 	digest := sha256.New()
 	writeDigestField(digest, purgePlanDomain)
 	writeDigestField(digest, identifier)
@@ -243,7 +243,7 @@ func unusedPurgePath(storeRoot, identifier string) (string, error) {
 
 // removeValidatedEntry removes every verified file and then every non-root
 // directory deepest-first through no-follow descriptor-relative operations.
-func removeValidatedEntry(entryRoot string, entry validatedStoreEntry) error {
+func removeValidatedEntry(entryRoot string, entry auditedStoreEntry) error {
 	files := make([]string, 0, len(entry.artifacts))
 	for _, artifact := range entry.artifacts {
 		files = append(files, artifact.Path)

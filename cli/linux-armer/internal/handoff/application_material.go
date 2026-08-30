@@ -54,7 +54,7 @@ func RevalidateForApplication(ctx context.Context, storeRoot, identifier string)
 	return ApplicationMaterial{
 		identifier:      identifier,
 		entryPath:       entryPath,
-		closedSetSHA256: digestClosedSet(identifier, validated),
+		closedSetSHA256: digestClosedSet(identifier, validated.auditedStoreEntry),
 		contract:        clonePrivateContract(validated.contract),
 	}, nil
 }
@@ -137,10 +137,6 @@ func clonePrivateContract(contract Contract) Contract {
 	if contract.BluetoothPublicAddress.Source != nil {
 		source := *contract.BluetoothPublicAddress.Source
 		cloned.BluetoothPublicAddress.Source = &source
-	}
-	if contract.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256 != nil {
-		binding := *contract.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256
-		cloned.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256 = &binding
 	}
 	return cloned
 }

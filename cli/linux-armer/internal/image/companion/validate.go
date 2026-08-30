@@ -302,6 +302,9 @@ func validateLicenceRecords(projectLicence string, records []imagecontract.Artif
 			return errors.New("companion licence records are not in unique lexical order")
 		}
 		previous = record.Path
+		if record.Size == 0 {
+			return fmt.Errorf("companion licence or notice must not be empty: %s", record.Path)
+		}
 		kind, recognised := projectDocumentKind(name)
 		if !recognised {
 			return fmt.Errorf("companion licence inventory contains unrecognised document %q", name)

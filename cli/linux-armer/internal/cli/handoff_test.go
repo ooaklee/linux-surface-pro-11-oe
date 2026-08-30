@@ -106,15 +106,10 @@ func writeBluetoothOnlyHandoffSource(t *testing.T) (string, []string) {
 	t.Helper()
 	salt := strings.Repeat("01", 32)
 	uuid := "123e4567-e89b-12d3-a456-426614174000"
-	instanceID := `USB\VID_1234&PID_5678\ABCDEF`
 	address := handoff.BluetoothAddress("20:11:22:33:44:55")
 	sourceType := handoff.BluetoothSourcePermanentAddress
 	absentReason := handoff.AbsentReasonNotRequested
 	deviceBinding, err := handoff.DeriveDeviceBinding(salt, uuid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	adapterBinding, err := handoff.DeriveBluetoothAdapterBinding(salt, instanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +119,7 @@ func writeBluetoothOnlyHandoffSource(t *testing.T) (string, []string) {
 		PrivacyClassification: handoff.PrivacyClassification,
 		CreatedAt:             "2026-08-30T12:34:56Z",
 		Collector: handoff.CollectorRecord{
-			Name: handoff.CollectorName, Version: "1.0.0",
+			Name: handoff.CollectorName, Version: "2.0.0",
 		},
 		Device: handoff.DeviceRecord{
 			PlatformID: handoff.PlatformID, Architecture: handoff.Architecture,
@@ -136,7 +131,6 @@ func writeBluetoothOnlyHandoffSource(t *testing.T) (string, []string) {
 		},
 		BluetoothPublicAddress: handoff.BluetoothPublicAddressSection{
 			Included: true, Address: &address, Source: &sourceType,
-			AdapterInstanceIDBindingSHA256: &adapterBinding,
 		},
 	}
 	source := filepath.Join(t.TempDir(), "windows-handoff")
@@ -153,11 +147,11 @@ func writeBluetoothOnlyHandoffSource(t *testing.T) (string, []string) {
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		t.Fatal(err)
 	}
-	return source, []string{uuid, instanceID, string(address), deviceBinding, adapterBinding, salt}
+	return source, []string{uuid, string(address), deviceBinding, salt}
 }
 
 // assertNoPrivateHandoffValues fails when redacted delivery output contains any
-// reusable device, adapter, address, binding, or salt value.
+// reusable device, address, binding, or salt value.
 func assertNoPrivateHandoffValues(t *testing.T, output string, privateValues []string) {
 	t.Helper()
 	for _, privateValue := range privateValues {

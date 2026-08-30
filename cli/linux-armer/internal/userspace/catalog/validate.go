@@ -9,6 +9,20 @@ import (
 	"unicode"
 )
 
+const (
+	// maximumHumanTextBytes bounds every maintained narrative before it reaches
+	// diagnostics or interactive output.
+	maximumHumanTextBytes = 4096
+	// maximumIdentifierBytes bounds stable identifiers, enum tokens, and release
+	// tags used by compiled policy and filesystem planning.
+	maximumIdentifierBytes = 128
+	// maximumAssetNameBytes matches the common portable filesystem component
+	// boundary for release asset allow-lists.
+	maximumAssetNameBytes = 255
+	// maximumURLBytes permits long release URLs without accepting unbounded text.
+	maximumURLBytes = 4096
+)
+
 // Catalogue token patterns constrain identifiers, tags, and asset names to flat,
 // portable values before they are used in URLs or filesystem destinations.
 var (
@@ -68,7 +82,8 @@ func validate(raw document, components []Component) error {
 		rawComponent := raw.Components[index]
 		prefix := fmt.Sprintf("components[%d]", index)
 
-		if !stableIDPattern.MatchString(component.ID) {
+		idLengthOK := validateByteLength(add, prefix+".id", component.ID, maximumIdentifierBytes)
+		if idLengthOK && !stableIDPattern.MatchString(component.ID) {
 			add(prefix+".id", "must be a stable lowercase kebab-case identifier beginning with a letter")
 		}
 		if first, exists := firstIDIndex[component.ID]; exists {
@@ -126,6 +141,9 @@ func validateKernelCompatibility(add func(string, string, ...any), prefix string
 // validateLevel checks a lifecycle value against the catalogue's closed support
 // vocabulary.
 func validateLevel(add func(string, string, ...any), field string, value Level) {
+	if !validateByteLength(add, field, string(value), maximumIdentifierBytes) {
+		return
+	}
 	switch value {
 	case LevelRequired, LevelSupported, LevelExperimental, LevelDiagnosticOnly, LevelObsolete:
 	default:
@@ -136,6 +154,9 @@ func validateLevel(add func(string, string, ...any), field string, value Level) 
 // validateCapability checks that a component belongs to a hardware capability
 // understood by the companion workflows.
 func validateCapability(add func(string, string, ...any), field string, value Capability) {
+	if !validateByteLength(add, field, string(value), maximumIdentifierBytes) {
+		return
+	}
 	switch value {
 	case CapabilityFirmware, CapabilityNetworking, CapabilityBluetooth, CapabilityAudio,
 		CapabilityPen, CapabilityCamera, CapabilityPower, CapabilityTouchscreen:
@@ -146,6 +167,9 @@ func validateCapability(add func(string, string, ...any), field string, value Ca
 
 // validateRedistribution enforces the reviewed artefact-sharing policy values.
 func validateRedistribution(add func(string, string, ...any), field string, value Redistribution) {
+	if !validateByteLength(add, field, string(value), maximumIdentifierBytes) {
+		return
+	}
 	switch value {
 	case RedistributionAllowed, RedistributionRestricted, RedistributionSourceRequired, RedistributionNotApplicable:
 	default:
@@ -156,6 +180,9 @@ func validateRedistribution(add func(string, string, ...any), field string, valu
 // validateEvidence requires compatibility claims to use one of the two audited
 // evidence categories.
 func validateEvidence(add func(string, string, ...any), field string, value CompatibilityEvidence) {
+	if !validateByteLength(add, field, string(value), maximumIdentifierBytes) {
+		return
+	}
 	switch value {
 	case EvidenceExactPair, EvidenceSourceIntegratedPriorValidation:
 	default:
@@ -210,29 +237,32 @@ func validateRelease(add func(string, string, ...any), prefix string, component 
 		add(prefix+".release", "must be omitted for obsolete components")
 	}
 
-	if !releaseTagPattern.MatchString(release.Tag) {
+	if validateByteLength(add, prefix+".release.tag", release.Tag, maximumIdentifierBytes) && !releaseTagPattern.MatchString(release.Tag) {
 		add(prefix+".release.tag", "must be a safe release tag containing only letters, digits, dots, underscores, and hyphens")
 	}
-	parsed, err := url.Parse(release.URL)
-	if err != nil {
-		add(prefix+".release.url", "must be a valid absolute URL: %v", err)
-	} else {
-		if parsed.Scheme != "https" {
-			add(prefix+".release.url", "must use https, got scheme %q", parsed.Scheme)
-		}
-		if parsed.Host != "github.com" {
-			add(prefix+".release.url", "must identify a release on github.com")
-		}
-		if parsed.User != nil {
-			add(prefix+".release.url", "must not include user credentials")
-		}
-		if parsed.RawQuery != "" || parsed.Fragment != "" {
-			add(prefix+".release.url", "must not include a query or fragment")
-		}
-		segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-		if len(segments) != 5 || segments[0] == "" || segments[1] == "" ||
-			segments[2] != "releases" || segments[3] != "tag" || segments[4] != release.Tag {
-			add(prefix+".release.url", "path must be /OWNER/REPOSITORY/releases/tag/%s", release.Tag)
+	urlLengthOK := validateByteLength(add, prefix+".release.url", release.URL, maximumURLBytes)
+	if urlLengthOK {
+		parsed, err := url.Parse(release.URL)
+		if err != nil {
+			add(prefix+".release.url", "must be a valid absolute URL: %v", err)
+		} else {
+			if parsed.Scheme != "https" {
+				add(prefix+".release.url", "must use https, got scheme %q", parsed.Scheme)
+			}
+			if parsed.Host != "github.com" {
+				add(prefix+".release.url", "must identify a release on github.com")
+			}
+			if parsed.User != nil {
+				add(prefix+".release.url", "must not include user credentials")
+			}
+			if parsed.RawQuery != "" || parsed.Fragment != "" {
+				add(prefix+".release.url", "must not include a query or fragment")
+			}
+			segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+			if len(segments) != 5 || segments[0] == "" || segments[1] == "" ||
+				segments[2] != "releases" || segments[3] != "tag" || segments[4] != release.Tag {
+				add(prefix+".release.url", "path must be /OWNER/REPOSITORY/releases/tag/%s", release.Tag)
+			}
 		}
 	}
 
@@ -243,7 +273,7 @@ func validateRelease(add func(string, string, ...any), prefix string, component 
 	hasChecksums := false
 	for assetIndex, asset := range release.AssetAllowlist {
 		field := fmt.Sprintf("%s.release.asset_allowlist[%d]", prefix, assetIndex)
-		if !safeAssetName(asset) {
+		if validateByteLength(add, field, asset, maximumAssetNameBytes) && !safeAssetName(asset) {
 			add(field, "must be a safe flat asset filename, got %q", asset)
 		}
 		if first, duplicate := seen[asset]; duplicate {
@@ -275,6 +305,9 @@ func safeAssetName(name string) bool {
 // validateNarrative keeps descriptive catalogue fields readable and declarative;
 // executable commands and host-specific writable paths belong in compiled code.
 func validateNarrative(add func(string, string, ...any), field, value string) {
+	if !validateByteLength(add, field, value, maximumHumanTextBytes) {
+		return
+	}
 	if strings.TrimSpace(value) == "" {
 		add(field, "must not be empty")
 		return
@@ -307,4 +340,14 @@ func validateNarrative(add func(string, string, ...any), field, value string) {
 			return
 		}
 	}
+}
+
+// validateByteLength keeps every text field within its domain-specific byte
+// limit and reports whether later content validation should continue.
+func validateByteLength(add func(string, string, ...any), field, value string, maximum int) bool {
+	if len(value) <= maximum {
+		return true
+	}
+	add(field, "must contain at most %d bytes", maximum)
+	return false
 }

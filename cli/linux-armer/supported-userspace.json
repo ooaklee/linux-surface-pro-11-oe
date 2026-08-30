@@ -43,7 +43,7 @@
       "name": "WCN7850 Bluetooth Public Address Integration",
       "level": "supported",
       "capability": "bluetooth",
-      "redistribution": "allowed",
+      "redistribution": "restricted",
       "support_actions": {
         "status": true,
         "pull": false,
@@ -52,10 +52,10 @@
       },
       "compatibility_evidence": "source_integrated_prior_validation",
       "notes": [
-        "The bounded raw management-socket helper applies the Windows-sourced public controller address before BlueZ initialises.",
+        "The native bounded management-socket client applies a same-device Windows-sourced public controller address through the private hand-off lifecycle before BlueZ initialises.",
         "Cold-boot initialisation and pairing passed on the audited X1E device; audio and suspend coverage remains incomplete."
       ],
-      "remediation": "Confirm the controller address from the same device, rebuild the bounded helper when its source changes, reinstall its lifecycle integration, and cold boot."
+      "remediation": "Run the strict Windows hand-off collector on the same device, use the handoff import and handoff apply subcommands for the Bluetooth feature, use handoff restore if recovery is required, then cold boot and recheck."
     },
     {
       "id": "firmware",
@@ -72,9 +72,9 @@
       "compatibility_evidence": "source_integrated_prior_validation",
       "notes": [
         "Qualcomm platform, GPU, audio DSP, camera, and wireless firmware is required before the related devices can initialise.",
-        "Windows-derived firmware remains outside distributable linux-armer artefacts unless redistribution rights are confirmed."
+        "Windows-derived firmware remains outside distributable linux-armer artefacts and enters Linux only through a strict, private, same-device hand-off."
       ],
-      "remediation": "Acquire firmware from an authorised source, verify that it belongs to the target device, and rerun component status checks."
+      "remediation": "Run the strict Windows hand-off collector on the same device, use handoff import, review the handoff apply preview for the firmware feature with an explicit aDSP policy, apply the confirmed plan, and use handoff restore if recovery is required."
     },
     {
       "id": "g6-pen",

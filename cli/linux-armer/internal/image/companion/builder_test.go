@@ -658,6 +658,110 @@ func TestBuilderChecksGitProvenance(t *testing.T) {
 	}
 }
 
+// TestDiscoverLicenceFilesUsesGitRootAuthority verifies that a nested CLI
+// source cannot override or hide the repository-level legal documents included
+// in a companion bundle.
+func TestDiscoverLicenceFilesUsesGitRootAuthority(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repositoryRoot, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceRoot := filepath.Join(repositoryRoot, "cli", "linux-armer")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(repositoryRoot, "LICENCE"):                "authoritative terms\n",
+		filepath.Join(repositoryRoot, "THIRD_PARTY_NOTICES.md"): "authoritative notices\n",
+		filepath.Join(sourceRoot, "LICENSE"):                    "nested terms must be ignored\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, declaration, err := discoverLicenceFiles(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declaration != projectLicenceDeclared {
+		t.Fatalf("project licence declaration = %q, want %q", declaration, projectLicenceDeclared)
+	}
+	if len(files) != 2 {
+		t.Fatalf("authoritative legal file count = %d, want 2", len(files))
+	}
+	want := map[string]string{
+		"LICENCE":                filepath.Join(repositoryRoot, "LICENCE"),
+		"THIRD_PARTY_NOTICES.md": filepath.Join(repositoryRoot, "THIRD_PARTY_NOTICES.md"),
+	}
+	for _, file := range files {
+		if expected, found := want[file.portablePath]; !found || file.absolutePath != expected {
+			t.Errorf("authoritative legal file = %#v, want one of %#v", file, want)
+		}
+	}
+}
+
+// TestVerifySourceRevisionChecksWholeRepository proves a nested CLI cannot
+// claim a clean revision while repository-root legal documents remain dirty.
+func TestVerifySourceRevisionChecksWholeRepository(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repositoryRoot, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceRoot := filepath.Join(repositoryRoot, "cli", "linux-armer")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	revision := strings.Repeat("a", 40)
+	runner := &fakeRunner{revision: revision}
+	request := BuildRequest{SourceDirectory: sourceRoot, Commit: revision}
+	if err := verifySourceRevision(context.Background(), runner, request); err != nil {
+		t.Fatal(err)
+	}
+	var statusCommand *platform.Command
+	for index := range runner.captureCommands {
+		command := &runner.captureCommands[index]
+		if strings.Contains(strings.Join(command.Args, " "), "status --porcelain=v1") {
+			statusCommand = command
+			break
+		}
+	}
+	if statusCommand == nil {
+		t.Fatal("repository cleanliness command was not issued")
+	}
+	if len(statusCommand.Args) != 5 || statusCommand.Args[0] != "-C" ||
+		statusCommand.Args[1] != repositoryRoot || statusCommand.Args[2] != "status" ||
+		statusCommand.Args[3] != "--porcelain=v1" || statusCommand.Args[4] != "--untracked-files=all" {
+		t.Fatalf("repository cleanliness command = %#v", statusCommand.Args)
+	}
+}
+
+// TestProjectDocumentKindRecognisesThirdPartyNotices pins the exact notice
+// filename required by the release workflow without treating it as licence
+// terms.
+func TestProjectDocumentKindRecognisesThirdPartyNotices(t *testing.T) {
+	kind, recognised := projectDocumentKind("THIRD_PARTY_NOTICES.md")
+	if !recognised || kind != "notice" {
+		t.Fatalf("THIRD_PARTY_NOTICES.md kind = %q/%v, want notice/true", kind, recognised)
+	}
+	for _, misleading := range []string{"LICENSE.template", "LICENCE-old", "COPYING_example", "NOTICE.backup"} {
+		if kind, recognised := projectDocumentKind(misleading); recognised {
+			t.Errorf("projectDocumentKind(%q) = %q/true, want unrecognised", misleading, kind)
+		}
+	}
+}
+
+// TestDiscoverLicenceFilesRejectsEmptyAuthority proves an empty recognised
+// document cannot make a local companion claim declared redistribution terms.
+func TestDiscoverLicenceFilesRejectsEmptyAuthority(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "LICENCE"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := discoverLicenceFiles(sourceRoot); err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Fatalf("empty project licence error = %v, want non-empty authority rejection", err)
+	}
+}
+
 // TestValidateRecordRejectsInvalidArtefacts checks malformed and duplicate
 // manifest paths after all companion-specific shape checks pass.
 func TestValidateRecordRejectsInvalidArtefacts(t *testing.T) {
@@ -677,6 +781,15 @@ func TestValidateRecordRejectsInvalidArtefacts(t *testing.T) {
 	duplicate.Catalogues[1] = duplicate.Catalogues[0]
 	if err := ValidateRecord(duplicate); err == nil {
 		t.Fatal("duplicate companion artefact path was accepted")
+	}
+	emptyLicence := record
+	emptyLicence.ProjectLicence = projectLicenceDeclared
+	emptyLicence.Licences = []imagecontract.ArtifactRecord{{
+		Path:   path.Join(ISOFilesystemRoot, "licences", "LICENCE"),
+		SHA256: strings.Repeat("e", 64), Size: 0,
+	}}
+	if err := ValidateRecord(emptyLicence); err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Fatalf("empty declared project licence error = %v, want non-empty authority rejection", err)
 	}
 	absent := Absent("")
 	if absent.Reason != OmissionReasonNotRequested || ValidateRecord(absent) != nil {

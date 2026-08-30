@@ -14,6 +14,7 @@ on:
       - "cli/linux-armer/internal/quality/**"
       - "cli/linux-armer/internal/userspace/**"
       - "cli/linux-armer/supported-userspace.json"
+      - "meta-sp11/recipes-support/iptsd-sp11/**"
       - "userspace/iptsd-sp11/**"
   push:
     branches:
@@ -28,6 +29,7 @@ on:
       - "cli/linux-armer/internal/quality/**"
       - "cli/linux-armer/internal/userspace/**"
       - "cli/linux-armer/supported-userspace.json"
+      - "meta-sp11/recipes-support/iptsd-sp11/**"
       - "userspace/iptsd-sp11/**"
 
 permissions:

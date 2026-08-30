@@ -40,7 +40,7 @@ func TestParseAddressValidatesAndRedacts(t *testing.T) {
 // a compiled positive upper bound.
 func TestNormaliseOptionsEnforcesBounds(t *testing.T) {
 	t.Parallel()
-	normalised, err := normaliseOptions(Options{})
+	normalised, err := normaliseOptions(Options{ControllerSelector: SurfacePro11WCN7850UART})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,13 @@ func TestNormaliseOptionsEnforcesBounds(t *testing.T) {
 		t.Fatalf("default options = %#v", normalised)
 	}
 	invalid := []Options{
-		{Attempts: maximumAttempts + 1},
-		{ControllerWait: maximumControllerWait + time.Second},
-		{ControllerWait: time.Second, PollInterval: 2 * time.Second},
-		{ReadTimeout: maximumReadTimeout + time.Second},
-		{RetryDelay: -time.Second},
+		{},
+		{ControllerSelector: "external-radio"},
+		{ControllerSelector: SurfacePro11WCN7850UART, Attempts: maximumAttempts + 1},
+		{ControllerSelector: SurfacePro11WCN7850UART, ControllerWait: maximumControllerWait + time.Second},
+		{ControllerSelector: SurfacePro11WCN7850UART, ControllerWait: time.Second, PollInterval: 2 * time.Second},
+		{ControllerSelector: SurfacePro11WCN7850UART, ReadTimeout: maximumReadTimeout + time.Second},
+		{ControllerSelector: SurfacePro11WCN7850UART, RetryDelay: -time.Second},
 	}
 	for _, options := range invalid {
 		if _, err := normaliseOptions(options); err == nil {

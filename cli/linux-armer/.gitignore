@@ -6,4 +6,5 @@
 /*.partial
 /*.journal.json
 /*.manifest.json
+/dist/
 /.linux-armer-remaster-*/

@@ -29,15 +29,6 @@ func TestGoldenContract(t *testing.T) {
 	if binding != contract.Device.SMBIOSProductUUIDBindingSHA256 {
 		t.Fatalf("derived binding = %s, want fixture binding", binding)
 	}
-	const adapterInstanceID = `BTH\MS_BTHPAN\7&12345678&0&2`
-	adapterBinding, err := DeriveBluetoothAdapterBinding(contract.Device.BindingSalt, adapterInstanceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if adapterBinding != *contract.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256 {
-		t.Fatalf("derived Bluetooth adapter binding = %s, want fixture binding", adapterBinding)
-	}
-
 	var written bytes.Buffer
 	if err := contract.WriteJSON(&written); err != nil {
 		t.Fatal(err)
@@ -56,10 +47,8 @@ func TestGoldenContract(t *testing.T) {
 	}
 	for _, privateValue := range []string{
 		privateAddress,
-		adapterInstanceID,
 		contract.Device.BindingSalt,
 		contract.Device.SMBIOSProductUUIDBindingSHA256,
-		*contract.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256,
 	} {
 		if strings.Contains(string(summary), privateValue) {
 			t.Fatalf("summary disclosed private value: %s", summary)
@@ -71,70 +60,23 @@ func TestGoldenContract(t *testing.T) {
 	}
 }
 
-// TestDeriveBluetoothAdapterBinding pins its domain-separated vector, proves
-// fresh salts prevent linkability, and enforces the PowerShell canonical form.
-func TestDeriveBluetoothAdapterBinding(t *testing.T) {
-	t.Parallel()
-
-	const instanceID = `BTH\MS_BTHPAN\7&12345678&0&2`
-	firstSalt := "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-	first, err := DeriveBluetoothAdapterBinding(firstSalt, instanceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != "1c160571108944ea6d3bd4f45f65133cea74a9a4097d3f75eb315ac138a99f70" {
-		t.Fatalf("DeriveBluetoothAdapterBinding() = %s, want pinned vector", first)
-	}
-	secondSalt := "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
-	second, err := DeriveBluetoothAdapterBinding(secondSalt, instanceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first == second {
-		t.Fatal("separate salts produced a linkable Bluetooth adapter binding")
-	}
-
-	for name, candidate := range map[string]string{
-		"lowercase":       `BTH\MS_BTHPAN\lowercase`,
-		"leading space":   ` BTH\MS_BTHPAN\VALUE`,
-		"trailing space":  `BTH\MS_BTHPAN\VALUE `,
-		"no separator":    `BTH`,
-		"empty component": `BTH\\VALUE`,
-		"forward slash":   `BTH/MS_BTHPAN/VALUE`,
-		"non-ASCII":       `BTH\MS_BTHPAN\CAFÉ`,
-		"control":         "BTH\\MS_BTHPAN\\VALUE\n",
-	} {
-		name, candidate := name, candidate
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			_, err := DeriveBluetoothAdapterBinding(firstSalt, candidate)
-			if err == nil {
-				t.Fatal("DeriveBluetoothAdapterBinding() accepted non-canonical input")
-			}
-			if strings.Contains(err.Error(), candidate) {
-				t.Fatalf("derivation error disclosed adapter instance ID: %v", err)
-			}
-		})
-	}
-}
-
-// TestFirmwarePoliciesMatchExactContract pins every ID, source name, payload
-// path, destination, and canonical order in the compiled eleven-file set.
+// TestFirmwarePoliciesMatchExactContract pins every ID, source name, original
+// INF, payload path, destination, and canonical order in the compiled set.
 func TestFirmwarePoliciesMatchExactContract(t *testing.T) {
 	t.Parallel()
 
 	expected := []FirmwarePolicy{
-		{ID: "gpu-main", SourceName: "qcdxkmsuc8380.mbn", PayloadPath: "payload/platform-firmware/qcdxkmsuc8380.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/qcdxkmsuc8380.mbn"},
-		{ID: "gpu-purwa", SourceName: "qcdxkmsucpurwa.mbn", PayloadPath: "payload/platform-firmware/qcdxkmsucpurwa.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/qcdxkmsucpurwa.mbn"},
-		{ID: "adsp-dtb", SourceName: "adsp_dtbs.elf", PayloadPath: "payload/platform-firmware/adsp_dtbs.elf", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adsp_dtb.mbn"},
-		{ID: "adsp-main", SourceName: "qcadsp8380.mbn", PayloadPath: "payload/platform-firmware/qcadsp8380.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/qcadsp8380.mbn"},
-		{ID: "adsp-resource", SourceName: "adspr.jsn", PayloadPath: "payload/platform-firmware/adspr.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adspr.jsn"},
-		{ID: "adsp-system", SourceName: "adsps.jsn", PayloadPath: "payload/platform-firmware/adsps.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adsps.jsn"},
-		{ID: "adsp-user", SourceName: "adspua.jsn", PayloadPath: "payload/platform-firmware/adspua.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adspua.jsn"},
-		{ID: "battery-manager", SourceName: "battmgr.jsn", PayloadPath: "payload/platform-firmware/battmgr.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/battmgr.jsn"},
-		{ID: "cdsp-dtb", SourceName: "cdsp_dtbs.elf", PayloadPath: "payload/platform-firmware/cdsp_dtbs.elf", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/cdsp_dtb.mbn"},
-		{ID: "cdsp-main", SourceName: "qccdsp8380.mbn", PayloadPath: "payload/platform-firmware/qccdsp8380.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/qccdsp8380.mbn"},
-		{ID: "cdsp-resource", SourceName: "cdspr.jsn", PayloadPath: "payload/platform-firmware/cdspr.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/cdspr.jsn"},
+		{ID: "gpu-main", SourceName: "qcdxkmsuc8380.mbn", SourceINF: "qcdx8380.inf", PayloadPath: "payload/platform-firmware/qcdxkmsuc8380.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/qcdxkmsuc8380.mbn"},
+		{ID: "gpu-purwa", SourceName: "qcdxkmsucpurwa.mbn", SourceINF: "qcdx8380.inf", PayloadPath: "payload/platform-firmware/qcdxkmsucpurwa.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/qcdxkmsucpurwa.mbn"},
+		{ID: "adsp-dtb", SourceName: "adsp_dtbs.elf", SourceINF: "surfacepro_ext_adsp8380.inf", PayloadPath: "payload/platform-firmware/adsp_dtbs.elf", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adsp_dtb.mbn"},
+		{ID: "adsp-main", SourceName: "qcadsp8380.mbn", SourceINF: "surfacepro_ext_adsp8380.inf", PayloadPath: "payload/platform-firmware/qcadsp8380.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/qcadsp8380.mbn"},
+		{ID: "adsp-resource", SourceName: "adspr.jsn", SourceINF: "surfacepro_ext_adsp8380.inf", PayloadPath: "payload/platform-firmware/adspr.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adspr.jsn"},
+		{ID: "adsp-system", SourceName: "adsps.jsn", SourceINF: "surfacepro_ext_adsp8380.inf", PayloadPath: "payload/platform-firmware/adsps.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adsps.jsn"},
+		{ID: "adsp-user", SourceName: "adspua.jsn", SourceINF: "surfacepro_ext_adsp8380.inf", PayloadPath: "payload/platform-firmware/adspua.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/adspua.jsn"},
+		{ID: "battery-manager", SourceName: "battmgr.jsn", SourceINF: "surfacepro_ext_adsp8380.inf", PayloadPath: "payload/platform-firmware/battmgr.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/battmgr.jsn"},
+		{ID: "cdsp-dtb", SourceName: "cdsp_dtbs.elf", SourceINF: "qcnspmcdm_ext_cdsp8380.inf", PayloadPath: "payload/platform-firmware/cdsp_dtbs.elf", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/cdsp_dtb.mbn"},
+		{ID: "cdsp-main", SourceName: "qccdsp8380.mbn", SourceINF: "qcnspmcdm_ext_cdsp8380.inf", PayloadPath: "payload/platform-firmware/qccdsp8380.mbn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/qccdsp8380.mbn"},
+		{ID: "cdsp-resource", SourceName: "cdspr.jsn", SourceINF: "qcnspmcdm_ext_cdsp8380.inf", PayloadPath: "payload/platform-firmware/cdspr.jsn", Destination: "lib/firmware/qcom/x1e80100/microsoft/Denali/cdspr.jsn"},
 	}
 	if got := FirmwarePolicies(); !reflect.DeepEqual(got, expected) {
 		t.Fatalf("FirmwarePolicies() = %#v, want %#v", got, expected)
@@ -160,8 +102,10 @@ func TestDecodeRejectsStrictJSONViolations(t *testing.T) {
 		{name: "unknown field", document: []byte(replaceOnce(t, golden, `"created_at":`, `"unexpected":true,"created_at":`)), message: "unknown or mis-cased"},
 		{name: "duplicate field", document: []byte(replaceOnce(t, golden, `"kind": "linux-armer.windows-handoff"`, `"kind":"linux-armer.windows-handoff","kind":"other"`)), message: "duplicate field"},
 		{name: "mis-cased field", document: []byte(replaceOnce(t, golden, `"privacy_classification"`, `"Privacy_Classification"`)), message: "unknown or mis-cased"},
-		{name: "retired adapter digest field", document: []byte(replaceOnce(t, golden, `"adapter_instance_id_binding_sha256"`, `"adapter_instance_id_sha256"`)), message: "unknown or mis-cased"},
+		{name: "retired adapter digest field", document: []byte(replaceOnce(t, golden, `"source": "net-adapter-permanent-address"`, `"source":"net-adapter-permanent-address","adapter_instance_id_binding_sha256":"1111111111111111111111111111111111111111111111111111111111111111"`)), message: "unknown or mis-cased"},
 		{name: "missing required field", document: []byte(replaceOnce(t, golden, "  \"privacy_classification\": \"private-device-bound\",\n", ``)), message: "required field"},
+		{name: "missing original INF", document: []byte(replaceOnce(t, golden, "          \"original_inf\": \"qcdx8380.inf\",\n", ``)), message: "required field"},
+		{name: "retired version 1 envelope", document: []byte(replaceOnce(t, golden, `"schema_version": 2`, `"schema_version": 1`)), message: "schema_version"},
 		{name: "null top-level object", document: []byte(`null`), message: "must not be null"},
 		{name: "null collector", document: []byte(replaceObjectWithNull(t, golden, `"collector"`)), message: "must not be null"},
 		{name: "null firmware files", document: []byte(replaceOnce(t, golden, `"files": [`, `"files": null,"discarded": [`)), message: "must not be null"},
@@ -197,13 +141,14 @@ func TestValidateRejectsEnvelopeAndDeviceViolations(t *testing.T) {
 		mutate  func(*Contract)
 		message string
 	}{
-		{name: "schema", mutate: func(contract *Contract) { contract.SchemaVersion = 2 }, message: "schema_version"},
+		{name: "schema", mutate: func(contract *Contract) { contract.SchemaVersion = 1 }, message: "schema_version"},
 		{name: "kind", mutate: func(contract *Contract) { contract.Kind = "other" }, message: "kind"},
 		{name: "privacy", mutate: func(contract *Contract) { contract.PrivacyClassification = "public" }, message: "privacy_classification"},
 		{name: "timestamp offset", mutate: func(contract *Contract) { contract.CreatedAt = "2026-08-30T12:34:56+00:00" }, message: "created_at"},
 		{name: "timestamp fraction", mutate: func(contract *Contract) { contract.CreatedAt = "2026-08-30T12:34:56.1Z" }, message: "created_at"},
 		{name: "collector name", mutate: func(contract *Contract) { contract.Collector.Name = "other.ps1" }, message: "collector name"},
 		{name: "collector version", mutate: func(contract *Contract) { contract.Collector.Version = "v1" }, message: "collector version"},
+		{name: "different semantic collector version", mutate: func(contract *Contract) { contract.Collector.Version = "2.0.1" }, message: CollectorVersion},
 		{name: "platform", mutate: func(contract *Contract) { contract.Device.PlatformID = "other" }, message: "platform_id"},
 		{name: "architecture", mutate: func(contract *Contract) { contract.Device.Architecture = "amd64" }, message: "architecture"},
 		{name: "short salt", mutate: func(contract *Contract) { contract.Device.BindingSalt = "01" }, message: "binding_salt"},
@@ -325,6 +270,10 @@ func TestValidatePlatformFirmwareUnion(t *testing.T) {
 			contract.PlatformFirmware.Files[0].WindowsSource.DriverStorePath = "Windows/System32/DriverStore/FileRepository/package/other.mbn"
 		}, message: "source filename"},
 		{name: "published INF", mutate: func(contract *Contract) { contract.PlatformFirmware.Files[0].WindowsSource.PublishedINF = "driver.inf" }, message: "published_inf"},
+		{name: "original INF case", mutate: func(contract *Contract) {
+			contract.PlatformFirmware.Files[0].WindowsSource.OriginalINF = "QCDX8380.inf"
+		}, message: "original_inf"},
+		{name: "original INF policy", mutate: func(contract *Contract) { contract.PlatformFirmware.Files[0].WindowsSource.OriginalINF = "other.inf" }, message: "compiled policy"},
 		{name: "driver version", mutate: func(contract *Contract) {
 			contract.PlatformFirmware.Files[0].WindowsSource.DriverVersion = "version one"
 		}, message: "driver_version"},
@@ -380,11 +329,7 @@ func TestValidateBluetoothUnion(t *testing.T) {
 		}, message: "must not contain reason"},
 		{name: "address missing", mutate: func(contract *Contract) { contract.BluetoothPublicAddress.Address = nil }, message: "requires address"},
 		{name: "source missing", mutate: func(contract *Contract) { contract.BluetoothPublicAddress.Source = nil }, message: "requires address"},
-		{name: "adapter digest missing", mutate: func(contract *Contract) { contract.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256 = nil }, message: "requires address"},
 		{name: "source invalid", mutate: func(contract *Contract) { contract.BluetoothPublicAddress.Source = testBluetoothSource("wifi-derived") }, message: "source"},
-		{name: "adapter digest invalid", mutate: func(contract *Contract) {
-			contract.BluetoothPublicAddress.AdapterInstanceIDBindingSHA256 = testString("bad")
-		}, message: "adapter instance"},
 	}
 	for _, testCase := range testCases {
 		testCase := testCase
@@ -463,17 +408,17 @@ func TestValidatePortablePathRejectsAlternateSemantics(t *testing.T) {
 	}
 }
 
-// readGoldenDocument returns the immutable v1 fixture bytes.
+// readGoldenDocument returns the immutable v2 fixture bytes.
 func readGoldenDocument(t *testing.T) []byte {
 	t.Helper()
-	data, err := os.ReadFile("testdata/windows-handoff-v1.golden.json")
+	data, err := os.ReadFile("testdata/windows-handoff-v2.golden.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return data
 }
 
-// decodeGoldenContract decodes a fresh deep copy of the v1 fixture for one test.
+// decodeGoldenContract decodes a fresh deep copy of the v2 fixture for one test.
 func decodeGoldenContract(t *testing.T) Contract {
 	t.Helper()
 	contract, err := Decode(bytes.NewReader(readGoldenDocument(t)))
@@ -525,10 +470,5 @@ func testAbsentReason(value AbsentReason) *AbsentReason {
 
 // testBluetoothSource returns a stable pointer for provenance tests.
 func testBluetoothSource(value BluetoothSource) *BluetoothSource {
-	return &value
-}
-
-// testString returns a stable string pointer for optional digest tests.
-func testString(value string) *string {
 	return &value
 }

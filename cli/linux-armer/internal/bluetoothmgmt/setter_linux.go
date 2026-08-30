@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -27,6 +29,12 @@ const (
 	managementSuccess = 0x00
 	// maximumManagementEventBytes bounds raw kernel event buffers.
 	maximumManagementEventBytes = 2048
+	// maximumControllerInventory bounds one kernel HCI class scan.
+	maximumControllerInventory = 32
+	// maximumCompatibleBytes bounds one device-tree compatibility property.
+	maximumCompatibleBytes int64 = 4096
+	// surfacePro11BluetoothCompatible is the exact built-in WCN7850 DT identity.
+	surfacePro11BluetoothCompatible = "qcom,wcn7850-bt"
 )
 
 // socketOperations is the narrow syscall boundary used by Linux tests.
@@ -100,10 +108,6 @@ func setWithOperations(ctx context.Context, address Address, options Options, op
 	if placeholderAddress(address) || address[0]&0x01 != 0 {
 		return errors.New("private Bluetooth address is not an accepted unicast public address")
 	}
-	if err := waitForController(ctx, normalised); err != nil {
-		return err
-	}
-	request := managementRequest(normalised.ControllerIndex, address)
 	for attempt := 0; attempt < normalised.Attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -113,7 +117,12 @@ func setWithOperations(ctx context.Context, address Address, options Options, op
 				return err
 			}
 		}
-		accepted, attemptErr := attemptSet(ctx, operations, normalised, request)
+		controllerIndex, err := waitForController(ctx, normalised)
+		if err != nil {
+			return err
+		}
+		request := managementRequest(controllerIndex, address)
+		accepted, attemptErr := attemptSet(ctx, operations, normalised, controllerIndex, request)
 		if accepted {
 			return nil
 		}
@@ -124,22 +133,96 @@ func setWithOperations(ctx context.Context, address Address, options Options, op
 	return errors.New("private Bluetooth address was not accepted after bounded management retries")
 }
 
-// waitForController polls only the fixed HCI sysfs presence path within a deadline.
-func waitForController(ctx context.Context, options normalisedOptions) error {
+// waitForController polls the bounded HCI inventory until exactly one
+// controller satisfies the compiled physical-radio selector.
+func waitForController(ctx context.Context, options normalisedOptions) (uint16, error) {
 	controllerContext, cancel := context.WithTimeout(ctx, options.ControllerWait)
 	defer cancel()
-	controllerPath := filepath.Join(options.ControllerRoot, fmt.Sprintf("hci%d", options.ControllerIndex))
 	for {
-		if info, err := os.Stat(controllerPath); err == nil && info.IsDir() {
-			return nil
+		controllerIndex, found, err := selectController(options.ControllerRoot, options.ControllerSelector)
+		if err != nil {
+			return 0, err
+		}
+		if found {
+			return controllerIndex, nil
 		}
 		if err := waitContext(controllerContext, options.PollInterval); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return errors.New("Bluetooth controller did not appear within the bounded wait")
+				return 0, errors.New("the selected Surface Pro 11 Bluetooth controller did not appear within the bounded wait")
 			}
-			return err
+			return 0, err
 		}
 	}
+}
+
+// selectController returns the sole HCI index whose device-tree compatibility
+// property proves it is the built-in Surface Pro 11 WCN7850 UART radio.
+func selectController(controllerRoot string, selector ControllerSelector) (uint16, bool, error) {
+	if selector != SurfacePro11WCN7850UART {
+		return 0, false, errors.New("Bluetooth controller selector is unsupported")
+	}
+	entries, err := os.ReadDir(controllerRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, errors.New("inspect Bluetooth controller inventory")
+	}
+	if len(entries) > maximumControllerInventory {
+		return 0, false, errors.New("Bluetooth controller inventory exceeds its compiled bound")
+	}
+	candidates := make([]uint16, 0, 1)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "hci") || len(name) <= len("hci") {
+			continue
+		}
+		parsed, parseErr := strconv.ParseUint(name[len("hci"):], 10, 16)
+		if parseErr != nil || strconv.FormatUint(parsed, 10) != name[len("hci"):] {
+			continue
+		}
+		compatiblePath := filepath.Join(controllerRoot, name, "device", "of_node", "compatible")
+		matched, matchErr := compatiblePropertyContains(compatiblePath, surfacePro11BluetoothCompatible)
+		if matchErr != nil {
+			return 0, false, matchErr
+		}
+		if matched {
+			candidates = append(candidates, uint16(parsed))
+		}
+	}
+	if len(candidates) > 1 {
+		return 0, false, errors.New("more than one Bluetooth controller matches the compiled Surface Pro 11 selector")
+	}
+	if len(candidates) == 0 {
+		return 0, false, nil
+	}
+	return candidates[0], true, nil
+}
+
+// compatiblePropertyContains reads one bounded NUL-delimited device-tree
+// compatibility property and performs an exact token comparison.
+func compatiblePropertyContains(path, expected string) (bool, error) {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, errors.New("open Bluetooth device-tree compatibility evidence")
+	}
+	content, readErr := io.ReadAll(io.LimitReader(file, maximumCompatibleBytes+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || int64(len(content)) > maximumCompatibleBytes {
+		return false, errors.New("read bounded Bluetooth device-tree compatibility evidence")
+	}
+	if len(content) == 0 || content[len(content)-1] != 0 {
+		return false, nil
+	}
+	for _, token := range strings.Split(string(content[:len(content)-1]), "\x00") {
+		if token == expected {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // waitContext performs a cancellation-aware retry delay.
@@ -158,7 +241,7 @@ func waitContext(ctx context.Context, delay time.Duration) error {
 }
 
 // attemptSet owns one fresh socket, bounded write, and matching response loop.
-func attemptSet(ctx context.Context, operations socketOperations, options normalisedOptions, request []byte) (bool, error) {
+func attemptSet(ctx context.Context, operations socketOperations, options normalisedOptions, controllerIndex uint16, request []byte) (bool, error) {
 	descriptor, err := operations.Open()
 	if err != nil {
 		return false, nil
@@ -188,20 +271,23 @@ func attemptSet(ctx context.Context, operations socketOperations, options normal
 			}
 			return false, nil
 		}
-		matched, success := parseManagementResponse(buffer[:read], options.ControllerIndex)
+		matched, success := parseManagementResponse(buffer[:read], controllerIndex)
 		if matched {
 			return success, nil
 		}
 	}
 }
 
-// managementRequest encodes the fixed set-public-address opcode and private payload.
+// managementRequest encodes the fixed set-public-address opcode and reverses
+// display-order address octets into the kernel's bdaddr_t wire representation.
 func managementRequest(controllerIndex uint16, address Address) []byte {
 	request := make([]byte, 12)
 	binary.LittleEndian.PutUint16(request[0:2], managementSetPublicAddress)
 	binary.LittleEndian.PutUint16(request[2:4], controllerIndex)
 	binary.LittleEndian.PutUint16(request[4:6], uint16(len(address)))
-	copy(request[6:], address[:])
+	for index := range address {
+		request[6+index] = address[len(address)-1-index]
+	}
 	return request
 }
 

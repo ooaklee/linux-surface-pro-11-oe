@@ -110,7 +110,7 @@ func TestNativeBluetoothIntegrationFailsClosed(t *testing.T) {
 // native hand-off contract for status tests.
 func writeNativeBluetoothIntegrationFixture(t *testing.T, root, secret string) {
 	t.Helper()
-	writeFile(t, root, handoffapplication.BluetoothConfigPath, 0o600, `{"schema_version":1,"controller_index":0,"address":"`+secret+`"}`)
+	writeFile(t, root, handoffapplication.BluetoothConfigPath, 0o600, `{"schema_version":2,"controller_selector":"surface-pro-11-wcn7850-uart","address":"`+secret+`"}`)
 	writeSyntheticELF(t, root, handoffapplication.InstalledBinaryPath, debugelf.EM_AARCH64, "", nil)
 	writeFile(t, root, handoffapplication.BluetoothUnitPath, 0o644, `[Unit]
 ConditionPathExists=/etc/linux-armer/private/bluetooth-address.json

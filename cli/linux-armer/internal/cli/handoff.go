@@ -209,7 +209,7 @@ func (a *application) newHandoffInternalBluetoothCommand(setter bluetoothAddress
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			address, controllerIndex, err := handoffapplication.ReadBluetoothRuntimeConfig(command.Context(), "/")
+			address, controllerSelector, err := handoffapplication.ReadBluetoothRuntimeConfig(command.Context(), "/")
 			if err != nil {
 				return err
 			}
@@ -217,7 +217,7 @@ func (a *application) newHandoffInternalBluetoothCommand(setter bluetoothAddress
 			if selectedSetter == nil {
 				selectedSetter = bluetoothmgmt.Set
 			}
-			if err := selectedSetter(command.Context(), address, bluetoothmgmt.Options{ControllerIndex: controllerIndex}); err != nil {
+			if err := selectedSetter(command.Context(), address, bluetoothmgmt.Options{ControllerSelector: controllerSelector}); err != nil {
 				return err
 			}
 			return nil
@@ -289,10 +289,10 @@ func (a *application) newHandoffListCommand() *cobra.Command {
 				return err
 			}
 			writer := tabwriter.NewWriter(a.out, 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(writer, "ID\tFIRMWARE\tBLUETOOTH")
+			_, _ = fmt.Fprintln(writer, "SCHEMA\tID\tFIRMWARE\tBLUETOOTH")
 			for _, stored := range summaries {
-				_, _ = fmt.Fprintf(writer, "%s\t%d files\t%t\n",
-					stored.ID, stored.Summary.FirmwareFiles,
+				_, _ = fmt.Fprintf(writer, "%d\t%s\t%d files\t%t\n",
+					stored.Summary.SchemaVersion, stored.ID, stored.Summary.FirmwareFiles,
 					stored.Summary.BluetoothIncluded)
 			}
 			return writer.Flush()

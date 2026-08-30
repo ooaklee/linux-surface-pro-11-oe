@@ -33,6 +33,16 @@ const (
 // always redacted.
 type Address [6]byte
 
+// ControllerSelector identifies one compiled, non-sensitive physical radio
+// selection policy rather than a boot-order-dependent HCI index.
+type ControllerSelector string
+
+const (
+	// SurfacePro11WCN7850UART selects exactly one controller backed by the
+	// Surface Pro 11 WCN7850 UART device-tree node.
+	SurfacePro11WCN7850UART ControllerSelector = "surface-pro-11-wcn7850-uart"
+)
+
 // String prevents ordinary formatting from disclosing a private address.
 func (Address) String() string {
 	return "<redacted>"
@@ -45,8 +55,8 @@ func (Address) GoString() string {
 
 // Options controls bounded controller discovery and management retries.
 type Options struct {
-	// ControllerIndex selects one HCI management controller.
-	ControllerIndex uint16
+	// ControllerSelector selects one compiled physical-controller policy.
+	ControllerSelector ControllerSelector
 	// ControllerRoot overrides /sys/class/bluetooth for isolated tests.
 	ControllerRoot string
 	// ControllerWait bounds HCI enumeration.
@@ -63,8 +73,8 @@ type Options struct {
 
 // normalisedOptions contains validated non-zero runtime bounds.
 type normalisedOptions struct {
-	// ControllerIndex selects one HCI management controller.
-	ControllerIndex uint16
+	// ControllerSelector selects one compiled physical-controller policy.
+	ControllerSelector ControllerSelector
 	// ControllerRoot is the concrete sysfs inventory directory.
 	ControllerRoot string
 	// ControllerWait bounds HCI enumeration.
@@ -116,13 +126,13 @@ func placeholderAddress(address Address) bool {
 // normaliseOptions supplies defaults and rejects unsafe timing controls.
 func normaliseOptions(options Options) (normalisedOptions, error) {
 	normalised := normalisedOptions{
-		ControllerIndex: options.ControllerIndex,
-		ControllerRoot:  options.ControllerRoot,
-		ControllerWait:  options.ControllerWait,
-		PollInterval:    options.PollInterval,
-		Attempts:        options.Attempts,
-		RetryDelay:      options.RetryDelay,
-		ReadTimeout:     options.ReadTimeout,
+		ControllerSelector: options.ControllerSelector,
+		ControllerRoot:     options.ControllerRoot,
+		ControllerWait:     options.ControllerWait,
+		PollInterval:       options.PollInterval,
+		Attempts:           options.Attempts,
+		RetryDelay:         options.RetryDelay,
+		ReadTimeout:        options.ReadTimeout,
 	}
 	if normalised.ControllerRoot == "" {
 		normalised.ControllerRoot = "/sys/class/bluetooth"
@@ -142,7 +152,8 @@ func normaliseOptions(options Options) (normalisedOptions, error) {
 	if normalised.ReadTimeout == 0 {
 		normalised.ReadTimeout = defaultReadTimeout
 	}
-	if normalised.ControllerWait < 0 || normalised.ControllerWait > maximumControllerWait ||
+	if normalised.ControllerSelector != SurfacePro11WCN7850UART ||
+		normalised.ControllerWait < 0 || normalised.ControllerWait > maximumControllerWait ||
 		normalised.PollInterval <= 0 || normalised.PollInterval > normalised.ControllerWait ||
 		normalised.Attempts < 1 || normalised.Attempts > maximumAttempts ||
 		normalised.RetryDelay < 0 || normalised.RetryDelay > maximumReadTimeout ||

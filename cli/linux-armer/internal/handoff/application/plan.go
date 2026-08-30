@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/bluetoothmgmt"
 	"github.com/ooaklee/linux-surface-pro-11-oe/cli/linux-armer/internal/handoff"
 )
 
@@ -63,8 +64,9 @@ type desiredAction struct {
 type bluetoothConfig struct {
 	// SchemaVersion selects the exact private local configuration shape.
 	SchemaVersion int `json:"schema_version"`
-	// ControllerIndex selects the bounded HCI management controller.
-	ControllerIndex uint16 `json:"controller_index"`
+	// ControllerSelector identifies the compiled physical-radio policy without
+	// trusting boot-order-dependent HCI numbering.
+	ControllerSelector bluetoothmgmt.ControllerSelector `json:"controller_selector"`
 	// Address is private and must never be returned by delivery code.
 	Address handoff.BluetoothAddress `json:"address"`
 }
@@ -255,7 +257,8 @@ func buildDesiredActions(contract handoff.Contract, features []Feature, policy A
 			return nil, errors.New("private Bluetooth material is incomplete after revalidation")
 		}
 		configBytes, err := json.Marshal(bluetoothConfig{
-			SchemaVersion: 1, ControllerIndex: 0, Address: *contract.BluetoothPublicAddress.Address,
+			SchemaVersion: 2, ControllerSelector: bluetoothmgmt.SurfacePro11WCN7850UART,
+			Address: *contract.BluetoothPublicAddress.Address,
 		})
 		if err != nil {
 			return nil, errors.New("encode private Bluetooth configuration")
