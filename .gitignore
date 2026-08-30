@@ -20,9 +20,14 @@ payload/**/*.img
 *.cab
 *.dtb
 *.elf
+*.etl
+*.evtx
 *.fw
 *.jsn
 *.mbn
+*.pdb
+*.sys
+*.tmf
 
 # Downloaded installers and generated disk images.
 *.iso

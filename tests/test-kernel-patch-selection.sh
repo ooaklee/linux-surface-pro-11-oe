@@ -22,6 +22,29 @@ assert_not_contains() {
   fi
 }
 
+verify_sha256sums() {
+  local directory="$1"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$directory" && sha256sum -c SHA256SUMS >/dev/null)
+  elif command -v shasum >/dev/null 2>&1; then
+    (cd "$directory" && shasum -a 256 -c SHA256SUMS >/dev/null)
+  else
+    fail "sha256sum or shasum is required for checksum tests"
+  fi
+}
+
+file_mode() {
+  local path="$1"
+  local mode=""
+
+  if mode="$(stat -c '%a' "$path" 2>/dev/null)"; then
+    printf '%s\n' "$mode"
+  else
+    stat -f '%Lp' "$path"
+  fi
+}
+
 write_build_manifest() {
   local path="$1"
   local source_head="$2"
@@ -127,6 +150,8 @@ run_release_tests() {
 
 run_build_helper_tests() {
   local test_root wrapper_dir fixture source_head checkout manifest
+  local checksum_helper checksum_fixture failure_fixture scenario
+  local expected_checksum_names actual_checksum_names
   test_root="$(mktemp -d "${TMPDIR:-/tmp}/sp11-build-patches.XXXXXX")"
   trap 'rm -rf "$test_root"' RETURN
 
@@ -143,6 +168,77 @@ run_build_helper_tests() {
   if grep -Eq '^--patch-dir(s)?$' "$wrapper_dir/docker-build-args.txt"; then
     fail "wrapper forwarded a patch option when none was supplied"
   fi
+
+  checksum_helper="$test_root/artifact-checksum-helper.sh"
+  {
+    sed -n '/^find_qcom_kernel_debs() {/,/^}/p' \
+      "$wrapper_dir/docker-build-inside.sh"
+    sed -n '/^write_artifact_sha256sums() {/,/^}/p' \
+      "$wrapper_dir/docker-build-inside.sh"
+  } > "$checksum_helper"
+  assert_contains "$checksum_helper" "find_qcom_kernel_debs() {"
+  assert_contains "$checksum_helper" "write_artifact_sha256sums() {"
+  # shellcheck source=/dev/null
+  . "$checksum_helper"
+
+  checksum_fixture="$test_root/checksum-artifacts"
+  mkdir -p "$checksum_fixture"
+  for deb in \
+    linux-headers-7.2-test-qcom-x1e_7.2-test_arm64.deb \
+    linux-image-7.2-test-qcom-x1e_7.2-test_arm64.deb \
+    linux-modules-7.2-test-qcom-x1e_7.2-test_arm64.deb \
+    linux-qcom-x1e-headers-7.2-test_7.2-test_all.deb; do
+    printf 'fixture package: %s\n' "$deb" > "$checksum_fixture/$deb"
+    printf '/linux-work/source/%s\n' "$deb" >> \
+      "$checksum_fixture/sp11-kernel-debs.txt"
+  done
+  printf 'Source HEAD: fixture\nLocal patches: none\n' > \
+    "$checksum_fixture/sp11-kernel-build-manifest.txt"
+  printf 'unrelated stale file\n' > "$checksum_fixture/stale-note.txt"
+
+  write_artifact_sha256sums "$checksum_fixture"
+  [ "$(wc -l < "$checksum_fixture/SHA256SUMS" | tr -d '[:space:]')" -eq 6 ] || \
+    fail "artifact checksum manifest does not contain exactly six entries"
+  expected_checksum_names="$(printf '%s\n' \
+    linux-headers-7.2-test-qcom-x1e_7.2-test_arm64.deb \
+    linux-image-7.2-test-qcom-x1e_7.2-test_arm64.deb \
+    linux-modules-7.2-test-qcom-x1e_7.2-test_arm64.deb \
+    linux-qcom-x1e-headers-7.2-test_7.2-test_all.deb \
+    sp11-kernel-build-manifest.txt \
+    sp11-kernel-debs.txt)"
+  actual_checksum_names="$(awk '{ print $2 }' "$checksum_fixture/SHA256SUMS")"
+  [ "$actual_checksum_names" = "$expected_checksum_names" ] || \
+    fail "artifact checksum manifest is not deterministic"
+  assert_not_contains "$checksum_fixture/SHA256SUMS" "SHA256SUMS"
+  assert_not_contains "$checksum_fixture/SHA256SUMS" "stale-note.txt"
+  [ "$(file_mode "$checksum_fixture/SHA256SUMS")" = 644 ] || \
+    fail "artifact checksum manifest is not mode 0644"
+  verify_sha256sums "$checksum_fixture"
+
+  for scenario in missing-deb extra-deb missing-build-manifest missing-deb-manifest; do
+    failure_fixture="$test_root/checksum-$scenario"
+    cp -R "$checksum_fixture" "$failure_fixture"
+    case "$scenario" in
+      missing-deb)
+        rm -f "$failure_fixture/linux-image-7.2-test-qcom-x1e_7.2-test_arm64.deb"
+        ;;
+      extra-deb)
+        printf 'stale package\n' > \
+          "$failure_fixture/linux-modules-extra-7.2-test-qcom-x1e_7.2-test_arm64.deb"
+        ;;
+      missing-build-manifest)
+        rm -f "$failure_fixture/sp11-kernel-build-manifest.txt"
+        ;;
+      missing-deb-manifest)
+        rm -f "$failure_fixture/sp11-kernel-debs.txt"
+        ;;
+    esac
+    if write_artifact_sha256sums "$failure_fixture" >/dev/null 2>&1; then
+      fail "artifact checksum helper accepted $scenario"
+    fi
+    [ ! -e "$failure_fixture/SHA256SUMS" ] || \
+      fail "artifact checksum helper retained SHA256SUMS after $scenario"
+  done
 
   fixture="$test_root/source"
   git init -q "$fixture"

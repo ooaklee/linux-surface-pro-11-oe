@@ -45,8 +45,8 @@ list for the upstream Arch status.
 | Graphics | ✅ Working | Direct boot reaches the Ubuntu desktop. 3D acceleration for X1E SoCs only; X1P support is on its way from upstream. |
 | Backlight | ✅ Working | Night Light and screen brightness controls work. X1E/OLED uses `/sys/class/backlight/dp_aux_backlight`; X1P/LCD uses the upstream `x1p64100-microsoft-denali.dtb` PWM-backlight path. |
 | USB3 | ⚠️ Partially | USB-C ports are working, but the Surface Dock connector is presumably not. |
-| USB4/Thunderbolt | ❌ Not working | No external display output when using the [official USB4 dock](https://learn.microsoft.com/en-us/surface/surface-usb4-dock). |
-| USB-C display output | ✅ Working | Working as of 6.15-rc6 (for DP alt mode). |
+| USB4/Thunderbolt | 🧪 PHY groundwork only | The independent v20 line carries Qualcomm's public USB43DP PHY series, but production keeps the PS8830 USB4-disable fallback. No host-router consumer is enabled, and the retimer-to-controller sideband path remains blocked in [issue 52](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/52); no tunneled-display claim yet. See [kernel PR 24](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/24) and [ADR0068](docs/adr/adr-0068-sp11-usb4-dp-integration.md). |
+| USB-C display output | ✅ Working | Direct DisplayPort Alt Mode works as of 6.15-rc6. This is separate from DisplayPort tunneled through USB4. |
 | USB-C boot | ✅ Working with `--grub-mode direct` | The normal GRUB menu can display entries but input and timeout are unreliable. Use `--grub-mode direct` for the verified live-USB path. |
 | Wi-Fi | ✅ Working | WCN7850/Qualcomm FastConnect 7800 binds to `ath12k_wifi7_pci`, loads firmware, scans, reconnects to a saved network after reboot, and passes traffic on patched git-fallback `7.0.0-22-qcom-x1e` plus an rfkill-capable Denali DTB. Stock/upgraded `7.0.0-32-qcom-x1e` remained hard-blocked. Uses a [kernel hack to disable rfkill](https://github.com/dwhinham/kernel-surface-pro-11/commit/fcc769be9eaa9823d55e98a28402104621fa6784). Continue validating normal reboots, suspend/resume, and package upgrades. |
 | Bluetooth | ✅ Working | Public address set via raw `AF_BLUETOOTH` socket C helper (`tools/sp11-bt-set-addr.c`) before `bluetooth.service` starts, avoiding the btmgmt D-state hang. Cold boot service succeeds at T+1s. Pairing, audio, and suspend/resume still need validation. See [how-to-bring-up-bluetooth](docs/how-to/how-to-bring-up-bluetooth.md). |
@@ -80,6 +80,22 @@ mkdir -p build
   --work-dir build/docker-sp11-qcom-x1e-kernel \
   --linux-work-volume sp11-kernel-build-ci \
   --copy-to-payload --reset-source --jobs 8
+
+# Experimental USB4 v20: guarded normal image plus an opt-in top-port test image
+./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
+  --source git \
+  --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
+  --git-branch sp11/integration-7.2.x-usb4-support \
+  --image ubuntu:26.04 \
+  --build-target "binary-indep binary-qcom-x1e" \
+  --work-dir build/docker-sp11-qcom-x1e-kernel-usb4-v20 \
+  --linux-work-volume sp11-qcom-x1e-kernel-usb4-v20 \
+  --copy-to-payload --reset-source --jobs 8
+
+# The branch is mutable; accept this milestone only at the ADR-recorded head.
+grep -Fx \
+  'Source HEAD: 70ddec100fe953712c309067fe2db4d8207facc6' \
+  build/docker-sp11-qcom-x1e-kernel-usb4-v20/artifacts/sp11-kernel-build-manifest.txt
 
 # OR: Ubuntu concept kernel
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
