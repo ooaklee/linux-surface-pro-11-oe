@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for treating Surface Pro 11 Wi-F
 > Wi-Fi investigation and former helper name as historical evidence. Its helper
 > command is non-prescriptive and superseded. Use `kernel build`,
 > `kernel preflight`, `kernel install`, and `doctor hardware wifi`; see
-> [CLI ADR010](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md).
+> [Lexr ADR010](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-010-native-cli-workflow-migration.md).
 > Read-only or structural success does not by itself qualify Wi-Fi on hardware.
 
 ## Context

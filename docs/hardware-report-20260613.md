@@ -14,12 +14,12 @@ On a current Linux installation, inspect the relevant static support state
 with:
 
 ```sh
-linux-armer doctor userspace \
+lexr doctor userspace \
   --feature kernel \
   --feature firmware \
   --feature wifi \
   --feature bluetooth
-linux-armer doctor hardware wifi bluetooth
+lexr doctor hardware wifi bluetooth
 ```
 
 The userspace doctor reads the selected filesystem and package state. The

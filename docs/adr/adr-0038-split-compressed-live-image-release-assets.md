@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for publishing Surface Pro 11 li
 > non-prescriptive evidence. Current operators use `image create`,
 > `image validate`, `image write`, `image release prepare`, and
 > `image release validate`; see
-> [CLI ADR017](../../cli/linux-armer/docs/adr/adr-017-native-image-release-preparation.md).
+> [Lexr ADR017](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-017-native-image-release-preparation.md).
 > Structural and reconstructed-byte proof does not assert a successful hardware boot.
 
 # ADR0038: Split Compressed Live Image Release Assets
@@ -244,4 +244,4 @@ decompressed raw image hash matched the manifest.
 
 - [ADR026: Prebuilt Kernel Release Artefacts](adr-0026-prebuilt-kernel-release-artifacts.md)
 - [ADR037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1](adr-0037-jglathe-qcom-7-1-1-stubble-paths.md)
-- [CLI ADR017: Native image release preparation](../../cli/linux-armer/docs/adr/adr-017-native-image-release-preparation.md)
+- [Lexr ADR017: Native image release preparation](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-017-native-image-release-preparation.md)

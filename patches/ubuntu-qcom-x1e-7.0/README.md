@@ -8,7 +8,7 @@ The two patches taught `ath12k` a `disable-rfkill` device-tree property and set
 it on the Microsoft Denali WCN7850 node. That experiment helped establish the
 kernel-side Wi-Fi path now carried by the maintained custom source branch.
 
-Use `linux-armer kernel build` for the reviewed maintained ref and
-`linux-armer doctor hardware wifi` for bounded live evidence. Distribution
+Use `lexr kernel build` for the reviewed maintained ref and
+`lexr doctor hardware wifi` for bounded live evidence. Distribution
 firmware owns current board data; the CLI does not inject this archived patch
 set or install a Wi-Fi board-file workaround.

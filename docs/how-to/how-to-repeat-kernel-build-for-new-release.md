@@ -2,7 +2,7 @@
 id: how-to-repeat-kernel-build-for-new-release
 title: "Repeat the Kernel Build for a New Release"
 # prettier-ignore
-description: Build, inspect and qualify a new reviewed Surface Pro 11 kernel revision through linux-armer.
+description: Build, inspect and qualify a new reviewed Surface Pro 11 kernel revision through Lexr.sh.
 ---
 
 # How To: Repeat the Kernel Build for a New Release
@@ -19,12 +19,12 @@ Record the repository and reviewed branch or ref. Prefer a signed or otherwise
 independently reviewed immutable revision for a release candidate.
 
 ```sh
-linux-armer doctor --workspace .
-linux-armer kernel build \
+lexr doctor --workspace .
+lexr kernel build \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
   --git-branch <reviewed-ref> \
-  --work-dir build/linux-armer/kernel-work-<generation> \
-  --output-dir build/linux-armer/kernel-<generation> \
+  --work-dir build/lexr/kernel-work-<generation> \
+  --output-dir build/lexr/kernel-<generation> \
   --dry-run
 ```
 
@@ -46,15 +46,15 @@ invocation.
 ## Inspect and prepare the release
 
 ```sh
-linux-armer kernel inspect build/linux-armer/kernel-<generation>
+lexr kernel inspect build/lexr/kernel-<generation>
 ```
 
 The directory must be one closed, ABI-bound runtime set. Retain the exact
 corresponding source closure and explicit licence inputs, then use:
 
 ```sh
-linux-armer kernel release prepare --help
-linux-armer kernel release validate <prepared-release-directory>
+lexr kernel release prepare --help
+lexr kernel release validate <prepared-release-directory>
 ```
 
 Follow [Prepare Kernel Release Artefacts](how-to-release-kernel-artifacts.md)
@@ -63,19 +63,19 @@ for all required preparation inputs and release-note constraints.
 ## Build and validate test media
 
 ```sh
-linux-armer image create \
+lexr image create \
   --source <ubuntu-concept-iso> \
   --source-sha256 <sha256> \
-  --kernel-dir build/linux-armer/kernel-<generation> \
-  --companion-source-dir cli/linux-armer \
-  --output build/linux-armer/linux-armer-<generation>.iso
-linux-armer image validate build/linux-armer/linux-armer-<generation>.iso
-linux-armer image devices
-linux-armer image write build/linux-armer/linux-armer-<generation>.iso \
+  --kernel-dir build/lexr/kernel-<generation> \
+  --companion-source-dir cli/lexr \
+  --output build/lexr/lexr-<generation>.iso
+lexr image validate build/lexr/lexr-<generation>.iso
+lexr image devices
+lexr image write build/lexr/lexr-<generation>.iso \
   --device <whole-device> \
   --dry-run
 
-sudo linux-armer image write build/linux-armer/linux-armer-<generation>.iso \
+sudo lexr image write build/lexr/lexr-<generation>.iso \
   --device <whole-device> \
   --confirm '<exact phrase from the current dry run>'
 ```
@@ -90,8 +90,8 @@ exact device-bound confirmation. The CLI never elevates itself.
 Keep the previous ABI installed and visible in GRUB. On the candidate kernel:
 
 ```sh
-linux-armer doctor userspace
-linux-armer doctor hardware wifi bluetooth audio touchscreen
+lexr doctor userspace
+lexr doctor hardware wifi bluetooth audio touchscreen
 ```
 
 Exercise cold boot, display, storage, networking, Bluetooth, speakers,

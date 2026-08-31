@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for building patched Surface Pro
 > is historical and non-prescriptive. `kernel build` now owns container policy
 > and immutable provenance; `kernel preflight`, `kernel install`,
 > `kernel release prepare`, and `kernel release validate` own target and release checks. See
-> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 
 ## Context
 

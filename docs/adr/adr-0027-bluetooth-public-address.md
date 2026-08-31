@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for setting the Surface Pro 11 B
 > retained as evidence of this Bluetooth gate, not as a current instruction.
 > Use private `handoff import`, `handoff apply`, and `handoff restore`, then
 > `doctor hardware bluetooth`; see
-> [CLI ADR013](../../cli/linux-armer/docs/adr/adr-013-private-handoff-application-transactions.md).
+> [Lexr ADR013](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-013-private-handoff-application-transactions.md).
 > The address must remain private, and structural validation does not prove cold-boot reliability.
 
 ## Context

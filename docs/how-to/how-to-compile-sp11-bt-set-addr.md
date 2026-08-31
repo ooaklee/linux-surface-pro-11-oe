@@ -2,7 +2,7 @@
 id: how-to-compile-sp11-bt-set-addr
 title: "Migrate Legacy Bluetooth Address Configuration"
 # prettier-ignore
-description: Replace legacy Bluetooth address tooling with linux-armer's private same-device hand-off workflow.
+description: Replace legacy Bluetooth address tooling with Lexr.sh's private same-device hand-off workflow.
 ---
 
 # How To: Migrate Legacy Bluetooth Address Configuration
@@ -10,40 +10,40 @@ description: Replace legacy Bluetooth address tooling with linux-armer's private
 Last reviewed: 2026-08-30
 
 The old standalone Bluetooth address implementation is retired. Do not compile
-or install it. `linux-armer handoff apply` now owns the validated same-device
+or install it. `lexr handoff apply` now owns the validated same-device
 address workflow and creates the required system integration itself.
 
 ## Migrate
 
 1. Collect the Bluetooth component on Windows with
-   `cli/linux-armer/tools/collect-sp11-windows-handoff.ps1`.
+   `cli/lexr/tools/collect-sp11-windows-handoff.ps1`.
 2. Import it on the same Surface into one explicit absolute user store:
 
    ```sh
    HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
-   linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
-   linux-armer handoff list --store "$HANDOFF_STORE"
+   lexr handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+   lexr handoff list --store "$HANDOFF_STORE"
    ```
 
    The unprivileged shell expands `$HOME` before any later `sudo` command.
 3. Preview the application:
 
    ```sh
-   linux-armer handoff apply <id> \
+   lexr handoff apply <id> \
      --store "$HANDOFF_STORE" \
      --target-root / \
      --feature bluetooth \
      --dry-run
 
-   sudo linux-armer handoff apply <id> \
+   sudo lexr handoff apply <id> \
      --store "$HANDOFF_STORE" \
      --target-root / \
      --feature bluetooth \
      --confirm '<exact phrase from the current dry run>'
    ```
 
-4. Verify with `linux-armer doctor userspace --feature bluetooth` and
-   `linux-armer doctor hardware bluetooth`.
+4. Verify with `lexr doctor userspace --feature bluetooth` and
+   `lexr doctor hardware bluetooth`.
 
 The hand-off is private, proprietary and device-bound. It must not be
 published or included in an image or release. See

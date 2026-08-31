@@ -14,8 +14,8 @@ Last reviewed: 2026-08-30
 Inspect the current static platform-firmware and Wi-Fi support state with:
 
 ```sh
-linux-armer doctor userspace --feature firmware --feature wifi
-linux-armer doctor hardware wifi
+lexr doctor userspace --feature firmware --feature wifi
+lexr doctor hardware wifi
 ```
 
 The userspace doctor reads package and firmware files. The hardware doctor adds

@@ -13,13 +13,13 @@ Last reviewed: 2026-08-30
 Validate a newly generated ISO before writing it to media:
 
 ```sh
-linux-armer image validate <generated.iso>
-linux-armer image devices
-linux-armer image write <generated.iso> \
+lexr image validate <generated.iso>
+lexr image devices
+lexr image write <generated.iso> \
   --device <whole-device> \
   --dry-run
 
-sudo linux-armer image write <generated.iso> \
+sudo lexr image write <generated.iso> \
   --device <whole-device> \
   --confirm '<exact phrase from the current dry run>'
 ```
@@ -32,14 +32,14 @@ never elevates itself.
 After booting, inspect the relevant static filesystem and package state with:
 
 ```sh
-linux-armer doctor userspace \
+lexr doctor userspace \
   --feature kernel \
   --feature firmware \
   --feature wifi \
   --feature bluetooth \
   --feature audio \
   --feature touchscreen
-linux-armer doctor hardware wifi bluetooth audio touchscreen
+lexr doctor hardware wifi bluetooth audio touchscreen
 ```
 
 `image validate` checks the generated ISO and its version-bound boot

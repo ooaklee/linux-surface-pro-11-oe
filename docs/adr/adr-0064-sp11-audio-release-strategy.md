@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for publishing the hash-pinned S
 > publication helper below is superseded and non-prescriptive. Use
 > `userspace audio release prepare` and `userspace audio release validate` for
 > deterministic local assets, then `userspace install audio` for installation; see
-> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
 > Remote publication remains a separate maintainer action and is not authorised by preparation.
 
 # ADR0064: Dedicated SP11 Audio Release Strategy

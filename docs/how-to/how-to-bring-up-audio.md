@@ -2,7 +2,7 @@
 id: how-to-bring-up-audio
 title: "Bring Up Current Surface Pro 11 Audio"
 # prettier-ignore
-description: Install and validate the checksum-pinned Surface Pro 11 audio userspace release with linux-armer.
+description: Install and validate the checksum-pinned Surface Pro 11 audio userspace release with Lexr.sh.
 ---
 
 # How To: Bring Up Current Surface Pro 11 Audio
@@ -16,7 +16,7 @@ audio-routing workaround.
 ## Before you begin
 
 - Boot the intended Surface kernel and retain a known-good GRUB entry.
-- Build `linux-armer` or copy its Linux ARM64 companion binary to a writable,
+- Build `lexr` or copy its Linux ARM64 companion binary to a writable,
   executable filesystem.
 - Use a normal user for inspection and download; elevate only the reviewed
   installation.
@@ -30,9 +30,9 @@ clean-up command in this guide:
 ```sh
 USER_HOME="<absolute-target-visible-linux-user-home>"
 
-linux-armer userspace show audio-fullio-v19c
-linux-armer doctor userspace --feature audio --user-home "$USER_HOME"
-linux-armer doctor hardware audio
+lexr userspace show audio-fullio-v19c
+lexr doctor userspace --feature audio --user-home "$USER_HOME"
+lexr doctor hardware audio
 ```
 
 `doctor userspace` checks the selected root and kernel pairing. `doctor
@@ -43,20 +43,20 @@ If the userspace doctor reports recognised legacy conflicts, create a
 reversible clean-up plan rather than changing files manually:
 
 ```sh
-linux-armer clean scan --root / --user-home "$USER_HOME"
-linux-armer clean plan \
+lexr clean scan --root / --user-home "$USER_HOME"
+lexr clean plan \
   --root / \
   --user-home "$USER_HOME" \
-  --output linux-armer-audio-cleanup.json
+  --output lexr-audio-cleanup.json
 ```
 
 Review every plan entry. Apply only a plan whose complete scope you accept:
 
 ```sh
-sudo linux-armer clean apply \
+sudo lexr clean apply \
   --root / \
   --user-home "$USER_HOME" \
-  --plan linux-armer-audio-cleanup.json \
+  --plan lexr-audio-cleanup.json \
   --yes
 ```
 
@@ -65,8 +65,8 @@ Keep the printed receipt for recovery.
 ## Pull and install the audited release
 
 ```sh
-linux-armer userspace pull audio --cache-dir build/linux-armer/userspace
-linux-armer userspace install audio \
+lexr userspace pull audio --cache-dir build/lexr/userspace
+lexr userspace install audio \
   --from <verified-audio-release-directory> \
   --dry-run
 ```
@@ -75,7 +75,7 @@ Use the exact verified directory printed by `userspace pull`. After reviewing
 the dry run:
 
 ```sh
-sudo linux-armer userspace install audio \
+sudo lexr userspace install audio \
   --from <verified-audio-release-directory> \
   --yes
 ```
@@ -90,8 +90,8 @@ prefix it with the host mount point.
 Reboot into the intended kernel, then run:
 
 ```sh
-linux-armer doctor userspace --feature audio --user-home "$USER_HOME"
-linux-armer doctor hardware audio
+lexr doctor userspace --feature audio --user-home "$USER_HOME"
+lexr doctor hardware audio
 wpctl status
 ```
 
@@ -109,7 +109,7 @@ Re-run the doctor against the same root and inspect the installer result. To
 reverse an earlier clean-up, validate and apply its receipt:
 
 ```sh
-sudo linux-armer clean restore \
+sudo lexr clean restore \
   /var/lib/linux-armer/backups/<transaction>/receipt.json \
   --root / \
   --user-home "$USER_HOME" \

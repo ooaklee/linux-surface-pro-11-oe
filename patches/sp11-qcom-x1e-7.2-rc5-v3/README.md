@@ -12,8 +12,8 @@ higher-priority out-of-tree GPI, SPI and touchscreen module overrides.
 
 The maintained custom kernel now carries the touchscreen stack in-tree and
 rejects the retired v3 release contract. Build it with
-`linux-armer kernel build`; use `linux-armer doctor hardware touchscreen` for
-bounded runtime evidence and `linux-armer userspace status` to report stale
+`lexr kernel build`; use `lexr doctor hardware touchscreen` for
+bounded runtime evidence and `lexr userspace status` to report stale
 module overrides for manual review. No current command installs the historical
 modules.
 

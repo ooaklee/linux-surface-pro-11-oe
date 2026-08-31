@@ -16,12 +16,12 @@ device.
 Inspect the current state:
 
 ```sh
-linux-armer userspace show g6-pen
-linux-armer doctor userspace --feature g6-pen
-linux-armer doctor userspace --feature iptsd
+lexr userspace show g6-pen
+lexr doctor userspace --feature g6-pen
+lexr doctor userspace --feature iptsd
 ```
 
-If a recognised legacy service is present, use `linux-armer clean scan`, write
+If a recognised legacy service is present, use `lexr clean scan`, write
 and review a `clean plan`, then apply that exact plan. Install the audited
 IPTSD release using [Build and Validate Surface Pro 11 Pen
 Support](how-to-bring-up-pen.md).

@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for building a patched Ubuntu qc
 > retained only as evidence of this kernel experiment. Current operators use
 > `kernel build`, `kernel preflight`, `kernel install`,
 > `kernel release prepare`, and `kernel release validate`; see
-> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 > Native package proof is not a substitute for the recorded device tests.
 
 ## Context

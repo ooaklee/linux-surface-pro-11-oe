@@ -2,14 +2,14 @@
 id: how-to-build-patched-qcom-x1e-kernel
 title: "Build a Patched qcom-x1e Kernel"
 # prettier-ignore
-description: Build and inspect the maintained Surface Pro 11 kernel with linux-armer's native ARM64 container policy.
+description: Build and inspect the maintained Surface Pro 11 kernel with Lexr.sh's native ARM64 container policy.
 ---
 
 # How To: Build a Patched qcom-x1e Kernel
 
 Last reviewed: 2026-08-30
 
-`linux-armer kernel build` is the supported build path. It resolves the exact
+`lexr kernel build` is the supported build path. It resolves the exact
 source revision, runs the maintained recipe in a Linux ARM64 container and
 publishes only a fresh, closed package bundle.
 
@@ -23,8 +23,8 @@ publishes only a fresh, closed package bundle.
 Check the host and review the plan:
 
 ```sh
-linux-armer doctor --workspace .
-linux-armer kernel build --dry-run
+lexr doctor --workspace .
+lexr kernel build --dry-run
 ```
 
 The dry run prints the resolved policy without invoking Docker, compiling or
@@ -36,20 +36,20 @@ build has executed its pinned container workflow.
 ## Build the maintained branch
 
 ```sh
-linux-armer kernel build \
-  --work-dir build/linux-armer/kernel-work \
-  --output-dir build/linux-armer/kernel-20260830
+lexr kernel build \
+  --work-dir build/lexr/kernel-work \
+  --output-dir build/lexr/kernel-20260830
 ```
 
 The default URL and branch identify the maintained custom kernel. To test an
 intentional alternative, state both inputs explicitly:
 
 ```sh
-linux-armer kernel build \
+lexr kernel build \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
   --git-branch <reviewed-branch-or-tag> \
-  --work-dir build/linux-armer/kernel-work-next \
-  --output-dir build/linux-armer/kernel-next
+  --work-dir build/lexr/kernel-work-next \
+  --output-dir build/lexr/kernel-next
 ```
 
 Use `--jobs <count>` to bound compilation. Use `--reset-source` only when the
@@ -59,7 +59,7 @@ resets the source in the labelled build volume, not a host checkout.
 ## Inspect the closed output
 
 ```sh
-linux-armer kernel inspect build/linux-armer/kernel-20260830
+lexr kernel inspect build/lexr/kernel-20260830
 ```
 
 Inspection must identify one ABI-bound runtime set with matching image and
@@ -73,13 +73,13 @@ licence files, then follow
 ## Use the bundle in an image
 
 ```sh
-linux-armer image create \
+lexr image create \
   --source <ubuntu-concept-iso> \
   --source-sha256 <sha256> \
-  --kernel-dir build/linux-armer/kernel-20260830 \
-  --companion-source-dir cli/linux-armer \
-  --output build/linux-armer/linux-armer-ubuntu-sp11.iso
-linux-armer image validate build/linux-armer/linux-armer-ubuntu-sp11.iso
+  --kernel-dir build/lexr/kernel-20260830 \
+  --companion-source-dir cli/lexr \
+  --output build/lexr/lexr-ubuntu-sp11.iso
+lexr image validate build/lexr/lexr-ubuntu-sp11.iso
 ```
 
 The implemented Ubuntu adapter preserves the source image's Casper contract
@@ -94,8 +94,8 @@ without the companion.
 Keep a known-good GRUB entry. After booting the candidate, run:
 
 ```sh
-linux-armer doctor userspace
-linux-armer doctor hardware wifi bluetooth audio touchscreen
+lexr doctor userspace
+lexr doctor hardware wifi bluetooth audio touchscreen
 ```
 
 Then qualify boot, display, storage, Wi-Fi, Bluetooth, audio, pen and

@@ -2,7 +2,7 @@
 id: how-to-migrate-to-native-audio
 title: "Migrate Legacy Surface Pro 11 Audio to FullIO v19c"
 # prettier-ignore
-description: Replace recognised legacy audio changes with the verified FullIO v19c release using linux-armer.
+description: Replace recognised legacy audio changes with the verified FullIO v19c release using Lexr.sh.
 ---
 
 # How To: Migrate Legacy Surface Pro 11 Audio to FullIO v19c
@@ -22,9 +22,9 @@ migration:
 ```sh
 USER_HOME="<absolute-target-visible-linux-user-home>"
 
-linux-armer doctor userspace --feature audio --user-home "$USER_HOME"
-linux-armer userspace show audio-fullio-v19c
-linux-armer clean scan --root / --user-home "$USER_HOME"
+lexr doctor userspace --feature audio --user-home "$USER_HOME"
+lexr userspace show audio-fullio-v19c
+lexr clean scan --root / --user-home "$USER_HOME"
 ```
 
 The clean scanner uses a bounded allow-list. Unknown local customisations are
@@ -33,10 +33,10 @@ reported only through other diagnostics and are not silently removed.
 ## Create and review the clean-up plan
 
 ```sh
-linux-armer clean plan \
+lexr clean plan \
   --root / \
   --user-home "$USER_HOME" \
-  --output linux-armer-audio-cleanup.json
+  --output lexr-audio-cleanup.json
 ```
 
 Read the whole JSON file. Stop if it includes a recognised change you still
@@ -46,10 +46,10 @@ does not mutate the system.
 Apply the accepted plan:
 
 ```sh
-sudo linux-armer clean apply \
+sudo lexr clean apply \
   --root / \
   --user-home "$USER_HOME" \
-  --plan linux-armer-audio-cleanup.json \
+  --plan lexr-audio-cleanup.json \
   --yes
 ```
 
@@ -58,11 +58,11 @@ Record the durable receipt path printed by the command.
 ## Pull and install FullIO v19c
 
 ```sh
-linux-armer userspace pull audio --cache-dir build/linux-armer/userspace
-linux-armer userspace install audio \
+lexr userspace pull audio --cache-dir build/lexr/userspace
+lexr userspace install audio \
   --from <verified-audio-release-directory> \
   --dry-run
-sudo linux-armer userspace install audio \
+sudo lexr userspace install audio \
   --from <verified-audio-release-directory> \
   --yes
 ```
@@ -78,8 +78,8 @@ path prefixed by the host mount point.
 Reboot into the intended kernel:
 
 ```sh
-linux-armer doctor userspace --feature audio --user-home "$USER_HOME"
-linux-armer doctor hardware audio
+lexr doctor userspace --feature audio --user-home "$USER_HOME"
+lexr doctor hardware audio
 wpctl status
 ```
 
@@ -93,7 +93,7 @@ qualify the hardware.
 If the migration must be reversed, use the original receipt:
 
 ```sh
-sudo linux-armer clean restore \
+sudo lexr clean restore \
   /var/lib/linux-armer/backups/<transaction>/receipt.json \
   --root / \
   --user-home "$USER_HOME" \

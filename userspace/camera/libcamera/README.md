@@ -1,7 +1,7 @@
 # SP11 IMX681 libcamera integration
 
 This directory contains the three reviewed inputs used by the native
-`linux-armer` camera builder:
+`lexr` camera builder:
 
 - `BASE.txt`, the strict upstream and Ubuntu source authority;
 - `0001-libipa-add-imx681-simple-ipa-support.patch`, the simple-IPA integration;
@@ -51,9 +51,9 @@ digest-qualified Ubuntu 26.04 image and never mounts the repository into the
 container. Review the non-mutating plan first:
 
 ```sh
-linux-armer userspace build camera \
+lexr userspace build camera \
   --repository-root . \
-  --output-dir build/linux-armer/camera/packages \
+  --output-dir build/lexr/camera/packages \
   --jobs 8 \
   --dry-run
 ```
@@ -79,7 +79,7 @@ explicit kernel release tag and ABI. It creates a fresh local closed directory;
 it never creates a Git tag, uploads an artefact or changes a remote service.
 
 ```sh
-linux-armer userspace camera release prepare \
+lexr userspace camera release prepare \
   --repository-root . \
   --from <printed-native-build-directory> \
   --output-dir build/release \
@@ -89,7 +89,7 @@ linux-armer userspace camera release prepare \
   --build-authority-sha256 <build-authority-sha256> \
   --dry-run
 
-linux-armer userspace camera release validate \
+lexr userspace camera release validate \
   build/release/<camera-release-tag> \
   --repository-root . \
   --authority-sha256 <release-authority-sha256>
@@ -112,19 +112,19 @@ Review installation without privilege, then repeat with elevated access and
 `--yes`:
 
 ```sh
-linux-armer userspace install camera \
+lexr userspace install camera \
   --from build/release/<camera-release-tag> \
   --repository-root . \
   --camera-authority-sha256 <release-authority-sha256> \
   --dry-run
 
-sudo linux-armer userspace install camera \
+sudo lexr userspace install camera \
   --from build/release/<camera-release-tag> \
   --repository-root . \
   --camera-authority-sha256 <release-authority-sha256> \
   --yes
 
-linux-armer doctor userspace --feature camera
+lexr doctor userspace --feature camera
 ```
 
 The installer also accepts the exact native build directory printed by
@@ -134,7 +134,7 @@ tuning proof without executing bundle code, then hashes each package again
 while staging it privately before `apt-get`. A prepared local release is the
 preferred hand-off because it also records the paired kernel tag and ABI. Do
 not combine packages from different builds or bypass either structured
-authority by passing individual packages to `linux-armer`.
+authority by passing individual packages to `lexr`.
 
 ## Capture and render private RAW10 evidence
 
@@ -143,9 +143,9 @@ IMX681 → CSIPHY2 → CSID0 → VFE0-RDI0 route. A dry run validates the graph
 without configuring or streaming it:
 
 ```sh
-linux-armer userspace camera capture --dry-run
-linux-armer userspace camera capture --output capture.raw --frames 10
-linux-armer userspace camera render capture.raw preview.png
+lexr userspace camera capture --dry-run
+lexr userspace camera capture --output capture.raw --frames 10
+lexr userspace camera render capture.raw preview.png
 ```
 
 Capture enforces exact 3840×2640 packed-RAW10 frame geometry, transport,

@@ -10,8 +10,8 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 > `userspace build camera`, `userspace install camera`,
 > `userspace camera capture`, `userspace camera render`, `userspace camera release prepare`, and
 > `userspace camera release validate`; see
-> [CLI ADR015](../../cli/linux-armer/docs/adr/adr-015-native-imx681-package-and-release-contracts.md)
-> and [CLI ADR018](../../cli/linux-armer/docs/adr/adr-018-native-imx681-runtime-validation.md).
+> [Lexr ADR015](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-015-native-imx681-package-and-release-contracts.md)
+> and [Lexr ADR018](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-018-native-imx681-runtime-validation.md).
 > Native package and capture checks do not close the remaining physical gates.
 
 # ADR0066: SP11 IMX681 libcamera Simple IPA Integration

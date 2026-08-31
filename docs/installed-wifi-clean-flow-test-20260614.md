@@ -13,9 +13,9 @@ Last reviewed: 2026-08-30
 For a newly generated ISO and a current installed system, use:
 
 ```sh
-linux-armer image validate <generated.iso>
-linux-armer doctor userspace --feature wifi
-linux-armer doctor hardware wifi
+lexr image validate <generated.iso>
+lexr doctor userspace --feature wifi
+lexr doctor hardware wifi
 ```
 
 The image validator checks the generated ISO rather than the written USB or

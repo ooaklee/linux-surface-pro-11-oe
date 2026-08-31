@@ -2,7 +2,7 @@
 id: how-to-install-sp11-firmware
 title: "Install Surface Pro 11 Platform Firmware"
 # prettier-ignore
-description: Collect and apply same-device platform firmware through linux-armer's private Windows hand-off workflow.
+description: Collect and apply same-device platform firmware through Lexr.sh's private Windows hand-off workflow.
 ---
 
 # How To: Install Surface Pro 11 Platform Firmware
@@ -11,7 +11,7 @@ Last reviewed: 2026-08-30
 
 Required platform firmware is proprietary and device-bound. The supported
 workflow collects an exact closed set from Windows on the same Surface, imports
-it into a private Linux store, and applies it through `linux-armer`. Do not
+it into a private Linux store, and applies it through `lexr`. Do not
 guess public download locations or substitute files from another device.
 
 ## Collect on the same Surface
@@ -20,7 +20,7 @@ From a private checkout on Windows:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\cli\linux-armer\tools\collect-sp11-windows-handoff.ps1 `
+  -File .\cli\lexr\tools\collect-sp11-windows-handoff.ps1 `
   -OutputDirectory E:\sp11-handoff `
   -Components PlatformFirmware
 ```
@@ -35,9 +35,9 @@ Move the collection privately to Linux on the same Surface:
 
 ```sh
 HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
-linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
-linux-armer handoff list --store "$HANDOFF_STORE"
-linux-armer doctor userspace --feature firmware
+lexr handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+lexr handoff list --store "$HANDOFF_STORE"
+lexr doctor userspace --feature firmware
 ```
 
 Import verifies the hand-off before storing it. A userspace doctor failure is
@@ -53,14 +53,14 @@ different boot requirements.
 For the installed NVMe system:
 
 ```sh
-linux-armer handoff apply <id> \
+lexr handoff apply <id> \
   --store "$HANDOFF_STORE" \
   --target-root / \
   --feature firmware \
   --adsp-policy enabled \
   --dry-run
 
-sudo linux-armer handoff apply <id> \
+sudo lexr handoff apply <id> \
   --store "$HANDOFF_STORE" \
   --target-root / \
   --feature firmware \
@@ -80,8 +80,8 @@ Do not copy firmware paths manually.
 Reboot the target, then run:
 
 ```sh
-linux-armer doctor userspace --feature firmware
-linux-armer doctor hardware audio
+lexr doctor userspace --feature firmware
+lexr doctor hardware audio
 ```
 
 Also verify the display, GPU acceleration, audio and suspend/resume on the
@@ -94,11 +94,11 @@ hardware qualification.
 Preview restoration using the receipt created by the application:
 
 ```sh
-sudo linux-armer handoff restore <receipt-id> \
+sudo lexr handoff restore <receipt-id> \
   --target-root / \
   --dry-run
 
-sudo linux-armer handoff restore <receipt-id> \
+sudo lexr handoff restore <receipt-id> \
   --target-root / \
   --confirm '<exact phrase from the current restore dry run>'
 ```

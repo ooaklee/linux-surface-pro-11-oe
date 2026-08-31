@@ -10,7 +10,7 @@ the archived 7.1.3 compatibility patch set and produced a co-installable
 four-package experiment.
 
 The maintained custom kernel branch now carries the accepted hardware support.
-Use `linux-armer kernel build` for that branch, `kernel inspect` for its closed
+Use `lexr kernel build` for that branch, `kernel inspect` for its closed
 package set, and `kernel preflight`/`kernel install` with a retained fallback
 when qualifying it. The CLI does not apply this archived patch directory.
 

@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for mapping PipeWire channels on
 > helper commands below are retained as dated audio evidence, not current
 > instructions. Use `userspace audio release prepare`,
 > `userspace audio release validate`, `userspace install audio`, `doctor hardware audio`, and `clean`; see
-> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
 
 # ADR0036: Right Speaker Audio via PipeWire audio.position Reorder
 

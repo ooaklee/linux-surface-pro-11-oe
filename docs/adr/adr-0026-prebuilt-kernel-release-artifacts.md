@@ -6,11 +6,11 @@ description: Architecture Decision Record (ADR) for publishing optional prebuilt
 ---
 
 > **Current implementation:** This ADR records the original release policy.
-> Native preparation and validation now use `linux-armer kernel release
-> prepare` and `linux-armer kernel release validate`; corresponding source and
+> Native preparation and validation now use `lexr kernel release prepare` and
+> `lexr kernel release validate`; corresponding source and
 > explicit licence evidence are mandatory, and the v3 out-of-tree touchscreen
 > bundle is retired. See
-> [ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md)
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md)
 > and the [current release how-to](../how-to/how-to-release-kernel-artifacts.md).
 
 ## Context

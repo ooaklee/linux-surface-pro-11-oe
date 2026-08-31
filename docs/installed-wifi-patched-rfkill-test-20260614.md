@@ -13,8 +13,8 @@ Last reviewed: 2026-08-30
 Inspect the current static Wi-Fi support state with:
 
 ```sh
-linux-armer doctor userspace --feature wifi
-linux-armer doctor hardware wifi
+lexr doctor userspace --feature wifi
+lexr doctor hardware wifi
 ```
 
 The userspace doctor checks package and firmware files. The hardware doctor
@@ -109,7 +109,7 @@ Redacted visual evidence:
 
 The following commands and recommendations are retained as part of the dated
 investigation. They operate on the live network and are not part of the current
-`linux-armer` static validation flow.
+`lexr` static validation flow.
 
 The recorded stability work covered repeated boots, suspend/resume cycles, and
 normal desktop use.

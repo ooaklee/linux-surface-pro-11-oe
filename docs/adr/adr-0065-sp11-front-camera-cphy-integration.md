@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for integrating the Surface Pro 
 > Use `userspace camera capture`, `userspace camera render`,
 > `userspace camera release prepare`, `userspace camera release validate`, and
 > `userspace install camera`; see
-> [CLI ADR018](../../cli/linux-armer/docs/adr/adr-018-native-imx681-runtime-validation.md).
+> [Lexr ADR018](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-018-native-imx681-runtime-validation.md).
 > Privacy LED, suspend, calibration, and repeated application gates remain explicit.
 
 # ADR0065: SP11 Front Camera C-PHY Integration

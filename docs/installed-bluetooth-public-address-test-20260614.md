@@ -14,8 +14,8 @@ Last reviewed: 2026-08-30
 Inspect the current static Bluetooth support state with:
 
 ```sh
-linux-armer doctor userspace --feature bluetooth
-linux-armer doctor hardware bluetooth
+lexr doctor userspace --feature bluetooth
+lexr doctor hardware bluetooth
 ```
 
 The userspace doctor checks firmware, package, and service files. The hardware

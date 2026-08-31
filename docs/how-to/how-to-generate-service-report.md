@@ -2,7 +2,7 @@
 id: how-to-generate-service-report
 title: "Collect a Private Surface Pro 11 Windows Hand-off"
 # prettier-ignore
-description: Collect and import the strict same-device Windows hand-off accepted by linux-armer.
+description: Collect and import the strict same-device Windows hand-off accepted by Lexr.sh.
 ---
 
 # How To: Collect a Private Surface Pro 11 Windows Hand-off
@@ -10,14 +10,14 @@ description: Collect and import the strict same-device Windows hand-off accepted
 Last reviewed: 2026-08-30
 
 Use the canonical Windows collector to create the strict, device-bound input
-accepted by `linux-armer handoff import`. This is not a general public service
+accepted by `lexr handoff import`. This is not a general public service
 report: its contents are private and proprietary.
 
 ## Before you begin
 
 - Boot Windows on the Surface that will receive the material.
 - Use a private checkout containing
-  `cli/linux-armer/tools/collect-sp11-windows-handoff.ps1`.
+  `cli/lexr/tools/collect-sp11-windows-handoff.ps1`.
 - Choose a new output directory on private removable storage.
 
 The collector can check its own deterministic fixtures without collecting
@@ -25,7 +25,7 @@ device material:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\cli\linux-armer\tools\collect-sp11-windows-handoff.ps1 `
+  -File .\cli\lexr\tools\collect-sp11-windows-handoff.ps1 `
   -SelfTest
 ```
 
@@ -35,7 +35,7 @@ Run PowerShell on the target Surface:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\cli\linux-armer\tools\collect-sp11-windows-handoff.ps1 `
+  -File .\cli\lexr\tools\collect-sp11-windows-handoff.ps1 `
   -OutputDirectory E:\sp11-handoff `
   -Components Both
 ```
@@ -50,8 +50,8 @@ Move the directory privately to Linux on the same device:
 
 ```sh
 HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
-linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
-linux-armer handoff list --store "$HANDOFF_STORE" --json > handoff-summary.json
+lexr handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+lexr handoff list --store "$HANDOFF_STORE" --json > handoff-summary.json
 ```
 
 The unprivileged shell expands `$HOME`, making `HANDOFF_STORE` the absolute

@@ -14,7 +14,7 @@ Use this procedure to [state the operator outcome].
 ## Before you begin
 
 - State the supported device, operating system and required access.
-- Name the exact `linux-armer` capability and its support grade.
+- Name the exact `lexr` capability and its support grade.
 - Keep a known-good boot or recovery path when changing a system.
 
 ## Inspect the current state
@@ -22,7 +22,7 @@ Use this procedure to [state the operator outcome].
 Run read-only diagnostics first:
 
 ```sh
-linux-armer <read-only-command>
+lexr <read-only-command>
 ```
 
 Use `--dry-run` for a mutating command only when that command's help advertises

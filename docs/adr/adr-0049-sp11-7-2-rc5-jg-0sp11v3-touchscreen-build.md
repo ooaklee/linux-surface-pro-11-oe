@@ -11,7 +11,7 @@ description: Architecture Decision Record (ADR) for the Surface Pro 11 v3 build 
 > `kernel preflight`, `kernel install`, `kernel release prepare`,
 > `kernel release validate`, `doctor hardware touchscreen`, `doctor userspace`,
 > and `clean`; see
-> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 
 # ADR0049: JG 7.2-rc5-jg-0sp11v3 Touchscreen Kernel Build
 

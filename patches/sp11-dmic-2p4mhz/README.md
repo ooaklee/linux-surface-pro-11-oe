@@ -10,10 +10,10 @@ removed the continuous microphone static observed at 4.8 MHz without an
 audible playback regression. That result led to the maintained source-tree
 integration; the current custom kernel branch owns the accepted setting.
 
-Build the maintained branch with `linux-armer kernel build`, inspect its closed
-bundle with `linux-armer kernel inspect`, and qualify audio with
-`linux-armer doctor userspace --feature audio` plus
-`linux-armer doctor hardware audio`. The CLI deliberately does not inject this
+Build the maintained branch with `lexr kernel build`, inspect its closed
+bundle with `lexr kernel inspect`, and qualify audio with
+`lexr doctor userspace --feature audio` plus
+`lexr doctor hardware audio`. The CLI deliberately does not inject this
 archived patch set into an arbitrary kernel ref.
 
 See [ADR-0045](../../docs/adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)

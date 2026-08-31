@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for the missing X1E80100-Microso
 > `userspace audio release prepare`, `userspace audio release validate`,
 > `userspace install audio`, `userspace status`, `doctor hardware audio`, and
 > `doctor userspace`; see
-> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
 > These checks do not replace listening, recording, or suspend testing.
 
 # ADR0033: Surface Pro 11 Audio Topology Gap

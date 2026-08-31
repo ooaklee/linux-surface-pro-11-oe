@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for matching the Surface Pro 11 
 > FullIO release is owned by `userspace audio release prepare`,
 > `userspace audio release validate`, and `userspace install audio`; inspect it with
 > `doctor hardware audio` and
-> `doctor userspace`. See [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+> `doctor userspace`. See [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
 
 # ADR0044: Surface Pro 11 UCM Uses One WSA Macro and Two Microphone Channels
 

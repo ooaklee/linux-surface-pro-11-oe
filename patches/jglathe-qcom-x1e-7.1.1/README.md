@@ -12,6 +12,6 @@ The upstream tag already carries the Surface Pro 11 Wi-Fi `disable-rfkill`
 kernel and Denali DTB changes, so this directory only carries build policy
 compatibility patches needed by Ubuntu's `check-config` step.
 
-Use `linux-armer kernel build` for a current build. The selected reviewed
+Use `lexr kernel build` for a current build. The selected reviewed
 kernel ref now owns its source configuration and annotations; the CLI does not
 silently inject this archived directory.

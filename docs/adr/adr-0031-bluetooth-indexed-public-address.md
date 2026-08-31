@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) correcting the Surface Pro 11 Bl
 > recoverable application use `handoff import`, `handoff apply`, and
 > `handoff restore`; current diagnosis
 > uses `doctor hardware bluetooth`. See
-> [CLI ADR013](../../cli/linux-armer/docs/adr/adr-013-private-handoff-application-transactions.md).
+> [Lexr ADR013](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-013-private-handoff-application-transactions.md).
 > Native checks do not replace the cold-boot and suspend gates recorded here.
 
 ## Context

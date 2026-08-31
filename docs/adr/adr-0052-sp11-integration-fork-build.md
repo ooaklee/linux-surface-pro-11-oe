@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for building the Surface Pro 11 
 > non-prescriptive. Use `kernel build`, `kernel preflight`, `kernel install`,
 > `kernel release prepare`, `kernel release validate`, and
 > `doctor hardware touchscreen`; the current touchscreen stack is in-tree. See
-> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 
 # ADR0052: Build from the SP11 Integration Kernel Fork
 

@@ -6,14 +6,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/iptsd-integration-tests.yml"
-      - "cli/linux-armer/cmd/**"
-      - "cli/linux-armer/go.mod"
-      - "cli/linux-armer/go.sum"
-      - "cli/linux-armer/internal/cli/**"
-      - "cli/linux-armer/internal/platform/**"
-      - "cli/linux-armer/internal/quality/**"
-      - "cli/linux-armer/internal/userspace/**"
-      - "cli/linux-armer/supported-userspace.json"
+      - ".gitmodules"
+      - "cli/lexr"
       - "meta-sp11/recipes-support/iptsd-sp11/**"
       - "userspace/iptsd-sp11/**"
   push:
@@ -21,14 +15,8 @@ on:
       - main
     paths:
       - ".github/workflows/iptsd-integration-tests.yml"
-      - "cli/linux-armer/cmd/**"
-      - "cli/linux-armer/go.mod"
-      - "cli/linux-armer/go.sum"
-      - "cli/linux-armer/internal/cli/**"
-      - "cli/linux-armer/internal/platform/**"
-      - "cli/linux-armer/internal/quality/**"
-      - "cli/linux-armer/internal/userspace/**"
-      - "cli/linux-armer/supported-userspace.json"
+      - ".gitmodules"
+      - "cli/lexr"
       - "meta-sp11/recipes-support/iptsd-sp11/**"
       - "userspace/iptsd-sp11/**"
 
@@ -47,25 +35,28 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: cli/linux-armer
+        working-directory: cli/lexr
 
     steps:
       - name: Check out the support repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: true
 
       - name: Set up Go from the CLI module
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: cli/linux-armer/go.mod
-          cache-dependency-path: cli/linux-armer/go.sum
+          go-version-file: cli/lexr/go.mod
+          cache-dependency-path: cli/lexr/go.sum
 
       - name: Run race-enabled native IPTSD tests
+        env:
+          LEXR_TEST_OE_ROOT: ${{ github.workspace }}
         run: go test -race -count=1 ./internal/userspace/... ./internal/cli ./internal/quality
 
       - name: Vet the native IPTSD packages
         run: go vet ./internal/userspace/... ./internal/cli ./internal/quality
 
       - name: Compile the native CLI
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${RUNNER_TEMP}/linux-armer" ./cmd/linux-armer
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${RUNNER_TEMP}/lexr" ./cmd/lexr

@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for shipping and installing KDE 
 > `image create` and `image validate` for supported installation media. Optional
 > desktop replacement is rehomed to distribution package-management guidance
 > and is not part of the hardware companion API; see
-> [CLI ADR004](../../cli/linux-armer/docs/adr/adr-004-ubuntu-hybrid-iso-remaster.md).
+> [Lexr ADR004](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-004-ubuntu-hybrid-iso-remaster.md).
 
 # ADR0039: KDE Plasma Desktop Option
 
@@ -118,5 +118,5 @@ opt-in.
 
 - [ADR0002: Boot Shim Image Strategy](adr-0002-boot-shim-image-strategy.md)
 - [ADR0007: Auto DTB Extraction and Debug Entries](adr-0007-auto-dtb-extraction-and-debug-entries.md)
-- [CLI ADR004: Ubuntu hybrid-ISO remaster](../../cli/linux-armer/docs/adr/adr-004-ubuntu-hybrid-iso-remaster.md)
-- [CLI ADR010: Native CLI workflow migration](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md)
+- [Lexr ADR004: Ubuntu hybrid-ISO remaster](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-004-ubuntu-hybrid-iso-remaster.md)
+- [Lexr ADR010: Native CLI workflow migration](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-010-native-cli-workflow-migration.md)

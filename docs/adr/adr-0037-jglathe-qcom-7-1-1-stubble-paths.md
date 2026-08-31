@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for patching Johan G.'s qcom-x1e
 > dated package experiment and is not a current instruction. Use `kernel build`,
 > `kernel preflight`, `kernel install`, `kernel release prepare`, and
 > `kernel release validate`;
-> see [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> see [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 > Preserve the reported hardware observation separately from native structural proof.
 
 # ADR0037: Packaged Stubble Paths for Johan G. qcom-x1e 7.1.1

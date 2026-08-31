@@ -9,7 +9,7 @@ co-installable `7.2-rc5-jg-0sp11v2-qcom-x1e` ABI while retaining the original
 test packages for rollback. Its result informed the maintained source-tree
 integration.
 
-Build the current reviewed branch with `linux-armer kernel build`, retain a
+Build the current reviewed branch with `lexr kernel build`, retain a
 known-good fallback, and qualify the resulting audio pairing with the native
 userspace and hardware doctors. The CLI deliberately does not apply this
 archived patch directory.

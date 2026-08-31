@@ -2,14 +2,14 @@
 id: how-to-release-kernel-artifacts
 title: "Prepare and Validate Kernel Release Artefacts"
 # prettier-ignore
-description: How-to guide for preparing a closed, checksummed Surface Pro 11 kernel release from linux-armer's native build output.
+description: How-to guide for preparing a closed, checksummed Surface Pro 11 kernel release from Lexr.sh's native build output.
 ---
 
 # How To: Prepare and Validate Kernel Release Artefacts
 
 Last reviewed: 2026-08-30
 
-Use `linux-armer kernel release prepare` to turn one exact native kernel build
+Use `lexr kernel release prepare` to turn one exact native kernel build
 into a new local release directory. Preparation is deliberately separate from
 publication: it does not create a tag, contact GitHub, upload files, install a
 kernel, obtain root privilege, or claim that the result has passed hardware
@@ -23,7 +23,7 @@ installation path.
 
 ## Prerequisites
 
-- A built `linux-armer` executable on `PATH`.
+- A built `lexr` executable on `PATH`.
 - Docker when the kernel still needs to be built.
 - Enough local storage for the kernel build, corresponding source archive, and
   release copies.
@@ -44,9 +44,9 @@ Select unique output names so a previous build cannot be mistaken for the new
 one:
 
 ```bash
-build_dir=build/linux-armer/kernel-v19
+build_dir=build/lexr/kernel-v19
 
-linux-armer kernel build \
+lexr kernel build \
   --repository-root . \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11 \
   --git-branch sp11/integration-7.2.x \
@@ -97,9 +97,9 @@ git -C "$source_checkout" checkout --detach FETCH_HEAD
 test "$(git -C "$source_checkout" rev-parse HEAD)" = "$revision"
 test "$(git -C "$source_checkout" rev-parse 'HEAD^{tree}')" = "$expected_tree"
 
-mkdir -p build/linux-armer/release-source
-source_archive="build/linux-armer/release-source/linux-$revision.tar.xz"
-licence_file="build/linux-armer/release-source/LICENSE.kernel.txt"
+mkdir -p build/lexr/release-source
+source_archive="build/lexr/release-source/linux-$revision.tar.xz"
+licence_file="build/lexr/release-source/LICENSE.kernel.txt"
 
 git -C "$source_checkout" archive \
   --format=tar \
@@ -119,7 +119,7 @@ Choose a tag-like release name and an absent output directory:
 release_name=sp11-qcom-x1e-7.2.0-jg-0sp11v19
 release_dir="build/release/$release_name"
 
-linux-armer kernel release prepare \
+lexr kernel release prepare \
   --build-dir "$build_dir" \
   --output-dir "$release_dir" \
   --release-name "$release_name" \
@@ -138,7 +138,7 @@ identity.
 Run the same command without `--dry-run`:
 
 ```bash
-linux-armer kernel release prepare \
+lexr kernel release prepare \
   --build-dir "$build_dir" \
   --output-dir "$release_dir" \
   --release-name "$release_name" \
@@ -168,8 +168,8 @@ release manifest; host paths and Docker volume identity are omitted.
 ## 5. Validate the exact directory
 
 ```bash
-linux-armer kernel release validate "$release_dir"
-linux-armer kernel release validate "$release_dir" --json
+lexr kernel release validate "$release_dir"
+lexr kernel release validate "$release_dir" --json
 ```
 
 Validation is local and read-only. It rejects unknown or trailing JSON,
@@ -197,7 +197,7 @@ Before using the repository's explicitly authorised release process:
 4. Keep the release experimental and unsigned until the separate hardware
    matrix has passed.
 5. After publication, download every asset into a new empty directory and run
-   `linux-armer kernel release validate` against those downloaded bytes.
+   `lexr kernel release validate` against those downloaded bytes.
 
 Do not add or remove an asset after preparation. Any change requires a new
 fresh output directory so the manifest, generated notes, and checksum set are
@@ -205,7 +205,7 @@ recreated together.
 
 ## Related Documents
 
-- [ADR016: Native kernel release preparation and v3 retirement](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md)
+- [ADR016: Native kernel release preparation and v3 retirement](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md)
 - [ADR026: Prebuilt kernel release artefacts](../adr/adr-0026-prebuilt-kernel-release-artifacts.md)
 - [Build a patched qcom-x1e kernel](how-to-build-patched-qcom-x1e-kernel.md)
 - [Reinstall the patched kernel from USB or a release](how-to-reinstall-patched-kernel-from-usb.md)

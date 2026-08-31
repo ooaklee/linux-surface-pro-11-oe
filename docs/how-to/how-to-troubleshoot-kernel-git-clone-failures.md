@@ -2,21 +2,21 @@
 id: how-to-troubleshoot-kernel-git-clone-failures
 title: "Troubleshoot Kernel Source Fetch Failures"
 # prettier-ignore
-description: Diagnose and recover a native linux-armer kernel build whose reviewed Git source cannot be fetched.
+description: Diagnose and recover a native Lexr.sh kernel build whose reviewed Git source cannot be fetched.
 ---
 
 # How To: Troubleshoot Kernel Source Fetch Failures
 
 Last reviewed: 2026-08-30
 
-Use this procedure when `linux-armer kernel build` stops while resolving or
+Use this procedure when `lexr kernel build` stops while resolving or
 fetching its kernel source. Preserve the first Git error and the exact reviewed
 repository/ref pair.
 
 ## Check the host and remote without changing state
 
 ```sh
-linux-armer doctor --workspace .
+lexr doctor --workspace .
 git ls-remote https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
   <reviewed-ref>
 ```
@@ -38,11 +38,11 @@ reports.
 ## Review the native build plan
 
 ```sh
-linux-armer kernel build \
+lexr kernel build \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
   --git-branch <reviewed-ref> \
-  --work-dir build/linux-armer/kernel-work \
-  --output-dir build/linux-armer/kernel-fetch-retry \
+  --work-dir build/lexr/kernel-work \
+  --output-dir build/lexr/kernel-fetch-retry \
   --dry-run
 ```
 
@@ -55,11 +55,11 @@ its output as release evidence.
 After fixing the network or ref, reset only the CLI-owned cached source:
 
 ```sh
-linux-armer kernel build \
+lexr kernel build \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
   --git-branch <reviewed-ref> \
-  --work-dir build/linux-armer/kernel-work \
-  --output-dir build/linux-armer/kernel-fetch-retry \
+  --work-dir build/lexr/kernel-work \
+  --output-dir build/lexr/kernel-fetch-retry \
   --reset-source
 ```
 
@@ -73,7 +73,7 @@ replace the source with an unreviewed mirror, or publish an incomplete output.
 ## Verify recovery
 
 ```sh
-linux-armer kernel inspect build/linux-armer/kernel-fetch-retry
+lexr kernel inspect build/lexr/kernel-fetch-retry
 ```
 
 The build is recovered only when it publishes a complete ABI-bound bundle and

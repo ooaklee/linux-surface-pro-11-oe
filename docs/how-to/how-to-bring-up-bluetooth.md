@@ -2,7 +2,7 @@
 id: how-to-bring-up-bluetooth
 title: "Bring Up Bluetooth"
 # prettier-ignore
-description: Import and apply same-device Bluetooth material through linux-armer's private Windows hand-off workflow.
+description: Import and apply same-device Bluetooth material through Lexr.sh's private Windows hand-off workflow.
 ---
 
 # How To: Bring Up Bluetooth
@@ -11,7 +11,7 @@ Last reviewed: 2026-08-30
 
 Bluetooth needs a public controller address and supporting material collected
 from the same Surface Pro 11. The maintained implementation is internal to
-`linux-armer`; no separately compiled helper is required.
+`lexr`; no separately compiled helper is required.
 
 ## Collect the private hand-off on Windows
 
@@ -20,7 +20,7 @@ run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\cli\linux-armer\tools\collect-sp11-windows-handoff.ps1 `
+  -File .\cli\lexr\tools\collect-sp11-windows-handoff.ps1 `
   -OutputDirectory E:\sp11-handoff `
   -Components Bluetooth
 ```
@@ -36,9 +36,9 @@ run as a normal user:
 
 ```sh
 HANDOFF_STORE="${HOME}/.linux-armer-handoffs"
-linux-armer handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
-linux-armer handoff list --store "$HANDOFF_STORE"
-linux-armer doctor hardware bluetooth
+lexr handoff import /path/to/sp11-handoff --store "$HANDOFF_STORE"
+lexr handoff list --store "$HANDOFF_STORE"
+lexr doctor hardware bluetooth
 ```
 
 Import validates the closed manifest and stores only accepted material.
@@ -52,13 +52,13 @@ that remains unchanged when it is later passed through `sudo`.
 Review a dry run first:
 
 ```sh
-linux-armer handoff apply <id> \
+lexr handoff apply <id> \
   --store "$HANDOFF_STORE" \
   --target-root / \
   --feature bluetooth \
   --dry-run
 
-sudo linux-armer handoff apply <id> \
+sudo lexr handoff apply <id> \
   --store "$HANDOFF_STORE" \
   --target-root / \
   --feature bluetooth \
@@ -75,8 +75,8 @@ mount point. Never apply one device's hand-off to another Surface.
 Reboot, then run:
 
 ```sh
-linux-armer doctor userspace --feature bluetooth
-linux-armer doctor hardware bluetooth
+lexr doctor userspace --feature bluetooth
+lexr doctor hardware bluetooth
 ```
 
 Confirm that the desktop can enable Bluetooth, discover a test device, pair,
@@ -89,8 +89,8 @@ steps, which are not capabilities claimed by the CLI.
 Preview and restore a recorded application with:
 
 ```sh
-sudo linux-armer handoff restore <receipt-id> --target-root / --dry-run
-sudo linux-armer handoff restore <receipt-id> \
+sudo lexr handoff restore <receipt-id> --target-root / --dry-run
+sudo lexr handoff restore <receipt-id> \
   --target-root / \
   --confirm '<exact phrase from the current restore dry run>'
 ```
@@ -99,7 +99,7 @@ Restore uses its target receipt and does not accept a hand-off store. When the
 imported hand-off is no longer needed, preview its removal from the same store:
 
 ```sh
-linux-armer handoff purge <id> --store "$HANDOFF_STORE" --dry-run
+lexr handoff purge <id> --store "$HANDOFF_STORE" --dry-run
 ```
 
 Repeat with its confirmation and the same store. Purging the store does not

@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for explicitly mounting the SP11
 > evidence. Current operators use `image create`, `image validate`,
 > `kernel preflight`, `kernel install`, `userspace install`, `userspace status`,
 > `handoff`, `doctor`, and `clean`; see
-> [CLI ADR007](../../cli/linux-armer/docs/adr/adr-007-installed-system-handoff.md).
+> [Lexr ADR007](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-007-installed-system-handoff.md).
 > Native structural checks do not claim a successful USB-free hardware boot.
 
 ## Context

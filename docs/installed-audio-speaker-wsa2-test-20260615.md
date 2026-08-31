@@ -8,8 +8,8 @@ Last reviewed: 2026-08-30
 > topology. Current systems use the checksum-pinned FullIO v19c release; follow
 > [Bring Up Current Surface Pro 11 Audio](how-to/how-to-bring-up-audio.md),
 > including its explicit `USER_HOME`, and run
-> `linux-armer doctor userspace --feature audio --user-home "$USER_HOME"` followed by
-> `linux-armer doctor hardware audio`. Do not copy commands from this record
+> `lexr doctor userspace --feature audio --user-home "$USER_HOME"` followed by
+> `lexr doctor hardware audio`. Do not copy commands from this record
 > into a current system. In particular, do not repeat the platform driver
 > unbind/rebind experiment: this record shows that reprobe failed and a reboot
 > was required to restore the card.

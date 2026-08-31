@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > This directory is historical evidence for the `7.2-rc5-jg-0` build. It is
-> not a current `linux-armer` input or annotation-regeneration procedure.
+> not a current `lexr` input or annotation-regeneration procedure.
 
 The upstream branch already carried the Surface Pro 11 Wi-Fi, Denali and
 stubble-path changes. This directory recorded only the Ubuntu `check-config`

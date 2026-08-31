@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for enabling the SoundWire feedb
 > and are non-prescriptive. Use `kernel build`, `kernel preflight`,
 > `kernel install`, `userspace install audio`, `userspace status`, and
 > `doctor hardware audio`; see
-> [CLI ADR010](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md).
+> [Lexr ADR010](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-010-native-cli-workflow-migration.md).
 > This notice does not alter the specific hardware result recorded here.
 
 # ADR0063: SP11 Feedback-Port Offset2 Boot Param (Windows Offset2 Parity)

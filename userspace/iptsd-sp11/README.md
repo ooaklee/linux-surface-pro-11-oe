@@ -8,7 +8,7 @@ DFT stylus stream and creates the standard pen input device.
 The pinned source is upstream `iptsd` v3.1.0 at commit
 `a83bc1232f7096f8b33b50fdbda249cd640de670`, tree
 `06c6e812873e117930eca60b8a32cec40fd13281`. See `SOURCE.env` for the
-machine-readable identity. The native `linux-armer userspace build iptsd`
+machine-readable identity. The native `lexr userspace build iptsd`
 domain verifies both identifiers before building the two required ARM64
 binaries.
 
@@ -32,12 +32,12 @@ binaries. Do not distribute only the binaries.
 ## Build
 
 ```sh
-linux-armer userspace build iptsd \
+lexr userspace build iptsd \
   --repository-root . \
-  --output-dir build/linux-armer/iptsd
+  --output-dir build/lexr/iptsd
 
-linux-armer userspace install iptsd \
-  --from build/linux-armer/iptsd/stage \
+lexr userspace install iptsd \
+  --from build/lexr/iptsd/stage \
   --dry-run
 ```
 

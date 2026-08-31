@@ -14,8 +14,8 @@ Validate the generated installation ISO before using it, then inspect the
 installed kernel and platform-firmware state after boot:
 
 ```sh
-linux-armer image validate <generated.iso>
-linux-armer doctor userspace --feature kernel --feature firmware
+lexr image validate <generated.iso>
+lexr doctor userspace --feature kernel --feature firmware
 ```
 
 The image validator checks ISO structure and version-bound boot artefacts. The

@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for the right speaker silence on
 > operators use the reviewed FullIO release through
 > `userspace audio release prepare`, `userspace audio release validate`, `userspace install audio`,
 > `doctor hardware audio`, and `clean`; see
-> [CLI ADR019](../../cli/linux-armer/docs/adr/adr-019-native-audio-release-preparation.md).
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
 
 # ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cache
 

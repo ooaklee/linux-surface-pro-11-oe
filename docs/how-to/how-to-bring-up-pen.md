@@ -2,7 +2,7 @@
 id: how-to-bring-up-pen
 title: "Build and Validate Surface Pro 11 Pen Support"
 # prettier-ignore
-description: Build, install and validate the maintained IPTSD integration through linux-armer.
+description: Build, install and validate the maintained IPTSD integration through Lexr.sh.
 ---
 
 # How To: Build and Validate Surface Pro 11 Pen Support
@@ -16,8 +16,8 @@ while qualifying a new build.
 ## Inspect compatibility
 
 ```sh
-linux-armer userspace show iptsd-v1
-linux-armer doctor userspace --feature iptsd
+lexr userspace show iptsd-v1
+lexr doctor userspace --feature iptsd
 ```
 
 The catalogue reports the component's support grade and compatible kernel
@@ -28,20 +28,20 @@ generation. Stop if the selected kernel falls outside that contract.
 Download the published, checksum-verified release:
 
 ```sh
-linux-armer userspace pull iptsd --cache-dir build/linux-armer/userspace
+lexr userspace pull iptsd --cache-dir build/lexr/userspace
 IPTSD_INPUT="<exact-directory-printed-by-userspace-pull>"
 ```
 
 Or build the pinned source using the maintained container policy:
 
 ```sh
-linux-armer userspace build iptsd \
-  --output-dir build/linux-armer/iptsd
-IPTSD_INPUT="build/linux-armer/iptsd/stage"
+lexr userspace build iptsd \
+  --output-dir build/lexr/iptsd
+IPTSD_INPUT="build/lexr/iptsd/stage"
 ```
 
 The IPTSD build executes when invoked; unlike the camera build it has no dry-run
-mode. Its verified payload is `build/linux-armer/iptsd/stage` for the explicit
+mode. Its verified payload is `build/lexr/iptsd/stage` for the explicit
 output above. Whichever acquisition route you choose, keep its corresponding
 `IPTSD_INPUT` value for installation; a pulled release is not installed from
 the native build path.
@@ -49,10 +49,10 @@ the native build path.
 ## Install
 
 ```sh
-linux-armer userspace install iptsd \
+lexr userspace install iptsd \
   --from "$IPTSD_INPUT" \
   --dry-run
-sudo linux-armer userspace install iptsd \
+sudo lexr userspace install iptsd \
   --from "$IPTSD_INPUT" \
   --yes
 ```
@@ -65,7 +65,7 @@ commands. Do not run diagnostic pen processors while IPTSD owns the device.
 After rebooting into the matching kernel:
 
 ```sh
-linux-armer doctor userspace --feature iptsd
+lexr doctor userspace --feature iptsd
 ```
 
 Then test hover, contact, pressure, both buttons, eraser, edge accuracy,

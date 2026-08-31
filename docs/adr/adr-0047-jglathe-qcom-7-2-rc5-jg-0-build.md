@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for building Johan G.'s qcom-x1e
 > commands below are historical evidence. Use `kernel build`,
 > `kernel preflight`, `kernel install`, `kernel release prepare`, and
 > `kernel release validate`; annotation regeneration remains kernel-source maintainer work. See
-> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 
 # ADR0047: JG 7.2-rc5-jg-0 Kernel Build
 

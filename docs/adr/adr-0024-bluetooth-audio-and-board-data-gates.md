@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for separating Surface Pro 11 Wi
 > `doctor hardware wifi bluetooth audio`, private `handoff import` and `handoff apply`,
 > `userspace install`, `userspace status`, `userspace audio release prepare`,
 > `userspace audio release validate`, and `clean`.
-> See [CLI ADR010](../../cli/linux-armer/docs/adr/adr-010-native-cli-workflow-migration.md).
+> See [Lexr ADR010](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-010-native-cli-workflow-migration.md).
 
 ## Context
 

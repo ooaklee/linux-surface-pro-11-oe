@@ -2,14 +2,14 @@
 id: how-to-reinstall-patched-kernel-from-usb
 title: "Reinstall the Patched Kernel from USB or a Release"
 # prettier-ignore
-description: How-to guide for validating, preflighting, and installing a Surface Pro 11 qcom-x1e kernel bundle with linux-armer.
+description: How-to guide for validating, preflighting, and installing a Surface Pro 11 qcom-x1e kernel bundle with Lexr.sh.
 ---
 
 # How To: Reinstall the Patched Kernel from USB or a Release
 
 Last reviewed: 2026-08-30
 
-Use the `linux-armer` companion to install one version-bound Surface Pro 11
+Use the `lexr` companion to install one version-bound Surface Pro 11
 kernel package set while retaining a known-good qcom-x1e fallback. The native
 installer does not use repository scripts, install an out-of-tree touchscreen
 bundle, change the default GRUB entry, or reboot the computer.
@@ -21,8 +21,8 @@ old `sp11v3` bundle or copy separate `gpi.ko`, `spi-geni-qcom.ko`, or
 ## Prerequisites
 
 - Root access for the final installation only.
-- A Linux ARM64 `linux-armer` executable. A live image created with
-  `--companion-source-dir` carries it at
+- A Linux ARM64 `lexr` executable. A live image created with
+  `--companion-source-dir` carries the compatibility executable at
   `/cdrom/sp11/companion/bin/linux-arm64/linux-armer`; an image built without
   that explicit option does not contain the companion.
 - One coherent Surface `linux-image` and `linux-modules` package pair. Matching
@@ -38,11 +38,11 @@ it:
 ```bash
 install -m 0755 \
   /cdrom/sp11/companion/bin/linux-arm64/linux-armer \
-  /tmp/linux-armer
-linux_armer=/tmp/linux-armer
+  /tmp/lexr
+LEXR=/tmp/lexr
 ```
 
-If `linux-armer` is already installed, use `linux_armer=linux-armer` instead.
+If `lexr` is already installed, use `LEXR=lexr` instead.
 
 ## 1. Obtain a verified bundle
 
@@ -51,10 +51,10 @@ If `linux-armer` is already installed, use `linux_armer=linux-armer` instead.
 List candidate releases, then download one exact package set:
 
 ```bash
-"$linux_armer" kernel release list
+"$LEXR" kernel release list
 
 bundle_dir="$PWD/kernel-bundle"
-"$linux_armer" kernel release download <release-tag> \
+"$LEXR" kernel release download <release-tag> \
   --output-dir "$bundle_dir" \
   --headers
 ```
@@ -71,7 +71,7 @@ closed-directory check:
 ```bash
 complete_release_dir="$PWD/complete-kernel-release"
 # Download every published asset into "$complete_release_dir" first.
-"$linux_armer" kernel release validate "$complete_release_dir"
+"$LEXR" kernel release validate "$complete_release_dir"
 ```
 
 That check also verifies corresponding source, explicit licence evidence,
@@ -93,7 +93,7 @@ cp /path/to/offline-release/SHA256SUMS "$bundle_dir/"
 Inspect the local pair before any privileged action:
 
 ```bash
-"$linux_armer" kernel inspect "$bundle_dir"
+"$LEXR" kernel inspect "$bundle_dir"
 ```
 
 ## 2. Identify the fallback ABI
@@ -113,7 +113,7 @@ device trees, initramfs, and GRUB evidence beneath the explicit target root.
 ## 3. Run the read-only preflight
 
 ```bash
-"$linux_armer" kernel preflight "$bundle_dir" \
+"$LEXR" kernel preflight "$bundle_dir" \
   --root / \
   --fallback-abi "$fallback_abi"
 ```
@@ -129,7 +129,7 @@ that guard on the live root.
 ## 4. Rehearse the installation
 
 ```bash
-"$linux_armer" kernel install "$bundle_dir" \
+"$LEXR" kernel install "$bundle_dir" \
   --root / \
   --fallback-abi "$fallback_abi" \
   --dry-run
@@ -144,7 +144,7 @@ Run the same request with explicit confirmation and the privilege already
 obtained by the caller:
 
 ```bash
-sudo "$linux_armer" kernel install "$bundle_dir" \
+sudo "$LEXR" kernel install "$bundle_dir" \
   --root / \
   --fallback-abi "$fallback_abi" \
   --yes
@@ -168,8 +168,8 @@ After boot, record the active ABI and run the read-only hardware checks:
 
 ```bash
 uname -r
-linux-armer doctor hardware
-linux-armer doctor userspace
+lexr doctor hardware
+lexr doctor userspace
 ```
 
 Structural success does not prove cold boot, suspend, pen, touch, Wi-Fi,
@@ -188,4 +188,4 @@ it cannot override live `uname` evidence for `/`.
 
 - [Prepare and validate kernel release artefacts](how-to-release-kernel-artifacts.md)
 - [Build a patched qcom-x1e kernel](how-to-build-patched-qcom-x1e-kernel.md)
-- [ADR016: Native kernel release preparation and v3 retirement](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md)
+- [ADR016: Native kernel release preparation and v3 retirement](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md)

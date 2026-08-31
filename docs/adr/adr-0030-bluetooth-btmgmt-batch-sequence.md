@@ -10,7 +10,7 @@ description: Architecture Decision Record (ADR) for using a scripted btmgmt batc
 > the former helper command. Use private `handoff import`, `handoff apply`,
 > `handoff restore`, and
 > `doctor hardware bluetooth`; see
-> [CLI ADR013](../../cli/linux-armer/docs/adr/adr-013-private-handoff-application-transactions.md).
+> [Lexr ADR013](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-013-private-handoff-application-transactions.md).
 
 ## Context
 

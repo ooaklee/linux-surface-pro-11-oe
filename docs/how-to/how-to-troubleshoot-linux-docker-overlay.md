@@ -2,21 +2,21 @@
 id: how-to-troubleshoot-linux-docker-overlay
 title: "Troubleshoot Docker Storage Failures on Linux Build Hosts"
 # prettier-ignore
-description: Diagnose Docker overlay and container-storage failures affecting native linux-armer builds.
+description: Diagnose Docker overlay and container-storage failures affecting native Lexr.sh builds.
 ---
 
 # How To: Troubleshoot Docker Storage Failures on Linux Build Hosts
 
 Last reviewed: 2026-08-30
 
-Use this procedure when `linux-armer kernel build` fails before the recipe runs
+Use this procedure when `lexr kernel build` fails before the recipe runs
 with a Docker overlay, snapshotter, mount or storage-driver error. These are
 daemon or host-storage failures, not kernel compilation failures.
 
 ## Collect read-only evidence
 
 ```sh
-linux-armer doctor --workspace .
+lexr doctor --workspace .
 docker version
 docker info
 docker system df
@@ -24,7 +24,7 @@ df -h .
 ```
 
 The Docker and filesystem commands are intentional bounded external host
-diagnostics. `linux-armer doctor` reports the minimum daemon and workspace
+diagnostics. `lexr doctor` reports the minimum daemon and workspace
 readiness needed by its workflows; it does not claim to inspect or repair the
 container engine's complete storage configuration.
 
@@ -35,9 +35,9 @@ private paths before sharing a report.
 ## Check scope
 
 ```sh
-linux-armer kernel build \
-  --work-dir build/linux-armer/kernel-work-storage-check \
-  --output-dir build/linux-armer/kernel-storage-check \
+lexr kernel build \
+  --work-dir build/lexr/kernel-work-storage-check \
+  --output-dir build/lexr/kernel-storage-check \
   --dry-run
 ```
 
@@ -58,11 +58,11 @@ daemon-wide failure when the real build is retried.
 After the daemon is healthy, retry with a fresh output directory:
 
 ```sh
-linux-armer doctor --workspace .
-linux-armer kernel build \
-  --work-dir build/linux-armer/kernel-work-storage-retry \
-  --output-dir build/linux-armer/kernel-storage-retry
-linux-armer kernel inspect build/linux-armer/kernel-storage-retry
+lexr doctor --workspace .
+lexr kernel build \
+  --work-dir build/lexr/kernel-work-storage-retry \
+  --output-dir build/lexr/kernel-storage-retry
+lexr kernel inspect build/lexr/kernel-storage-retry
 ```
 
 Do not fall back to an untracked host build. The native container workflow is

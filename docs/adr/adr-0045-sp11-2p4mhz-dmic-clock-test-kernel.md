@@ -9,7 +9,7 @@ description: Architecture Decision Record (ADR) for rebuilding the Surface Pro 1
 > retained as evidence of the isolated test kernel and is non-prescriptive. Use
 > `kernel build`, `kernel preflight`, `kernel install`, `kernel release prepare`,
 > and `kernel release validate`; see
-> [CLI ADR016](../../cli/linux-armer/docs/adr/adr-016-native-kernel-release-preparation.md).
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 > The native workflow does not broaden this ADR's recorded hardware result.
 
 # ADR0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel
