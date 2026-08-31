@@ -1,9 +1,40 @@
 # Surface Pro 11 Wi-Fi Test After Windows Firmware and Cold Boot - 2026-06-13
 
+Last reviewed: 2026-08-30
+
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.**
+> This record preserves the firmware and cold-boot observations made on 13 June
+> 2026. Its broad finish helper, copied firmware, patched-kernel proposal, and
+> workaround assumptions are historical and must not be used as current setup
+> or remediation guidance.
+
+## Current Read-Only Check
+
+Inspect the current static platform-firmware and Wi-Fi support state with:
+
+```sh
+lexr doctor userspace --feature firmware --feature wifi
+lexr doctor hardware wifi
+```
+
+The userspace doctor reads package and firmware files. The hardware doctor adds
+bounded PCI, driver, loaded device-tree, rfkill and interface evidence without
+changing the radio. Neither command extracts firmware, scans, associates, or
+proves traffic. Supplemental Wi-Fi commands and logs can expose SSIDs, BSSIDs,
+saved-network names, MAC addresses, and interface identifiers; redact them
+before sharing the output. Apply same-device platform firmware only through
+[Install Surface Pro 11 Platform Firmware](how-to/how-to-install-sp11-firmware.md).
+
 ## Context
 
 After the installed Ubuntu boot was stable on `7.0.0-32-qcom-x1e`, firmware was
 copied from the mounted Windows NTFS partition with:
+
+> [!CAUTION]
+> The broad finish helper below is retained verbatim as historical evidence. It
+> is not a current installation command and must not be run as present-day
+> guidance.
 
 ```bash
 sudo ./scripts/finish-sp11-installed-system.sh \
@@ -75,13 +106,18 @@ The transient post-firmware MHI/global-reset failure appears recoverable by a
 full cold boot. If it recurs consistently, retest with `adsp_dtb.mbn` disabled
 to isolate aDSP bring-up from Wi-Fi PCIe/MHI bring-up.
 
-## Next Steps
+## Historical Next Steps
 
-Continue with the patched qcom-x1e kernel experiment from
+> [!CAUTION]
+> The patch proposal below is preserved as part of the dated investigation and
+> is superseded as current user guidance.
+
+The recorded proposal was to continue with the patched qcom-x1e kernel
+experiment from
 [ADR019](adr/adr-0019-patched-qcom-x1e-kernel-for-wifi-rfkill.md) and
 [the patched-kernel how-to](how-to/how-to-build-patched-qcom-x1e-kernel.md).
 
-The patched kernel must provide both:
+At the time, the proposed patched kernel needed both:
 
 - ath12k support for `disable-rfkill`,
 - `disable-rfkill;` on the Denali WCN7850 `wifi@0` device-tree node.

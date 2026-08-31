@@ -47,7 +47,7 @@ this value unless new device-side evidence demonstrates a regression. The
 4.8 MHz value is no longer the preferred default.
 
 The `7.1.3-jg-1dmic2p4` ABI and prerelease remain useful as the isolated
-validation artifact. Future general-purpose builds do not need to retain the
+validation artefact. Future general-purpose builds do not need to retain the
 `dmic2p4` experiment suffix once the accepted property is integrated into
 their normal versioned patch set.
 

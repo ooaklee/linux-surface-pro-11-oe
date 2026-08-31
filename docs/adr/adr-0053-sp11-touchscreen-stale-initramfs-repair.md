@@ -56,7 +56,7 @@ boot the touch path fails with `CH START completion timeout` (ADR-0049).
 The installer will **repair** the stale initramfs as part of the install, not
 merely refuse it. Concretely, `install-sp11-touchscreen.sh` now:
 
-1. **Neutralizes the stock in-tree modules before `depmod`.** For each
+1. **Neutralises the stock in-tree modules before `depmod`.** For each
    compression variant of `kernel/drivers/dma/qcom/gpi.ko*` and
    `kernel/drivers/spi/spi-geni-qcom.ko*`, the script resolves the usr-merged
    path and either `dpkg-divert --rename`s the file when it is dpkg-owned, or
@@ -91,7 +91,7 @@ merely refuse it. Concretely, `install-sp11-touchscreen.sh` now:
   rebuilds clean even if the stock files are later reintroduced.
 - The repair is per-ABI: a new kernel ABI has a fresh module tree, so the
   installer must be re-run for that release, matching DKMS-style out-of-tree
-  module behavior.
+  module behaviour.
 - Reverting to stock modules requires removing the diversion
   (`dpkg-divert --remove --rename`) and reinstalling the kernel modules
   package, then rebuilding the initramfs.

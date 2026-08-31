@@ -5,6 +5,13 @@ title: "ADR030: Bluetooth btmgmt Batch Sequence"
 description: Architecture Decision Record (ADR) for using a scripted btmgmt batch sequence when setting the Surface Pro 11 Bluetooth public address.
 ---
 
+> **Current operator notice (2026-08-30):** This batch sequence was disproved
+> by later field testing and is retained only as historical evidence. Do not run
+> the former helper command. Use private `handoff import`, `handoff apply`,
+> `handoff restore`, and
+> `doctor hardware bluetooth`; see
+> [Lexr ADR013](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-013-private-handoff-application-transactions.md).
+
 ## Context
 
 [ADR027](adr-0027-bluetooth-public-address.md) chose a trusted

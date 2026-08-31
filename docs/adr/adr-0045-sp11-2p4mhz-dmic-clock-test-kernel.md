@@ -5,6 +5,13 @@ title: "ADR0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel"
 description: Architecture Decision Record (ADR) for rebuilding the Surface Pro 11 Stubble-wrapped kernel with a 2.4 MHz digital microphone clock as a co-installable test kernel.
 ---
 
+> **Current operator notice (2026-08-30):** The builder excerpt below is
+> retained as evidence of the isolated test kernel and is non-prescriptive. Use
+> `kernel build`, `kernel preflight`, `kernel install`, `kernel release prepare`,
+> and `kernel release validate`; see
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
+> The native workflow does not broaden this ADR's recorded hardware result.
+
 # ADR0045: Surface Pro 11 2.4 MHz DMIC Clock Test Kernel
 
 ## Status
@@ -56,7 +63,7 @@ package is therefore named:
 linux-image-7.1.3-jg-1dmic2p4-qcom-x1e
 ```
 
-Use a dedicated Docker work volume and artifact directory so the experiment
+Use a dedicated Docker work volume and artefact directory so the experiment
 does not reuse or overwrite the normal 7.1.3-jg-1 build output:
 
 ```bash

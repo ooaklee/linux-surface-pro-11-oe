@@ -48,4 +48,4 @@ older filename or future upstream candidate filenames.
 
 The default candidate order intentionally targets the verified X1E Surface Pro
 11 class. LCD, 5G, X1P, or other variants may need a different explicit DTB and
-should get their own ADR before becoming default behavior.
+should get their own ADR before becoming default behaviour.

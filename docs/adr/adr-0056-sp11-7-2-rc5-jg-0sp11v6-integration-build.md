@@ -82,7 +82,7 @@ Build: `docker-sp11-qcom-x1e-kernel-integration-7.2rc-sp11-v6` on
 
 - `uname -r` on the device: `7.2-rc5-jg-0sp11v6-qcom-x1e`
 - `sp11-wsa-routing.service` enabled, active, exit 0
-- Release assets hash-verified against the build artifacts
+- Release assets hash-verified against the build artefacts
   (`SHA256SUMS`), including the source tarball
 
 ## References

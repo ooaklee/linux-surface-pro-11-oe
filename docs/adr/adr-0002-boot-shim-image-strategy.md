@@ -30,7 +30,7 @@ do not solve the first-boot device-tree requirement.
 We will build a raw USB disk image containing:
 
 - an ARM64 removable-media EFI System Partition with standalone GRUB,
-- a Linux data partition labeled `SP11DATA`,
+- a Linux data partition labelled `SP11DATA`,
 - the Ubuntu Snapdragon X concept ISO,
 - the compiled Surface Pro 11 Denali DTB,
 - optional local payload files for offline testing.

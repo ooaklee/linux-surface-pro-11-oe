@@ -5,6 +5,14 @@ title: "ADR0063: SP11 Feedback-Port Offset2 Boot Param (Windows Offset2 Parity)"
 description: Architecture Decision Record (ADR) for enabling the SoundWire feedback-port Offset2 parity from kernel commit 5cf86f71 through the opt-in soundwire_qcom.sp11_feedback_active_offset2_zero module parameter on the SP11 GRUB command line, eliminating volume-change pops and stream-start static on the 7.2.0-jg-0sp11v10 line.
 ---
 
+> **Current operator notice (2026-08-30):** Former broad installer and audio
+> migration helper names below are preserved as evidence of the v10 transition
+> and are non-prescriptive. Use `kernel build`, `kernel preflight`,
+> `kernel install`, `userspace install audio`, `userspace status`, and
+> `doctor hardware audio`; see
+> [Lexr ADR010](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-010-native-cli-workflow-migration.md).
+> This notice does not alter the specific hardware result recorded here.
+
 # ADR0063: SP11 Feedback-Port Offset2 Boot Param (Windows Offset2 Parity)
 
 ## Status
@@ -64,7 +72,7 @@ static immediately before system sounds was audible on v10.
   reads `Y`.
 - Rollback is a one-line GRUB edit followed by `update-grub`, or the migration
   script's restore path.
-- Unrelated kernel configurations are unaffected; the module behavior changes
+- Unrelated kernel configurations are unaffected; the module behaviour changes
   only when the parameter is present.
 - Migration tooling is recorded in
   [a864d31](https://github.com/ooaklee/linux-surface-pro-11-oe/commit/a864d31)

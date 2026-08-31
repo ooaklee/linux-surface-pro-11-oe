@@ -28,7 +28,7 @@ ADR0059 delivered the evidence-gated `g6-pen` userspace daemon with hardware
 output disabled until presence and position could be validated. Testing on a
 Surface Pro 11 has now established that the report `0x0c` FF00 max-energy
 decode can gate presence with energy thresholds. Per-bank index hysteresis
-stabilizes the decoded position, and a one-second stale watchdog releases the
+stabilises the decoded position, and a one-second stale watchdog releases the
 pen when it leaves range without a final decodable cycle. In practice,
 out-of-range transitions do not produce usable cycles, so release normally
 arrives through this stale path.
@@ -41,7 +41,7 @@ testing, the lift path exposed a pacer bug: cancelling the queued position
 frames also swallowed the generated tap frames. Tap frames marked with
 `G6_VALID_TAP` now bypass pacing and reach uinput as `BTN_TOUCH` down and up.
 
-Desktop behavior remains incomplete. It has not yet been demonstrated that a
+Desktop behaviour remains incomplete. It has not yet been demonstrated that a
 compositor converts those `BTN_TOUCH` events into clicks, and the correct
 right-click button semantics remain unvalidated.
 
@@ -52,7 +52,7 @@ hover and position handling need not wait for desktop tap-to-click parity.
 
 Follow-up work will complete and validate:
 
-- tap-to-click behavior on a desktop compositor;
+- tap-to-click behaviour on a desktop compositor;
 - pen button and eraser mapping; and
 - production enablement of `g6-pen.conf`.
 

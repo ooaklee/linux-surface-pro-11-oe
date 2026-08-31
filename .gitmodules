@@ -1,0 +1,3 @@
+[submodule "cli/lexr"]
+	path = cli/lexr
+	url = https://github.com/ooaklee/lexr.sh.git

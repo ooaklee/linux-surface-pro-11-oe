@@ -8,8 +8,9 @@ DFT stylus stream and creates the standard pen input device.
 The pinned source is upstream `iptsd` v3.1.0 at commit
 `a83bc1232f7096f8b33b50fdbda249cd640de670`, tree
 `06c6e812873e117930eca60b8a32cec40fd13281`. See `SOURCE.env` for the
-machine-readable identity. `scripts/build-sp11-iptsd-docker.sh` verifies both
-identifiers before building the two required ARM64 binaries.
+machine-readable identity. The native `lexr userspace build iptsd`
+domain verifies both identifiers before building the two required ARM64
+binaries.
 
 The integration supports the X1P/LCD (`045e:0c80`) and X1E/OLED (`045e:0c83`)
 variants through two device presets. They disable `iptsd` touchscreen
@@ -19,7 +20,7 @@ metadata feature report rather than hard-coded configuration.
 
 The udev, systemd, and sleep lifecycle is adapted from the MIT-licensed
 `turbineBMW/surface-pro-11-linux` integration at commit
-`05e5335bc72476d44390336701cf03efa5fd0165`; its license is retained as
+`05e5335bc72476d44390336701cf03efa5fd0165`; its licence is retained as
 `LICENSE.integration`. That project provides useful hardware evidence, but its
 transport differs from this kernel bridge and does not replace validation of
 this integration.
@@ -31,10 +32,19 @@ binaries. Do not distribute only the binaries.
 ## Build
 
 ```sh
-./scripts/build-sp11-iptsd-docker.sh --copy-to-payload
+lexr userspace build iptsd \
+  --repository-root . \
+  --output-dir build/lexr/iptsd
+
+lexr userspace install iptsd \
+  --from build/lexr/iptsd/stage \
+  --dry-run
 ```
 
-The payload installer verifies `SHA256SUMS`, installs the binaries under
+The build executes when invoked and has no dry-run mode. Its closed, verified
+payload is published beneath the explicit output as `stage`. Review the
+installer dry run before repeating it with elevated privileges and `--yes`.
+The installer verifies `SHA256SUMS`, installs the binaries under
 `/usr/local/libexec`, installs device-specific presets under
 `/usr/local/share/iptsd`, and installs the lifecycle rules. The OpenEmbedded
 recipe builds the same pinned iptsd commit against the dependency versions in

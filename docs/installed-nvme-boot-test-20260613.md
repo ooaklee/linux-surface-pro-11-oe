@@ -1,5 +1,29 @@
 # Surface Pro 11 Installed NVMe Boot Test - 2026-06-13
 
+Last reviewed: 2026-08-30
+
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.**
+> This record preserves the installed-boot result observed on 13 June 2026.
+> Its helper references, paths, workaround assumptions, and next step describe
+> that test only and must not be followed on a current installation.
+
+## Current Read-Only Checks
+
+Validate the generated installation ISO before using it, then inspect the
+installed kernel and platform-firmware state after boot:
+
+```sh
+lexr image validate "<generated.iso>"
+lexr doctor userspace --feature kernel --feature firmware
+```
+
+The image validator checks ISO structure and version-bound boot artefacts. The
+doctor reads static filesystem and package state. Neither command proves that
+the machine can boot from NVMe, validates a live GRUB transition, or changes
+the installed system. NVMe boot remains an intentional physical qualification
+boundary and is not a capability claimed by the CLI.
+
 ## Context
 
 The successful live-USB path from
@@ -38,7 +62,12 @@ therefore needs `devicetree /sp11-denali.dtb`. This is tracked by
 This does not yet prove full hardware support. Wi-Fi, Bluetooth, touchscreen,
 audio, camera, and suspend still require post-install bring-up and validation.
 
-## Next Steps
+## Historical Next Step (Superseded)
+
+> [!CAUTION]
+> The broad installed-system finish helper described below is retired as
+> current guidance. The paragraph is retained only to preserve the dated test
+> record; do not run that helper on a current installation.
 
 Run the installed-system finish helper after booting from NVMe. That helper
 installs firmware, applies the temporary WCN7850 Wi-Fi board-file fixup, and

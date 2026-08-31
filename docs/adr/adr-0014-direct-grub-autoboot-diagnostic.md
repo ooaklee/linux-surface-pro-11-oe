@@ -14,7 +14,7 @@ show the GRUB menu, but the default entry did not auto-boot after the configured
 timeout.
 
 The Surface Flex Keyboard backlight key can still cycle brightness modes. That
-shows the keyboard has power and local keyboard or firmware behavior, but it
+shows the keyboard has power and local keyboard or firmware behaviour, but it
 does not prove that normal key events are reaching GRUB.
 
 Because the GRUB timeout also does not advance into the default entry, buying a
@@ -25,7 +25,7 @@ an input event that keeps GRUB from timing out.
 ## Decision
 
 The USB image builder will keep the normal interactive GRUB menu as the default
-behavior, but add an optional `--grub-mode direct` diagnostic mode.
+behaviour, but add an optional `--grub-mode direct` diagnostic mode.
 
 Direct mode embeds a GRUB config that immediately executes the same USB-safe
 `casper` `iso-scan` path used by the first menu entry:

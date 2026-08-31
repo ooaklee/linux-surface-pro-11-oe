@@ -2,7 +2,7 @@
 id: adr-0051-release-and-tag-cleanup
 title: "ADR0051: Remove Broken or Incorrect Releases and Tags"
 # prettier-ignore
-description: Decision record for auditing the project's GitHub releases and tags, removing artifacts with false functionality or provenance, and preserving valid historical releases.
+description: Decision record for auditing the project's GitHub releases and tags, removing artefacts with false functionality or provenance, and preserving valid historical releases.
 ---
 
 # ADR0051: Remove Broken or Incorrect Releases and Tags
@@ -10,7 +10,7 @@ description: Decision record for auditing the project's GitHub releases and tags
 ## Status
 
 Accepted and executed (2026-08-07). Amended the same day to record the names
-and validation rules for the authorized experimental r1 successors.
+and validation rules for the authorised experimental r1 successors.
 
 ## Context
 
@@ -29,7 +29,7 @@ reproducible release:
   initramfs, causing a clean installation to report `Invalid proto 9`.
 
 That discovery required a broader question: whether other historical releases
-or tags also made claims that their artifacts, provenance, or tagged source did
+or tags also made claims that their artefacts, provenance, or tagged source did
 not support. Removing only the most recent release would leave earlier known
 failures available for new users to install.
 
@@ -48,7 +48,7 @@ For each release, the audit:
 5. compared checksum entries with the actual uploaded asset names;
 6. inspected the tagged tree for the support files claimed by the release;
 7. compared functionality claims with the device evidence and later ADRs; and
-8. distinguished a superseded but valid experiment from an artifact known to
+8. distinguished a superseded but valid experiment from an artefact known to
    be broken or incorrectly identified.
 
 Age or supersession alone was not grounds for deletion. A historical release
@@ -119,7 +119,7 @@ It never had a GitHub release and accurately marks the accepted, validated
 7.2-rc5 build-support change documented by ADR0047. An unpublished source tag
 is not incorrect merely because it has no binary release.
 
-The two retained dirty-manifest releases are legacy artifacts, not templates
+The two retained dirty-manifest releases are legacy artefacts, not templates
 for future publication. Their tags correctly identify the commits recorded by
 their manifests, and their primary claims are not known to be false, but the
 uncommitted build-time support-tree state cannot be reconstructed from the tag.
@@ -175,16 +175,16 @@ For each selected release:
 4. verify independently that the release, remote tag, and local tag are all
    absent; and
 5. remove live documentation links or amend historical ADRs to state that the
-   artifact was removed.
+   artefact was removed.
 
 Do not move a broken public tag to a corrected commit and do not reuse its
-name. A corrected artifact must receive a new immutable tag so caches, mirrors,
+name. A corrected artefact must receive a new immutable tag so caches, mirrors,
 and prior audit records cannot confuse the two releases.
 
 The corrective standalone kernel/module bundle is named
 `sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`, and the corrective image is named
 `sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1`. The `-r1` suffix identifies
-new immutable public artifacts; it does not change the installable
+new immutable public artefacts; it does not change the installable
 `7.2-rc5-jg-0sp11v3-qcom-x1e` kernel ABI. Neither retired original name may be
 recreated.
 
@@ -211,7 +211,7 @@ manifest support commit with both the local and remote tag targets.
 Touchscreen releases additionally follow the exact-ABI module, DTB,
 initramfs, and provenance gates in ADR0050.
 
-The project owner authorized the fresh r1 kernel and image as experimental
+The project owner authorised the fresh r1 kernel and image as experimental
 prereleases while ADR0050's clean-install hardware matrix is outstanding. This
 is a distribution exception, not a hardware qualification. The r1 notes must
 disclose the outstanding matrix and require a known-good fallback kernel and
@@ -249,7 +249,7 @@ before deleting the remote release. Binary assets remain excluded.
 
 ## Consequences
 
-- New users cannot accidentally download artifacts already known to be broken
+- New users cannot accidentally download artefacts already known to be broken
   or incorrectly identified.
 - The public release list is shorter but more trustworthy.
 - Historical reasoning remains available in git and the ADRs even though the
@@ -280,7 +280,7 @@ and caches with conflicting histories.
 ### Delete every historical release
 
 Rejected. Several older releases have matching tag provenance and bounded,
-validated purposes. Removing correct artifacts would discard useful rollback
+validated purposes. Removing correct artefacts would discard useful rollback
 and diagnostic options without improving the accuracy of the remaining
 release set.
 
@@ -292,10 +292,10 @@ manifest.
 
 ## Related
 
-- [ADR0026: Prebuilt Kernel Release Artifacts](adr-0026-prebuilt-kernel-release-artifacts.md)
+- [ADR0026: Prebuilt Kernel Release Artefacts](adr-0026-prebuilt-kernel-release-artifacts.md)
 - [ADR0038: Split Compressed Live Image Release Assets](adr-0038-split-compressed-live-image-release-assets.md)
 - [ADR0042: Surface Pro 11 Touchscreen Integration Troubleshooting](adr-0042-sp11-touchscreen-troubleshooting.md)
 - [ADR0044: Surface Pro 11 UCM Uses One WSA Macro and Two Microphone Channels](adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
 - [ADR0047: JG 7.2-rc5-jg-0 Kernel Build](adr-0047-jglathe-qcom-7-2-rc5-jg-0-build.md)
 - [ADR0050: Surface Pro 11 Touchscreen Clean-Install and Release Flow](adr-0050-sp11-touchscreen-clean-install-release-flow.md)
-- [Release Prebuilt Kernel Artifacts](../how-to/how-to-release-kernel-artifacts.md)
+- [Release Prebuilt Kernel Artefacts](../how-to/how-to-release-kernel-artifacts.md)

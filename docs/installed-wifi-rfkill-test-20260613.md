@@ -1,5 +1,29 @@
 # Surface Pro 11 Installed Wi-Fi rfkill Test - 2026-06-13
 
+Last reviewed: 2026-08-30
+
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.**
+> This record preserves the Wi-Fi rfkill failure observed on 13 June 2026. Its
+> helper, ad hoc module scan, DTB proposal, kernel assumptions, and next steps
+> are historical and must not be used as current remediation instructions.
+
+## Current Read-Only Check
+
+Inspect the current static Wi-Fi support state with:
+
+```sh
+lexr doctor userspace --feature wifi
+lexr doctor hardware wifi
+```
+
+The userspace doctor checks package and firmware files. The hardware doctor
+adds bounded PCI, driver, loaded device-tree, rfkill and interface evidence
+without changing the radio. Neither doctor scans, associates, reconnects, or
+proves traffic. Supplemental Wi-Fi commands and logs can expose SSIDs, BSSIDs,
+saved-network names, MAC addresses, and interface identifiers; redact them
+before sharing the output.
+
 ## Context
 
 After [the installed NVMe boot test](installed-nvme-boot-test-20260613.md),
@@ -38,14 +62,16 @@ This matches the Surface Pro 11 Arch bring-up notes: without extra ath12k and
 device-tree handling, Wi-Fi remains hard-blocked by rfkill even though the
 device can probe.
 
-## Next Steps
+## Historical Next Steps
 
-Check whether the installed Ubuntu ath12k module supports the `disable-rfkill`
-device-tree property. If it does, test adding `disable-rfkill;` to the
-`wifi@0` node under the WCN7850 PCIe port in `/boot/sp11-denali.dtb`.
+The recorded next step was to check whether the installed Ubuntu ath12k module
+supported the `disable-rfkill` device-tree property. If it did, the proposal
+was to test adding `disable-rfkill;` to the `wifi@0` node under the WCN7850
+PCIe port in `/boot/sp11-denali.dtb`.
 
 This is not a module parameter, so `modinfo` alone is not enough. A practical
-first check is to run the troubleshooting helper:
+first check in that investigation was the troubleshooting helper below. It is
+retained verbatim but is not a current recommendation:
 
 ```bash
 sudo ./scripts/troubleshoot-sp11-wifi-rfkill.sh --try-unblock

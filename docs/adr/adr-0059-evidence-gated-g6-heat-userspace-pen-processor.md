@@ -33,7 +33,7 @@ The Surface Pro 11 G6 touchscreen exposes a native HID pen descriptor, but the
 captured firmware traffic does not contain native pen report `0x01`. Windows
 instead consumes proprietary HEAT reports `0x0b`, `0x0c`, `0x0d`, and `0x1a`
 as a five-report cycle, with ordered `0x07` and `0x6e` sideband, and
-synthesizes the final pen report in software.
+synthesises the final pen report in software.
 
 The Phase-1 Windows HID-SPI and ETW investigation established enough structure
 to build a bounded parser and replayable transport:
@@ -41,7 +41,7 @@ to build a bounded parser and replayable transport:
 - report `0x0c` anchors the cycle, whose remaining core reports occur in six
   observed orderings;
 - the region-1, channel-6 kind-`0x5c` record contains two banks of fixed-size
-  DFT vectors whose strongest valid centers track the X and Y sensor axes;
+  DFT vectors whose strongest valid centres track the X and Y sensor axes;
 - generation changes, explicit transport boundaries, sequence gaps, and stale
   input must be authoritative safety events; and
 - native pressure, presence, fine position, barrel-button, eraser/tool, and
@@ -88,14 +88,14 @@ kernel interface limited to the versioned raw transport ABI.
   pressure, barrel and secondary buttons, eraser/tool state, and signed tilt
   remain hard-gated in code with no configuration escape hatch until their raw
   HEAT mappings are independently validated.
-- The uinput device advertises the synthesized processor contract: X/Y maxima
+- The uinput device advertises the synthesised processor contract: X/Y maxima
   `27388/18258` at 100 units/mm, pressure `0..4096`, and signed tilt
   `-9000..9000` at 5730 units/radian. Gated fields remain released or zero.
   Once enabled, each core position interval is emitted as four reports paced
   3.75 ms apart; lift and lifecycle boundaries always preempt the pacer.
 - Binary ABI replay and the reviewable `G6T1` text form are first-class inputs.
   Replay is unpaced and timestamp-driven so identical input produces identical
-  JSON output. Corpora containing report `0x6e` must be sanitized before they
+  JSON output. Corpora containing report `0x6e` must be sanitised before they
   are shared because that sideband may contain a device or pen identifier.
 - `meta-sp11` owns the OpenEmbedded recipe and systemd integration. The service
   waits for `/dev/g6ts-heat` and `/dev/uinput`, and the raw device permits only
@@ -111,7 +111,7 @@ are incomplete and are expected to evolve as captures improve. Userspace keeps
 unverified signal processing out of a privileged transport driver and supports
 sanitizers, deterministic corpus replay, and faster iteration.
 
-**Synthesize native report `0x01` directly from guessed fields (rejected).** No
+**Synthesise native report `0x01` directly from guessed fields (rejected).** No
 native `0x01` appeared in the captures, and the descriptor defines only the
 output contract, not how HEAT fields produce presence, pressure, tool state, or
 tilt.
@@ -138,17 +138,17 @@ and reduce the risk of later field-map work.
 - Kernel and userspace responsibilities are explicit: the kernel preserves raw
   records and lifecycle integrity, while userspace owns cycle assembly, signal
   processing, pacing, policy, and uinput emission.
-- Captured traffic can reproduce parser and state-machine behavior on systems
+- Captured traffic can reproduce parser and state-machine behaviour on systems
   without SP11 hardware. The P4-P8 corpus exercised 3,156 cycles with no
   sequence gaps, incomplete bundles, or unanchored records; one valid P4
   region-0 cycle was correctly rejected as unsupported.
-- Coarse center selection is not the proprietary fractional-position solver
+- Coarse centre selection is not the proprietary fractional-position solver
   and can differ by roughly 219 X or 217 Y HIMETRIC units after scaling. It
   must not be described as full pen parity.
 - Enabling hover requires a validated presence discriminator. Contact,
   pressure, buttons, eraser/tool state, and tilt require separate raw mappings
   and regression evidence.
-- The service becomes a required runtime component for synthesized G6 pen
+- The service becomes a required runtime component for synthesised G6 pen
   input and exclusively owns `/dev/g6ts-heat` while active. ABI versioning
   constrains coordinated kernel/userspace upgrades and concurrent diagnostics.
-- Unsanitized report `0x6e` data and replays that include it remain private.
+- Unsanitised report `0x6e` data and replays that include it remain private.

@@ -1,5 +1,19 @@
 # Surface Pro 11 Right Speaker Diagnostic Test - 2026-06-15
 
+Last reviewed: 2026-08-30
+
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.** This record
+> captures experiments against the retired `7.0.0-22-qcom-x1e` kernel and CRD
+> topology. Current systems use the checksum-pinned FullIO v19c release; follow
+> [Bring Up Current Surface Pro 11 Audio](how-to/how-to-bring-up-audio.md),
+> including its explicit `USER_HOME`, and run
+> `lexr doctor userspace --feature audio --user-home "$USER_HOME"` followed by
+> `lexr doctor hardware audio`. Do not copy commands from this record
+> into a current system. In particular, do not repeat the platform driver
+> unbind/rebind experiment: this record shows that reprobe failed and a reboot
+> was required to restore the card.
+
 ## Context
 
 After the audio topology was built and the card instantiated (ADR-0033 Track A),
@@ -218,6 +232,10 @@ attributed; it is part of the normal card assembly sequence.
 
 ### 9. Unbind/rebind attempt (failed)
 
+> **Do not run this experiment.** It removed the sound card and the attempted
+> rebind failed. The commands remain below solely to preserve what this dated
+> test actually did.
+
 ```bash
 echo -n 6b00000.codec | sudo tee /sys/bus/platform/drivers/wsa_macro/unbind
 # Card 0 disappears
@@ -241,7 +259,7 @@ cat /sys/class/hwmon/hwmon*/temp1_input
 # (empty — neither WSA884x amp reports temperature)
 ```
 
-This suggests the WSA884x amps may not be fully initialized at the hardware
+This suggests the WSA884x amps may not be fully initialised at the hardware
 level, even though they are `Attached` on the SoundWire bus.
 
 ## Result
@@ -294,10 +312,10 @@ of likelihood:
    It may corrupt registers controlling the right-channel DAPM path or the
    second DMA RX enable bit, while leaving the left channel functional.
 
-3. **Bootstrap sequence** — the WSA884x driver may not fully initialize the
+3. **Bootstrap sequence** — the WSA884x driver may not fully initialise the
    second amplifier (no temperature sensor readings observed for either amp).
 
-See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md) for the full
+See [ADR-0034](adr/adr-0034-wsa2-regcache-right-speaker.md) for the full
 hypothesis breakdown with investigation steps.
 
 ## Next Steps

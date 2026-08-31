@@ -39,7 +39,7 @@ The pipewire-pulse server stores the client-supplied linear value verbatim as
 the SPA `channelVolumes`; it applies no curve of its own. The taper is
 therefore applied entirely client-side, in `libpulse`
 (`pa_sw_volume_from_percent`) and in KDE's own volume math in `plasma-pa`.
-This is stock PulseAudio behavior, not Surface-specific, but the low end is
+This is stock PulseAudio behaviour, not Surface-specific, but the low end is
 too steep for this speaker setup and the top end is compressed (75% vs 100%
 differs by only 7.5 dB), matching the user report.
 

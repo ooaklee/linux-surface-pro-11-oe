@@ -5,6 +5,12 @@ title: "ADR0036: Right Speaker Audio via PipeWire audio.position Reorder"
 description: Architecture Decision Record (ADR) for mapping PipeWire channels onto the Surface Pro 11 four-slot speaker PCM.
 ---
 
+> **Current operator notice (2026-08-30):** The former PipeWire reorder and WSA
+> helper commands below are retained as dated audio evidence, not current
+> instructions. Use `userspace audio release prepare`,
+> `userspace audio release validate`, `userspace install audio`, `doctor hardware audio`, and `clean`; see
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
+
 # ADR0036: Right Speaker Audio via PipeWire audio.position Reorder
 
 ## Status
@@ -33,7 +39,7 @@ hypotheses.
 ## Discovery
 
 During testing on 2026-06-19, raw `speaker-test -D hw:0,1 -c 4` occasionally
-produced audio from the right speaker on ch2 (labeled `Rear Left` by ALSA).
+produced audio from the right speaker on ch2 (labelled `Rear Left` by ALSA).
 This happened after a sound card rebind put the DSP in a non-standard state.
 While the DAPM gate prevented the right DMA bit from being enabled through
 `amixer`, the physical channel ch2 was still capable of carrying audio when
@@ -57,7 +63,7 @@ With the default ordering `[ FL FR RL RR ]`:
 - ch2 = RL (Rear Left) → receives nothing (zeroed in matrix)
 - ch3 = RR (Rear Right) → receives nothing (zeroed in matrix)
 
-The right physical speaker is on ch2. With the default labeling, ch2 is
+The right physical speaker is on ch2. With the default labelling, ch2 is
 `RL` and receives no signal. The right input goes to ch1 (`FR`), which is
 DAPM-gated.
 
@@ -67,7 +73,7 @@ With the reordered labels `[ FL RL FR RR ]`:
 - ch2 = FR (Front Right) → receives left+right sum from mix-matrix
 - ch3 = RR (Rear Right) → receives nothing
 
-By labeling ch2 as `FR`, PipeWire's channelmix routes signal to it. The
+By labelling ch2 as `FR`, PipeWire's channelmix routes signal to it. The
 DAPM gate on the mixer control doesn't prevent this because PipeWire writes
 directly to the PCM buffer — the signal reaches the physical channel
 regardless of the mixer's DAPM state.
@@ -126,7 +132,7 @@ amixer -c "$CARD" sset 'SpkrRight PA' 31
 - Both speakers receive the same mono-summed signal — true stereo is not
   possible through this path without a kernel fix to the DAPM gate
 - The DAPM gate root cause in `lpass-wsa-macro.c` remains unresolved
-- If a future kernel update changes the DAPM behavior, the `audio.position`
+- If a future kernel update changes the DAPM behaviour, the `audio.position`
   reorder may need adjustment
 - The right speaker's PA Volume is set to maximum (31/31) — if this causes
   distortion at high volumes, it should be reduced
