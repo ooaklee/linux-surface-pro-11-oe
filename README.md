@@ -1,14 +1,22 @@
 # ARM64 Linux on Microsoft Surface Pro 11
 
-This repository is the OpenEmbedded integration, hardware-evidence and release
-channel for running ARM64 Linux on the Surface Pro 11. The command-line
-companion is
-[Lexr.sh](https://github.com/ooaklee/lexr.sh), maintained in its own repository
-and pinned here as the `cli/lexr` submodule. The supported path is the compiled
-`lexr` CLI; repository scripts are not part of the current operator workflow.
-Lexr publishes its own binaries, while kernels and related device-support
-artefacts retain their established
-[OE release URLs](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
+![Ubuntu with KDE Plasma desktop running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
+
+This repository is the experimental hardware-integration, evidence and release
+channel for ARM64 Linux on the Microsoft Surface Pro 11. It carries downstream
+kernel patch sets, device-support payloads, OpenEmbedded recipes, userspace
+integration sources, test records and architecture decisions for both the
+Snapdragon X Elite X1E/OLED and Snapdragon X Plus X1P/LCD variants.
+
+[Lexr.sh](https://github.com/ooaklee/lexr.sh) is the supported companion CLI.
+It turns the reviewed integration policy in this repository into guarded image,
+kernel, userspace, private hand-off and clean-up workflows. This repository
+pins the exact reviewed Lexr revision in the [`cli/lexr`](cli/lexr) submodule.
+The compiled `lexr` CLI is the supported operator path; repository scripts are
+not part of the current operator workflow. Lexr owns its source, issues and
+binary-only releases, while kernel and device-support releases remain on the
+established
+[OE release page](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
 
 > [!NOTE]
 > Lexr.sh remains private during the repository migration. Only authenticated
