@@ -7,11 +7,16 @@ description: Replace legacy Bluetooth address tooling with Lexr.sh's private sam
 
 # How To: Migrate Legacy Bluetooth Address Configuration
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 The old standalone Bluetooth address implementation is retired. Do not compile
 or install it. `lexr handoff apply` now owns the validated same-device
 address workflow and creates the required system integration itself.
+
+Before collecting, [initialise the Lexr submodule](../../README.md#build-the-cli)
+so that the canonical Windows collector is present. This requires an
+authenticated checkout while Lexr remains private; once it is public, ordinary
+anonymous submodule initialisation is sufficient.
 
 ## Migrate
 

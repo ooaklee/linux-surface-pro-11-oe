@@ -7,7 +7,7 @@ description: Build, inspect and qualify a new reviewed Surface Pro 11 kernel rev
 
 # How To: Repeat the Kernel Build for a New Release
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 Use this procedure after the maintained kernel branch or an intentionally
 reviewed source branch advances. A new build is a new provenance event: never
@@ -61,6 +61,13 @@ Follow [Prepare Kernel Release Artefacts](how-to-release-kernel-artifacts.md)
 for all required preparation inputs and release-note constraints.
 
 ## Build and validate test media
+
+The optional companion-source inclusion below requires the
+[initialised Lexr submodule](../../README.md#build-the-cli). While Lexr remains
+private, populating that submodule requires authenticated repository access;
+once it is public, ordinary anonymous submodule initialisation is sufficient.
+Omit `--companion-source-dir` when the source checkout is intentionally
+unavailable.
 
 ```sh
 lexr image create \

@@ -7,7 +7,7 @@ description: Collect and apply same-device platform firmware through Lexr.sh's p
 
 # How To: Install Surface Pro 11 Platform Firmware
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 Required platform firmware is proprietary and device-bound. The supported
 workflow collects an exact closed set from Windows on the same Surface, imports
@@ -16,7 +16,10 @@ guess public download locations or substitute files from another device.
 
 ## Collect on the same Surface
 
-From a private checkout on Windows:
+Before collecting, [initialise the Lexr submodule](../../README.md#build-the-cli)
+on Windows. This requires authenticated repository access while Lexr remains
+private; once it is public, ordinary anonymous submodule initialisation is
+sufficient. From the root of that checkout, run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `

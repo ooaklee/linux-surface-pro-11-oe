@@ -7,7 +7,7 @@ description: How-to guide for preparing a closed, checksummed Surface Pro 11 ker
 
 # How To: Prepare and Validate Kernel Release Artefacts
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 Use `lexr kernel release prepare` to turn one exact native kernel build
 into a new local release directory. Preparation is deliberately separate from
@@ -116,7 +116,7 @@ commit and tree from the build.
 Choose a tag-like release name and an absent output directory:
 
 ```bash
-release_name=sp11-qcom-x1e-7.2.0-jg-0sp11v19
+release_name=sp11-kernel-7.2.0-jg-0sp11v19
 release_dir="build/release/$release_name"
 
 lexr kernel release prepare \
@@ -185,9 +185,56 @@ the project's separate publication review. It does not verify a remote tag,
 prove reproducibility, grant publication authority, or qualify the kernel on
 Surface hardware.
 
-## 6. Review before publication
+## 6. Publish through the Lexr-owned workflow
 
-Before using the repository's explicitly authorised release process:
+Kernel publication automation lives in the standalone
+[`sp11-kernel-build.yml`](https://github.com/ooaklee/lexr.sh/blob/main/.github/workflows/sp11-kernel-build.yml)
+workflow, not in this repository. Dispatch it manually from Lexr's `main`
+branch. A build-only run is the appropriate first pass; request publication
+only after reviewing the selected source revision and its redistribution
+evidence. An explicit release name must begin with `sp11-kernel-`; otherwise
+the workflow derives that prefix and the ABI from the verified build.
+
+The workflow builds through the native CLI on the dedicated Linux
+`lexr-kernel` runner. When publication is requested, it materialises the exact
+source revision and tree from build provenance, prepares the closed release,
+and validates the resulting assets before they leave the build job.
+The retained build artefact contains only the verified Debian packages and
+their `SHA256SUMS` file. Raw build manifests containing absolute runner paths or
+the managed Docker volume identity remain job-local; the separately prepared,
+path-free release artefact is the publication authority.
+
+Cross-repository publication is deliberately constrained. It is available
+only when all of these controls are in place:
+
+- the manual dispatch runs from the exact `refs/heads/main` Lexr ref, and the
+  workflow refuses a publication request from any other ref;
+- Lexr stores `OE_RELEASE_TOKEN` as an Actions secret, with the fine-grained
+  token restricted to `ooaklee/linux-surface-pro-11-oe` and only the
+  repository `Contents: Read and write` permission selected beyond GitHub's
+  implicit metadata access; and
+- only the GitHub-hosted publication step can read that secret; the
+  self-hosted kernel build and pull-request validation cannot.
+
+Protect Lexr's `main` branch when the repository plan makes branch protection
+available. Before entering the secret-bearing step, the GitHub-hosted job
+revalidates the self-hosted builder's manifest release name, checksum set,
+required source and licence assets, experimental state, and `sp11-kernel-`
+namespace. It resolves OE `main` to an exact revision, refuses to reuse an
+existing release tag, and then uses `OE_RELEASE_TOKEN` to create a draft release
+against that revision in `ooaklee/linux-surface-pro-11-oe`. The hosted job
+verifies the new tag immediately, downloads every uploaded asset into a fresh
+directory, compares the complete local and remote digest sets, checks
+`SHA256SUMS`, and runs `lexr kernel release validate` against the downloaded
+bytes. It verifies the tag again immediately before promoting the draft as an
+experimental prerelease which is not marked latest.
+
+Kernel and device-support assets remain on this repository's established
+[release channel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases);
+they are never attached to a Lexr release. Lexr releases contain only its six
+compiled platform executables and their checksum manifest.
+
+Before requesting publication:
 
 1. Review `linux-armer-kernel-release-manifest.json` and `RELEASE-NOTES.md`.
 2. Confirm the source archive and licence evidence are suitable for
@@ -196,8 +243,8 @@ Before using the repository's explicitly authorised release process:
    hardware identifier, authenticated URL, or local path is present.
 4. Keep the release experimental and unsigned until the separate hardware
    matrix has passed.
-5. After publication, download every asset into a new empty directory and run
-   `lexr kernel release validate` against those downloaded bytes.
+5. After publication, download every asset from the OE release into a new
+   empty directory and run `lexr kernel release validate` against those bytes.
 
 Do not add or remove an asset after preparation. Any change requires a new
 fresh output directory so the manifest, generated notes, and checksum set are

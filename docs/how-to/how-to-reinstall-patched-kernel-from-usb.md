@@ -7,7 +7,7 @@ description: How-to guide for validating, preflighting, and installing a Surface
 
 # How To: Reinstall the Patched Kernel from USB or a Release
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 Use the `lexr` companion to install one version-bound Surface Pro 11
 kernel package set while retaining a known-good qcom-x1e fallback. The native
@@ -58,6 +58,12 @@ bundle_dir="$PWD/kernel-bundle"
   --output-dir "$bundle_dir" \
   --headers
 ```
+
+Without `--repository`, both commands use the established
+[`ooaklee/linux-surface-pro-11-oe` release channel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
+Use `--repository <owner/name>` only for an explicitly reviewed compatible
+alternative. Lexr's own release page contains CLI binaries and their checksum
+manifest, not kernel or device-support assets.
 
 The download command requires the selected packages to be covered by that
 release's `SHA256SUMS`, verifies their bytes, and writes the normal kernel

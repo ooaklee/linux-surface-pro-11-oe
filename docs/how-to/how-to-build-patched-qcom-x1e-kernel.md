@@ -7,7 +7,7 @@ description: Build and inspect the maintained Surface Pro 11 kernel with Lexr.sh
 
 # How To: Build a Patched qcom-x1e Kernel
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 `lexr kernel build` is the supported build path. It resolves the exact
 source revision, runs the maintained recipe in a Linux ARM64 container and
@@ -71,6 +71,13 @@ licence files, then follow
 [Prepare Kernel Release Artefacts](how-to-release-kernel-artifacts.md).
 
 ## Use the bundle in an image
+
+The optional companion-source inclusion below requires the
+[initialised Lexr submodule](../../README.md#build-the-cli). While Lexr remains
+private, populating that submodule requires authenticated repository access;
+once it is public, ordinary anonymous submodule initialisation is sufficient.
+Omit `--companion-source-dir` when the source checkout is intentionally
+unavailable.
 
 ```sh
 lexr image create \

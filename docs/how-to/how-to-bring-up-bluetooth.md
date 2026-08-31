@@ -7,7 +7,7 @@ description: Import and apply same-device Bluetooth material through Lexr.sh's p
 
 # How To: Bring Up Bluetooth
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 Bluetooth needs a public controller address and supporting material collected
 from the same Surface Pro 11. The maintained implementation is internal to
@@ -15,8 +15,10 @@ from the same Surface Pro 11. The maintained implementation is internal to
 
 ## Collect the private hand-off on Windows
 
-From a private repository checkout on the same Surface, open PowerShell and
-run:
+[Initialise the Lexr submodule](../../README.md#build-the-cli) on the same
+Surface. This requires authenticated repository access while Lexr remains
+private; once it is public, ordinary anonymous submodule initialisation is
+sufficient. Open PowerShell from the root of that checkout and run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `

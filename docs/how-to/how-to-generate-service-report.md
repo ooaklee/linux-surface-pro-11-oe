@@ -7,7 +7,7 @@ description: Collect and import the strict same-device Windows hand-off accepted
 
 # How To: Collect a Private Surface Pro 11 Windows Hand-off
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 Use the canonical Windows collector to create the strict, device-bound input
 accepted by `lexr handoff import`. This is not a general public service
@@ -16,8 +16,10 @@ report: its contents are private and proprietary.
 ## Before you begin
 
 - Boot Windows on the Surface that will receive the material.
-- Use a private checkout containing
-  `cli/lexr/tools/collect-sp11-windows-handoff.ps1`.
+- [Initialise the Lexr submodule](../../README.md#build-the-cli) so that
+  `cli/lexr/tools/collect-sp11-windows-handoff.ps1` is present. This requires
+  authenticated repository access while Lexr remains private; once it is
+  public, ordinary anonymous submodule initialisation is sufficient.
 - Choose a new output directory on private removable storage.
 
 The collector can check its own deterministic fixtures without collecting

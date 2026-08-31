@@ -6,6 +6,13 @@ running ARM64 Linux on the Surface Pro 11. The command-line companion is now
 and pinned here as the `cli/lexr` submodule. The supported path is the compiled
 `lexr` CLI; repository scripts are not part of the current operator workflow.
 
+> [!NOTE]
+> Lexr.sh remains private during the repository migration. Only authenticated
+> GitHub users with access to Lexr can populate `cli/lexr`; an ordinary clone
+> of this OE repository still works, but CLI-dependent procedures require the
+> populated submodule. The recorded HTTPS URL will work anonymously without
+> another OE change when Lexr becomes public.
+
 > [!WARNING]
 > The generated media, custom kernels and hardware support remain
 > experimental. Back up important data, keep a known-good boot entry and a
@@ -21,14 +28,48 @@ level.
 
 The build host needs Go 1.26 or newer. Image and kernel builds also need a
 running Docker daemon with Linux ARM64 container support. Initialise the pinned
-submodule after cloning this repository, then build Lexr from its module:
+submodule after cloning this repository, then build Lexr from its module.
+
+For a new checkout, configure GitHub HTTPS credentials with access to Lexr
+while it remains private, then clone both repositories together:
+
+```sh
+git clone --recurse-submodules \
+  https://github.com/ooaklee/linux-surface-pro-11-oe.git
+cd linux-surface-pro-11-oe
+```
+
+For an existing checkout, initialise the same pinned submodule explicitly:
 
 ```sh
 git submodule update --init --recursive
+```
+
+While Lexr remains private, both forms require GitHub HTTPS credentials with
+access to `ooaklee/lexr.sh`. Once that repository is public, the recorded HTTPS
+submodule URL will work without authentication.
+
+Then build and run the command:
+
+```sh
 mkdir -p cli/lexr/bin
 go -C cli/lexr build -o bin/lexr ./cmd/lexr
 ./cli/lexr/bin/lexr doctor
 ```
+
+Lexr-dependent GitHub Actions are owned and run by the
+[standalone Lexr.sh repository](https://github.com/ooaklee/lexr.sh). Lexr
+releases contain only the six compiled platform executables and their checksum
+manifest. Kernel builds use a separate, manually dispatched Lexr workflow;
+when publication is explicitly requested from the exact Lexr `main` ref, its
+GitHub-hosted publication step uses the dedicated `OE_RELEASE_TOKEN` stored in
+Lexr and publishes the verified experimental kernel prerelease to this OE
+repository. The secret is not exposed to pull-request validation or the
+self-hosted kernel build. The publisher resolves this repository's `main` ref
+to an exact revision, refuses to reuse an existing release tag, and verifies
+the new tag before promotion. Protect Lexr `main` when the repository plan
+makes branch protection available. Kernel and other device-support releases
+therefore keep their established OE URLs.
 
 Clone [the standalone Lexr.sh repository](https://github.com/ooaklee/lexr.sh)
 instead when working on the CLI independently of this OE integration. Run
@@ -81,6 +122,11 @@ lexr kernel release download <release-tag> \
   --output-dir build/lexr/kernel-bundle
 lexr kernel inspect build/lexr/kernel-bundle
 ```
+
+These commands use the established
+[`ooaklee/linux-surface-pro-11-oe` release channel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases)
+by default. Select another repository only when intentionally testing a
+compatible alternative.
 
 See [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 and [Prepare Kernel Release Artefacts](docs/how-to/how-to-release-kernel-artifacts.md)
@@ -274,7 +320,8 @@ sudo lexr clean restore \
 
 - [Lexr.sh CLI reference, source and safety model](https://github.com/ooaklee/lexr.sh)
 - [Lexr.sh supported image catalogue](https://github.com/ooaklee/lexr.sh/blob/main/supported-isos.json)
-- [Lexr.sh releases](https://github.com/ooaklee/lexr.sh/releases)
+- [Lexr.sh CLI binary releases](https://github.com/ooaklee/lexr.sh/releases)
+- [OE kernel and device-support releases](https://github.com/ooaklee/linux-surface-pro-11-oe/releases)
 - [How-to guides](docs/how-to/)
 - [Architecture decisions](docs/adr/)
 - [Kernel release preparation](docs/how-to/how-to-release-kernel-artifacts.md)
