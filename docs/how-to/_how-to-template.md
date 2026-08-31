@@ -7,6 +7,12 @@ description: How-to guide for [TASK] [DESCRIPTION]
 
 # How To: [TITLE]
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). Use a guide
+> based on this template for low-level, manual, or evidence procedures which
+> remain outside the CLI.
+
 Use this procedure to [briefly describe the task and outcome].
 
 ## Purpose
@@ -18,7 +24,7 @@ Keep this section focused on user intent rather than implementation detail.
 
 - [Required device, operating system, package, script, or account access.]
 - [Required permissions, such as Administrator or root, if applicable.]
-- [Required input files or artifacts.]
+- [Required input files or artefacts.]
 
 Note any optional privileges or tools that improve report quality, speed, or
 debuggability.
@@ -61,13 +67,13 @@ List checks that prove the procedure completed successfully.
 ```
 
 Passing validation means [state exactly what the check proves]. It does not
-prove [state important limits, such as hardware behavior that still needs real
+prove [state important limits, such as hardware behaviour that still needs real
 device testing].
 
 ## Privacy and Safety
 
 Call out destructive steps, sensitive data, proprietary files, credentials,
-local paths, or other artifacts that should not be committed.
+local paths, or other artefacts that should not be committed.
 
 Before committing documentation or derived summaries, check that:
 

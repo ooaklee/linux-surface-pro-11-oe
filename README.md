@@ -1,13 +1,22 @@
-# Ubuntu on Surface Pro 11 (Snapdragon X Elite)
+# ARM64 Linux on Microsoft Surface Pro 11
 
 ![KDE Plasma running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
 
-This repository is an experimental Ubuntu bring-up kit for the Microsoft
-Surface Pro 11 with Snapdragon X Elite (X1E80100). It uses the Surface Laptop
-7 Ubuntu work as a reference, and ports the Surface Pro 11-specific pieces from
-Dale Whinham’s Arch Linux work and, most importantly, [Jens Glathe](https://github.com/jglathe)'s continual kernel work: [join the community](https://discourse.ubuntu.com/t/ubuntu-concept-snapdragon-x-elite/48800/2027).
+This repository is the experimental hardware-integration, evidence and release
+channel for ARM64 Linux on the Microsoft Surface Pro 11. It carries the
+downstream kernel work, device-support payloads, low-level scripts, test
+records and architecture decisions for both the Snapdragon X Elite X1E/OLED
+and Snapdragon X Plus X1P/LCD variants.
 
-The current verified target is:
+[Lexr.sh](https://github.com/ooaklee/lexr.sh) is the supported companion CLI.
+It turns the reviewed integration policy in this repository into guarded image,
+kernel, userspace, private hand-off and clean-up workflows. This repository
+pins the exact reviewed Lexr revision at [`cli/lexr`](cli/lexr); Lexr owns its
+own source, issues and binary-only releases, while kernel and device-support
+releases remain on the established
+[OE release page](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
+
+The primary recorded X1E hardware target is:
 
 | Item | Value |
 | --- | --- |
@@ -17,22 +26,78 @@ The current verified target is:
 | Firmware/UEFI | `175.222.235`, dated 2026-02-23 |
 | Internal disk | Samsung `MZ9L4512HBLU-00BMV-SAMSUNG`, 476.9 GiB NVMe |
 | Windows source checked | Windows 11 Home Insider Preview build `29585` |
+| Latest published project kernel | [`sp11v19`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v19), based on Linux 7.2.0 |
+| Exact project source | [`2cbd1ec3…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/2cbd1ec3e2da385e7bd91fd65c63ba5a8fb5b865) |
 
 > Warning: this is not an official Ubuntu, Microsoft, or linux-surface release.
 > Keep Windows installed, keep a recovery USB nearby, and expect regressions.
 
+The published `sp11v19` package is a Linux 7.2.0-based downstream integration,
+not the latest official Linux kernel. As of 2026-08-31, kernel.org lists stable
+7.2.2 and mainline 7.3-rc1; consult the current
+[kernel.org release record](https://www.kernel.org/releases.json) rather than
+inferring upstream status from the project release number. The final v19
+rebuild was package- and source-validated but was not separately boot-tested as
+one all-up image. Individual green entries below name hardware evidence gathered
+from the relevant accepted integration generation.
+
 ## Prerequisites
 
-- Surface Pro 11 with Snapdragon X Elite (`X1E80100`) — not Surface Laptop 7/Romulus or Intel Surface devices
+- Surface Pro 11 with Snapdragon X Elite (`X1E80100`) or Snapdragon X Plus
+  (`X1P64100`); evidence differs by variant as recorded below
 - Windows backup + BitLocker/Device Encryption recovery key (suspend or decrypt before partition work)
 - Secure Boot disabled in Surface UEFI
 - Windows recovery USB or another restore path
-- USB-C flash drive, 16 GB+ (write script erases the entire disk)
-- macOS build host with Docker Desktop, `git`, `diskutil`, sudo (20 GB free)
-- Temporary networking for post-install firmware (Wi-Fi doesn't work in the live session — use USB-C Ethernet, phone tethering, or a mounted Windows partition)
-- External USB keyboard recommended for installer recovery
+- USB-C flash drive, 16 GB+; writing an image erases the complete selected disk
+- macOS or Linux host with Git, Go 1.26+, Docker and at least 24 GiB of free workspace storage
+- Access to the Lexr submodule while its repository is access-controlled
+- Temporary alternative networking and an external USB keyboard remain prudent recovery options
 
-## Current Status
+## Current support matrix
+
+Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
+older-version scope; 🧪 experimental hardware result, not supported; 🧩
+integrated and build-verified without variant-specific hardware acceptance; ❌
+unsupported in the current project; ❓ no evidence found.
+
+| Feature | X1E/OLED | X1P/LCD | Evidence boundary |
+| --- | --- | --- | --- |
+| NVMe boot | ✅ | 🧩 | X1E completed an [installed USB-free boot](docs/installed-nvme-boot-test-20260613.md); X1P shares the device-tree path but lacks an equivalent run. |
+| Internal display | ✅ | ✅ | X1P panel boot and brightness were hardware-tested in [OE PR 50](https://github.com/ooaklee/linux-surface-pro-11-oe/pull/50). |
+| 3D acceleration | ⚠️ | 🧩 | X1E has older hardware evidence; no separate X1P 3D acceptance run is recorded. |
+| Backlight | ✅ DP AUX | ✅ PWM | X1P PWM support is [downstream project commit `350d7bd9…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/350d7bd9eb51c9fe95dbcc71ee19513ef6630d7f), not an upstream Linux claim. |
+| Direct USB 3 | ✅ | 🧩 | X1E passed the guarded USB4 control run; this does not qualify a Surface Dock. |
+| USB4/Thunderbolt | ❌; 🧪 retimer-only | ❌ | No production router, domain or tunnel path exists; [kernel PR 24](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/24) remains guarded and X1P trials can hard-lock. |
+| Direct USB-C DP video | ⚠️ | 🧩 | X1E passed at 6.15-rc6 but has not been rerun against the current USB4 control; direct DP is not USB4 tunnelling. |
+| DisplayPort audio | ❌ | ❌ | The current Denali graph has no DisplayPort DAI. |
+| Wi-Fi | ✅ | 🧩 | X1E [scan, association, traffic and reconnect passed](docs/installed-wifi-clean-flow-test-20260614.md); downstream rfkill handling and distribution firmware remain required. |
+| Bluetooth | ⚠️ | 🧩 | X1E pairing and A2DP music playback work well. Audible volume changes, but the desktop gauge can jump back to its connection-time position; [issue 58](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/58) tracks that indicator desynchronisation. Suspend coverage remains incomplete. |
+| Speakers | ✅ | 🧩 | X1E passed with the [FullIO v19c userspace/kernel pairing](docs/adr/adr-0064-sp11-audio-release-strategy.md); X1P has no separate hardware acceptance. |
+| Microphone | ✅ | 🧩 | X1E PipeWire, browser and local capture passed with the v12 + FullIO v19c pairing in [issue 48's closing acceptance](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/48#issuecomment-5436171174); [kernel PR 21](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/21) supplies the current 4.8 MHz kernel path. |
+| Touchscreen | ✅ | ✅ | X1P physical touch was explicitly tested in [kernel PR 18](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/18); support is downstream project code. |
+| Pen | ⚠️ | 🧩 | X1E pressure, tilt, hover and barrel-button paths passed under [ADR0067](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md); eraser, recovery and repeated suspend remain open, and X1P lacks a device run. |
+| Attached Flex Keyboard/touchpad | ⚠️ | 🧩 | X1E attached mode has [historical hardware evidence](https://github.com/dwhinham/linux-surface-pro-11/blob/169864c10ce902cf29600ecab4094c0d07ae3376/README.md#L29); the kernel uses the upstream [Surface Aggregator/KIP path](https://github.com/torvalds/linux/commit/c4a069095395ecd1e936f488511dfd9016b9c479). Detached Bluetooth and a current all-up regression remain open. |
+| Volume rocker | ✅ | 🧩 | X1E press, hold-repeat and no-spurious-event checks passed in [issue 37](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/37). |
+| Battery | 🧩 | 🧩 | Provider arbitration is integrated, but no explicit charging and capacity acceptance record was found. |
+| Power profiles | ✅ | 🧩 | X1E desktop mappings for power saver, balanced and performance passed in [kernel PR 16](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/16); `balanced-performance` was exposed but not switched separately. |
+| Suspend/resume | ⚠️ | ❓ | X1E remains partial and [issue 39](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/39) is open. |
+| Front RGB camera | 🧪 | ❌ | X1E raw and processed browser video passed under [kernel PR 22](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/22), but calibration, auto-exposure, privacy and suspend gates remain; X1P has no camera node. |
+| Front privacy LED | 🧩 | ❌ | X1E wiring exists, but polarity, lifetime and privacy behaviour are not qualified. |
+| Rear camera | ❌ | ❌ | [Issue 41](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/41) remains open. |
+| IR/Windows Hello | ❌ | ❌ | [Issue 42](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/42) remains open. |
+| 5G | ❌ | ❌ | No project support evidence is recorded; the primary installed test target is Wi-Fi-only. |
+
+The upstream boundary is narrower than this table. Linux v7.2's
+[common Denali device tree](https://github.com/torvalds/linux/blob/v7.2/arch/arm64/boot/dts/qcom/x1-microsoft-denali.dtsi)
+enables the common GPU, display, Wi-Fi, NVMe, Bluetooth and USB paths. The
+[initial Denali commit](https://github.com/torvalds/linux/commit/0d72ccaa1e840b4c8723a929b2febbedcf5f80cd)
+explicitly left touch, pen, cameras and status LEDs incomplete; the project
+kernel supplies reviewed downstream integrations for several of those gaps.
+
+## Historical pre-Lexr status snapshot
+
+<details>
+<summary>Show the older single-variant bring-up table</summary>
 
 The Surface Pro 11 needs a custom device tree and firmware handling — a stock
 ARM64 Ubuntu ISO is not enough. See the
@@ -43,7 +108,7 @@ list for the upstream Arch status.
 | --- | --- | --- |
 | NVMe | ✅ Working | Installed Ubuntu boots from `/dev/nvme0n1p5` with separate `/boot` and `/boot/efi` partitions after support setup. |
 | Graphics | ✅ Working | Direct boot reaches the Ubuntu desktop. 3D acceleration for X1E SoCs only; X1P support is on its way from upstream. |
-| Backlight | ✅ Working | Night Light and screen brightness controls work. X1E/OLED uses `/sys/class/backlight/dp_aux_backlight`; X1P/LCD uses the upstream `x1p64100-microsoft-denali.dtb` PWM-backlight path. |
+| Backlight | ✅ Working | Night Light and screen brightness controls work. X1E/OLED uses `/sys/class/backlight/dp_aux_backlight`; X1P/LCD uses the [downstream project](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/350d7bd9eb51c9fe95dbcc71ee19513ef6630d7f) `x1p64100-microsoft-denali.dtb` PWM-backlight path. |
 | USB3 | ⚠️ Partially | USB-C ports are working, but the Surface Dock connector is presumably not. |
 | USB4/Thunderbolt | ❌ Not working | No external display output when using the [official USB4 dock](https://learn.microsoft.com/en-us/surface/surface-usb4-dock). |
 | USB-C display output | ✅ Working | Working as of 6.15-rc6 (for DP alt mode). |
@@ -54,10 +119,162 @@ list for the upstream Arch status.
 | Audio — microphone | ✅ Working with 2.4 MHz DMIC clock | The corrected single-WSA-macro UCM profile exposes two-channel internal microphone capture, and Surface-specific unity gain avoids the shared +16 dB default clipping. Setting the Denali DMIC clock to 2.4 MHz eliminates the continuous feedback/static heard at 4.8 MHz and makes recorded speech dramatically clearer. Capture remains slightly tinny or thin. See [ADR-0044](docs/adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](docs/adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
 | Touchscreen | ✅ Working on installed v6 system | MSHW0485 G6 touchscreen over SE2 QSPI (`spi@a88000`) with GPI DMA, now carried **in-tree** on the 7.2-rc6 build (`7.2-rc6-jg-0sp11v6`) as the phase55 `mshw0485_touch`, `spi-geni-qcom`, and `gpi` drivers — no out-of-tree module install. Multi-touch, pinch/zoom, and three-finger gestures work, and sound is verified on the same build. Supersedes the v3 geocausa OOT-module approach. See [ADR-0054](docs/adr/adr-0054-sp11-7-2-rc5-jg-0sp11v4-intree-touchscreen-build.md) and [ADR-0049](docs/adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md). |
 | Pen | ✅ Supported on X1P/LCD and X1E/OLED; live-validated on X1E/OLED v19 | The matching pen-part-2 kernel and pinned upstream iptsd integration cover both `045e:0c80` and `045e:0c83`, with iptsd touch output disabled. Live X1E testing passed hover/lift, continuous input, pressure, both tilt axes, the barrel button, and normal one-, two-, and three-finger touch with balanced Phase 84 IRQ/report accounting and no transport errors, resets, or daemon restarts. Separate X1P hardware validation, eraser, recovery, repeated suspend/resume, and comprehensive touch/gesture regression qualification remain. Unmodified iptsd v3.1.0 does not expose a second stylus button. See [ADR0067](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md). |
-| Touchpad | ✅ Working | Type Cover touchpad works after the kernel loads `i2c-hid-of` and the `gpio` keys. Hot-plug may need re-binding. |
+| Touchpad | ✅ Working while attached | The Type Cover touchpad uses the Surface Aggregator/KIP `ssam_node_hid_kip_touchpad` path. Detached Bluetooth mode and a current all-up hot-plug regression remain unverified. |
 | Suspend/Resume | ⚠️ Partially | Lid suspend works with kernel `6.10+`, but can fail to resume display. |
 
-## Quick Start
+</details>
+
+This snapshot is retained for archaeology only. It mixes older kernel
+generations and must not override the evidence-scoped matrix above.
+
+## Current Lexr workflow
+
+Clone OE with the pinned companion source, then build the provenance-aware Lexr
+binary from the submodule:
+
+```sh
+git clone --recurse-submodules \
+  --branch cli/linux-armer \
+  https://github.com/ooaklee/linux-surface-pro-11-oe.git
+cd linux-surface-pro-11-oe
+
+(cd cli/lexr && go run ./cmd/lexr-build)
+./cli/lexr/bin/lexr version
+./cli/lexr/bin/lexr doctor
+```
+
+During the access-controlled phase, only contributors who can read the Lexr
+repository can initialise the submodule. A clone without `--recurse-submodules`
+still contains the complete OE kernel, evidence, scripts and release history;
+initialise `cli/lexr` later when access is available. The HTTPS submodule URL
+does not need to change when Lexr becomes public.
+
+### Create and validate the Ubuntu Concept image
+
+The Ubuntu Concept Casper adapter is the first implemented image strategy. Its
+shortest command selects the audited catalogue source and latest candidate OE
+kernel release. Start with the deterministic plan, then create and validate the
+same output:
+
+```sh
+mkdir -p build/lexr
+
+./cli/lexr/bin/lexr image create \
+  --output build/lexr/lexr-ubuntu-sp11.iso \
+  --dry-run
+
+./cli/lexr/bin/lexr image create \
+  --output build/lexr/lexr-ubuntu-sp11.iso
+
+./cli/lexr/bin/lexr image validate \
+  build/lexr/lexr-ubuntu-sp11.iso
+```
+
+For a reproducible source decision, download Canonical's dated catalogue image,
+record its SHA-256, and pass `--source`, `--source-sha256` and an explicit
+`--kernel-release`. The current adapter remasters the vendor Casper filesystem,
+preserves the hybrid ISO/GPT layout and vendor media-discovery contract, and
+replaces the complete kernel-facing module set. Fedora, Debian, elementary OS
+and Pop!_OS remain catalogue-only until they have explicit adapters.
+
+Structural validation is not a hardware acceptance result. An older direct
+Ubuntu Concept image reached the X1E desktop, but that does not qualify the
+current Lexr remaster or an X1P boot. Keep those runs as explicit release gates.
+
+Add the exact Lexr binary, corresponding source, catalogues and eligible offline
+IPTSD bundle to the same image inventory when live recovery needs the companion:
+
+```sh
+./cli/lexr/bin/lexr image create \
+  --kernel-release latest \
+  --companion-source-dir cli/lexr \
+  --companion-userspace iptsd \
+  --output build/lexr/lexr-ubuntu-sp11-with-companion.iso
+```
+
+The embedded `/sp11/lexr-manifest.json` and adjacent
+`*.iso.manifest.json` remain the single schema-4 inventory. Its
+`companion_bundle` attribute records the executable, source archive, catalogues
+and eligible userspace files; private Windows hand-offs are never included.
+
+### Write the validated ISO
+
+Device discovery is read-only. Review the exact whole-device identity and
+confirmation before allowing the elevated write:
+
+```sh
+./cli/lexr/bin/lexr image devices
+
+./cli/lexr/bin/lexr image write \
+  build/lexr/lexr-ubuntu-sp11.iso \
+  --device /dev/diskX \
+  --dry-run
+```
+
+Repeat the command with `sudo` and the exact confirmation phrase emitted by the
+current dry run. Lexr rejects blanket confirmation, system-backed storage,
+identity drift, active consumers and incomplete read-back verification.
+
+### Install a verified kernel and audit userspace
+
+Kernel downloads continue to resolve against this repository's releases:
+
+```sh
+./cli/lexr/bin/lexr kernel release list
+./cli/lexr/bin/lexr kernel release download latest \
+  --output-dir build/lexr/kernel-bundle
+
+RUNNING_ABI="$(uname -r)"
+./cli/lexr/bin/lexr kernel preflight build/lexr/kernel-bundle \
+  --root / \
+  --fallback-abi "$RUNNING_ABI"
+
+./cli/lexr/bin/lexr kernel install build/lexr/kernel-bundle \
+  --root / \
+  --fallback-abi "$RUNNING_ABI" \
+  --dry-run
+```
+
+Only after reviewing the preflight and dry-run receipt should the install be
+repeated with `sudo` and `--yes`. Lexr preserves the selected fallback kernel;
+it does not change the default kernel, remove the fallback or reboot.
+
+After installation, use the companion to show exactly which userspace support
+is missing before pulling or installing anything:
+
+```sh
+./cli/lexr/bin/lexr doctor userspace
+./cli/lexr/bin/lexr userspace status
+./cli/lexr/bin/lexr userspace list
+./cli/lexr/bin/lexr userspace pull recommended
+```
+
+Restricted platform firmware and the Bluetooth public address use Lexr's
+private same-device Windows hand-off, not an ISO or public release. Review the
+[Lexr operator documentation](https://github.com/ooaklee/lexr.sh#private-windows-hand-offs)
+before collecting or applying those values.
+
+### Inspect obsolete workarounds
+
+Clean-up remains explicit and reversible. Scan first, save the exact plan, and
+review every recognised path before applying it:
+
+```sh
+./cli/lexr/bin/lexr clean scan
+./cli/lexr/bin/lexr clean plan --output lexr-cleanup-plan.json
+```
+
+See [Use Lexr with the OE repository](docs/how-to/how-to-use-lexr.md) for the
+complete current operator path and its privilege, recovery and dry-run
+boundaries.
+
+## Retained manual script workflow
+
+The scripts below preserve low-level reproduction and historical evidence.
+They are not the primary orchestration interface and several examples target
+older integration generations. Use Lexr for current image, kernel, userspace,
+hand-off and clean-up operations unless a hardware investigation explicitly
+requires the underlying script.
 
 The custom live-USB builder creates a small ARM64 GRUB boot shim, stores the
 Ubuntu Snapdragon X concept ISO on a Linux data partition, and injects the
@@ -69,12 +286,11 @@ Surface Pro 11 device tree at boot. This avoids remastering the Ubuntu ISO.
 cd /path/to/linux-surface-pro-11-oe
 mkdir -p build
 
-# Pen part 2 integration branch (build and validate for release)
-# This git-mode command is usable after the paired branch is published.
+# Published v19 integration branch; verify the exact source identity below.
 ./scripts/build-sp11-qcom-x1e-kernel-docker.sh \
   --source git \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11.git \
-  --git-branch sp11/integration-7.2.x-pen-part-2 \
+  --git-branch sp11/integration-7.2.x \
   --image ubuntu:26.04 \
   --build-target "binary-indep binary-qcom-x1e" \
   --work-dir build/docker-sp11-qcom-x1e-kernel \
@@ -144,9 +360,13 @@ mkdir -p build
   --jobs 8
 ```
 
-Until the paired branches are published, build the local kernel checkout only
-from a case-sensitive Linux filesystem or Docker volume; the remote git-mode
-command above cannot see unpushed changes.
+The v19 integration is published. On 2026-08-31,
+`sp11/integration-7.2.x` resolved to exact source
+[`2cbd1ec3e2da…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/2cbd1ec3e2da385e7bd91fd65c63ba5a8fb5b865).
+Remote branches can move, and the script's git mode accepts a branch or tag
+rather than an arbitrary commit. Use Lexr's checksum-verified release flow for
+repeatable installation, or verify that identity explicitly before treating a
+manual build as release provenance.
 
 The release examples use the immutable
 `jg/ubuntu-qcom-x1e-7.2-rc5-jg-0` tag. The moving
@@ -303,7 +523,7 @@ For a direct local installation instead of the USB payload flow, place all four
 matching `.deb` packages in one directory and run the same helper against that
 directory. An `sp11v3` directory must also contain the release's matching
 `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files. For example, with
-the verified release assets downloaded to `$HOME/Downloads`:
+the verified release artefacts downloaded to `$HOME/Downloads`:
 
 ```bash
 cd /path/to/linux-surface-pro-11-oe
@@ -313,7 +533,7 @@ cd /path/to/linux-surface-pro-11-oe
 sudo reboot
 ```
 
-The current v6 bundle contains matching image, modules, flavour-header, and
+The historical v6 bundle contains matching image, modules, flavour-header, and
 common-header packages for `7.2-rc5-jg-0sp11v6` with the in-tree phase55
 touchscreen and the wsa884x PA recovery — no separate module files are needed
 ([ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)).
@@ -327,10 +547,20 @@ od -An -tu4 -N4 --endian=big \
   /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
 ```
 
-Expected values are `7.2-rc5-jg-0sp11v6-qcom-x1e` (or `7.2-rc5-jg-0sp11v3-qcom-x1e`, or
+For those historical bundles only, expected values are
+`7.2-rc5-jg-0sp11v6-qcom-x1e` (or
+`7.2-rc5-jg-0sp11v3-qcom-x1e`, or
 `7.1.3-jg-1sp11v2-qcom-x1e` after selecting the rollback kernel) and `2400000`.
+The current published project ABI is `7.2.0-jg-0sp11v19-qcom-x1e`, and its
+Denali kernel path uses `4800000`; use the Lexr release flow above for that
+generation rather than adapting this archived package procedure.
 
-## Post-Install Bring-Up
+## Manual post-install bring-up reference
+
+This section records the lower-level procedures behind earlier hardware
+acceptance. Some commands and kernel names are generation-specific. Run
+`lexr doctor userspace` and consult the current support matrix before applying
+one of these procedures to a current installation.
 
 ### Touchscreen
 
@@ -457,16 +687,16 @@ cd "$SP11DATA/support"
 sudo ./scripts/sp11-audio-topology.sh --install
 ```
 
-Alternatively, download the
-[audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
-Pair the corrected UCM with the newest kernel bundle
-[v7 (7.2.0-jg-0sp11v7)](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v7),
-built from the
-[`sp11/integration-7.2.x`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/integration-7.2.x)
-fork: it carries the wsa884x 2S/4-ohm PA-recovery profile (no left-speaker
-audio wedge at sustained full volume), the 2.4 MHz DMIC clock, and the
-in-tree phase55 touchscreen
-([ADR-0056](docs/adr/adr-0056-sp11-7-2-rc5-jg-0sp11v6-integration-build.md)).
+The [audio topology and UCM v2 release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2)
+and [v7 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v7)
+record the historical 2.4 MHz, manual-routing generation; neither is the
+current recommendation. The accepted current userspace is the published
+[FullIO v19c release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-v19c),
+whose interfaces are supported from project kernel generation v12 and
+validated through v19. Use `lexr userspace status --feature audio` and
+`lexr userspace pull audio-fullio-v19c` for that guarded path. The manual sink,
+routing and topology helpers in this subsection remain only for reproducing
+archived evidence.
 The experimental
 [7.2-rc5-jg-0sp11v3 r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
 and the existing
@@ -512,7 +742,7 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 - [2026-06-13 Wi-Fi rfkill test after qcom-x1e upgrade](docs/installed-wifi-rfkill-upgrade-test-20260613.md)
 - [2026-06-13 Wi-Fi test after Windows firmware and cold boot](docs/installed-wifi-windows-firmware-cold-boot-test-20260613.md)
 - [2026-06-14 Wi-Fi rfkill test after patched qcom-x1e boot](docs/installed-wifi-patched-rfkill-test-20260614.md)
-- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-usb-flow-test-20260614.md)
+- [2026-06-14 Wi-Fi clean USB flow test](docs/installed-wifi-clean-flow-test-20260614.md)
 - [2026-06-14 Bluetooth public address test](docs/installed-bluetooth-public-address-test-20260614.md)
 
 ### Visual Evidence
@@ -523,14 +753,15 @@ DTB, firmware, audio, or Bluetooth bring-up. See
 
 ## How-To Guides
 
+- [Use Lexr with the OE Repository](docs/how-to/how-to-use-lexr.md)
 - [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
 - [Bring Up Bluetooth](docs/how-to/how-to-bring-up-bluetooth.md)
 - [Bring Up Audio](docs/how-to/how-to-bring-up-audio.md)
 - [Build and Validate the SP11 Pen Integration](docs/how-to/how-to-bring-up-pen.md)
 - [Run the Legacy G6 Diagnostic Pen Processor](docs/how-to/how-to-run-g6-pen-processor.md)
 - [Compile the Raw mgmt-Socket Bluetooth Helper](docs/how-to/how-to-compile-sp11-bt-set-addr.md)
-- [Release Prebuilt Kernel Artifacts](docs/how-to/how-to-release-kernel-artifacts.md)
-- [Release Audio Topology Artifacts](scripts/prepare-sp11-audio-release-assets.sh)
+- [Release Prebuilt Kernel Artefacts](docs/how-to/how-to-release-kernel-artifacts.md)
+- [Release Audio Topology Artefacts](scripts/prepare-sp11-audio-release-assets.sh)
 - [Generate a Service Report](docs/how-to/how-to-generate-service-report.md)
 - [Touchscreen Clean-Install and Release Retrospective](docs/adr/adr-0050-sp11-touchscreen-clean-install-release-flow.md)
 - [Troubleshoot Docker Overlay Mount Failures on Linux Build Hosts](docs/how-to/how-to-troubleshoot-linux-docker-overlay.md)
@@ -566,7 +797,7 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR023: Docker Kernel Build Case-Sensitive Work Volume](docs/adr/adr-0023-docker-kernel-build-case-sensitive-work-volume.md)
 - [ADR024: Bluetooth, Audio, and Board-Data Bring-Up Gates](docs/adr/adr-0024-bluetooth-audio-and-board-data-gates.md)
 - [ADR025: rfkill-Capable DTB Selection](docs/adr/adr-0025-rfkill-capable-dtb-selection.md)
-- [ADR026: Prebuilt Kernel Release Artifacts](docs/adr/adr-0026-prebuilt-kernel-release-artifacts.md)
+- [ADR026: Prebuilt Kernel Release Artefacts](docs/adr/adr-0026-prebuilt-kernel-release-artifacts.md)
 - [ADR027: Bluetooth Public Address](docs/adr/adr-0027-bluetooth-public-address.md)
 - [ADR028: Bounded Bluetooth Management Hook](docs/adr/adr-0028-bounded-bluetooth-management-hook.md)
 - [ADR029: Bluetooth Cold-Boot Service Retry Profile](docs/adr/adr-0029-bluetooth-cold-boot-service-retry-profile.md)
@@ -608,8 +839,18 @@ The major bring-up decisions are recorded in `docs/adr/`:
 - [ADR0065: SP11 Front Camera C-PHY Integration](docs/adr/adr-0065-sp11-front-camera-cphy-integration.md)
 - [ADR0066: SP11 IMX681 libcamera Simple IPA Integration](docs/adr/adr-0066-sp11-imx681-libcamera-simple-ipa.md)
 - [ADR0067: SP11 Kernel HIDRAW Bridge and Pinned iptsd Pen Integration](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md)
+- [ADR0069: Standalone Lexr and OE Workflow Ownership](docs/adr/adr-0069-standalone-lexr-workflow-ownership.md)
 
-## Windows Firmware
+## Private Windows firmware and Bluetooth hand-off
+
+Current collection is owned by Lexr's strict version-3 same-device hand-off.
+The collector is pinned at
+`cli/lexr/tools/collect-sp11-windows-handoff.ps1`; collected directories and
+their payloads are private device data and must never be committed, attached to
+an issue, placed on an ISO or published in a release. Follow Lexr's
+[private hand-off procedure](https://github.com/ooaklee/lexr.sh#private-windows-hand-offs)
+for the required protected NTFS parent, controller selection, transfer, import,
+application and recovery boundaries.
 
 The verified Windows install contains these key firmware inputs:
 
@@ -619,7 +860,7 @@ The verified Windows install contains these key firmware inputs:
 - `cdsp_dtbs.elf`
 - `qccdsp8380.mbn`
 
-The `scripts/sp11-grab-fw.sh` helper installs these files either by downloading
+The retained `scripts/sp11-grab-fw.sh` helper installs these files either by downloading
 the latest WOA-Project Qualcomm reference driver set (`--download`) or by
 copying the newest matching files from a mounted Windows root
 (`--windows-root`). The installed-system finish script invokes this helper.
@@ -630,16 +871,18 @@ aDSP/cDSP JSON payloads, plus the full procedure and validation steps.
 Firmware installation is a one-time step: the files persist under
 `/lib/firmware`. Kernel package installation normally rebuilds the new
 kernel's initramfs automatically, while firmware needed after the root
-filesystem is mounted remains available from `/lib/firmware`. Do not rerun the
-firmware helper for each kernel installation or upgrade.
+filesystem is mounted remains available from `/lib/firmware`. This helper is a
+low-level historical path, not a substitute for Lexr's closed, provenance-bound
+private hand-off. Do not rerun it for each kernel installation or upgrade.
 
 ## Useful Commands on Windows
 
-Collect the Bluetooth MAC address from Windows (run PowerShell as Admin from
-a checkout of this repository):
+Run the non-collecting contract self-test from an elevated Windows PowerShell
+session before following the complete private collection procedure:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\collect-sp11-windows-bluetooth-address.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  .\cli\lexr\tools\collect-sp11-windows-handoff.ps1 -SelfTest
 ```
 
 ## Sources
@@ -649,6 +892,8 @@ kept as source credit and as an audit trail for future decisions.
 
 Base projects and install flow:
 
+- Lexr companion CLI: <https://github.com/ooaklee/lexr.sh>
+- Surface Pro 11 downstream integration kernel: <https://github.com/ooaklee/linux_ms_dev_kit-sp11>
 - Surface Laptop 7 Ubuntu notes by Bryce Hoehn: <https://github.com/bryce-hoehn/linux-surface-laptop-7>
 - Surface Pro 11 Arch notes by Dan Whinham: <https://github.com/dwhinham/linux-surface-pro-11>
 - linux-surface project and Surface Pro 11 support discussion: <https://github.com/linux-surface/linux-surface> and <https://github.com/linux-surface/linux-surface/issues/1962>

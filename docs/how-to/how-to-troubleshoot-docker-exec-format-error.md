@@ -7,6 +7,12 @@ description: How-to guide for resolving Docker `exec format error` when running 
 
 # How To: Troubleshoot Docker `exec format error` on x86_64 Linux Build Hosts
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure when `scripts/build-sp11-qcom-x1e-kernel-docker.sh` fails on
 a Linux host with an error like:
 

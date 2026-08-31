@@ -7,6 +7,12 @@ description: How-to guide for rebuilding the Surface Pro 11 Wi-Fi rfkill patched
 
 # How To: Repeat Patched Kernel Build for a New qcom-x1e Release
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure when Ubuntu ships a new `qcom-x1e` kernel release (e.g.
 `7.0.0-40-qcom-x1e`) and you need to produce a matching patched build with the
 same Surface Pro 11 Wi-Fi rfkill fixes.

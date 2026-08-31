@@ -7,6 +7,12 @@ description: How-to guide for validating and configuring Surface Pro 11 Bluetoot
 
 # How To: Bring Up Bluetooth
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure when Wi-Fi works on the patched qcom-x1e kernel but
 Bluetooth appears as `hci0` without a usable BlueZ controller.
 

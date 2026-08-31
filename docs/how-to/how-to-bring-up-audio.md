@@ -1,5 +1,11 @@
 # How to Bring Up Audio on Surface Pro 11
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Last updated: 2026-08-16
 
 ## Prerequisites

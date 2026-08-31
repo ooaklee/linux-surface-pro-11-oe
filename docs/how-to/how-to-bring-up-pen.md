@@ -7,6 +7,12 @@ description: Build, install, inspect, validate, and roll back the Surface Pro 11
 
 # How To: Build and Validate the SP11 Pen Integration
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 This procedure exercises the matching
 `sp11/integration-7.2.x-pen-part-2` kernel and support branches. It is a
 pre-release hardware test, not a release procedure. The integration supports

@@ -7,6 +7,12 @@ description: How-to guide for building the Surface Pro 11 raw mgmt-socket Blueto
 
 # How To: Compile the Raw mgmt-Socket Bluetooth Helper
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Build `tools/sp11-bt-set-addr.c` directly on the Surface Pro 11 when the
 prebuilt binary is not available or when the source has been modified.
 

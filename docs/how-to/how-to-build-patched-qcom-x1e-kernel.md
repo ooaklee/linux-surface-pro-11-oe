@@ -7,6 +7,12 @@ description: How-to guide for building and testing a Surface Pro 11 qcom-x1e ker
 
 # How To: Build a Patched qcom-x1e Kernel
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure when Wi-Fi probes on Surface Pro 11 but remains
 hard-blocked by rfkill, and `scripts/troubleshoot-sp11-wifi-rfkill.sh` reports
 that the installed ath12k modules do not contain `disable-rfkill` support.

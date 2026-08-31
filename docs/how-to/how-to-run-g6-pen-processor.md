@@ -1,5 +1,11 @@
 # Run the legacy Surface G6 diagnostic pen processor
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 ADR0067 supersedes `g6-pen` for production pen input. Use this procedure only
 for controlled `/dev/g6ts-heat` diagnostics or deterministic replay. The G6
 panel does not send native pen report `0x01`; this tool bundles the exported

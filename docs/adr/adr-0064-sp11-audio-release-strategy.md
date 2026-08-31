@@ -9,9 +9,10 @@ description: Architecture Decision Record (ADR) for publishing the hash-pinned S
 
 ## Status
 
-Accepted for the FullIO v19c and geocausa v12 release pairing. Publication is
-still a separate, explicit maintainer action; this decision does not record a
-published `sp11-audio-v19c` release.
+Accepted for the FullIO v19c and geocausa v12 release pairing. The reviewed
+[`sp11-audio-v19c`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-v19c)
+bundle was published on 2026-08-27; subsequent publication remains a separate,
+explicit maintainer action.
 
 ## Context
 
@@ -40,8 +41,9 @@ and make ordinary kernel redistribution include the protected payload.
 
 The accepted pairing is:
 
-- geocausa v12 kernel ABI `7.2.0-jg-0sp11v12-qcom-x1e`, with intended OE
-  release tag `sp11-qcom-x1e-7.2.0-jg-0sp11v12`;
+- geocausa v12 kernel ABI `7.2.0-jg-0sp11v12-qcom-x1e`, with published OE
+  release tag
+  [`sp11-qcom-x1e-7.2.0-jg-0sp11v12`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v12);
 - FullIO v19c topology from SP11X1e-audio tag
   `native-audio-fullio-v19c-20260826`;
 - the matching `MICROSOFT-Surface-Pro-11in.conf` and `SP11-HiFi.conf`, plus a

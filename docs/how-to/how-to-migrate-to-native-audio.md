@@ -7,6 +7,12 @@ description: How-to guide for migrating from the legacy OE audio workarounds (CR
 
 # How To: Migrate SP11 Audio to the Native v9+ Pairing
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure to replace the Surface Pro 11 legacy audio workaround stack
 with the userspace pairing required by the `7.2.0-jg-0sp11v9` and
 `7.2.0-jg-0sp11v10` kernels.

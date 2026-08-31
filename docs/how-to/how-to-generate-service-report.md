@@ -1,5 +1,11 @@
 # SOP: Generate a Surface Pro 11 Service Report
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure to collect a Windows-side diagnostic bundle from a Surface
 Pro 11 and turn it into a concise hardware report like
 [`docs/hardware-report-20260613.md`](../hardware-report-20260613.md).

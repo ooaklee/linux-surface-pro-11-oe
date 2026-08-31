@@ -7,6 +7,12 @@ description: How-to guide for installing Qualcomm display, GPU, aDSP, and cDSP f
 
 # How To: Install Surface Pro 11 Firmware
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure after the first installed boot to make the Surface Pro 11
 display/GPU and audio DSP firmware available to Linux.
 

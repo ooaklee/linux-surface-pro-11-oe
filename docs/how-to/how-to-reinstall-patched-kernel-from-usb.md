@@ -7,6 +7,12 @@ description: How-to guide for installing or reinstalling a Surface Pro 11 qcom-x
 
 # How To: Reinstall the Patched Kernel from USB or GitHub Releases
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure after Ubuntu `apt` or an official kernel package has
 displaced a Surface Pro 11-specific qcom-x1e kernel, or when installing a
 downloaded kernel bundle for the first time. Release families differ: the

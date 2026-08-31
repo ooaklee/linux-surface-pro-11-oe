@@ -7,6 +7,12 @@ description: How-to guide for preparing optional Surface Pro 11 qcom-x1e kernel 
 
 # How To: Release Prebuilt Kernel Artifacts
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure to prepare an optional GitHub prerelease containing prebuilt
 Surface Pro 11 qcom-x1e kernel `.deb` packages.
 

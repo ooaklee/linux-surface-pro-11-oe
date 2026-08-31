@@ -7,6 +7,12 @@ description: "How-to guide for resolving `fatal: fetch-pack: invalid index-pack 
 
 # How To: Troubleshoot Kernel Git Clone `fetch-pack` Failures
 
+> [!NOTE]
+> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
+> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
+> retains low-level, manual, or evidence procedures for bring-up and
+> troubleshooting.
+
 Use this procedure when `scripts/build-sp11-qcom-x1e-kernel.sh` (or the Docker
 wrapper `scripts/build-sp11-qcom-x1e-kernel-docker.sh`) fails during the
 kernel source clone with an error like:
