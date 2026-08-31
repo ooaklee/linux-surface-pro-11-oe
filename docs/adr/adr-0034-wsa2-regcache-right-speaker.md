@@ -5,6 +5,13 @@ title: "ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cac
 description: Architecture Decision Record (ADR) for the right speaker silence on the Surface Pro 11.
 ---
 
+> **Current operator notice (2026-08-30):** Former WSA-routing and manual-sink
+> helper names below are retained only as investigation evidence. Current
+> operators use the reviewed FullIO release through
+> `userspace audio release prepare`, `userspace audio release validate`, `userspace install audio`,
+> `doctor hardware audio`, and `clean`; see
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
+
 # ADR0034: Right Speaker Silence — SoundWire Port Mapping and Regmap Cache
 
 ## Status
@@ -83,7 +90,7 @@ wsa_macro 6b00000.codec: using zero-initialized flat cache,
 
 **This warning is on 6b00000 — the active, working macro.** It is the ONLY
 macro driving the SoundWire bus. The `zero-initialized flat cache` message
-indicates a `REGCACHE_FLAT` regmap initialized with all-zero values rather than
+indicates a `REGCACHE_FLAT` regmap initialised with all-zero values rather than
 silicon defaults, but upstream `lpass-wsa-macro.c` does supply an explicit
 `reg_defaults` table before `devm_regmap_init_mmio()`. The warning alone does
 not prove the cache is broken for all register ranges.
@@ -262,7 +269,7 @@ Areas to inspect:
 - Does `wsa_is_volatile_register()` correctly mark registers that change
   autonomously (e.g., SoundWire status, DMA RX enable bits)?
 - Is `REGCACHE_FLAT` the right type? `REGCACHE_RBTREE` would only store
-  registers that have been read, potentially catching uninitialized reads —
+  registers that have been read, potentially catching uninitialised reads —
   but it would not proactively read hardware defaults. It works with the
   `reg_defaults` table.
 

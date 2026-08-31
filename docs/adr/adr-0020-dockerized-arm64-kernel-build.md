@@ -1,9 +1,15 @@
 ---
 id: adrs-adr020
-title: "ADR020: Dockerized ARM64 Kernel Build"
+title: "ADR020: Dockerised ARM64 Kernel Build"
 # prettier-ignore
 description: Architecture Decision Record (ADR) for building patched Surface Pro 11 qcom-x1e kernel packages inside a Docker ARM64 Linux container.
 ---
+
+> **Current operator notice (2026-08-30):** The three-part shell workflow below
+> is historical and non-prescriptive. `kernel build` now owns container policy
+> and immutable provenance; `kernel preflight`, `kernel install`,
+> `kernel release prepare`, and `kernel release validate` own target and release checks. See
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
 
 ## Context
 
@@ -23,7 +29,7 @@ the Surface must export the source package and source version metadata first.
 
 ## Decision
 
-The project will support Dockerized ARM64 qcom-x1e kernel builds as the
+The project will support Dockerised ARM64 qcom-x1e kernel builds as the
 preferred heavy-build workflow when another machine is available.
 
 The workflow has three parts:
@@ -62,4 +68,4 @@ version, the operator must provide a matching apt `.sources` or `.list` file to
 the Docker wrapper, or intentionally choose the git fallback path.
 
 Generated package files, source trees, and copied USB payload debs remain local
-artifacts and must not be committed.
+artefacts and must not be committed.

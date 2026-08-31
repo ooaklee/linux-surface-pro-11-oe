@@ -31,7 +31,7 @@ and [ADR009](adr-0009-default-casper-iso-scan-boot.md) for the next test image.
 The GRUB console-input and module-tree experiments from
 [ADR011](adr-0011-grub-efi-console-input.md) and
 [ADR012](adr-0012-grub-module-tree.md) will remain as historical records, but
-they will not describe the active builder behavior.
+they will not describe the active builder behaviour.
 
 The next test will use the external keyboard to select GRUB entries and attempt
 to enter the Ubuntu live environment or installer. If installation works with
@@ -41,14 +41,14 @@ until Surface Flex Keyboard support in GRUB is understood.
 
 ## Consequences
 
-This restores the image to the known-visible GRUB menu behavior and prioritizes
+This restores the image to the known-visible GRUB menu behaviour and prioritises
 testing the Ubuntu live/install path over solving Surface Flex Keyboard input
 inside GRUB immediately.
 
 Surface Flex Keyboard input in GRUB remains unresolved. The previous failed
 experiments narrow the remaining likely bootloader paths to a true
 `grub-install`-produced removable layout, reusing more of the working Surface
-Pro 11 Arch image's GRUB artifacts, or a Ventoy-based boot path that preserves
+Pro 11 Arch image's GRUB artefacts, or a Ventoy-based boot path that preserves
 the Surface Pro 11 DTB and boot arguments.
 
 If the external-keyboard install path works, the project can document that

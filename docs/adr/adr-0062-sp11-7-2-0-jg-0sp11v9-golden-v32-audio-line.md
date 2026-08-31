@@ -104,7 +104,7 @@ actively conflicted with it:
   `sp11-pipewire-speaker-sink.sh`): the native sink provides stereo with
   correct positions; ADR-0036's reorder no longer applies.
 - Version-lock the userspace pairing to the kernel: UCM and topology are now
-  kernel-line-specific artifacts with recorded hashes
+  kernel-line-specific artefacts with recorded hashes
   (`deploy/golden-v32/manifest.json`), installed as part of the audio
   bring-up, not separate workarounds.
 - Keep the v8 kernel as the GRUB rollback entry until the cold-boot
@@ -125,7 +125,7 @@ actively conflicted with it:
 - The UCM/topology are now coupled to the kernel line — upgrading the kernel
   without the matching pairing regresses to the "no native sink" state; this
   ADR and the manifest hashes are the reference.
-- v8-era artifacts (CRD topology build, OE `Surface11-HiFi.conf`, workaround
+- v8-era artefacts (CRD topology build, OE `Surface11-HiFi.conf`, workaround
   docs/scripts) become legacy and must be cleaned up in the OE repo install
   flow (`sp11-audio-topology.sh`, install scripts, related ADRs).
 - **Accepted regression: DMIC capture is unavailable on this line.** The

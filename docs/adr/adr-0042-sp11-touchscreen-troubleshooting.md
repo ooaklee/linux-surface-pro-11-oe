@@ -5,6 +5,13 @@ title: "ADR0042: Surface Pro 11 Touchscreen — Kernel Integration Troubleshooti
 description: Architecture Decision Record (ADR) documenting the troubleshooting history, root-cause analysis, and remaining blockers for enabling the Surface Pro 11 touchscreen on the jglathe/linux_ms_dev_kit kernel at tag jg/ubuntu-qcom-x1e-7.1.3-jg-0.
 ---
 
+> **Current operator notice (2026-08-30):** This troubleshooting record is
+> historical and non-prescriptive. Current kernels carry the touchscreen stack
+> in-tree; use `kernel build`, `kernel preflight`, `kernel install`,
+> `doctor hardware touchscreen`, `doctor userspace`, and `clean`. The
+> `/lib/modules/.../build/scripts/` path quoted below is kernel-header evidence,
+> not a supported repository helper.
+
 # ADR0042: Surface Pro 11 Touchscreen — Kernel Integration Troubleshooting
 
 ## Status

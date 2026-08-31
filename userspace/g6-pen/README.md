@@ -11,7 +11,7 @@ typed virtual pen with uinput.  It also replays the identical record ABI (or a
 reviewable text representation) without hardware.
 
 The production configuration is deliberately fail-closed.  The available
-Windows captures prove that Windows synthesizes pen input from HEAT and locate
+Windows captures prove that Windows synthesises pen input from HEAT and locate
 the nested `0xFF00` / kind-`0x5c` signal records, but do not yet prove a
 presence discriminator or the proprietary `PenPosition_FindPosition`
 reconstruction.  Consequently `hover.enabled=false` is shipped, and the
@@ -93,13 +93,13 @@ signed little-endian DFT samples at `+8..+43`, and the four-byte window tuple at
 `+44..+47`.  The first bank represents the 68-column axis and the second the
 46-row axis.  Sensor-grid output scales to the observed OS space as
 `X_h = 405.80996*x - 0.1382` and `Y_h = 401.18737*y - 0.2015`.  This comes from
-the simultaneous P4 corpus.  Across 870 outputs, the selected integer center
+the simultaneous P4 corpus.  Across 870 outputs, the selected integer centre
 was within about 0.54 sensor cell of the floating `FindPosition` result; after
 coarse scaling that can be roughly 219 X or 217 Y HIMETRIC units.  Separately,
 regressing the floating result to HIMETRIC with the formulas above had at most
 about 0.54 HIMETRIC residual.  The `ff00-0c-max-energy` decoder implements this
 bounded parser, selects the highest-energy valid-trailer vector in each bank,
-and applies the regression to the integer center, so it is deliberately a
+and applies the regression to the integer centre, so it is deliberately a
 coarse path.  It still requires explicit energy/presence thresholds; those are
 not validated, so the packaged gate remains off.  The 18 DFT samples needed for
 subcell position are retained but not guessed at.
@@ -112,8 +112,8 @@ trailer rule produced 60 false positives and 4 false negatives, while a tested
 energy rule produced 92/19.  A false cycle reached total energy 204409 versus a
 true minimum of 3930.  No threshold from these captures is safe to ship.
 
-The uinput device uses the synthesized processor contract: X/Y maxima
-`27388/18258` at 100 units/mm.  It advertises signed centered tilt
+The uinput device uses the synthesised processor contract: X/Y maxima
+`27388/18258` at 100 units/mm.  It advertises signed centred tilt
 (`-9000..9000`) at 5730 units/radian.  Pressure is `0..4096` with resolution
 zero because the descriptor has no physical/unit metadata.  These capabilities
 are distinct from the guarded native fallback's `9600/7200` coordinate range;
@@ -135,7 +135,7 @@ both remain hard-gated.
 P8 validates the final typed eraser contract: eraser hover carries in-range and
 invert with zero pressure, while eraser contact adds the eraser switch and
 pressure.  It does not identify the upstream HEAT tool fields, so the daemon
-does not synthesize eraser state and the tool gate remains hard-closed.
+does not synthesise eraser state and the tool gate remains hard-closed.
 
 The optional `rect-centroid` decoder exists to exercise the complete
 pipeline with synthetic or newly validated maps.  Its keys are demonstrated
@@ -161,7 +161,7 @@ anchor/re-anchor, sequence-gap/wrap, interpolation, tracking-close,
 generation-boundary re-hover, stale-lift, text-replay, and binary-replay tests.
 Replays never create uinput devices.
 
-Convert a sanitized Windows `hidspi-rx-bodies.csv`, then optionally pack it as
+Convert a sanitised Windows `hidspi-rx-bodies.csv`, then optionally pack it as
 the exact binary device stream:
 
 ```sh
@@ -172,6 +172,6 @@ python3 tools/g6-corpus.py pack capture.g6t capture.g6h
 
 Pass `--include-sideband` only for private diagnostics.  Report `0x6e` may
 contain a device or pen identifier; the converter warns and marks the output,
-which must be sanitized before sharing.
+which must be sanitised before sharing.
 
 For live diagnostics without input injection, use `--no-uinput --emit-json`.

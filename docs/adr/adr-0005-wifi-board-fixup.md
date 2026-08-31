@@ -43,4 +43,4 @@ remaining available. If upstream firmware gains an exact Surface Pro 11 board
 entry, a future ADR should retire this workaround.
 
 The fixup is intentionally narrow to WCN7850 on Surface Pro 11 and should not
-be generalized to other devices without a separate hardware decision.
+be generalised to other devices without a separate hardware decision.

@@ -5,6 +5,13 @@ title: "ADR028: Bounded Bluetooth Management Hook"
 description: Architecture Decision Record (ADR) for bounding Surface Pro 11 Bluetooth btmgmt commands in the automatic public-address hook.
 ---
 
+> **Current operator notice (2026-08-30):** This hook design and its former
+> helper name are historical, non-prescriptive evidence. Current private input
+> and recoverable application use `handoff import`, `handoff apply`, and
+> `handoff restore`; current
+> read-only evidence uses `doctor hardware bluetooth`. See
+> [Lexr ADR013](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-013-private-handoff-application-transactions.md).
+
 ## Context
 
 [ADR027](adr-0027-bluetooth-public-address.md) chose a Windows-sourced
@@ -29,7 +36,7 @@ of hanging, but the reboot test exposed a second issue: the generated unit ran
 `Before=bluetooth.service` and was also enabled through
 `bluetooth.service.wants`. That held BlueZ back until the helper had exhausted
 its `btmgmt` attempts. The journal then showed `bluetooth.service` starting and
-initializing the management interface only after the helper failed.
+initialising the management interface only after the helper failed.
 
 ## Decision
 

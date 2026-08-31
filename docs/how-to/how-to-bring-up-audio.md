@@ -1,325 +1,120 @@
-# How to Bring Up Audio on Surface Pro 11
+---
+id: how-to-bring-up-audio
+title: "Bring Up Current Surface Pro 11 Audio"
+# prettier-ignore
+description: Install and validate the checksum-pinned Surface Pro 11 audio userspace release with Lexr.sh.
+---
 
-> [!NOTE]
-> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
-> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
-> retains low-level, manual, or evidence procedures for bring-up and
-> troubleshooting.
+# How To: Bring Up Current Surface Pro 11 Audio
 
-Last updated: 2026-08-16
+Last reviewed: 2026-08-30
 
-## Prerequisites
+The maintained path pairs a compatible custom kernel with the audited
+`audio-fullio-v19c` userspace component. It does not require an additional
+audio-routing workaround.
 
-- [x] SP11 kernel patched with DTB audio DAI links (`wsa-dai-link`, `va-dai-link`)
-- [x] ADSP/CDSP firmware in place (`qcadsp8380.mbn`, `qccdsp8380.mbn`)
-- [x] Audio firmware copied from Windows / linux-firmware
-- [x] WSA routing/graph probe installed (see [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md))
+## Before you begin
 
-## Status (2026-08-16)
+- Boot the intended Surface kernel and retain a known-good GRUB entry.
+- Build `lexr` or copy its Linux ARM64 companion binary to a writable,
+  executable filesystem.
+- Use a normal user for inspection and download; elevate only the reviewed
+  installation.
 
-| Audio path | Status | Notes |
-|---|---|---|
-| Sound card (ALSA) | Working | `x1e80100` card instantiates with topology |
-| Speaker (WSA884x) | Experimental (both slots mapped) | 4-channel PCM via WSA_CODEC_DMA_RX_0. PipeWire uses `[ FL RL FR RR ]` so physical slots 0 and 2 receive the stereo mix; this is slot mapping, not a DAPM bypass. See [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md). |
-| Audio graph setup | Probe-backed | `sp11-wsa-routing.service` applies the route with PCM1 closed, then exercises a fresh graph. Boot opcode `0x1001021` is only the SPF readiness query; ALSA restore services must not be masked. See [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md). |
-| PipeWire integration | Partial | Card detected but manual sink config needed |
-| Headphone (WCD939x RX) | Untested | RX_CODEC not in current DTS DAI links |
-| Internal microphones (VA DMIC) | Working, slightly tinny | Corrected UCM opens the `Mic` device and records two-channel 48 kHz `S16_LE` audio from `hw:0,3`. Surface-specific 0 dB decoder gain avoids the clipping seen with the shared +16 dB default. The validated 2.4 MHz DMIC clock eliminates the continuous static heard at 4.8 MHz; capture remains slightly tinny or thin. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md) and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md). |
-| HDMI/DisplayPort audio | Untested | DP DAI links not in current DTS |
-| Bluetooth audio | Working | Independent of card topology |
+## Inspect the system
 
-## Quick Start: Build and Install Topology
+Select the target-visible home of the Linux user whose desktop audio
+configuration must be checked, then keep that exact value for every doctor and
+clean-up command in this guide:
 
-### 1. Build the topology
+```sh
+USER_HOME="<absolute-target-visible-linux-user-home>"
 
-```bash
-./scripts/sp11-audio-topology.sh
+lexr userspace show audio-fullio-v19c
+lexr doctor userspace --feature audio --user-home "$USER_HOME"
+lexr doctor hardware audio
 ```
 
-### 2. Install (needs sudo)
+`doctor userspace` checks the selected root and kernel pairing. `doctor
+hardware` reports bounded live evidence; it does not claim that speakers or
+microphones have been physically qualified.
 
-```bash
-sudo ./scripts/sp11-audio-topology.sh --install
+If the userspace doctor reports recognised legacy conflicts, create a
+reversible clean-up plan rather than changing files manually:
+
+```sh
+lexr clean scan --root / --user-home "$USER_HOME"
+lexr clean plan \
+  --root / \
+  --user-home "$USER_HOME" \
+  --output lexr-audio-cleanup.json
 ```
 
-### 3. Reboot
+Review every plan entry. Apply only a plan whose complete scope you accept:
 
-The topology is loaded by the AudioReach DSP at card probe time (boot). Reboot
-is required after first install.
-
-### 4. Install the WSA routing/graph probe
-
-The helper installs `sp11-wsa-routing.service`, unmasks any ALSA-state-service
-masks left by old releases, applies WSA routing while PCM1 is closed, and
-opens a short silent stream to exercise AudioReach and DAPM. See the corrected
-status in [ADR-0035](../adr/adr-0035-audio-boot-race-alsactl.md).
-
-```bash
-sudo ./scripts/sp11-fix-audio-boot-race.sh install
-sudo reboot
+```sh
+sudo lexr clean apply \
+  --root / \
+  --user-home "$USER_HOME" \
+  --plan lexr-audio-cleanup.json \
+  --yes
 ```
 
-After reboot, verify the service's own probe and graph lifecycle:
+Keep the printed receipt for recovery.
 
-```bash
-# 1001021 is GET_SPF_STATE and is not a playback-graph failure.
-# The service should produce no new 1001000..1001006 errors.
-journalctl -k -b | grep -E '100100[0-6]|qcom-apm'
+## Pull and install the audited release
 
-# Should show no Bus clash
-journalctl -k -b | grep 'Bus clash'
-
-# The WSA routing service should be active
-systemctl status sp11-wsa-routing.service
+```sh
+lexr userspace pull audio --cache-dir build/lexr/userspace
+lexr userspace install audio \
+  --from "<verified-audio-release-directory>" \
+  --dry-run
 ```
 
-### 5. Test with ALSA directly
+Use the exact verified directory printed by `userspace pull`. After reviewing
+the dry run:
 
-```bash
-# Check card appeared
-cat /proc/asound/cards
-aplay -l
-
-# Close every PCM holder, apply the complete route, and exercise a fresh graph.
-systemctl --user stop wireplumber.service pipewire-pulse.service \
-  pipewire-pulse.socket pipewire.service pipewire.socket
-SP11_MAX_RETRIES=2 ./scripts/sp11-enable-wsa-routing.sh
-
-# Low-level tests of physical slots 0 and 2.
-speaker-test -D hw:X1E80100Microso,1 -c 4 -r 48000 -F S16_LE \
-  -t sine -f 440 -S 10 -s 1 -l 1
-speaker-test -D hw:X1E80100Microso,1 -c 4 -r 48000 -F S16_LE \
-  -t sine -f 440 -S 10 -s 3 -l 1
-
-systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service
+```sh
+sudo lexr userspace install audio \
+  --from "<verified-audio-release-directory>" \
+  --yes
 ```
 
-**SAFETY**: Keep volume low (`SpkrLeft PA Volume`, `SpkrRight PA Volume`). The
-machine driver limits these to raw 6/31 (0 dB at index 6), but verify with:
+For an installed system mounted below a live environment, add
+`--root <absolute-mount-point>` to the doctor, clean and install commands.
+`USER_HOME` remains the absolute path as seen from inside that target; do not
+prefix it with the host mount point.
 
-```bash
-amixer -c0 cget numid=1   # SpkrLeft PA Volume
-amixer -c0 cget numid=9   # SpkrRight PA Volume
-```
+## Verify playback and capture
 
-### 6. PipeWire workaround
+Reboot into the intended kernel, then run:
 
-If PipeWire shows only `Dummy Output` after reboot, install the user-level
-manual speaker sink:
-
-```bash
-./scripts/sp11-pipewire-speaker-sink.sh --install --enable-route
+```sh
+lexr doctor userspace --feature audio --user-home "$USER_HOME"
+lexr doctor hardware audio
 wpctl status
-./scripts/troubleshoot-sp11-audio.sh > sp11-audio-after-manual-sink.txt
 ```
 
-This writes
-`~/.config/pipewire/pipewire.conf.d/50-sp11-speakers.conf`, wraps the verified
-ALSA speaker PCM (`hw:X1E80100Microso,1`), applies a channelmix matrix that
-sums stereo onto physical slots 0 and 2, and restarts the user PipeWire
-services. This fixes userspace slot assignment; it does not bypass DAPM or
-prove that either amplifier is acoustically healthy. It is a stop-gap, not
-the final UCM fix. Remove it with:
+Select the built-in audio devices in the desktop settings. Test both speakers
+at a low volume first, then make a short recording and play it back. A static
+doctor pass is necessary evidence, but successful playback, capture and a
+suspend/resume cycle are the hardware acceptance gates. Those exercises are an
+intentional physical qualification boundary and are not capabilities claimed
+by the CLI.
 
-```bash
-./scripts/sp11-pipewire-speaker-sink.sh --remove
+## Recover
+
+If installation fails, do not combine files from different audio releases.
+Re-run the doctor against the same root and inspect the installer result. To
+reverse an earlier clean-up, validate and apply its receipt:
+
+```sh
+sudo lexr clean restore \
+  "/var/lib/lexr/backups/<transaction>/receipt.json" \
+  --root / \
+  --user-home "$USER_HOME" \
+  --yes
 ```
 
-## How It Works
-
-### The Missing File
-
-The X1E80100 AudioReach DSP requires a *topology graph* (`.tplg.bin`) that
-describes the audio routing between frontend PCMs (MultiMedia1-6) and backend
-DAIs (WSA_CODEC_DMA_RX_0, VA_CODEC_DMA_TX_0, etc.).
-
-The file name is constructed as:
-
-```
-qcom/{driver_name}/{card_name}-tplg.bin
-```
-
-For Surface Pro 11:
-- `driver_name` = `x1e80100` (from machine driver)
-- `card_name` = `X1E80100-Microsoft-Surface-Pro-11` (from DTS `model` property)
-
-Result: `qcom/x1e80100/X1E80100-Microsoft-Surface-Pro-11-tplg.bin`
-
-### Topology Generation
-
-The topology is built from the `X1E80100-CRD.m4` template in
-[linux-msm/audioreach-topology](https://github.com/linux-msm/audioreach-topology):
-
-1. `m4` macro processor expands the `.m4` template → `.conf` text description
-2. `alsatplg` (from alsa-utils) compiles `.conf` → `.tplg.bin` binary topology
-
-The CRD template is the same source used for 10+ other X1E80100 devices
-including Romulus (Surface Laptop 7). It provides:
-- WSA_CODEC_DMA_RX_0 (4-channel: woofer + tweeter per channel)
-- VA_CODEC_DMA_TX_0 (voice-activation microphone array)
-- TX_CODEC_DMA_TX_3 (WCD939x headset mic — unused by current DTS)
-- RX_CODEC_DMA_RX_0 (WCD939x headphone — unused by current DTS)
-- DISPLAY_PORT_RX_0-7 (HDMI/DP audio — unused by current DTS)
-
-### ALSA UCM Integration
-
-The UCM profile (`/usr/share/alsa/ucm2/`) is configured via DMI-based regex
-matching in `conf.d/x1e80100/x1e80100.conf`. The Surface Pro 11 DMI string
-(`Microsoft Corporation-Surface-Microsoft Surface Pro, 11th Edition`) is matched
-and loads the Surface-specific UCM config.
-
-The Surface-specific profile must reference only the single WSA macro exposed
-by the card. Older copies also enabled `Wsa2Speaker*` sequences; UCM aborted on
-the missing `WSA2` controls before it could expose either `Speaker` or `Mic`.
-The corrected profile removes those invalid sequences and declares two capture
-channels. See [ADR-0044](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md).
-
-The manual speaker sink remains necessary for the verified channel-position
-workaround. It bypasses ACP/UCM for playback and opens the speaker PCM directly.
-
-## Troubleshooting
-
-### Card not appearing in /proc/asound/cards
-
-```bash
-dmesg | grep -i 'tplg\|snd-x1e'
-# Expected: no topology load error
-# If error: verify topology file exists at /lib/firmware/qcom/x1e80100/
-```
-
-### speaker-test fails with "Invalid argument"
-
-```bash
-# Check if DSP mixer route is enabled
-amixer -c0 cget numid=68
-# If "values=off", enable it:
-amixer -c0 cset numid=68 'on'
-```
-
-### WSA warning in dmesg
-
-```
-wsa_macro 6b00000.codec: using zero-initialized flat cache
-```
-
-This warning is on the active WSA macro (6b00000, prefix `WSA`) that drives
-the SoundWire bus. It indicates that the regmap cache began zero-initialized,
-but does not by itself prove an open-graph or amplifier failure. The
-`audio.position` reorder maps PipeWire onto physical PCM slots 0 and 2; it is
-not a DAPM workaround. See [ADR-0034](../adr/adr-0034-wsa2-regcache-right-speaker.md)
-and [ADR-0036](../adr/adr-0036-right-speaker-audio-position-reorder.md).
-
-### No sound from speakers
-
-1. Stop PipeWire services and activation sockets, then run
-   `SP11_MAX_RETRIES=2 ./scripts/sp11-enable-wsa-routing.sh`.
-2. Check mixer levels: `amixer -c0 contents | grep -A2 'PA Volume'`.
-3. Test `hw:X1E80100Microso,1` as four-channel S16_LE/48 kHz; slots 1 and 3
-   in `speaker-test -s` correspond to physical PCM slots 0 and 2.
-4. If the probe reports RUNNING plus both WSA DAPM endpoints but the tone is
-   still silent, investigate WSA884x PA state/profile; do not infer another
-   graph-open failure from boot opcode `0x1001021`.
-
-### UCM exposes no microphone source
-
-Check whether the `HiFi` verb opens and lists both devices:
-
-```bash
-alsaucm -c hw:0 set _verb HiFi list _devices
-```
-
-If this fails on a control beginning with `WSA2`, reinstall the repository's
-Surface UCM profile. The Surface card exposes one WSA macro with two WSA8845
-amplifiers; a second WSA macro sequence prevents the whole verb from loading.
-
-After installation, verify direct capture before debugging PipeWire:
-
-```bash
-arecord -D hw:0,3 -f S16_LE -r 48000 -c 2 -d 5 sp11-mic-test.wav
-```
-
-If the card retained its old `off` profile from an earlier failed UCM load,
-activate `HiFi` once and select the internal microphone source:
-
-```bash
-pactl set-card-profile alsa_card.platform-sound HiFi
-wpctl status
-wpctl set-default <internal-microphone-source-id>
-```
-
-### Microphone works but has constant static
-
-This is the current known limitation. The standard PipeWire source and direct
-ALSA capture both carry a persistent broadband static or scratching sound, and
-volume controls show input activity in a quiet room.
-
-Tests completed on the target device found:
-
-- reducing `VA_DEC0 Volume` and `VA_DEC1 Volume` from +16 dB to 0 dB removed
-  full-scale clipping and made speech clearer, but did not remove the static;
-- DMIC0 was cleaner than DMIC1, while DMIC2 produced anomalous full-scale data
-  and DMIC3 was silent;
-- an 80 Hz high-pass plus 8 kHz low-pass filter improved measured noise and
-  voice clarity, but the static remained clearly audible; and
-- WebRTC noise suppression reduced the idle level but degraded speech quality
-  substantially, so it is not enabled by default.
-
-Do not interpret activity in a quiet room as proof that Firefox, PipeWire, or
-the desktop portal is creating the noise. The same behavior is present in raw
-ALSA capture.
-
-The 2.4 MHz DMIC clock is now the validated Surface Pro 11 default. The
-co-installable `7.1.3-jg-1dmic2p4-qcom-x1e` diagnostic kernel eliminated the continuous
-feedback/static heard with 4.8 MHz, made recorded speech dramatically clearer,
-and caused no audible degradation during music playback. Capture remains
-slightly tinny or thin. The kernel uses a Stubble-provided device tree embedded
-in the packaged image, so changing a loose DTB under `/boot` or the EFI System
-Partition does not change the live tree. See
-[ADR-0045](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md) for the test
-build and [ADR-0046](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md) for the
-default-setting decision and device-side evidence.
-
-For a new installation, use the experimental
-[`7.2-rc5-jg-0sp11v3` r1 kernel bundle](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
-with the
-[`sp11-audio-topology-v2` assets](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-audio-topology-v2).
-The v2 topology binary is unchanged from v1; v2 updates the UCM capture path to
-match the single WSA macro, use two microphone channels, and apply unity
-decoder gain. The kernel remains necessary because UCM changes alone do not
-alter the Denali DMIC clock. The v3 kernel retains the v2 build's validated
-2.4 MHz clock and adds the separately packaged, exact-ABI touchscreen module
-set. See [ADR-0048](../adr/adr-0048-jglathe-qcom-7-2-rc5-jg-0sp11v2-build.md)
-and [ADR-0049](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md).
-
-The 7.2-rc5 SP11 v2 and v3 kernels boot with the 2.4 MHz clock through the
-GRUB-injected `/boot/sp11-denali.dtb` (unlike the 7.1.3 v2 kernel, which carried
-the device tree embedded in the packaged Stubble image). The installer prefers
-the newest numeric `sp11vN` build's DTB and injects it into every GRUB kernel
-entry, so the live device-tree value reflects the injected file:
-
-```bash
-uname -r
-od -An -tu4 -N4 --endian=big \
-  /sys/firmware/devicetree/base/soc@0/codec@6d44000/qcom,dmic-sample-rate
-```
-
-Expected output for the current bundle is
-`7.2-rc5-jg-0sp11v3-qcom-x1e` and `2400000`.
-
-## References
-
-- ADR: [adr-0033-audio-topology-gap.md](../adr/adr-0033-audio-topology-gap.md)
-- ADR: [adr-0034-wsa2-regcache-right-speaker.md](../adr/adr-0034-wsa2-regcache-right-speaker.md)
-- ADR: [adr-0035-audio-boot-race-alsactl.md](../adr/adr-0035-audio-boot-race-alsactl.md)
-- ADR: [adr-0036-right-speaker-audio-position-reorder.md](../adr/adr-0036-right-speaker-audio-position-reorder.md)
-- ADR: [adr-0044-sp11-ucm-single-wsa-macro-microphone.md](../adr/adr-0044-sp11-ucm-single-wsa-macro-microphone.md)
-- ADR: [adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md](../adr/adr-0045-sp11-2p4mhz-dmic-clock-test-kernel.md)
-- ADR: [adr-0046-sp11-default-2p4mhz-dmic-clock.md](../adr/adr-0046-sp11-default-2p4mhz-dmic-clock.md)
-- ADR: [adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md](../adr/adr-0049-sp11-7-2-rc5-jg-0sp11v3-touchscreen-build.md)
-- Script: [sp11-audio-topology.sh](../../scripts/sp11-audio-topology.sh)
-- Script: [sp11-pipewire-speaker-sink.sh](../../scripts/sp11-pipewire-speaker-sink.sh)
-- Script: [sp11-enable-wsa-routing.sh](../../scripts/sp11-enable-wsa-routing.sh)
-- Script: [sp11-fix-audio-boot-race.sh](../../scripts/sp11-fix-audio-boot-race.sh)
-- Source: [linux-msm/audioreach-topology](https://github.com/linux-msm/audioreach-topology)
-- UCM configs: `/usr/share/alsa/ucm2/Qualcomm/x1e80100/`
-- PipeWire UCM issue: see ADR-0033 for tracking and workarounds
+See [Migrate Legacy Audio](how-to-migrate-to-native-audio.md) for the complete
+transition sequence.

@@ -1,5 +1,34 @@
 # Surface Pro 11 Hardware Report - 2026-06-13
 
+Last reviewed: 2026-08-30
+
+> [!IMPORTANT]
+> **Immutable historical evidence — not a current procedure.**
+> This report preserves the hardware inventory observed on 13 June 2026. Its
+> versions, paths, observations, and follow-up wording describe that snapshot
+> only and must not be treated as current setup or remediation guidance.
+
+## Current Read-Only Check
+
+On a current Linux installation, inspect the relevant static support state
+with:
+
+```sh
+lexr doctor userspace \
+  --feature kernel \
+  --feature firmware \
+  --feature wifi \
+  --feature bluetooth
+lexr doctor hardware wifi bluetooth
+```
+
+The userspace doctor reads the selected filesystem and package state. The
+hardware doctor adds bounded, redacted live radio evidence without changing
+devices, services or rfkill state. Neither command interrogates Windows,
+scans, associates, pairs, or proves that a device works. Supplemental Wi-Fi or
+Bluetooth commands and logs can expose SSIDs, BSSIDs, Bluetooth MAC addresses,
+and paired-device names; redact those identifiers before sharing any evidence.
+
 Source: Windows diagnostic report collected from the target Surface Pro 11 over
 AnyDesk/Live Share.
 

@@ -5,6 +5,13 @@ title: "ADR019: Patched qcom-x1e Kernel for Wi-Fi rfkill"
 description: Architecture Decision Record (ADR) for building a patched Ubuntu qcom-x1e kernel when installed ath12k lacks Surface Pro 11 disable-rfkill support.
 ---
 
+> **Current operator notice (2026-08-30):** Former builder commands below are
+> retained only as evidence of this kernel experiment. Current operators use
+> `kernel build`, `kernel preflight`, `kernel install`,
+> `kernel release prepare`, and `kernel release validate`; see
+> [Lexr ADR016](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md).
+> Native package proof is not a substitute for the recorded device tests.
+
 ## Context
 
 [ADR018](adr-0018-wifi-rfkill-bring-up-gate.md) identified Wi-Fi bring-up as
@@ -57,7 +64,7 @@ checks for a different installed qcom-x1e kernel ABI and refuses to proceed
 unless a fallback exists or the operator explicitly passes `--allow-no-fallback`.
 Users must keep an older known-good qcom-x1e ABI installed as a GRUB fallback
 during this experiment and should not run `apt autoremove` until the patched
-kernel has booted and Wi-Fi behavior is known.
+kernel has booted and Wi-Fi behaviour is known.
 
 The installed DTB injector will prefer the newest versioned Denali DTB path for
 each compatible DTB name, so a patched kernel package is less likely to be
@@ -72,7 +79,7 @@ The build should happen on the installed Surface Pro 11 or another ARM64 Linux
 system with enough disk space and power. The macOS USB-image builder remains
 separate from kernel-package building.
 
-Generated kernel `.deb` files and build trees are local artifacts. They must
+Generated kernel `.deb` files and build trees are local artefacts. They must
 not be committed to this repository.
 
 If the patched kernel boots and the diagnostic helper reports both DT and

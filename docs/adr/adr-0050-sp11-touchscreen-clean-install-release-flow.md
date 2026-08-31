@@ -14,7 +14,7 @@ identities are validated on the existing OLED X1E80100 development device. A
 clean-install hardware run remains the gate for stable or hardware-qualified
 promotion of a touchscreen bundle.
 
-The project owner authorized one bounded exception for the fresh r1 kernel and
+The project owner authorised one bounded exception for the fresh r1 kernel and
 image to be published as explicitly experimental prereleases after their
 automated package, module, DTB, image, provenance, and fresh-download checks
 pass. The clean-install matrix remains outstanding; these prereleases must say
@@ -41,7 +41,7 @@ Source and device evidence distinguish them:
   protocol 9 with `Invalid proto 9`.
 - The pinned geocausa Phase 91 controller accepts protocol 9 on `a88000.spi`
   unconditionally. `sp11_windows_se_init` is consulted later to choose a
-  controller-initialization path; it does not enable protocol-9 recognition.
+  controller-initialisation path; it does not enable protocol-9 recognition.
 - The development Surface works with `sp11_windows_se_init=N` and logs
   `applied Linux-integrated QSPI SE preparation`.
 - Its three loaded module source versions match the `updates/` files, and they
@@ -134,7 +134,7 @@ and classifies the main signatures:
 | `CH START completion timeout` | Stock or mismatched GPI DMA path likely loaded |
 | No enabled `spi@a88000` / MSHW0485 child | Wrong kernel, ABI, or device tree |
 | Protocol 9 accepted but client init fails | Investigate transport/client state; only then A/B the opt-in cold-init profile |
-| `Microsoft Surface G6 Touch` plus initialized log | Controller, DMA, client, and input registration succeeded |
+| `Microsoft Surface G6 Touch` plus initialised log | Controller, DMA, client, and input registration succeeded |
 
 ### Release
 
@@ -153,7 +153,7 @@ and classifies the main signatures:
   `sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`; the image uses
   `sp11-ubuntu-live-direct-7.2-rc5-jg-0sp11v3-r1`. The installable kernel ABI
   remains `7.2-rc5-jg-0sp11v3-qcom-x1e`.
-- An explicitly authorized experimental prerelease may precede the full
+- An explicitly authorised experimental prerelease may precede the full
   hardware matrix only when its release notes disclose the outstanding gate,
   retain the fallback and recovery requirements, and make no stable or
   hardware-qualified claim. All integrity and provenance gates still apply.
@@ -174,7 +174,7 @@ the ARM64 build host:
   manifest extracted from the validated raw image matched the curated payload
   byte for byte.
 
-These checks cover the refusal behavior in matrix item 4 and the artifact side
+These checks cover the refusal behaviour in matrix item 4 and the artefact side
 of the release. Items 1–3 and 5–7 still require the physical Surface Pro 11
 transitions described below.
 
@@ -190,7 +190,7 @@ Stable or hardware-qualified promotion must cover:
 4. missing and mismatched module bundles (refusal before package mutation);
 5. both initramfs-tools and dracut paths;
 6. cold power-on, Linux reboot, Windows-to-Linux boot, and suspend/resume;
-7. default Linux-integrated initialization, with the Windows sequence tested
+7. default Linux-integrated initialisation, with the Windows sequence tested
    separately only if a correctly loaded module still fails.
 
 ## Consequences
@@ -204,7 +204,7 @@ Stable or hardware-qualified promotion must cover:
   initramfs is rebuilt and inspected.
 - The original v3 release and tag were removed on 2026-08-07. This ADR retains
   the audit evidence; a corrective successor must use a new immutable tag.
-- The authorized r1 prereleases can make corrected artifacts available for
+- The authorised r1 prereleases can make corrected artefacts available for
   community testing before the complete hardware matrix finishes, but their
   experimental status and the remaining gate become part of the public
   release record.

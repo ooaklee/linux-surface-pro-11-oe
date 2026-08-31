@@ -19,7 +19,7 @@ tree, rather than a single `grub-mkstandalone` EFI binary carrying a small
 hand-picked module set.
 
 Running `grub-install` directly inside the Docker-based macOS builder is
-awkward because GRUB tries to canonicalize container and mounted filesystem
+awkward because GRUB tries to canonicalise container and mounted filesystem
 paths. The project still needs a Docker-friendly build path.
 
 ## Decision
@@ -48,5 +48,5 @@ without requiring privileged loop mounts or `grub-install` in Docker Desktop.
 
 If this still does not enable the Flex Keyboard at GRUB, the remaining likely
 paths are an exact `grub-install`-produced layout from an ARM64 Linux system,
-using the Arch GRUB package artifacts directly, or a Ventoy experiment that
+using the Arch GRUB package artefacts directly, or a Ventoy experiment that
 preserves the Surface Pro 11 DTB and boot arguments.

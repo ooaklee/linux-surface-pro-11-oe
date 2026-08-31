@@ -5,6 +5,13 @@ title: "ADR0064: Dedicated SP11 Audio Release Strategy"
 description: Architecture Decision Record (ADR) for publishing the hash-pinned Surface Pro 11 FullIO topology and UCM pairing as a dedicated linux-surface-pro-11-oe release, separate from kernel packages and paired explicitly with the geocausa v12 kernel release.
 ---
 
+> **Current operator notice (2026-08-30):** The former combined staging and
+> publication helper below is superseded and non-prescriptive. Use
+> `userspace audio release prepare` and `userspace audio release validate` for
+> deterministic local assets, then `userspace install audio` for installation; see
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
+> Remote publication remains a separate maintainer action and is not authorised by preparation.
+
 # ADR0064: Dedicated SP11 Audio Release Strategy
 
 ## Status

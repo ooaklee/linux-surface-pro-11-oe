@@ -16,7 +16,7 @@ The target Windows install contains Denali firmware files in the DriverStore
 and `System32`. The WOA Qualcomm reference driver repository also publishes
 Surface Pro 11 driver CABs under `Surface/8380_DEN`.
 
-Those firmware files are proprietary artifacts. Committing them to this repo
+Those firmware files are proprietary artefacts. Committing them to this repo
 would make the project harder to redistribute and review.
 
 The Surface Pro 11 Arch work also notes a first-boot hazard: enabling the aDSP

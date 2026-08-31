@@ -5,6 +5,14 @@ title: "ADR016: USB Data Mount and Installed-System Helpers"
 description: Architecture Decision Record (ADR) for explicitly mounting the SP11DATA USB partition and replacing fragile installed-system copy-paste commands with support helpers.
 ---
 
+> **Current operator notice (2026-08-30):** The installed-system helpers below
+> describe the former raw-image workflow and are retained only as historical
+> evidence. Current operators use `image create`, `image validate`,
+> `kernel preflight`, `kernel install`, `userspace install`, `userspace status`,
+> `handoff`, `doctor`, and `clean`; see
+> [Lexr ADR007](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-007-installed-system-handoff.md).
+> Native structural checks do not claim a successful USB-free hardware boot.
+
 ## Context
 
 [ADR015](adr-0015-direct-live-desktop-and-install-gate.md) allows cautious
@@ -16,7 +24,7 @@ Surface Pro 11 DTB and boot arguments that make the live USB viable.
 The first README instructions used `findmnt -S LABEL=SP11DATA` to locate the
 USB data partition. Testing showed this is not enough. During a live USB boot,
 Ubuntu mounts the looped ISO as `/cdrom`, while the underlying ext4 data
-partition labeled `SP11DATA` may remain unmounted. `findmnt` only reports
+partition labelled `SP11DATA` may remain unmounted. `findmnt` only reports
 mounted filesystems, so it can return nothing even though the USB partition is
 present and discoverable through `blkid -L SP11DATA`.
 

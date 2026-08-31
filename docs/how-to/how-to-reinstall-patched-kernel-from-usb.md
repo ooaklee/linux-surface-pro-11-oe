@@ -1,260 +1,197 @@
 ---
 id: how-to-reinstall-patched-kernel-from-usb
-title: "Reinstall the Patched Kernel from USB or GitHub Releases"
+title: "Reinstall the Patched Kernel from USB or a Release"
 # prettier-ignore
-description: How-to guide for installing or reinstalling a Surface Pro 11 qcom-x1e kernel bundle from the live-USB payload or verified GitHub Release assets.
+description: How-to guide for validating, preflighting, and installing a Surface Pro 11 qcom-x1e kernel bundle with Lexr.sh.
 ---
 
-# How To: Reinstall the Patched Kernel from USB or GitHub Releases
+# How To: Reinstall the Patched Kernel from USB or a Release
 
-> [!NOTE]
-> For current CLI-managed image, kernel, userspace, private hand-off, diagnosis,
-> and clean-up workflows, start with [Use Lexr](how-to-use-lexr.md). This page
-> retains low-level, manual, or evidence procedures for bring-up and
-> troubleshooting.
+Last reviewed: 2026-08-31
 
-Use this procedure after Ubuntu `apt` or an official kernel package has
-displaced a Surface Pro 11-specific qcom-x1e kernel, or when installing a
-downloaded kernel bundle for the first time. Release families differ: the
-historical 7.0 build applied two local ath12k rfkill patches, while the current
-`sp11v3` build starts from an immutable Johan G. kernel tag and adds the SP11
-build-policy, 2.4 MHz DMIC, touchscreen device-tree, and exact-ABI module work.
+Use the `lexr` companion to install one version-bound Surface Pro 11
+kernel package set while retaining a known-good qcom-x1e fallback. The native
+installer does not use repository scripts, install an out-of-tree touchscreen
+bundle, change the default GRUB entry, or reboot the computer.
 
-## Purpose
-
-Replacing an SP11-specific kernel can regress the Denali Wi-Fi, DMIC-clock, or
-touchscreen path, depending on the stock kernel version. For `sp11v3`, the four
-kernel packages and three touchscreen modules form one exact-ABI transaction;
-installing only the `.deb` files does not provide a working touchscreen.
-
-This procedure gets the pre-built patched kernel `.deb` files onto the Surface
-and reinstalls them — no Docker build required. The packages can come from the
-live USB payload **or** from the GitHub releases page; both install exactly the
-same way.
+The current kernel contains the touchscreen drivers in-tree. Do not install an
+old `sp11v3` bundle or copy separate `gpi.ko`, `spi-geni-qcom.ko`, or
+`mshw0485_touch.ko` files into a current kernel.
 
 ## Prerequisites
 
-- Root access on the Surface Pro 11.
-- The patched kernel `.deb` packages, from one of the sources below.
-- For an `sp11v3` touchscreen kernel, the complete release asset set, including
-  its matching `gpi.ko`, `spi-geni-qcom.ko`, and `mshw0485_touch.ko` files,
-  provenance manifest, and `SHA256SUMS`.
-- A checkout of this repository on the Surface — either the live USB
-  `SP11DATA/support` directory, or a `git clone` — so the guarded installer and
-  its post-install support helper are available.
-- A known-good qcom-x1e kernel already installed as a GRUB fallback. The
-  installer refuses to proceed without one (so a bad kernel cannot leave the
-  device unbootable).
+- Root access for the final installation only.
+- A Linux ARM64 `lexr` executable. A live image created with
+  `--companion-source-dir` carries the compatibility executable at
+  `/cdrom/sp11/companion/bin/linux-arm64/lexr`; an image built without
+  that explicit option does not contain the companion.
+- One coherent Surface `linux-image` and `linux-modules` package pair. Matching
+  headers may be included as a pair.
+- `SHA256SUMS` from the same release.
+- A distinct, known-good qcom-x1e ABI already installed and available through
+  GRUB.
+- Recovery media kept available throughout testing.
 
-## 1. Get the kernel packages
-
-Pick whichever source is available and point `DEBS` at the directory that holds
-the kernel `.deb` files — three for a standard qcom-x1e build, four for the
-jglathe tree (7.1.1+), which adds a `linux-qcom-x1e-headers-*_all.deb` common
-headers package. The install step in section 2 is identical either way; the
-guarded installer accepts either payload.
-
-**Option A — from the live USB (SP11DATA partition):**
-
-The build copies the packages to `payload/kernel-debs/` on the data partition.
+If the image includes the companion, copy it to a writable path before running
+it:
 
 ```bash
-# Mount the USB data partition if it is not already mounted:
-SP11DEV="$(blkid -L SP11DATA)"
-SP11DATA="$(findmnt -rn -S "$SP11DEV" -o TARGET | head -n1)"
-if [ -z "$SP11DATA" ]; then
-  SP11DATA=/mnt/sp11data
-  sudo mkdir -p "$SP11DATA"
-  sudo mount "$SP11DEV" "$SP11DATA"
-fi
-
-DEBS="$SP11DATA/payload/kernel-debs"
-ls "$DEBS"/linux-*.deb
+install -m 0755 \
+  /cdrom/sp11/companion/bin/linux-arm64/lexr \
+  /tmp/lexr
+LEXR=/tmp/lexr
 ```
 
-**Option B — from GitHub releases (Surface has Wi-Fi, Ethernet, or tethering):**
+If `lexr` is already installed, use `LEXR=lexr` instead.
 
-Browse the releases page and select the intended patched-kernel tag:
+## 1. Obtain a verified bundle
 
-```
-https://github.com/ooaklee/linux-surface-pro-11-oe/releases
-```
+### From a release with networking
 
-The corrective v3 prerelease is
-[`sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1)
-(experimental). The removed unsuffixed v3 tag is retired and must not be
-reused.
-
-For `sp11v3`, download the complete published asset set into a new directory,
-fetch the release tag into the local repository, and run the semantic release
-validator before installation:
+List candidate releases, then download one exact package set:
 
 ```bash
-TAG=sp11-qcom-x1e-7.2-rc5-jg-0sp11v3-r1
-DEBS="$HOME/sp11-kernel-debs-$TAG"
-mkdir -p "$DEBS"
+"$LEXR" kernel release list
 
-gh release download "$TAG" \
-  --repo ooaklee/linux-surface-pro-11-oe \
-  --dir "$DEBS"
-
-cd /path/to/linux-surface-pro-11-oe
-git fetch https://github.com/ooaklee/linux-surface-pro-11-oe.git \
-  "refs/tags/$TAG:refs/tags/$TAG"
-
-./scripts/validate-sp11-touchscreen-release.sh \
-  --dir "$DEBS" \
-  --tag "$TAG" \
-  --remote https://github.com/ooaklee/linux-surface-pro-11-oe.git
+bundle_dir="$PWD/kernel-bundle"
+"$LEXR" kernel release download "<release-tag>" \
+  --output-dir "$bundle_dir" \
+  --headers
 ```
 
-The validator checks exact checksum and asset membership, package roles and
-ABI, module provenance and vermagic, the touchscreen device tree, and both the
-local and remote tag targets. Without `gh`, download every asset listed on the
-release page into one empty directory, fetch the tag as above, and run the same
-validator.
+Without `--repository`, both commands use the established
+[`ooaklee/linux-surface-pro-11-oe` release channel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
+Use `--repository <owner/name>` only for an explicitly reviewed compatible
+alternative. Lexr's own release page contains CLI binaries and their checksum
+manifest, not kernel or device-support assets.
 
-For an older non-touchscreen release, downloading only its `.deb` files and
-`SHA256SUMS` is sufficient for installation. In that narrower case,
-`sha256sum -c SHA256SUMS --ignore-missing` verifies the downloaded packages but
-does not validate the release's complete asset set.
+The download command requires the selected packages to be covered by that
+release's `SHA256SUMS`, verifies their bytes, and writes the normal kernel
+bundle manifest atomically. Omit `--headers` when development headers are not
+needed.
 
-## 2. Install the patched kernel
-
-Run the guarded installer from your repository checkout, pointing `--work-dir`
-at the `$DEBS` directory from section 1. This is the same command for both the
-USB and the GitHub packages.
+For a release prepared with the current native release contract, downloading
+every published asset into a new empty directory permits the stronger
+closed-directory check:
 
 ```bash
-# From the USB checkout:   cd "$SP11DATA/support"
-# From a git clone:        cd /path/to/linux-surface-pro-11-oe
-cd "$SP11DATA/support"
-
-./scripts/build-sp11-qcom-x1e-kernel.sh \
-  --work-dir "$DEBS" \
-  --install-only
+complete_release_dir="$PWD/complete-kernel-release"
+# Download every published asset into "$complete_release_dir" first.
+"$LEXR" kernel release validate "$complete_release_dir"
 ```
 
-`--install-only`:
+That check also verifies corresponding source, explicit licence evidence,
+public provenance, generated notes, and exact directory membership. It is
+stricter than the package-only download operation.
 
-- refuses to install unless another `qcom-x1e` kernel ABI is present as a GRUB
-  fallback (pass `--allow-no-fallback` only if you accept live-USB recovery as
-  your fallback). A genuinely fresh install that has only generic Ubuntu
-  kernels (for example `7.0.0-32`/`7.0.0-22`, not a `-qcom-x1e` flavour) has
-  no qualifying fallback and must pass `--allow-no-fallback`,
-- installs the kernel `.deb` packages with `apt`, then
-- runs `install-sp11-support.sh --installed-system`, which re-selects the
-  rfkill-capable Denali OLED DTB and re-injects it into GRUB and initramfs, and
-- for `sp11v3`, refuses a missing or mismatched three-module touchscreen bundle
-  before package installation, then installs and verifies it in the exact
-  target initramfs.
+### From offline USB storage
 
-For `sp11v3`, the touchscreen installer also **repairs** a stale initramfs that
-still embeds the stock in-tree `gpi`/`spi-geni-qcom` modules: it diverts (or
-removes) the stock copies, runs `depmod`, rebuilds the initramfs, and verifies
-that only the `updates/` overrides remain. See
-[ADR-0053](../adr/adr-0053-sp11-touchscreen-stale-initramfs-repair.md).
-
-> **The r1 release tags bundle the pre-repair installer**, which detects the
-> stale stock modules and then refuses with
-> `initramfs also contains a stock/duplicate`. If you hit that, either use a
-> checkout of `main` (which includes the repair) or repair manually before
-> re-running the touchscreen step:
->
-> ```bash
-> REL=7.2-rc5-jg-0sp11v3-qcom-x1e
-> sudo rm -f /lib/modules/$REL/kernel/drivers/dma/qcom/gpi.ko*
-> sudo rm -f /lib/modules/$REL/kernel/drivers/spi/spi-geni-qcom.ko*
-> sudo depmod -a $REL
-> sudo update-initramfs -u -k $REL
-> ```
-
-It elevates with `sudo` as needed. If `--work-dir` points to a directory under
-your home (e.g. `~/Downloads`), you may see a harmless `_apt` sandbox warning:
-`pkgAcquire::Run (13: Permission denied)`. apt falls back to running as root
-and the install completes normally. The DTB `postrm`/`postinst` hooks also run
-automatically during the `dpkg` step:
-
-```
-Setting up linux-image-7.0.0-22-qcom-x1e (7.0.0-22.22) ...
-/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb:
-Using Surface Pro 11 DTB: /usr/lib/firmware/7.0.0-22-qcom-x1e/device-tree/qcom/x1e80100-microsoft-denali-oled.dtb
-Injected Surface Pro 11 DTB into /boot/grub/grub.cfg
-...
-Found installed fallback qcom-x1e kernel ABI: 7.0.0-32-qcom-x1e
-Installed Surface Pro 11 support helpers into /
-```
-
-### Minimal fallback (no repository checkout)
-
-Do not use this fallback for an `sp11v3` touchscreen release: direct `dpkg`
-does not install or verify the required out-of-tree module bundle. Obtain the
-repository checkout and use the guarded flow above.
-
-If you only have the `.deb` files and not a checkout of this repo, install them
-directly only for a kernel-only release. This skips the fallback-kernel guard,
-so make sure a known-good qcom-x1e kernel is still installed first:
+Copy the release's package files and `SHA256SUMS` into one writable directory.
+Do not mix files from two releases:
 
 ```bash
-sudo dpkg -i "$DEBS"/linux-*.deb
+bundle_dir="$PWD/kernel-bundle"
+mkdir "$bundle_dir"
+cp /path/to/offline-release/linux-*.deb "$bundle_dir/"
+cp /path/to/offline-release/SHA256SUMS "$bundle_dir/"
 ```
 
-The Denali DTB is re-injected automatically by the
-`/etc/kernel/postinst.d/zzzz-surface-pro-11-dtb` hook that the support setup
-installed on first boot — you will see `Injected Surface Pro 11 DTB into
-/boot/grub/grub.cfg` in the output. If that hook is missing, install it by
-running `./scripts/install-sp11-support.sh --installed-system` from a repository
-checkout.
+Inspect the local pair before any privileged action:
 
-## 3. Reboot
+```bash
+"$LEXR" kernel inspect "$bundle_dir"
+```
+
+## 2. Identify the fallback ABI
+
+The fallback must be a different installed Surface qcom-x1e kernel. If the
+currently running kernel is the fallback, record it directly:
+
+```bash
+fallback_abi="$(uname -r)"
+printf '%s\n' "$fallback_abi"
+```
+
+Do not use a generic distribution ABI as a substitute. The preflight refuses
+to continue unless it can verify the selected fallback's kernel, modules,
+device trees, initramfs, and GRUB evidence beneath the explicit target root.
+
+## 3. Run the read-only preflight
+
+```bash
+"$LEXR" kernel preflight "$bundle_dir" \
+  --root / \
+  --fallback-abi "$fallback_abi"
+```
+
+Review the target ABI, package count, device-tree count, checksum status, and
+planned commands. Preflight makes no changes. Use `--json` when retaining a
+machine-readable plan.
+
+If preflight reports missing fallback evidence, stop and restore or install a
+known-good qcom-x1e kernel first. The CLI deliberately has no option to waive
+that guard on the live root.
+
+## 4. Rehearse the installation
+
+```bash
+"$LEXR" kernel install "$bundle_dir" \
+  --root / \
+  --fallback-abi "$fallback_abi" \
+  --dry-run
+```
+
+This repeats complete preflight through the installation entry point without
+running package-manager or bootloader commands.
+
+## 5. Install the reviewed bundle
+
+Run the same request with explicit confirmation and the privilege already
+obtained by the caller:
+
+```bash
+sudo "$LEXR" kernel install "$bundle_dir" \
+  --root / \
+  --fallback-abi "$fallback_abi" \
+  --yes
+```
+
+The manager stages immutable package copies, installs the coherent set,
+verifies the packaged Denali device trees, updates initramfs and GRUB through
+fixed argument-separated commands, and rechecks the fallback. A failed
+transaction returns rollback evidence. It does not select the new kernel as
+the default and does not reboot.
+
+## 6. Reboot manually and diagnose
+
+Keep the fallback selected until the new ABI has been exercised. When ready:
 
 ```bash
 sudo reboot
 ```
 
-## Validation
-
-After reboot, confirm Wi-Fi is no longer hard-blocked:
-
-```bash
-rfkill list
-```
-
-Expected output for `phy0`:
-
-```
-1: phy0: Wireless LAN
-    Soft blocked: no
-    Hard blocked: no
-```
-
-Verify the running kernel:
+After boot, record the active ABI and run the read-only hardware checks:
 
 ```bash
 uname -r
-# 7.2-rc5-jg-0sp11v3-qcom-x1e
+lexr doctor hardware
+lexr doctor userspace
 ```
 
-For an `sp11v3` kernel, also verify the complete touchscreen boot path:
+Structural success does not prove cold boot, suspend, pen, touch, Wi-Fi,
+Bluetooth, camera, or audio behaviour. Retain the fallback kernel and recovery
+media until those checks pass on the actual Surface. These device exercises are
+an intentional physical qualification boundary and are not capabilities
+claimed by the CLI.
 
-```bash
-sudo ./scripts/troubleshoot-sp11-touchscreen.sh
-```
+## Alternate roots
 
-## Privacy and Safety
+For an offline mounted Linux root, pass its absolute path with `--root`. The
+optional `--running-abi` flag is accepted only for an alternate-root fixture;
+it cannot override live `uname` evidence for `/`.
 
-The release manifest records the source family, immutable source commit,
-applied project patches, and module provenance for that specific bundle. The
-v3 release is built from the Johan G. 7.2-rc5 tag with the SP11 DMIC and
-touchscreen changes; it is not the historical Ubuntu 7.0 two-patch build. No
-device-specific data is included. Every kernel release is **experimental and
-unsigned** — validate the published asset set before installing, and keep a
-known-good qcom-x1e fallback kernel installed so the GRUB fallback guard can
-protect the boot path.
+## Related Documents
 
-## Related
-
-- [Build a Patched qcom-x1e Kernel](how-to-build-patched-qcom-x1e-kernel.md) —
-  full Docker build from source, and the `--install-only` payload install.
-- [Wi-Fi RFkill Bring-Up Gate](/docs/adr/adr-0018-wifi-rfkill-bring-up-gate.md) —
-  explanation of the hard-block issue.
+- [Prepare and validate kernel release artefacts](how-to-release-kernel-artifacts.md)
+- [Build a patched qcom-x1e kernel](how-to-build-patched-qcom-x1e-kernel.md)
+- [ADR016: Native kernel release preparation and v3 retirement](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-016-native-kernel-release-preparation.md)

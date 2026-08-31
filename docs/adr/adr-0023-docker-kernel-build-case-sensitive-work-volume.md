@@ -2,12 +2,12 @@
 id: adrs-adr023
 title: "ADR023: Docker Kernel Build Case-Sensitive Work Volume"
 # prettier-ignore
-description: Architecture Decision Record (ADR) for keeping Dockerized qcom-x1e kernel source and object builds on a Linux case-sensitive filesystem.
+description: Architecture Decision Record (ADR) for keeping Dockerised qcom-x1e kernel source and object builds on a Linux case-sensitive filesystem.
 ---
 
 ## Context
 
-[ADR020](adr-0020-dockerized-arm64-kernel-build.md) introduced Dockerized
+[ADR020](adr-0020-dockerized-arm64-kernel-build.md) introduced Dockerised
 ARM64 kernel builds. [ADR021](adr-0021-git-fallback-kernel-build-toolchain.md)
 selected the temporary git fallback toolchain, and
 [ADR022](adr-0022-docker-kernel-build-without-fakeroot.md) removed fakeroot
@@ -31,14 +31,14 @@ The Docker kernel wrapper will no longer use the host bind mount as the
 default kernel source and object build directory.
 
 The wrapper will keep the host `--work-dir` for Docker control files, logs
-captured by the caller, and copied build artifacts. The actual inner
+captured by the caller, and copied build artefacts. The actual inner
 `build-sp11-qcom-x1e-kernel.sh --work-dir` path will default to `/linux-work`,
 backed by the Docker named volume `sp11-qcom-x1e-kernel-build`.
 
 After a successful container build, the wrapper's inner script will copy
 generated qcom-x1e `.deb` packages and build manifests from `/linux-work` back
 to the host work directory under `artifacts/`. Existing `--copy-to-payload`
-behavior will then copy those host-visible package artifacts into
+behaviour will then copy those host-visible package artefacts into
 `payload/kernel-debs/`.
 
 The wrapper will still allow `--container-work-dir /work` for operators who
@@ -48,7 +48,7 @@ case-insensitive.
 
 ## Consequences
 
-Dockerized kernel builds work on macOS hosts without losing case-distinct Linux
+Dockerised kernel builds work on macOS hosts without losing case-distinct Linux
 kernel files during checkout.
 
 The source and object tree are no longer directly browsable under the host
@@ -62,5 +62,5 @@ resets the source tree inside the volume for the next build, while
 volume.
 
 The host work directory remains the stable place to look for copied package
-artifacts, wrapper-generated control files, and logs captured by the shell
+artefacts, wrapper-generated control files, and logs captured by the shell
 command running the wrapper.

@@ -5,6 +5,13 @@ title: "ADR0035: Audio Boot Race — superseded diagnosis"
 description: Superseded Surface Pro 11 audio boot-race diagnosis, retained for historical test context.
 ---
 
+> **Current operator notice (2026-08-30):** All former fix, routing, sink, and
+> service helper references below are non-prescriptive historical evidence.
+> Use `userspace audio release prepare`, `userspace audio release validate`,
+> `userspace install audio`, `doctor hardware audio`, `doctor userspace`, and
+> `clean`; see
+> [Lexr ADR019](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-019-native-audio-release-preparation.md).
+
 # ADR0035: Audio Boot Race — alsactl Restore vs AudioReach DSP Graph Load
 
 ## Status
@@ -86,7 +93,7 @@ persisted into subsequent boots — triggering the race.
 ### 1. Clear WSA controls from asound.state
 
 Strip all WSA/Spkr control blocks from `/var/lib/alsa/asound.state` so they
-default to their kernel-initialized state at boot. Non-WSA controls (VA mic,
+default to their kernel-initialised state at boot. Non-WSA controls (VA mic,
 etc.) are preserved.
 
 ### 2. Mask alsa-restore.service

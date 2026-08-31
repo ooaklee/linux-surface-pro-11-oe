@@ -25,7 +25,7 @@ terminal input/output commands.
 ## Decision
 
 Before switching to Ventoy, the standalone GRUB image will explicitly include
-and initialize GRUB terminal input support:
+and initialise GRUB terminal input support:
 
 - embed `terminal`, `keystatus`, and `read` alongside the existing boot
   modules,
@@ -44,7 +44,7 @@ current raw-image workflow and avoids a Ventoy dependency.
 
 The GRUB menu output path is intentionally left unchanged because the current
 image already displays the menu. This test isolates input handling rather than
-changing both input and output behavior at once.
+changing both input and output behaviour at once.
 
 If the Flex Keyboard still cannot control GRUB, a future ADR should evaluate a
 larger bootloader change: either a `grub-install`-style on-disk GRUB module

@@ -40,7 +40,7 @@ The repository can evolve toward a plug-and-play Ubuntu workflow without
 forking or disturbing the reference projects.
 
 We must copy only reusable logic and public configuration patterns. Proprietary
-firmware blobs and generated local test artifacts remain outside git.
+firmware blobs and generated local test artefacts remain outside git.
 
 Future decisions should link back to this ADR when they depend on the dedicated
 Surface Pro 11 Ubuntu scope.

@@ -45,13 +45,15 @@ those established release channels.
   repository-scoped credential permits only the required cross-repository OE
   release operation, and publication remains bound to an exact OE `main`
   revision.
-- OE does not run a workflow which checks out private Lexr source. The legacy
-  script-test workflow remains while its OE scripts remain present, but the
-  superseded OE kernel-build and IPTSD-integration workflows are removed.
-- Existing OE scripts, tests and tools are retained until each one has an
-  explicit replacement and equivalence audit. Documentation directs new work
-  to Lexr without rewriting historical reports or pretending that an old
-  command was used to gather past evidence.
+- OE does not run a workflow which checks out private Lexr source. The
+  superseded kernel-build, IPTSD-integration and script-test workflows are
+  removed from OE.
+- The completed native-workflow audit assigns every former repository script,
+  shell test and root helper tool to a typed Lexr owner, explicit retirement or
+  specialist rehoming. OE therefore removes that second execution surface as
+  recorded by [ADR0070](adr-0070-retire-superseded-repository-scripts.md).
+  Historical reports retain their original commands beneath explicit
+  non-prescriptive notices.
 - Existing OE repository and release URLs remain stable external provenance.
   Lexr-owned pre-release media, private hand-off, installed-state and bundle
   identifiers advance to explicit Lexr-only contracts rather than carrying a
@@ -75,9 +77,10 @@ OE cut-over advanced to it.
   request code cannot receive the credential used for OE release publication.
 - The two repositories have clear release boundaries while users retain the
   existing OE links for kernels and device-support payloads.
-- Retained scripts may overlap temporarily with Lexr. Their presence is a
-  compatibility and evidence-preservation measure, not an instruction to add
-  new orchestration outside Lexr.
+- Current operator guidance has one implementation boundary: the pinned Lexr
+  binary and its typed domains. Patch inputs, dated evidence, userspace source
+  and OpenEmbedded recipes remain in OE without retaining a second runnable
+  orchestration surface.
 
 ## Alternatives Considered
 
@@ -92,6 +95,8 @@ the executable source and would expose an unnecessary credential boundary.
 links are already shared, and Lexr's own releases should remain a predictable
 binary-only distribution surface.
 
-**Delete every superseded script immediately (rejected).** Historical reports,
-recovery procedures and unported edge cases still refer to those files. Each
-retirement needs a separate replacement audit rather than a bulk deletion.
+**Delete scripts before completing the native-workflow audit (rejected).** A
+bulk deletion without replacement mapping would hide recovery gaps. Deletion
+became acceptable only after the pinned Lexr revision recorded every native,
+retired or rehomed outcome and current OE guidance stopped depending on the
+files.
