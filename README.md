@@ -50,11 +50,12 @@ The published `7.2.2-jg-0sp11v1` bundle is a Linux 7.2.2-based downstream
 integration, not a claim about the latest official Linux kernel. As of
 2026-08-31, kernel.org lists stable 7.2.2 and mainline 7.3-rc1. Check the
 current [kernel.org release record](https://www.kernel.org/releases.json)
-instead of inferring upstream status from the project release number. The v1
-bundle was
-package-, source-, and Stubble-image-validated, but has not been boot-tested on
-Surface hardware as one all-up image. Individual green entries below name
-hardware evidence from the relevant accepted integration generation.
+instead of inferring upstream status from the project release number.
+
+The v1 bundle was package-, source-, and Stubble-image-validated, but has not
+been boot-tested on Surface hardware as one all-up image. Individual green
+entries below name hardware evidence from the relevant accepted integration
+generation.
 
 Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
 older-version scope; 🧪 experimental hardware result, not supported; 🧩
