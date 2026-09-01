@@ -45,13 +45,10 @@ These examples select the integration branch explicitly while the cut-over is
 under review. Omit `--branch cli/linux-armer` and the branch-switching steps
 after the same changes reach the repository's default branch.
 
-During Lexr's private phase, recursive initialisation succeeds only for GitHub
-accounts which can read `ooaklee/lexr.sh`. Git uses the caller's normal GitHub
-authentication; do not place a token in a clone URL, shell history, repository
-file, or support report. Someone without access can clone the OE repository
-without `--recurse-submodules`, but cannot build or run the pinned CLI until
-access is granted or Lexr becomes public. The same recursive clone and submodule
-commands work anonymously after that transition.
+Both repositories are public, so the recorded HTTPS URL supports anonymous
+recursive initialisation. GitHub credentials are needed only for operations
+that write to GitHub or for private forks; do not place a token in a clone URL,
+shell history, repository file, or support report.
 
 `git submodule update` checks out the exact revision recorded by OE. It does not
 silently follow Lexr's default branch.

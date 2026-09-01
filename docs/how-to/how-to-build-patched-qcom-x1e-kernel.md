@@ -73,9 +73,9 @@ licence files, then follow
 ## Use the bundle in an image
 
 The optional companion-source inclusion below requires the
-[initialised Lexr submodule](../../README.md#build-the-cli). While Lexr remains
-private, populating that submodule requires authenticated repository access;
-once it is public, ordinary anonymous submodule initialisation is sufficient.
+[initialised Lexr submodule](../../README.md#build-the-cli). Both public
+repositories can be populated anonymously through the recorded HTTPS submodule
+URL.
 Omit `--companion-source-dir` when the source checkout is intentionally
 unavailable.
 

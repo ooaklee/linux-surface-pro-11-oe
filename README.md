@@ -19,11 +19,9 @@ established
 [OE release page](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
 
 > [!NOTE]
-> Lexr.sh remains private during the repository migration. Only authenticated
-> GitHub users with access to Lexr can populate `cli/lexr`; an ordinary clone
-> of this OE repository still works, but CLI-dependent procedures require the
-> populated submodule. The recorded HTTPS URL will work anonymously without
-> another OE change when Lexr becomes public.
+> Lexr.sh is public. The pinned HTTPS submodule can be populated anonymously,
+> including by `git clone --recurse-submodules`; credentials are needed only
+> for operations that write to GitHub or for private forks.
 
 > [!WARNING]
 > The generated media, custom kernels and hardware support remain
@@ -113,8 +111,7 @@ The build host needs Go 1.26 or newer. Image and kernel builds also need a
 running Docker daemon with Linux ARM64 container support. Initialise the pinned
 submodule after cloning this repository, then build Lexr from its module.
 
-For a new checkout, configure GitHub HTTPS credentials with access to Lexr
-while it remains private, then clone both repositories together:
+For a new checkout, clone both public repositories together:
 
 ```sh
 git clone --recurse-submodules \
@@ -137,9 +134,8 @@ These examples select the integration branch explicitly while the cut-over is
 under review. Omit `--branch cli/linux-armer` and the branch-switching steps
 after the same changes reach the repository's default branch.
 
-While Lexr remains private, both forms require GitHub HTTPS credentials with
-access to `ooaklee/lexr.sh`. Once that repository is public, the recorded HTTPS
-submodule URL will work without authentication.
+The recorded HTTPS submodule URL works anonymously. Add GitHub credentials only
+when pushing changes or when your chosen fork is private.
 
 Then use the provenance-aware source builder and run the command:
 

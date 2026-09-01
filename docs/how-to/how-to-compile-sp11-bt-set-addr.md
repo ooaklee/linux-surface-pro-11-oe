@@ -14,9 +14,8 @@ or install it. `lexr handoff apply` now owns the validated same-device
 address workflow and creates the required system integration itself.
 
 Before collecting, [initialise the Lexr submodule](../../README.md#build-the-cli)
-so that the canonical Windows collector is present. This requires an
-authenticated checkout while Lexr remains private; once it is public, ordinary
-anonymous submodule initialisation is sufficient.
+so that the canonical Windows collector is present. The public HTTPS submodule
+can be initialised anonymously.
 
 ## Migrate
 

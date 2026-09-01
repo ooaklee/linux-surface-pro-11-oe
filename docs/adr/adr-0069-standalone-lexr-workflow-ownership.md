@@ -23,8 +23,9 @@ release lifecycle and issue tracker as [Lexr](https://github.com/ooaklee/lexr.sh
 
 Keeping a second source copy in OE would split issue ownership and allow the
 two implementations to drift. Running Lexr-dependent automation from OE would
-also require OE to obtain a private cross-repository checkout credential while
-Lexr remains access-controlled. That reverses the intended ownership boundary.
+also have required OE to obtain a private cross-repository checkout credential
+while Lexr was access-controlled. That would have reversed the intended
+ownership boundary.
 
 OE nevertheless remains the public authority for Surface Pro 11 integration
 evidence, kernel and device-support artefacts, historical decisions, patches,
@@ -45,7 +46,7 @@ those established release channels.
   repository-scoped credential permits only the required cross-repository OE
   release operation, and publication remains bound to an exact OE `main`
   revision.
-- OE does not run a workflow which checks out private Lexr source. The
+- OE does not run a workflow that checks out Lexr source. The
   superseded kernel-build, IPTSD-integration and script-test workflows are
   removed from OE.
 - The completed native-workflow audit assigns every former repository script,
@@ -67,12 +68,11 @@ OE cut-over advanced to it.
 
 ## Consequences
 
-- A recursive OE clone gives authorised contributors the exact reviewed Lexr
-  source; cloning without submodules still provides the complete OE evidence
-  and integration repository.
-- Contributors without access to Lexr cannot initialise the submodule during
-  the access-controlled phase. This restriction disappears if the standalone
-  repository becomes public; no OE history or URL change is then required.
+- A recursive OE clone gives contributors the exact reviewed Lexr source;
+  cloning without submodules still provides the complete OE evidence and
+  integration repository.
+- The public HTTPS submodule can be initialised anonymously. Read credentials
+  are needed only when a contributor substitutes a private fork.
 - OE pull requests do not need a Lexr repository token, and untrusted pull
   request code cannot receive the credential used for OE release publication.
 - The two repositories have clear release boundaries while users retain the
