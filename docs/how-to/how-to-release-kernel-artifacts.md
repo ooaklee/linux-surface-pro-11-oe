@@ -116,7 +116,7 @@ commit and tree from the build.
 Choose a tag-like release name and an absent output directory:
 
 ```bash
-release_name=sp11-kernel-7.2.0-jg-0sp11v19
+release_name=sp11-qcom-x1e-7.2.2-jg-0sp11v1
 release_dir="build/release/$release_name"
 
 lexr kernel release prepare \
@@ -192,8 +192,9 @@ Kernel publication automation lives in the standalone
 workflow, not in this repository. Dispatch it manually from Lexr's `main`
 branch. A build-only run is the appropriate first pass; request publication
 only after reviewing the selected source revision and its redistribution
-evidence. An explicit release name must begin with `sp11-kernel-`; otherwise
-the workflow derives that prefix and the ABI from the verified build.
+evidence. The workflow derives
+`sp11-qcom-x1e-<package-version>` from the verified build. An explicit release
+name is an exact assertion of that value rather than an alias.
 
 The workflow builds through the native CLI on the dedicated Linux
 `lexr-kernel` runner. When publication is requested, it materialises the exact
@@ -218,9 +219,9 @@ only when all of these controls are in place:
 
 Protect Lexr's `main` branch when the repository plan makes branch protection
 available. Before entering the secret-bearing step, the GitHub-hosted job
-revalidates the self-hosted builder's manifest release name, checksum set,
-required source and licence assets, experimental state, and `sp11-kernel-`
-namespace. It resolves OE `main` to an exact revision, refuses to reuse an
+revalidates the self-hosted builder's manifest release name against its package
+version, checksum set, required source and licence assets, and experimental
+state. It resolves OE `main` to an exact revision, refuses to reuse an
 existing release tag, and then uses `OE_RELEASE_TOKEN` to create a draft release
 against that revision in `ooaklee/linux-surface-pro-11-oe`. The hosted job
 verifies the new tag immediately, downloads every uploaded asset into a fresh
