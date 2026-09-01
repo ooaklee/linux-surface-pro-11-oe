@@ -99,6 +99,12 @@ The first implemented image adapter is
 without being buildable; `catalog show` reports an entry's actual support
 level.
 
+Fedora Workstation Live 44 is implemented by Lexr's `fedora-live` adapter.
+Lexr owns its EROFS remastering, native custom-kernel RPM, boot policy,
+Anaconda hand-off, and ISO validation. This repository owns the corresponding
+reusable [Fedora IPTSD package-source input](userspace/iptsd-sp11/packaging/fedora/README.md),
+not a second Fedora build or remastering workflow.
+
 ## Build the CLI
 
 The build host needs Go 1.26 or newer. Image and kernel builds also need a
