@@ -43,17 +43,18 @@ The primary recorded X1E hardware target is:
 | Firmware/UEFI | `175.222.235`, dated 2026-02-23 |
 | Internal disk | Samsung `MZ9L4512HBLU-00BMV-SAMSUNG`, 476.9 GiB NVMe |
 | Windows source checked | Windows 11 Home Insider Preview build `29585` |
-| Latest published project kernel | [`sp11v19`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v19), based on Linux 7.2.0 |
-| Exact project source | [`2cbd1ec3…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/2cbd1ec3e2da385e7bd91fd65c63ba5a8fb5b865) |
+| Most recent experimental kernel release | [`7.2.2-jg-0sp11v1`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.2-jg-0sp11v1), based on Linux 7.2.2 |
+| Exact project source | [`050f0cb5…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/050f0cb5533e1d88e3955a515b5e8e4c847ffe0d) |
 
-The published `sp11v19` package is a Linux 7.2.0-based downstream integration,
-not the latest official Linux kernel. As of 2026-08-31, kernel.org lists stable
-7.2.2 and mainline 7.3-rc1; consult the current
-[kernel.org release record](https://www.kernel.org/releases.json) rather than
-inferring upstream status from the project release number. The final v19
-rebuild was package- and source-validated but was not separately boot-tested as
-one all-up image. Individual green entries below name hardware evidence from
-the relevant accepted integration generation.
+The published `7.2.2-jg-0sp11v1` bundle is a Linux 7.2.2-based downstream
+integration, not a claim about the latest official Linux kernel. As of
+2026-08-31, kernel.org lists stable 7.2.2 and mainline 7.3-rc1. Check the
+current [kernel.org release record](https://www.kernel.org/releases.json)
+instead of inferring upstream status from the project release number. The v1
+bundle was
+package-, source-, and Stubble-image-validated, but has not been boot-tested on
+Surface hardware as one all-up image. Individual green entries below name
+hardware evidence from the relevant accepted integration generation.
 
 Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
 older-version scope; 🧪 experimental hardware result, not supported; 🧩
