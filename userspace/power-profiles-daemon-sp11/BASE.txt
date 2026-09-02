@@ -1,0 +1,13 @@
+Upstream project: https://gitlab.freedesktop.org/upower/power-profiles-daemon.git
+Upstream tag: 0.30
+Upstream commit: 5b4994c8a91290481bef87a5bae95391d0ec677f
+Upstream tree: 8310d18187f51b027004b3fc3e35f2bdd1ef5840
+Distribution package observed on device: 0.30-2 (arm64, Ubuntu resolute)
+Ubuntu source descriptor SHA256: 800ba32fed9823627faf9b47fcff15171e2d38f17035cb76da109ec60a4f2bc8
+Ubuntu upstream tarball SHA256: 528ee5b8ca0a27d8d66128ebf850e23be9571dc130cf2a82dd2463dac7d3a92f
+Ubuntu Debian tarball SHA256: a02b340e1198230a986c0dd05e58dfb359b1939109139acc2947bd0c631f1835
+SP11 package versions: OE revision .sp11.1; Ubuntu 0.30-2+sp11.1
+Kernel interface minimum: 7.2.2-jg-0sp11v1-qcom-x1e
+Kernel interface commit in PR25 history: 3953c459a0c63176bce0dcc5ef42d8486a60702e
+Equivalent current target commit: 84f6900b705a345ee7c62e8a783343bf249ff45f
+Validation date: 2026-09-02

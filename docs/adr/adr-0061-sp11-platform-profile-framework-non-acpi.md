@@ -9,7 +9,13 @@ description: Architecture Decision Record (ADR) documenting why power-profiles-d
 
 ## Status
 
-Accepted and hardware-verified (2026-08-23). Kernel
+Partially superseded by
+[ADR0072](adr-0072-sp11-power-profiles-daemon-class-interface.md) on
+2026-09-02. The hardware evidence below remains valid, but new 7.2.2 SP11
+releases use the native class interface through updated userspace and do not
+re-create the legacy ACPI hierarchy in the kernel.
+
+Originally accepted and hardware-verified (2026-08-23). Kernel
 `7.2.0-jg-0sp11v8-qcom-x1e` is installed on the X1E80100 OLED device. The
 framework loads, the legacy sysfs interface is present, the SSAM device is
 bound, power-profiles-daemon (ppd) uses the `platform_profile` driver, and
@@ -101,5 +107,5 @@ Hardware verification on 2026-08-23 with the X1E80100 OLED device running
   `--build-target "binary-indep binary-qcom-x1e"`. This has no functional
   impact on the device because it has no DKMS or other out-of-tree module
   consumers.
-- The ADR is superseded only if ppd or the kernel later adopt a class-based
-  interface and the legacy path is dropped.
+- The class-based userspace integration and retirement of this synthetic
+  legacy path are recorded by ADR0072.

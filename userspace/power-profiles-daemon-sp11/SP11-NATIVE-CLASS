@@ -1,0 +1,5 @@
+SP11 power-profiles-daemon native class integration
+upstream=0.30
+commit=5b4994c8a91290481bef87a5bae95391d0ec677f
+minimum-kernel=7.2.2-jg-0sp11v1-qcom-x1e
+interface=/sys/class/platform-profile/platform-profile-*/profile
