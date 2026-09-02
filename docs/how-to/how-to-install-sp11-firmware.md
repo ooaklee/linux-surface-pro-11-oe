@@ -17,9 +17,8 @@ guess public download locations or substitute files from another device.
 ## Collect on the same Surface
 
 Before collecting, [initialise the Lexr submodule](../../README.md#build-the-cli)
-on Windows. This requires authenticated repository access while Lexr remains
-private; once it is public, ordinary anonymous submodule initialisation is
-sufficient. In an elevated PowerShell session, first complete Lexr's
+on Windows. The public HTTPS submodule can be initialised anonymously. In an
+elevated PowerShell session, first complete Lexr's
 [protected-parent procedure](https://github.com/ooaklee/lexr.sh#collect-on-windows)
 to create a new private parent on the fixed local NTFS volume. From the root of
 the checkout in that same session, run:

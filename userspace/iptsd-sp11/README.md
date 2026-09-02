@@ -52,6 +52,20 @@ the selected OE release and installs under the standard `/usr` prefix.
 Recipe parse and package-build validation in a supported BitBake environment
 remain pending; the Docker payload build does not validate the OE recipe.
 
+## Fedora package source
+
+The reusable Fedora RPM input is kept in
+[`packaging/fedora`](packaging/fedora/README.md). It consumes the same pinned,
+source-complete IPTSD payload and this directory's configuration, udev,
+systemd, sleep-lifecycle, provenance, and licence inputs. It builds natively
+for AArch64 and installs under Fedora's `/usr` layout; it never repackages the
+Ubuntu-built binaries from the portable payload.
+
+Fedora image remastering and package-build orchestration remain Lexr adapter
+responsibilities. This repository deliberately provides no second RPM wrapper,
+root script, or Fedora workflow. Changes to the RPM template still require a
+complete native package build in Lexr plus physical device qualification.
+
 The legacy `g6-pen` daemon and production `sp11-iptsd` service must never run
 at the same time. A generic `iptsd` package/service is also mutually exclusive:
 the OE recipe conflicts with it and the local installer masks its template.

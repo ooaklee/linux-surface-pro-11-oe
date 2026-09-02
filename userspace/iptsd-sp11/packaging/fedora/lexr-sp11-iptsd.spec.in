@@ -1,0 +1,133 @@
+Name:           lexr-sp11-iptsd
+Version:        @IPTSD_VERSION@
+Release:        1.sp11%{?dist}
+Summary:        Surface Pro 11 IPTSD stylus integration
+License:        GPL-2.0-or-later AND MIT AND BSD-3-Clause AND Apache-2.0 AND MPL-2.0
+URL:            https://github.com/linux-surface/iptsd
+Source0:        lexr-sp11-iptsd-source.tar.xz
+BuildArch:      aarch64
+
+BuildRequires:  gcc-c++
+BuildRequires:  meson
+BuildRequires:  ninja-build
+BuildRequires:  pkgconf-pkg-config
+BuildRequires:  systemd-rpm-macros
+Requires:       coreutils
+Requires:       gawk
+Requires:       systemd
+Requires:       systemd-udev
+Conflicts:      g6-pen
+Conflicts:      iptsd
+Provides:       sp11-iptsd = %{version}-%{release}
+
+%global debug_package %{nil}
+%global _build_id_links none
+
+%description
+Pinned upstream IPTSD plus the Surface Pro 11 HIDRAW lifecycle integration.
+The kernel remains the sole direct-touch provider; this package creates only
+the virtual stylus device. It supports the X1E/OLED and X1P/LCD digitizer
+product IDs carried by the maintained integration.
+
+%prep
+%setup -q -n lexr-sp11-iptsd-source
+
+%build
+export SOURCE_DATE_EPOCH=@SOURCE_DATE_EPOCH@
+export CXXFLAGS="%{optflags} -ffile-prefix-map=%{_builddir}=/usr/src/lexr-sp11-iptsd"
+meson setup build source \
+  --prefix=/usr \
+  --bindir=libexec \
+  --sysconfdir=/etc \
+  --buildtype=release \
+  -Doptimization=3 \
+  -Dwerror=false \
+  -Db_lto=false \
+  -Ddebug_tools=[] \
+  -Dservice_manager=[] \
+  -Dsample_config=false \
+  -Dforce_access_checks=true \
+  --force-fallback-for=CLI11,eigen3,fmt,INIReader,Microsoft.GSL,spdlog
+ninja -C build src/iptsd src/iptsd-check-device
+
+%install
+install -D -m 0755 build/src/iptsd \
+  %{buildroot}%{_libexecdir}/sp11-iptsd
+install -D -m 0755 build/src/iptsd-check-device \
+  %{buildroot}%{_libexecdir}/sp11-iptsd-check-device
+install -D -m 0644 integration/config/surface-pro-11-0c80.conf \
+  %{buildroot}%{_datadir}/iptsd/surface-pro-11-0c80.conf
+install -D -m 0644 integration/config/surface-pro-11-0c83.conf \
+  %{buildroot}%{_datadir}/iptsd/surface-pro-11-0c83.conf
+
+install -d %{buildroot}%{_unitdir} \
+  %{buildroot}%{_udevrulesdir} \
+  %{buildroot}%{_prefix}/lib/systemd/system-sleep
+sed \
+  -e 's|@IPTSD@|%{_libexecdir}/sp11-iptsd|g' \
+  -e 's|@CHECKER@|%{_libexecdir}/sp11-iptsd-check-device|g' \
+  -e 's|@SYSTEMCTL@|%{_bindir}/systemctl|g' \
+  -e 's|@SYSTEMD_ESCAPE@|%{_bindir}/systemd-escape|g' \
+  integration/packaging/sp11-iptsd@.service.in \
+  > %{buildroot}%{_unitdir}/sp11-iptsd@.service
+sed \
+  -e 's|@CHECKER@|%{_libexecdir}/sp11-iptsd-check-device|g' \
+  -e 's|@SYSTEMD_ESCAPE@|%{_bindir}/systemd-escape|g' \
+  integration/packaging/70-sp11-iptsd.rules.in \
+  > %{buildroot}%{_udevrulesdir}/70-sp11-iptsd.rules
+sed \
+  -e 's|@IPTSD@|%{_libexecdir}/sp11-iptsd|g' \
+  -e 's|@CHECKER@|%{_libexecdir}/sp11-iptsd-check-device|g' \
+  -e 's|@SYSTEMCTL@|%{_bindir}/systemctl|g' \
+  -e 's|@SYSTEMD_ESCAPE@|%{_bindir}/systemd-escape|g' \
+  integration/packaging/sp11-iptsd-restart.in \
+  > %{buildroot}%{_prefix}/lib/systemd/system-sleep/sp11-iptsd-restart
+chmod 0644 \
+  %{buildroot}%{_unitdir}/sp11-iptsd@.service \
+  %{buildroot}%{_udevrulesdir}/70-sp11-iptsd.rules
+chmod 0755 %{buildroot}%{_prefix}/lib/systemd/system-sleep/sp11-iptsd-restart
+
+install -d %{buildroot}%{_licensedir}/%{name}
+install -m 0644 licenses/* %{buildroot}%{_licensedir}/%{name}/
+install -D -m 0644 integration/README.md \
+  %{buildroot}%{_docdir}/%{name}/README.md
+install -D -m 0644 SOURCE.env \
+  %{buildroot}%{_docdir}/%{name}/SOURCE.env
+
+%post
+%systemd_post sp11-iptsd@.service
+/usr/bin/udevadm control --reload-rules >/dev/null 2>&1 || :
+# Installing the rule after boot must also handle an already-enumerated SP11
+# digitizer. Limit synthetic add events to the two maintained HID parent IDs.
+for hidraw in /sys/class/hidraw/hidraw*; do
+  [ -e "$hidraw" ] || continue
+  hid_parent="$(/usr/bin/readlink -f "$hidraw/device" 2>/dev/null || :)"
+  case "$hid_parent" in
+    */001C:045E:0C80.*|*/001C:045E:0C83.*)
+      /usr/bin/udevadm trigger --action=add --subsystem-match=hidraw \
+        --sysname-match="${hidraw##*/}" >/dev/null 2>&1 || :
+      ;;
+  esac
+done
+
+%preun
+%systemd_preun sp11-iptsd@.service
+
+%postun
+%systemd_postun_with_restart sp11-iptsd@.service
+/usr/bin/udevadm control --reload-rules >/dev/null 2>&1 || :
+
+%files
+%license %{_licensedir}/%{name}
+%doc %{_docdir}/%{name}
+%{_libexecdir}/sp11-iptsd
+%{_libexecdir}/sp11-iptsd-check-device
+%{_datadir}/iptsd/surface-pro-11-0c80.conf
+%{_datadir}/iptsd/surface-pro-11-0c83.conf
+%{_unitdir}/sp11-iptsd@.service
+%{_udevrulesdir}/70-sp11-iptsd.rules
+%{_prefix}/lib/systemd/system-sleep/sp11-iptsd-restart
+
+%changelog
+* @CHANGELOG_DATE@ Lexr maintainers <maintainers@lexr.invalid> - @IPTSD_VERSION@-1.sp11
+- Build the pinned, source-complete SP11 integration natively for Fedora.

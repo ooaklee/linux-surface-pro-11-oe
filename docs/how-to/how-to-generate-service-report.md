@@ -17,9 +17,8 @@ report: its contents are private and proprietary.
 
 - Boot Windows on the Surface that will receive the material.
 - [Initialise the Lexr submodule](../../README.md#build-the-cli) so that
-  `cli/lexr/tools/collect-sp11-windows-handoff.ps1` is present. This requires
-  authenticated repository access while Lexr remains private; once it is
-  public, ordinary anonymous submodule initialisation is sufficient.
+  `cli/lexr/tools/collect-sp11-windows-handoff.ps1` is present. The public HTTPS
+  submodule can be initialised anonymously.
 - In elevated PowerShell, follow Lexr's
   [protected-parent procedure](https://github.com/ooaklee/lexr.sh#collect-on-windows)
   to create a new private parent on the fixed local NTFS volume.
