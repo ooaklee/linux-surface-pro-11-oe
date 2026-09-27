@@ -12,6 +12,12 @@ image, kernel, userspace, private hand-off, diagnosis, and clean-up workflows.
 The OE repository retains low-level integration evidence and pins the reviewed
 Lexr source revision beneath `cli/lexr`.
 
+To prepare a prebuilt distro image on Windows, use the canonical
+[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md). It covers joining parts,
+decompression, checksum verification, Etcher, Secure Boot and USB boot. On
+Linux, follow the selected release's Lexr download and validation commands,
+then [write a reviewed USB device](#write-a-reviewed-usb-device) below.
+
 > [!WARNING]
 > Lexr images and kernels are experimental. Back up important data, keep a
 > separate recovery device and known-good kernel, and disable Secure Boot before

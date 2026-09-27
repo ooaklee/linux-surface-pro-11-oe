@@ -22,6 +22,12 @@ Debian and Arch sources are pinned historical snapshots; their rolling source
 URLs do not make them current distribution media. Follow each release's
 checksum, reconstruction and USB-writing instructions for its exact assets.
 
+**Preparing the USB on Windows?** Use the
+[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md) to join the parts, decompress
+and verify the image, flash it with Etcher, and configure Secure Boot and USB
+boot. **Already running Linux?** Follow the release's Lexr download and
+validation commands, then the [Lexr USB workflow](docs/how-to/how-to-use-lexr.md#write-a-reviewed-usb-device).
+
 Earlier candidates reached the live desktop or terminal on X1E/OLED hardware.
 The [Lexr catalogue at v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/blob/v0.5.0-rc.3/supported-isos.json)
 records the tested candidate revisions, working features and limitations.
