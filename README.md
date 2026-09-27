@@ -2,14 +2,16 @@
 
 ## Compatible distributions and image downloads
 
-Five experimental live images are being rebuilt with
+Five experimental live images were rebuilt with
 [Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
 and the
 [Surface Pro 11 v23 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23)
-(`7.2.0-jg-0sp11v23-qcom-x1e`). The release links below are planned download
-locations and become available after each rebuild is validated and published.
+(`7.2.0-jg-0sp11v23-qcom-x1e`) and are available below. Each release passed
+structural validation and post-publication fresh-download checks of the
+complete asset set, checksums and reconstructed ISO identity. The new ISO
+bytes have not been physically boot-tested.
 
-| Distribution | Upstream source | Planned image release |
+| Distribution | Upstream source | Image release |
 | --- | --- | --- |
 | Ubuntu Concept Resolute | ARM64 X1E desktop snapshot, 2026-03-26 | [Ubuntu Concept v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-ubuntu-concept-26.04-v23-20260927) |
 | elementary OS 8.1 | ARM64 stable image, 2026-02-19 | [elementary OS v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-elementary-os-8.1-v23-20260927) |
@@ -21,6 +23,8 @@ These images target the Surface Pro 11 **X1E/OLED** by default. The dated
 Debian and Arch sources are pinned historical snapshots; their rolling source
 URLs do not make them current distribution media. Follow each release's
 checksum, reconstruction and USB-writing instructions for its exact assets.
+The [publication record](docs/reference/image-release-refresh-20260927.md#publication-and-legacy-release-outcome)
+lists the exact ISO and source hashes, release identities and validation times.
 
 **Preparing the USB on Windows?** Use the
 [Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md) to join the parts, decompress

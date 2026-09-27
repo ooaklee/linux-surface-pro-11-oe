@@ -1,10 +1,15 @@
 ---
 id: image-release-refresh-20260927
 title: "2026-09-27 Image Release Refresh"
-description: Pre-retirement audit and reaction-retention policy for three experimental image releases selected for the five-distribution Lexr v0.5.0-rc.3 refresh.
+description: Pre-retirement audit and verified publication and legacy-release outcome for the five-distribution Lexr v0.5.0-rc.3 refresh.
 ---
 
 # 2026-09-27 image release refresh
+
+> Publication and legacy-release checks completed by `2026-09-27T03:50:13.235940+00:00`.
+> See [Publication and legacy-release outcome](#publication-and-legacy-release-outcome).
+> The sections before that outcome preserve the original pre-retirement audit
+> and subsequent owner policy amendment. Their planned actions are historical.
 
 ## Status and authorized scope
 
@@ -198,3 +203,98 @@ available; do not rewrite the immutable rc.3 producer source or relabel the
 new elementary bytes as the previously tested ISO. The archived release
 bodies and generated notes in this appendix are historical records, not
 current download instructions. Their original links are intentionally retained.
+
+## Publication and legacy-release outcome
+
+All five replacement images were published as experimental prereleases. The
+last fresh-download validation for the set completed at `2026-09-27T03:47:56.246357+00:00`.
+Each release passed checks of the complete asset set, checksums, source/tool/
+kernel identities and reconstructed ISO bytes. The embedded Linux ARM64 Lexr
+executables were also extracted and executed to confirm the exact rc.3 identity.
+
+All five images use Lexr `v0.5.0-rc.3` at `120941632db2d2b086983c6cd2e90320d25a0999` and kernel `sp11-qcom-x1e-7.2.0-jg-0sp11v23` (ABI `7.2.0-jg-0sp11v23-qcom-x1e`), with OE tag anchor `aba8c0b65ea73422c8e15868606bb934780a066e`.
+
+The times below record completed post-publication fresh-download validation, not hardware tests. No new physical boot or installation qualification is claimed.
+
+| Image release | ISO SHA-256 | ISO bytes | Source catalogue ID | Release ID | Verified UTC |
+| --- | --- | ---: | --- | ---: | --- |
+| [sp11-ubuntu-concept-26.04-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-ubuntu-concept-26.04-v23-20260927) | `2eaec7e6f2921ca25a4bfd92e4865d8dbcf887c61ded7ba6a5500b1e69713697` | 4,631,429,120 | `ubuntu-concept-resolute-x1e` | 397471071 | 2026-09-27T02:42:59.669230+00:00 |
+| [sp11-elementary-os-8.1-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-elementary-os-8.1-v23-20260927) | `2340b30da08e1802c1106eb6bdcb8388093a6ebd8c68c3eab8ad457f8f4382fe` | 3,716,218,880 | `elementary-os-8-1-20260219` | 397471053 | 2026-09-27T02:40:48.897923+00:00 |
+| [sp11-debian-13-gnome-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-debian-13-gnome-v23-20260927) | `74c1fc015f92f5b6a3a926a1fa80649ea9d2cd3882aca8fcd75dee3f5c7d9a37` | 4,328,980,480 | `debian-live-testing-gnome-arm64-20240902` | 397459349 | 2026-09-27T02:13:44.339737+00:00 |
+| [sp11-fedora-workstation-44-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-fedora-workstation-44-v23-20260927) | `6c1597c647319eecbaec9ddf1eeb3a5a5a1447e645f71424d9a566f3bf52d0a2` | 3,928,686,592 | `fedora-workstation-live-44` | 397494759 | 2026-09-27T03:47:56.246357+00:00 |
+| [sp11-arch-linux-arm-terminal-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-arch-linux-arm-terminal-v23-20260927) | `66ee90cafd636b95961b37634bf12a916fbedc2c3eabdee887d2b915820fd15e` | 2,231,500,800 | `arch-linux-arm-aarch64-20260805` | 397459872 | 2026-09-27T02:10:39.359741+00:00 |
+
+| Source catalogue ID | Exact upstream source SHA-256 |
+| --- | --- |
+| `ubuntu-concept-resolute-x1e` | `d0cbef7b48f5806093c2f4d8ea6d372249e86ace0051217c76ce92d60274078d` |
+| `elementary-os-8-1-20260219` | `85116d48c406ae7cd60c936050a099d4b8610321273f6f0a694796db4d4e86ba` |
+| `debian-live-testing-gnome-arm64-20240902` | `3260c69821f85464974e2136a0cda5d3954818467dda168bdfcb69547c4d7abc` |
+| `fedora-workstation-live-44` | `162ba3c552a2d241c7c63ec26777af0255ee1b5a135adc0be986ceed999933ef` |
+| `arch-linux-arm-aarch64-20260805` | `42a4eeaa038994ffd31fa173256ef2f0ef511358eeb41b9ea1f8626391b9b319` |
+
+The [machine-readable publication record](image-release-refresh-20260927-publication.json)
+contains these public identities and publication times.
+
+### Selected legacy releases
+
+All five replacements passed publication and fresh-download validation before
+these legacy actions. Each reaction endpoint was queried immediately before
+its action; the table records those checks and the observed final Git targets.
+
+| Legacy release | Reaction check UTC | Count | Observed completed action | Verified successor | Tag target after action |
+| --- | --- | ---: | --- | --- | --- |
+| `sp11-ubuntu-concept-26.04-v23-20260905` | `2026-09-27T03:48:22.295690+00:00` | 2 | Retained release and assets; added successor notice | [sp11-ubuntu-concept-26.04-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-ubuntu-concept-26.04-v23-20260927) | `aba8c0b65ea73422c8e15868606bb934780a066e` |
+| `sp11-elementary-os-8.1-v23-20260906` | `2026-09-27T03:48:43.377397+00:00` | 0 | Removed release and uploaded assets; kept tag | [sp11-elementary-os-8.1-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-elementary-os-8.1-v23-20260927) | `aba8c0b65ea73422c8e15868606bb934780a066e` |
+| `sp11-arch-linux-arm-terminal-v23-20260909` | `2026-09-27T03:49:00.086493+00:00` | 0 | Removed release and uploaded assets; kept tag | [sp11-arch-linux-arm-terminal-v23-20260927](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-arch-linux-arm-terminal-v23-20260927) | `aba8c0b65ea73422c8e15868606bb934780a066e` |
+
+Ubuntu's two reactions, uploaded assets and historical notes were retained,
+with a verified notice linking the replacement. elementary and Arch had zero
+reactions at their final checks, so their selected older release entries and
+uploaded assets were removed. All 12 former asset IDs returned HTTP 404 at
+`2026-09-27T03:50:13.235940+00:00`. All three Git tags retain their original target.
+This owner-requested retirement does not imply that the old images were broken
+or retract their recorded hardware observations.
+
+The original audit snapshot remains unchanged. It contains public metadata
+and small assets; the legacy multi-gigabyte image parts were not archived or
+reconstructed for that snapshot. Kernel and userspace releases were outside
+this cleanup. The separately retained historical raw Ubuntu release was not
+a retirement target.
+
+The replacement ISO bytes have not been physically boot-tested. Structural,
+checksum and reconstruction checks do not qualify installation, installed-system
+boot, recovery, the full peripheral matrix or X1P/LCD hardware. Earlier
+candidate results retain their original revisions, image hashes and limits.
+
+### Fedora packaging exception
+
+Fedora's rc.3 creation journal recorded the ISO label and GRUB marker in a
+digest map even though they are contextual strings. For packaging, a separate
+derived journal omitted only that pair after an exact check against the typed
+image-manifest evidence. The ISO, embedded Lexr companion, image manifest,
+original journal, checkpoint times, output identity and real hashes were
+preserved. The release retains the label and marker in its image contract;
+the original path-bearing journal remains private and is not publicly bound.
+Image creation and release preparation used released Lexr `v0.5.0-rc.3`;
+preparation's preservation checks and release validation passed.
+
+[Lexr PR 68](https://github.com/ooaklee/lexr.sh/pull/68), at
+[`557cd5d3`](https://github.com/ooaklee/lexr.sh/commit/557cd5d3ad279b5768bc54399c9008c328b53224),
+contains the proposed permanent compatibility fix: it validates the same pair
+and normalises an in-memory copy while preserving the original journal. That
+follow-up also maintains the download links and shared Windows guidance.
+The image producer and embedded executable remain the exact rc.3 revision
+recorded above.
+
+### Windows and Linux preparation
+
+Use the [Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md)
+for joining parts, decompression, verification, Etcher and Surface UEFI setup.
+Linux users follow each ISO release's verification instructions and the
+[Lexr USB workflow](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/installation-media.md#2-review-the-usb-target).
+The older raw Ubuntu image predates the Lexr USB writer; its Linux pointer
+directs readers to a current Lexr ISO release.
+
+Distro release descriptions now link to that guide and omit duplicated leading
+titles. These presentation changes preserve the remaining historical content
+and do not change the archived snapshot or image assets.
