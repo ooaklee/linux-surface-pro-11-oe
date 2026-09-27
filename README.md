@@ -22,6 +22,14 @@ bytes have not been physically boot-tested.
 You can also [build your own](https://github.com/ooaklee/lexr.sh/blob/main/README.md#create-your-first-image)
 image with Lexr.
 
+Lexr images and installation guidance intentionally support multi-OS layouts;
+they do not require users to erase the whole internal drive. Keeping Windows
+or another Linux installation available provides a fallback for recovery,
+diagnostics and contributing support for more features. This is especially
+explicit in the [Arch partitioning walkthrough](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/arch-linux-arm-quickstart.md#2-select-only-the-space-reserved-for-arch): install into reserved space, reuse an
+existing EFI System Partition without formatting it, and leave the other OS
+partitions unchanged.
+
 These images target the Surface Pro 11 **X1E/OLED** by default. The dated
 Debian and Arch sources are pinned historical snapshots; their rolling source
 URLs do not make them current distribution media. Follow each release's
