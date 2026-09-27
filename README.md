@@ -19,12 +19,13 @@ bytes have not been physically boot-tested.
 | Fedora Workstation Live 44 | AArch64 image, 44-1.7 | [Fedora Workstation v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-fedora-workstation-44-v23-20260927) |
 | Arch Linux ARM | AArch64 root filesystem snapshot, 2026-08-05; terminal live ISO with no desktop preselected | [Arch Linux ARM terminal v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-arch-linux-arm-terminal-v23-20260927) |
 
+You can also [build your own](https://github.com/ooaklee/lexr.sh/blob/main/README.md#create-your-first-image)
+image with Lexr.
+
 These images target the Surface Pro 11 **X1E/OLED** by default. The dated
 Debian and Arch sources are pinned historical snapshots; their rolling source
 URLs do not make them current distribution media. Follow each release's
 checksum, reconstruction and USB-writing instructions for its exact assets.
-The [publication record](docs/reference/image-release-refresh-20260927.md#publication-and-legacy-release-outcome)
-lists the exact ISO and source hashes, release identities and validation times.
 
 **Preparing the USB on Windows?** Use the
 [Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md) to join the parts, decompress
