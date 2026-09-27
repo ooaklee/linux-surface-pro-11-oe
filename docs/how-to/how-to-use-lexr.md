@@ -12,6 +12,12 @@ image, kernel, userspace, private hand-off, diagnosis, and clean-up workflows.
 The OE repository retains low-level integration evidence and pins the reviewed
 Lexr source revision beneath `cli/lexr`.
 
+To prepare a prebuilt distro image on Windows, use the canonical
+[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-image-usb.md). It covers joining parts,
+decompression, checksum verification, Etcher, Secure Boot and USB boot. On
+Linux, follow the selected release's Lexr download and validation commands,
+then [write a reviewed USB device](#write-a-reviewed-usb-device) below.
+
 > [!WARNING]
 > Lexr images and kernels are experimental. Back up important data, keep a
 > separate recovery device and known-good kernel, and disable Secure Boot before
@@ -24,7 +30,6 @@ For a fresh checkout, initialise the Lexr submodule with the repository:
 
 ```sh
 git clone --recurse-submodules \
-  --branch cli/linux-armer \
   https://github.com/ooaklee/linux-surface-pro-11-oe.git
 cd linux-surface-pro-11-oe
 git submodule status -- cli/lexr
@@ -33,17 +38,21 @@ git submodule status -- cli/lexr
 For an existing checkout:
 
 ```sh
-git fetch origin cli/linux-armer
-git switch cli/linux-armer
+git fetch origin main
+git switch main
 git pull --ff-only
 git submodule sync -- cli/lexr
 git submodule update --init --recursive cli/lexr
 git submodule status -- cli/lexr
 ```
 
-These examples select the integration branch explicitly while the cut-over is
-under review. Omit `--branch cli/linux-armer` and the branch-switching steps
-after the same changes reach the repository's default branch.
+The repository's default `main` branch contains the Lexr integration. This
+checkout pins [Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
+at commit
+[`120941632db2d2b086983c6cd2e90320d25a0999`](https://github.com/ooaklee/lexr.sh/commit/120941632db2d2b086983c6cd2e90320d25a0999).
+The
+[compatible distribution downloads](../../README.md#compatible-distributions-and-image-downloads)
+record the Lexr and kernel versions used for the current image release set.
 
 Both repositories are public, so the recorded HTTPS URL supports anonymous
 recursive initialisation. GitHub credentials are needed only for operations
@@ -84,8 +93,12 @@ the host. Add `--json` when a machine-readable report is required.
 
 ## Create and validate an image
 
-The Ubuntu Concept Casper adapter is the first implemented image adapter. A dry
-run prints its deterministic plan without downloading or building:
+Lexr v0.5.0-rc.3 implements image adapters for Ubuntu Concept, elementary OS,
+Debian Live, Fedora Live and Arch Linux ARM. See the
+[distribution table](../../README.md#compatible-distributions-and-image-downloads)
+for source identities and qualification limits. The examples below use the
+default Ubuntu Concept adapter. A dry run prints its deterministic plan
+without downloading or building:
 
 ```sh
 "$LEXR" image create \
@@ -204,7 +217,7 @@ explicit path. If a check needs user-level state, also pass `--user-home` as the
 absolute home path visible inside that target. Userspace installation is a
 separate, receipt-backed mutation and requires its own dry run, effective root,
 and confirmation. See the
-[Lexr userspace guide](https://github.com/ooaklee/lexr.sh#userspace-companion)
+[Lexr userspace guide](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/userspace-support.md)
 for component-specific pull, build, and install commands.
 
 ## Keep Windows hand-offs private
@@ -217,7 +230,7 @@ a release, an image, or an ordinary support report.
 
 The non-private collector source is
 `cli/lexr/tools/collect-sp11-windows-handoff.ps1`. Follow the
-[Lexr private hand-off procedure](https://github.com/ooaklee/lexr.sh#private-windows-hand-offs)
+[Lexr private hand-off procedure](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-handoff.md)
 to collect into protected Windows storage and transfer it privately. Importing
 copies a strictly validated version 3 hand-off into a protected,
 content-addressed store beneath the current user's home; it does not modify the

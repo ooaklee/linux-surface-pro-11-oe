@@ -20,7 +20,7 @@ report: its contents are private and proprietary.
   `cli/lexr/tools/collect-sp11-windows-handoff.ps1` is present. The public HTTPS
   submodule can be initialised anonymously.
 - In elevated PowerShell, follow Lexr's
-  [protected-parent procedure](https://github.com/ooaklee/lexr.sh#collect-on-windows)
+  [protected-parent procedure](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-handoff.md#1-create-the-protected-windows-parent)
   to create a new private parent on the fixed local NTFS volume.
 - Reserve a new directory on trusted removable storage for the completed
   transfer copy, not for the collector's live output transaction.

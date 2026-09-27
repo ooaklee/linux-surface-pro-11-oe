@@ -1,27 +1,50 @@
 # ARM64 Linux on Microsoft Surface Pro 11
 
+## Compatible distributions and image downloads
+
+These experimental ARM64 live images target the Surface Pro 11 **X1E/OLED**
+and include [Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
+and the [SP11 v23 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23).
+Read each release's download instructions and hardware testing limits before
+choosing an image.
+
+| Distribution | Upstream source | Image release |
+| --- | --- | --- |
+| Ubuntu Concept Resolute | ARM64 X1E desktop snapshot, 2026-03-26 | [Ubuntu Concept v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-ubuntu-concept-26.04-v23-20260927) |
+| elementary OS 8.1 | ARM64 stable image, 2026-02-19 | [elementary OS v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-elementary-os-8.1-v23-20260927) |
+| Debian Live GNOME | ARM64 Debian 13 testing snapshot, 2024-09-02 | [Debian Live v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-debian-13-gnome-v23-20260927) |
+| Fedora Workstation Live 44 | AArch64 image, 44-1.7 | [Fedora Workstation v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-fedora-workstation-44-v23-20260927) |
+| Arch Linux ARM | AArch64 root filesystem snapshot, 2026-08-05; terminal live ISO with no desktop preselected | [Arch Linux ARM terminal v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-arch-linux-arm-terminal-v23-20260927) |
+
+You can also [build your own](https://github.com/ooaklee/lexr.sh/blob/main/README.md#create-your-first-image)
+image with Lexr.
+
+Installation guidance supports keeping Windows or another Linux system as a
+fallback. The [Arch partitioning walkthrough](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/arch-linux-arm-quickstart.md#2-select-only-the-space-reserved-for-arch)
+shows how to install into reserved space and reuse the existing EFI System
+Partition without formatting it or changing other OS partitions.
+
+The Debian and Arch sources are dated snapshots, not current distribution
+media. Build and checksum validation alone do not establish hardware support.
+
+**Preparing the USB on Windows?** Use the
+[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-image-usb.md) to join the parts, decompress
+and verify the image, flash it with Etcher, and configure Secure Boot and USB
+boot. **Already running Linux?** Follow the release's Lexr download and
+validation commands, then the [Lexr USB workflow](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/installation-media.md#2-review-the-usb-target).
+
+## About this repository
+
 ![Ubuntu with KDE Plasma desktop running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
 
-This repository is the experimental hardware-integration, evidence and release
-channel for ARM64 Linux on the Microsoft Surface Pro 11. It carries downstream
-kernel patch sets, device-support payloads, OpenEmbedded recipes, userspace
-integration sources, test records and architecture decisions for both the
-Snapdragon X Elite X1E/OLED and Snapdragon X Plus X1P/LCD variants.
+This repository maintains kernel patches, userspace support, OpenEmbedded
+recipes and hardware test records for ARM64 Linux on the Microsoft Surface
+Pro 11: Snapdragon X Elite (X1E/OLED) and Snapdragon X Plus (X1P/LCD).
 
-[Lexr.sh](https://github.com/ooaklee/lexr.sh) is the supported companion CLI.
-It turns the reviewed integration policy in this repository into guarded image,
-kernel, userspace, private hand-off and clean-up workflows. This repository
-pins the exact reviewed Lexr revision in the [`cli/lexr`](cli/lexr) submodule.
-The compiled `lexr` CLI is the supported operator path; repository scripts are
-not part of the current operator workflow. Lexr owns its source, issues and
-binary-only releases, while kernel and device-support releases remain on the
-established
-[OE release page](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
-
-> [!NOTE]
-> Lexr.sh is public. The pinned HTTPS submodule can be populated anonymously,
-> including by `git clone --recurse-submodules`; credentials are needed only
-> for operations that write to GitHub or for private forks.
+[Lexr](https://github.com/ooaklee/lexr.sh) provides the CLI for preparing images,
+managing kernels and setting up device support. Its source, documentation and
+CLI releases live in the Lexr repository. Images, kernels and device-support
+packages are published on the [OE releases page](https://github.com/ooaklee/linux-surface-pro-11-oe/releases).
 
 > [!WARNING]
 > The generated media, custom kernels and hardware support remain
@@ -41,19 +64,14 @@ The primary recorded X1E hardware target is:
 | Firmware/UEFI | `175.222.235`, dated 2026-02-23 |
 | Internal disk | Samsung `MZ9L4512HBLU-00BMV-SAMSUNG`, 476.9 GiB NVMe |
 | Windows source checked | Windows 11 Home Insider Preview build `29585` |
-| Most recent experimental kernel release | [`7.2.2-jg-0sp11v1`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.2-jg-0sp11v1), based on Linux 7.2.2 |
-| Exact project source | [`050f0cb5…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/050f0cb5533e1d88e3955a515b5e8e4c847ffe0d) |
+| Kernel used for these images | [`7.2.0-jg-0sp11v23`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23), based on Linux 7.2.0 |
+| Exact kernel source | [`ce78e6ebc3d7…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/ce78e6ebc3d70c4a316b5721a62478ca87d6cb46) |
 
-The published `7.2.2-jg-0sp11v1` bundle is a Linux 7.2.2-based downstream
-integration, not a claim about the latest official Linux kernel. As of
-2026-08-31, kernel.org lists stable 7.2.2 and mainline 7.3-rc1. Check the
-current [kernel.org release record](https://www.kernel.org/releases.json)
-instead of inferring upstream status from the project release number.
-
-The v1 bundle was package-, source-, and Stubble-image-validated, but has not
-been boot-tested on Surface hardware as one all-up image. Individual green
-entries below name hardware evidence from the relevant accepted integration
-generation.
+The [v23 release notes](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23)
+and [manifest](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/download/sp11-qcom-x1e-7.2.0-jg-0sp11v23/lexr-kernel-release-manifest.json)
+identify the kernel, matching device trees and tested userspace combinations.
+The table below spans several integration versions; it does not certify every
+feature on every image above.
 
 Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
 older-version scope; 🧪 experimental hardware result, not supported; 🧩
@@ -94,369 +112,70 @@ enables the common GPU, display, Wi-Fi, NVMe, Bluetooth and USB paths. The
 explicitly left touch, pen, cameras and status LEDs incomplete; the project
 kernel supplies reviewed downstream integrations for several of those gaps.
 
-The first implemented image adapter is
-`ubuntu-concept-resolute-x1e`. Other ARM64 images can appear in the catalogue
-without being buildable; `catalog show` reports an entry's actual support
-level.
+## Current guidance
 
-Fedora Workstation Live 44 is implemented by Lexr's `fedora-live` adapter.
-Lexr owns its EROFS remastering, native custom-kernel RPM, boot policy,
-Anaconda hand-off, and ISO validation. This repository owns the corresponding
-reusable [Fedora IPTSD package-source input](userspace/iptsd-sp11/packaging/fedora/README.md),
-not a second Fedora build or remastering workflow.
+Start with [Install Lexr](https://github.com/ooaklee/lexr.sh/blob/main/docs/getting-started/install.md)
+and the [first-image quickstart](https://github.com/ooaklee/lexr.sh/blob/main/docs/getting-started/index.md).
+For host requirements and command syntax, use Lexr's
+[requirements](https://github.com/ooaklee/lexr.sh/blob/main/docs/reference/requirements.md)
+and [command reference](https://github.com/ooaklee/lexr.sh/blob/main/docs/reference/command-reference.md).
+
+| Task | Lexr guide |
+| --- | --- |
+| Create, validate and write installation media | [Installation media](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/installation-media.md) |
+| Include the CLI and support files for offline use | [Offline companion](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/offline-companion.md) |
+| Download, build or inspect a kernel bundle | [Kernel management](https://github.com/ooaklee/lexr.sh/blob/main/docs/operator-manual/kernel-management.md) |
+| Install a released kernel and retain a fallback on Debian or Ubuntu | [Kernel and userspace installation](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/install-released-kernel-and-userspace.md) |
+| Audit and configure audio, pen, camera and other support | [Userspace support](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/userspace-support.md) |
+| Diagnose the host or device | [Diagnostics](https://github.com/ooaklee/lexr.sh/blob/main/docs/reference/command-reference.md#diagnostics) |
+| Transfer private firmware and Bluetooth evidence from Windows | [Windows hand-off](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-handoff.md) |
+| Remove recognised legacy workarounds or restore a cleanup | [Reversible cleanup](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/reversible-cleanup.md) |
+
+These guides track Lexr's `main` branch. Follow the selected image release's
+instructions and check your CLI version when using the pinned rc.3 companion.
+Windows hand-offs contain private, device-bound data; never add them to an
+image, release or public support report.
+
+For OE-specific tasks, see [kernel recovery from USB](docs/how-to/how-to-reinstall-patched-kernel-from-usb.md),
+[kernel release preparation](docs/how-to/how-to-release-kernel-artifacts.md)
+and the [how-to index](docs/how-to/).
 
 ## Build the CLI
 
-The build host needs Go 1.26 or newer. Image and kernel builds also need a
-running Docker daemon with Linux ARM64 container support. Initialise the pinned
-submodule after cloning this repository, then build Lexr from its module.
-
-For a new checkout, clone both public repositories together:
+To use the exact Lexr source selected by this OE checkout, initialise the
+[`cli/lexr`](cli/lexr) submodule and build it with Go 1.26 or newer. It is
+pinned to [v0.5.0-rc.3 at `1209416`](https://github.com/ooaklee/lexr.sh/commit/120941632db2d2b086983c6cd2e90320d25a0999),
+the revision used for the image releases above.
 
 ```sh
-git clone --recurse-submodules \
-  --branch cli/linux-armer \
-  https://github.com/ooaklee/linux-surface-pro-11-oe.git
+git clone --recurse-submodules https://github.com/ooaklee/linux-surface-pro-11-oe.git
 cd linux-surface-pro-11-oe
-```
-
-For an existing checkout, initialise the same pinned submodule explicitly:
-
-```sh
-git fetch origin cli/linux-armer
-git switch cli/linux-armer
-git pull --ff-only
-git submodule sync -- cli/lexr
-git submodule update --init --recursive cli/lexr
-```
-
-These examples select the integration branch explicitly while the cut-over is
-under review. Omit `--branch cli/linux-armer` and the branch-switching steps
-after the same changes reach the repository's default branch.
-
-The recorded HTTPS submodule URL works anonymously. Add GitHub credentials only
-when pushing changes or when your chosen fork is private.
-
-Then use the provenance-aware source builder and run the command:
-
-```sh
 go -C cli/lexr run ./cmd/lexr-build
 ./cli/lexr/bin/lexr version
-./cli/lexr/bin/lexr doctor
 ```
 
-The builder records the pinned Lexr revision explicitly and avoids attributing
-the enclosing OE checkout's revision to the executable.
-
-Lexr-dependent GitHub Actions are owned and run by the
-[standalone Lexr.sh repository](https://github.com/ooaklee/lexr.sh). Lexr
-releases contain only compiled platform executables and their checksum
-manifest. Kernel builds use a separate, manually dispatched Lexr workflow. Its
-GitHub-hosted publication step uses a dedicated, repository-scoped credential
-to publish an explicitly requested experimental kernel prerelease to this OE
-repository. The credential is not exposed to pull-request validation or the
-self-hosted kernel build. The publisher resolves this repository's `main` ref
-to an exact revision, refuses to reuse an existing release tag, and verifies
-the new tag before promotion. Kernel and other device-support releases
-therefore keep their established OE URLs.
-
-Clone [the standalone Lexr.sh repository](https://github.com/ooaklee/lexr.sh)
-instead when working on the CLI independently of this OE integration. Run
-`lexr` in an interactive terminal to open the wizard, or use the same services
-through explicit subcommands. `lexr <command> --help` shows the options
-implemented by that command. The examples below use `lexr` for a binary
-installed on `PATH`; substitute `./cli/lexr/bin/lexr` when running directly
-from this checkout.
-
-Lexr.sh is the product name and `lexr` is the command. The pinned pre-`0.1.0`
-naming boundary is intentionally Lexr-only: image manifests use schema 4 and
-`/sp11/lexr-manifest.json`; Windows hand-offs use schema 3 and collector
-`3.0.0`; application receipts use schema 2; private imports live beneath
-`${HOME}/.lexr-handoffs`; and installed recovery state lives beneath
-`/var/lib/lexr`. Current kernel bundle, provenance and release manifests use
-`lexr-kernel-*.json`. Recreate pre-release media and recollect unpublished
-hand-offs made with an earlier contract rather than silently reinterpreting
-them. Existing OE repository and release URLs remain stable external
-provenance.
-
-## End-to-end workflow
-
-### 1. Inspect the source-image catalogue
-
-```sh
-lexr catalog validate
-lexr catalog list
-lexr catalog show ubuntu-concept-resolute-x1e
-```
-
-Catalogue-only entries are useful references, but `image create` accepts only
-an entry with an implemented adapter.
-
-### 2. Obtain a kernel bundle
-
-Build the maintained custom kernel in the CLI-owned ARM64 container workflow:
-
-```sh
-lexr kernel build --dry-run
-lexr kernel build \
-  --output-dir build/lexr/kernel-current
-lexr kernel inspect build/lexr/kernel-current
-```
-
-Use `--git-url` and `--git-branch` only when intentionally testing another
-kernel source. `--reset-source` resets the source tree in the CLI-owned work
-volume; it does not modify a host checkout.
-
-Alternatively, download a published, checksum-verified kernel release:
-
-```sh
-lexr kernel release list
-lexr kernel release download latest \
-  --output-dir build/lexr/kernel-bundle
-lexr kernel inspect build/lexr/kernel-bundle
-```
-
-These commands use the established
-[`ooaklee/linux-surface-pro-11-oe` release channel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases)
-by default. Select another repository only when intentionally testing a
-compatible alternative.
-
-See [Build a Patched qcom-x1e Kernel](docs/how-to/how-to-build-patched-qcom-x1e-kernel.md)
-and [Prepare Kernel Release Artefacts](docs/how-to/how-to-release-kernel-artifacts.md)
-for the detailed build and release paths.
-
-### 3. Create the live image
-
-Use a local upstream image and record its independently obtained SHA-256 when
-possible:
-
-```sh
-lexr image create \
-  --source resolute-desktop-arm64+x1e-20260326.iso \
-  --source-sha256 "<sha256>" \
-  --kernel-dir build/lexr/kernel-bundle \
-  --output build/lexr/lexr-ubuntu-sp11.iso
-```
-
-Omit `--source` to let the catalogue download the pinned source, or replace
-`--kernel-dir` with `--kernel-release latest`. Select an exact release tag for
-a reproducible build. Add `--dry-run` to review the plan without remastering.
-
-To carry the companion CLI, maintained source and an eligible offline IPTSD
-release on the medium:
-
-```sh
-lexr image create \
-  --source resolute-desktop-arm64+x1e-20260326.iso \
-  --source-sha256 "<sha256>" \
-  --kernel-release latest \
-  --companion-source-dir cli/lexr \
-  --companion-userspace iptsd \
-  --output build/lexr/lexr-ubuntu-sp11.iso
-```
-
-The image contains one logical schema-4 inventory. Its on-media copy is
-`/sp11/lexr-manifest.json`, and the generated ISO has the matching sidecar
-representation. `companion_bundle` is an attribute of that existing ISO
-manifest, including when no companion is requested. It is never a separate
-companion manifest. Portable userspace receipts verify their own component
-files but do not create another ISO inventory. Private Windows hand-offs are
-never companion content.
-
-### 4. Validate and write the USB
-
-```sh
-lexr image validate build/lexr/lexr-ubuntu-sp11.iso
-lexr image devices
-lexr image write build/lexr/lexr-ubuntu-sp11.iso \
-  --device "<whole-device>" \
-  --dry-run
-
-sudo lexr image write build/lexr/lexr-ubuntu-sp11.iso \
-  --device "<whole-device>" \
-  --confirm '<exact phrase from the current dry run>'
-```
-
-Review the current dry run, then use its exact device-bound confirmation in the
-privileged command. The CLI never elevates itself. The writer rejects unsafe
-targets and succeeds only after a full SHA-256 read-back and safe ejection.
-
-### 5. Install while retaining a fallback
-
-Keep the running, known-good ABI installed. Inspect the downloaded bundle,
-then preflight the target before changing it:
-
-```sh
-KNOWN_GOOD_ABI="$(uname -r)"
-lexr kernel inspect build/lexr/kernel-bundle
-lexr kernel preflight build/lexr/kernel-bundle \
-  --root / \
-  --fallback-abi "$KNOWN_GOOD_ABI"
-lexr kernel install build/lexr/kernel-bundle \
-  --root / \
-  --fallback-abi "$KNOWN_GOOD_ABI" \
-  --dry-run
-```
-
-Review the plan, then repeat `kernel install` with elevated privileges and
-`--yes`. For an installed system mounted below a live environment, replace `/`
-with that absolute mount point. The full recovery procedure is in
-[Reinstall a Patched Kernel from USB](docs/how-to/how-to-reinstall-patched-kernel-from-usb.md).
-
-### 6. Manage userspace support
-
-```sh
-lexr userspace catalog validate
-lexr userspace list
-lexr userspace status
-lexr userspace pull recommended --cache-dir build/lexr/userspace
-lexr userspace install recommended \
-  --from build/lexr/userspace \
-  --dry-run
-```
-
-Repeat the install with elevated privileges and `--yes` after reviewing it.
-IPTSD and camera components also have maintained native builds. Camera supports
-a non-mutating plan; the IPTSD build executes when invoked:
-
-```sh
-lexr userspace build iptsd \
-  --output-dir build/lexr/iptsd
-lexr userspace build camera \
-  --output-dir build/lexr/camera \
-  --dry-run
-```
-
-Audio, pen and camera have different support grades. Inspect
-`lexr userspace show <component>` before changing a system.
-
-### 7. Diagnose the host and device
-
-```sh
-lexr doctor
-lexr doctor userspace
-lexr doctor hardware wifi bluetooth audio
-```
-
-Use `--root <absolute-path>` with the userspace or hardware doctor to inspect a
-mounted target. Diagnostic commands do not change the system. Review their
-output before sharing it because host diagnostics can include environment
-paths; device diagnostics deliberately omit private device identities.
-
-### 8. Import private Windows material
-
-Some device-bound platform firmware and the Bluetooth public address must come
-from the same Surface. On Windows, run the canonical collector from this
-checkout's initialised Lexr submodule. First follow Lexr's
-[protected-parent procedure](https://github.com/ooaklee/lexr.sh#collect-on-windows)
-in the same elevated PowerShell session. It creates a new private parent on the
-fixed local NTFS volume; never use removable storage as the collector's live
-output transaction.
-
-```powershell
-$privateParent = Join-Path $env:ProgramFiles 'lexr-private'
-$handoff = Join-Path $privateParent `
-  ('sp11-handoff-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-
-powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\cli\lexr\tools\collect-sp11-windows-handoff.ps1 `
-  -OutputDirectory $handoff
-if ($LASTEXITCODE -ne 0) {
-  throw 'Windows hand-off collection failed.'
-}
-```
-
-The collector never exports Windows Wi-Fi firmware. Treat its output as
-private, device-bound and proprietary; do not publish it or add it to an image
-or release. After the collector succeeds, follow the same procedure to copy
-the completed child to a new directory on trusted removable storage. Move that
-private transfer copy to Linux, then validate and import it:
-
-```sh
-HANDOFF_STORE="${HOME}/.lexr-handoffs"
-lexr handoff import "<private-handoff-directory>" --store "$HANDOFF_STORE"
-lexr handoff list --store "$HANDOFF_STORE"
-lexr handoff apply "<id>" \
-  --store "$HANDOFF_STORE" \
-  --target-root / \
-  --feature firmware \
-  --feature bluetooth \
-  --adsp-policy enabled \
-  --dry-run
-
-sudo lexr handoff apply "<id>" \
-  --store "$HANDOFF_STORE" \
-  --target-root / \
-  --feature firmware \
-  --feature bluetooth \
-  --adsp-policy enabled \
-  --confirm '<exact phrase from the current dry run>'
-```
-
-The unprivileged shell expands `$HOME`, so `HANDOFF_STORE` remains the same
-absolute user-store path when it is passed through `sudo`.
-
-Use `--adsp-policy disabled` for a live USB target and `enabled` for the
-installed NVMe system. `handoff restore` runs with `sudo` and reads its receipt
-beneath the target rather than the hand-off store. `handoff purge` must receive
-`--store "$HANDOFF_STORE"` when removing a reviewed private import.
-
-### 9. Detect and recover from recognised legacy changes
-
-Never remove old workarounds by guessing paths. Build an exact plan from the
-CLI's bounded allow-list:
-
-```sh
-lexr clean scan --root /
-lexr clean plan --root / \
-  --output lexr-cleanup-plan.json
-sudo lexr clean apply --root / \
-  --plan lexr-cleanup-plan.json \
-  --yes
-```
-
-Keep the durable receipt. If needed, validate and restore the captured entries:
-
-```sh
-sudo lexr clean restore \
-  "/var/lib/lexr/backups/<transaction>/receipt.json" \
-  --root / \
-  --yes
-```
+For an existing checkout, run `git submodule update --init --recursive cli/lexr`
+from the repository root first. The source builder records Lexr's own revision
+in the executable. See [Use Lexr from OE](docs/how-to/how-to-use-lexr.md) for
+more detail, including the Windows collector in the pinned submodule.
+CLI development belongs in the [Lexr repository](https://github.com/ooaklee/lexr.sh).
 
 ## Repository boundary
 
-The former `scripts/` tree, its three shell tests, three root helper tools and
-script-only workflow were removed after the complete native outcome register
-in [Lexr ADR010](https://github.com/ooaklee/lexr.sh/blob/main/docs/adr/adr-010-native-cli-workflow-migration.md)
-passed review. [OE ADR0070](docs/adr/adr-0070-retire-superseded-repository-scripts.md)
-records the corresponding repository decision.
+| Content | Location |
+| --- | --- |
+| Kernel patches and archived integration notes | [patches/](patches/) |
+| Device-support sources, including Fedora IPTSD package inputs | [userspace/](userspace/) and [Fedora packaging](userspace/iptsd-sp11/packaging/fedora/README.md) |
+| OpenEmbedded recipes | [meta-sp11/](meta-sp11/README.md) |
+| Hardware reports and integration guides | [docs/](docs/) |
+| Architecture decisions | [docs/adr/](docs/adr/) |
 
-OE still carries the patch bytes, userspace integration sources, OpenEmbedded
-recipes and device evidence needed for provenance and builds. Patch-set README
-files mark retired injection flows as archived compatibility evidence. Dated
-reports and historical ADR bodies may quote the commands used during discovery;
-their current notices identify the Lexr owner and prevent those commands from
-becoming present-day instructions.
-
-## Current guidance
-
-- [Lexr.sh CLI reference, source and safety model](https://github.com/ooaklee/lexr.sh)
-- [Lexr.sh supported image catalogue](https://github.com/ooaklee/lexr.sh/blob/main/supported-isos.json)
-- [Lexr.sh CLI binary releases](https://github.com/ooaklee/lexr.sh/releases)
-- [OE kernel and device-support releases](https://github.com/ooaklee/linux-surface-pro-11-oe/releases)
-- [Use Lexr from the OE repository](docs/how-to/how-to-use-lexr.md)
-- [How-to guides](docs/how-to/)
-- [Architecture decisions](docs/adr/)
-- [Standalone Lexr and OE workflow ownership](docs/adr/adr-0069-standalone-lexr-workflow-ownership.md)
-- [Retire superseded repository scripts](docs/adr/adr-0070-retire-superseded-repository-scripts.md)
-- [Kernel release preparation](docs/how-to/how-to-release-kernel-artifacts.md)
-- [Kernel recovery from USB](docs/how-to/how-to-reinstall-patched-kernel-from-usb.md)
-
-Documents and reports with explicit historical dates remain evidence of the
-experiments they describe. Use the standalone Lexr.sh guidance for current CLI
-behaviour and this README and the current OE how-to guides for integration
-actions.
+Lexr owns image preparation and CLI automation; OE supplies the integration
+inputs and hardware evidence. [ADR0069](docs/adr/adr-0069-standalone-lexr-workflow-ownership.md)
+records that split, and [ADR0070](docs/adr/adr-0070-retire-superseded-repository-scripts.md)
+records the retirement of the old repository scripts. Commands in dated
+reports and archived patch notes describe past experiments; use the current
+guides above for setup.
 
 ## Sources and credit
 
