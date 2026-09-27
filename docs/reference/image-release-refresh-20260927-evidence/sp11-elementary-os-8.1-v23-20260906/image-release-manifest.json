@@ -1,0 +1,452 @@
+{
+  "schema_version": 1,
+  "release_name": "sp11-elementary-os-8.1-v23-20260906",
+  "image": {
+    "name": "lexr-elementary-sp11-v23-927d00e.iso",
+    "sha256": "82f9b71c610a05c9b42b34e72cc36c121fe549841a55a22b7e3f808c25022884",
+    "size_bytes": 3713728512
+  },
+  "image_manifest": {
+    "name": "lexr-elementary-sp11-v23-927d00e.iso.manifest.json",
+    "sha256": "e514670b052efd6d9efd77ddb708c480fc6e11463149af51360a52459395d7c6",
+    "size_bytes": 8921
+  },
+  "image_contract": {
+    "schema_version": 5,
+    "created_at": "2026-09-06T17:15:55.77468Z",
+    "tool_version": "v0.4.0-rc.1-6-g927d00e",
+    "layout": "hybrid-iso",
+    "adapter": "elementary-casper",
+    "source_image": {
+      "path": "elementaryos-8.1-stable-arm64.20260219.iso",
+      "sha256": "85116d48c406ae7cd60c936050a099d4b8610321273f6f0a694796db4d4e86ba",
+      "size_bytes": 3191691264
+    },
+    "kernel_bundle": {
+      "schema_version": 2,
+      "release": "local:7.2.0-jg-0sp11v23-qcom-x1e",
+      "repository": "https://github.com/ooaklee/linux_ms_dev_kit-sp11",
+      "abi": "7.2.0-jg-0sp11v23-qcom-x1e",
+      "version": "7.2.0-jg-0sp11v23",
+      "architecture": "arm64",
+      "requested_boot_image_mode": "source",
+      "effective_dtb_delivery": "external-required",
+      "embedded_dtb_count": 0,
+      "packages": [
+        {
+          "role": "boot-support",
+          "name": "lexr-kernel-boot-support_7.2.0-jg-0sp11v23_all.deb",
+          "path": "sp11/kernel/lexr-kernel-boot-support_7.2.0-jg-0sp11v23_all.deb",
+          "sha256": "d772ac646a4467346f9b83b7254789c268cc14de13ebf17313a96c8bd40c42f0",
+          "size_bytes": 5864,
+          "verified": true
+        },
+        {
+          "role": "image",
+          "name": "linux-image-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+          "path": "sp11/kernel/linux-image-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+          "sha256": "0e8bcc1051e9d0ec0fe5aef60852507322a1ac0a179af5200b5666fed041d0cd",
+          "size_bytes": 15175872,
+          "verified": true
+        },
+        {
+          "role": "modules",
+          "name": "linux-modules-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+          "path": "sp11/kernel/linux-modules-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+          "sha256": "579c4567a73dc294ff9d3a7fd6da6ddc726839759a56207e56481e5a2c15aca7",
+          "size_bytes": 284743872,
+          "verified": true
+        }
+      ],
+      "device_trees": [
+        {
+          "device": "surface-pro-11-x1e-oled",
+          "basename": "x1e80100-microsoft-denali-oled.dtb",
+          "path": "usr/lib/firmware/7.2.0-jg-0sp11v23-qcom-x1e/device-tree/qcom/x1e80100-microsoft-denali-oled.dtb",
+          "compatible_strings": [
+            "microsoft,denali-oled",
+            "microsoft,denali",
+            "lenovo,thinkpad-t14s",
+            "qcom,x1e80100"
+          ],
+          "sha256": "325cc2476a82c91e0c1011afac7639ffe2bdad7568ef92d316a0dbaaac2e3bd2",
+          "embedded_matches": 0,
+          "selectors": [
+            {
+              "kind": "compatible",
+              "value": "microsoft,denali-oled"
+            }
+          ],
+          "required": true
+        },
+        {
+          "device": "surface-pro-11-x1p-lcd",
+          "basename": "x1p64100-microsoft-denali.dtb",
+          "path": "usr/lib/firmware/7.2.0-jg-0sp11v23-qcom-x1e/device-tree/qcom/x1p64100-microsoft-denali.dtb",
+          "compatible_strings": [
+            "microsoft,denali-lcd",
+            "microsoft,denali",
+            "lenovo,thinkpad-t14s",
+            "qcom,x1p64100",
+            "qcom,x1e80100"
+          ],
+          "sha256": "43903619576e486678c46c82ce9d66d3ee49337bb33f985a29be53e23a691bd9",
+          "embedded_matches": 0,
+          "selectors": [
+            {
+              "kind": "compatible",
+              "value": "microsoft,denali-lcd"
+            }
+          ],
+          "required": false
+        }
+      ]
+    },
+    "boot_artifacts": {
+      "kernel": {
+        "path": "casper/vmlinuz",
+        "sha256": "b8c402fe2a18ff1893578495315015e18032c7fcb9dbda3f75bfa547e61487d1",
+        "size_bytes": 15004160
+      },
+      "initrd": {
+        "path": "casper/initrd.lz",
+        "sha256": "6d48d64a51c9ddc2f5225e830a60d3f4c232bff96f5ebbb5ee01a9da00368f47",
+        "size_bytes": 86137206
+      },
+      "device_trees": [
+        {
+          "path": "sp11/dtb/x1e80100-microsoft-denali-oled.dtb",
+          "sha256": "325cc2476a82c91e0c1011afac7639ffe2bdad7568ef92d316a0dbaaac2e3bd2",
+          "size_bytes": 217964
+        },
+        {
+          "path": "sp11/dtb/x1p64100-microsoft-denali.dtb",
+          "sha256": "43903619576e486678c46c82ce9d66d3ee49337bb33f985a29be53e23a691bd9",
+          "size_bytes": 216203
+        }
+      ]
+    },
+    "media_discovery": {
+      "strategy": "direct-hybrid",
+      "protocol": "casper",
+      "evidence": [
+        {
+          "role": "medium-identity",
+          "scope": "iso-filesystem",
+          "path": ".disk/casper-uuid-generic",
+          "value": "615f45c0-5f01-4448-99df-70f2952e3e41",
+          "artifact": {
+            "path": ".disk/casper-uuid-generic",
+            "sha256": "9efbcb4f73cec4de2a20cb50d5cdba55baf74389295ffe4850fed623a455308b",
+            "size_bytes": 37
+          }
+        },
+        {
+          "role": "initramfs-identity",
+          "scope": "initramfs",
+          "path": "conf/uuid.conf",
+          "value": "615f45c0-5f01-4448-99df-70f2952e3e41"
+        },
+        {
+          "role": "live-directory",
+          "scope": "iso-filesystem",
+          "path": "casper",
+          "value": "/casper"
+        },
+        {
+          "role": "efi-bootloader",
+          "scope": "iso-filesystem",
+          "path": "EFI/boot/bootaa64.efi",
+          "artifact": {
+            "path": "EFI/boot/bootaa64.efi",
+            "sha256": "38ed2ce9203397760e1f41ce029d20073cf31f8d061735eed5442de9a28e9ec9",
+            "size_bytes": 2443144
+          }
+        },
+        {
+          "role": "efi-system-partition",
+          "scope": "iso-filesystem",
+          "path": "boot/grub/efi.img",
+          "artifact": {
+            "path": "boot/grub/efi.img",
+            "sha256": "67677b27524e47c661b651f1f7781eeea95da120767fa7bed8d4561602c68ae3",
+            "size_bytes": 3473408
+          }
+        },
+        {
+          "role": "installer-product",
+          "scope": "iso-filesystem",
+          "path": ".disk/info",
+          "artifact": {
+            "path": ".disk/info",
+            "sha256": "72bd86a84ce9e0ba04ebd85cc6f5e2663b38251314f395d71cb3bd1756de7723",
+            "size_bytes": 52
+          }
+        }
+      ]
+    },
+    "companion_bundle": {
+      "included": true,
+      "root": "sp11/companion",
+      "tool": {
+        "version": "v0.4.0-rc.1-6-g927d00e",
+        "commit": "927d00e1f672bc177593c6dde1862cb348cce60b",
+        "build_date": "2026-09-06T17:13:54Z"
+      },
+      "project_licence": "declared",
+      "executable": {
+        "artifact": {
+          "path": "sp11/companion/bin/linux-arm64/lexr",
+          "sha256": "64f8fa530ae4355c1d8482593a59fe6870cc1773a8b0641cafe4abcdad16724e",
+          "size_bytes": 12517502
+        },
+        "operating_system": "linux",
+        "architecture": "arm64",
+        "format": "ELF",
+        "mode": "0755"
+      },
+      "source_archive": {
+        "path": "sp11/companion/source/lexr_v0.4.0-rc.1-6-g927d00e_source.tar.gz",
+        "sha256": "5213f4125615673fde109cec4ad55c545c2a7d24eb515c85a0e4ce7540f9aa42",
+        "size_bytes": 1145501
+      },
+      "catalogues": [
+        {
+          "path": "sp11/companion/catalogues/supported-isos.json",
+          "sha256": "382c1f90fcc236145719732e16b3471731fbfea41253160a9ebb3a95cd13266a",
+          "size_bytes": 8320
+        },
+        {
+          "path": "sp11/companion/catalogues/supported-userspace.json",
+          "sha256": "76ea2f4251ab33f8e43ca95d139b89f6c7dd75226cc55880d920050afa40a33d",
+          "size_bytes": 11334
+        }
+      ],
+      "licences": [
+        {
+          "path": "sp11/companion/licences/LICENSE",
+          "sha256": "5d11a83a6bf443152f7db7d9ff289ec824e91291f149dddfd107249f86340373",
+          "size_bytes": 10858
+        },
+        {
+          "path": "sp11/companion/licences/NOTICE",
+          "sha256": "f6a0fb9e09aadfbfcebaa23e6ad041a4acc93e4926c9561e630591b76cb987fc",
+          "size_bytes": 80
+        },
+        {
+          "path": "sp11/companion/licences/THIRD_PARTY_NOTICES.md",
+          "sha256": "dfa4694c89dff0bc05f91ab031495bd33b556369aa524d4b4999fa695f3a5ded",
+          "size_bytes": 13826
+        }
+      ],
+      "userspace": [
+        {
+          "component": "iptsd-v1",
+          "release": "sp11-iptsd-v2",
+          "redistribution": "source-required",
+          "root": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2",
+          "artifacts": [
+            {
+              "path": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2/SHA256SUMS",
+              "sha256": "3910e64748674525b7e1e401aa18fcffd3c3918227086085e665034732f38141",
+              "size_bytes": 103
+            },
+            {
+              "path": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2/lexr-userspace-bundle.json",
+              "sha256": "1eabb935c2db3927eb13afcb0a1172cfd24974f2d7d2b4e3ecb5addce6eb3203",
+              "size_bytes": 594
+            },
+            {
+              "path": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2/sp11-iptsd-3.1.0-sp11.2-arm64.tar.xz",
+              "sha256": "c3a6235d7c0a7cc588add7b1f5aab68c6e980b2e03c1e938cc4c5751899719e6",
+              "size_bytes": 4375724
+            }
+          ]
+        }
+      ]
+    },
+    "boot_arguments": [
+      "boot=casper",
+      "live-media-path=/casper",
+      "clk_ignore_unused",
+      "pd_ignore_unused",
+      "arm64.nopauth",
+      "systemd.tpm2_wait=0"
+    ],
+    "secure_boot": "unsupported; disable Secure Boot for the unsigned custom kernel and external device tree"
+  },
+  "image_creation": {
+    "schema_version": 1,
+    "operation": "image.create",
+    "records": [
+      {
+        "step_id": "verify-source",
+        "completed_at": "2026-09-06T17:14:43.532943Z",
+        "digests": [
+          {
+            "name": "source.iso",
+            "sha256": "85116d48c406ae7cd60c936050a099d4b8610321273f6f0a694796db4d4e86ba"
+          }
+        ]
+      },
+      {
+        "step_id": "verify-kernel",
+        "completed_at": "2026-09-06T17:14:43.77892Z"
+      },
+      {
+        "step_id": "stage-companion",
+        "completed_at": "2026-09-06T17:14:45.722603Z"
+      },
+      {
+        "step_id": "prepare-tools",
+        "completed_at": "2026-09-06T17:14:45.811565Z"
+      },
+      {
+        "step_id": "extract-live-root",
+        "completed_at": "2026-09-06T17:15:17.535576Z"
+      },
+      {
+        "step_id": "prepare-wifi",
+        "completed_at": "2026-09-06T17:15:26.067733Z",
+        "digests": [
+          {
+            "name": "ath12k/WCN7850/hw2.0/board.bin",
+            "sha256": "0ef5f6f3cb124f33c6de52371819ccd7c13763ceb86d476a178fd56e4cdc26a3"
+          }
+        ]
+      },
+      {
+        "step_id": "install-kernel",
+        "completed_at": "2026-09-06T17:15:34.115737Z"
+      },
+      {
+        "step_id": "build-initramfs",
+        "completed_at": "2026-09-06T17:15:44.698425Z"
+      },
+      {
+        "step_id": "bind-live-media",
+        "completed_at": "2026-09-06T17:15:55.19515Z"
+      },
+      {
+        "step_id": "pair-device-trees",
+        "completed_at": "2026-09-06T17:15:55.566613Z"
+      },
+      {
+        "step_id": "repack-live-root",
+        "completed_at": "2026-09-06T17:20:20.229676Z"
+      },
+      {
+        "step_id": "create-hybrid-boot",
+        "completed_at": "2026-09-06T17:20:41.175959Z"
+      },
+      {
+        "step_id": "validate-output",
+        "completed_at": "2026-09-06T17:22:35.735243Z",
+        "digests": [
+          {
+            "name": "output.iso",
+            "sha256": "82f9b71c610a05c9b42b34e72cc36c121fe549841a55a22b7e3f808c25022884"
+          }
+        ]
+      },
+      {
+        "step_id": "publish-output",
+        "completed_at": "2026-09-06T17:22:35.740852Z",
+        "digests": [
+          {
+            "name": "output.iso",
+            "sha256": "82f9b71c610a05c9b42b34e72cc36c121fe549841a55a22b7e3f808c25022884"
+          }
+        ]
+      }
+    ],
+    "output": {
+      "name": "lexr-elementary-sp11-v23-927d00e.iso",
+      "sha256": "82f9b71c610a05c9b42b34e72cc36c121fe549841a55a22b7e3f808c25022884",
+      "size_bytes": 3713728512
+    }
+  },
+  "structural_validation": {
+    "valid": true,
+    "layout": "hybrid-iso",
+    "adapter": "elementary-casper",
+    "kernel_abi": "7.2.0-jg-0sp11v23-qcom-x1e",
+    "device_trees": [
+      "surface-pro-11-x1e-oled",
+      "surface-pro-11-x1p-lcd"
+    ],
+    "checks": [
+      {
+        "name": "embedded-manifest",
+        "passed": true
+      },
+      {
+        "name": "embedded-artifacts",
+        "passed": true
+      },
+      {
+        "name": "live-grub",
+        "passed": true
+      },
+      {
+        "name": "grub-bootstrap",
+        "passed": true
+      },
+      {
+        "name": "installer-product",
+        "passed": true
+      },
+      {
+        "name": "optical-and-usb-efi",
+        "passed": true
+      },
+      {
+        "name": "companion-bundle",
+        "passed": true
+      },
+      {
+        "name": "media-checksums",
+        "passed": true
+      },
+      {
+        "name": "supplemental-gpu-firmware",
+        "passed": true
+      },
+      {
+        "name": "kernel-and-installer-root",
+        "passed": true
+      },
+      {
+        "name": "installed-companion-and-recovery",
+        "passed": true
+      }
+    ]
+  },
+  "compression": {
+    "format": "zstd",
+    "implementation": "zstd-cli",
+    "version": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+    "level": 6,
+    "threads": 1,
+    "content_checksum": true
+  },
+  "compressed_archive": {
+    "name": "lexr-elementary-sp11-v23-927d00e.iso.zst",
+    "sha256": "c91ce69ec62577b81d776d224d4a517b414411ac1ca5a0e1defaf3162c0a383b",
+    "size_bytes": 3548326164
+  },
+  "part_size_bytes": 2000000000,
+  "parts": [
+    {
+      "name": "lexr-elementary-sp11-v23-927d00e.iso.zst.part-0000",
+      "sha256": "f58e3b11dc337f0c0894eb22a956e61fd5d98ba6c97789a666f1fbe74db14969",
+      "size_bytes": 2000000000
+    },
+    {
+      "name": "lexr-elementary-sp11-v23-927d00e.iso.zst.part-0001",
+      "sha256": "8020da8d2efd82b6096932e1994db558fd5a26bbbcbc8a0edccd899847cbdb46",
+      "size_bytes": 1548326164
+    }
+  ],
+  "remote_mutation": false
+}

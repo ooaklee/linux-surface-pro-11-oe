@@ -1,0 +1,227 @@
+{
+  "schema_version": 5,
+  "created_at": "2026-09-05T18:02:08.19756Z",
+  "tool_version": "v0.3.0-10-g872ecf9",
+  "layout": "hybrid-iso",
+  "adapter": "ubuntu-casper",
+  "source_image": {
+    "path": "source.iso",
+    "sha256": "d0cbef7b48f5806093c2f4d8ea6d372249e86ace0051217c76ce92d60274078d",
+    "size_bytes": 4084543488
+  },
+  "kernel_bundle": {
+    "schema_version": 2,
+    "release": "local:7.2.0-jg-0sp11v23-qcom-x1e",
+    "repository": "https://github.com/ooaklee/linux_ms_dev_kit-sp11",
+    "abi": "7.2.0-jg-0sp11v23-qcom-x1e",
+    "version": "7.2.0-jg-0sp11v23",
+    "architecture": "arm64",
+    "requested_boot_image_mode": "source",
+    "effective_dtb_delivery": "external-required",
+    "embedded_dtb_count": 0,
+    "packages": [
+      {
+        "role": "boot-support",
+        "name": "lexr-kernel-boot-support_7.2.0-jg-0sp11v23_all.deb",
+        "path": "sp11/kernel/lexr-kernel-boot-support_7.2.0-jg-0sp11v23_all.deb",
+        "sha256": "d772ac646a4467346f9b83b7254789c268cc14de13ebf17313a96c8bd40c42f0",
+        "size_bytes": 5864,
+        "verified": true
+      },
+      {
+        "role": "image",
+        "name": "linux-image-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "path": "sp11/kernel/linux-image-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "sha256": "0e8bcc1051e9d0ec0fe5aef60852507322a1ac0a179af5200b5666fed041d0cd",
+        "size_bytes": 15175872,
+        "verified": true
+      },
+      {
+        "role": "modules",
+        "name": "linux-modules-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "path": "sp11/kernel/linux-modules-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "sha256": "579c4567a73dc294ff9d3a7fd6da6ddc726839759a56207e56481e5a2c15aca7",
+        "size_bytes": 284743872,
+        "verified": true
+      }
+    ],
+    "device_trees": [
+      {
+        "device": "surface-pro-11-x1e-oled",
+        "basename": "x1e80100-microsoft-denali-oled.dtb",
+        "path": "usr/lib/firmware/7.2.0-jg-0sp11v23-qcom-x1e/device-tree/qcom/x1e80100-microsoft-denali-oled.dtb",
+        "compatible_strings": [
+          "microsoft,denali-oled",
+          "microsoft,denali",
+          "lenovo,thinkpad-t14s",
+          "qcom,x1e80100"
+        ],
+        "sha256": "325cc2476a82c91e0c1011afac7639ffe2bdad7568ef92d316a0dbaaac2e3bd2",
+        "embedded_matches": 0,
+        "selectors": [
+          {
+            "kind": "compatible",
+            "value": "microsoft,denali-oled"
+          }
+        ],
+        "required": true
+      },
+      {
+        "device": "surface-pro-11-x1p-lcd",
+        "basename": "x1p64100-microsoft-denali.dtb",
+        "path": "usr/lib/firmware/7.2.0-jg-0sp11v23-qcom-x1e/device-tree/qcom/x1p64100-microsoft-denali.dtb",
+        "compatible_strings": [
+          "microsoft,denali-lcd",
+          "microsoft,denali",
+          "lenovo,thinkpad-t14s",
+          "qcom,x1p64100",
+          "qcom,x1e80100"
+        ],
+        "sha256": "43903619576e486678c46c82ce9d66d3ee49337bb33f985a29be53e23a691bd9",
+        "embedded_matches": 0,
+        "selectors": [
+          {
+            "kind": "compatible",
+            "value": "microsoft,denali-lcd"
+          }
+        ],
+        "required": false
+      }
+    ]
+  },
+  "boot_artifacts": {
+    "kernel": {
+      "path": "casper/vmlinuz",
+      "sha256": "b8c402fe2a18ff1893578495315015e18032c7fcb9dbda3f75bfa547e61487d1",
+      "size_bytes": 15004160
+    },
+    "initrd": {
+      "path": "casper/initrd",
+      "sha256": "869238bbaf7f5fe95b14cb94fbaf0a3674082ad42a4eef8a83180e4e36b8e497",
+      "size_bytes": 135697829
+    },
+    "device_trees": [
+      {
+        "path": "sp11/dtb/x1e80100-microsoft-denali-oled.dtb",
+        "sha256": "325cc2476a82c91e0c1011afac7639ffe2bdad7568ef92d316a0dbaaac2e3bd2",
+        "size_bytes": 217964
+      },
+      {
+        "path": "sp11/dtb/x1p64100-microsoft-denali.dtb",
+        "sha256": "43903619576e486678c46c82ce9d66d3ee49337bb33f985a29be53e23a691bd9",
+        "size_bytes": 216203
+      }
+    ]
+  },
+  "media_discovery": {
+    "strategy": "direct-hybrid",
+    "protocol": "casper",
+    "evidence": [
+      {
+        "role": "medium-identity",
+        "scope": "iso-filesystem",
+        "path": ".disk/casper-uuid-generic",
+        "value": "b65d09b3-632a-4c16-9675-fa225a5be681",
+        "artifact": {
+          "path": ".disk/casper-uuid-generic",
+          "sha256": "54eed13bef4d93bd2b05429c577632b43ad1ef8d08e9897fd1aa4535feb08254",
+          "size_bytes": 37
+        }
+      },
+      {
+        "role": "initramfs-identity",
+        "scope": "initramfs",
+        "path": "conf/uuid.conf",
+        "value": "b65d09b3-632a-4c16-9675-fa225a5be681"
+      }
+    ]
+  },
+  "companion_bundle": {
+    "included": true,
+    "root": "sp11/companion",
+    "tool": {
+      "version": "v0.3.0-10-g872ecf9",
+      "commit": "872ecf90df03dafd3f56dfd326fe79765bb439ed",
+      "build_date": "2026-09-05T17:57:17Z"
+    },
+    "project_licence": "declared",
+    "executable": {
+      "artifact": {
+        "path": "sp11/companion/bin/linux-arm64/lexr",
+        "sha256": "d2c2383ff4b6c0b76451da9cf9ca9de332a54ef5f754f9b11c8fc98ee7156c18",
+        "size_bytes": 12320894
+      },
+      "operating_system": "linux",
+      "architecture": "arm64",
+      "format": "ELF",
+      "mode": "0755"
+    },
+    "source_archive": {
+      "path": "sp11/companion/source/lexr_v0.3.0-10-g872ecf9_source.tar.gz",
+      "sha256": "3b277ed2bf2dd5c945bb83c78219151352251c6e1cebdd513b831add3f8a9158",
+      "size_bytes": 1095290
+    },
+    "catalogues": [
+      {
+        "path": "sp11/companion/catalogues/supported-isos.json",
+        "sha256": "5df444591fa8ae91a1cf1be09f54e6d4cc625e4270de02c17406b9625067cd31",
+        "size_bytes": 7770
+      },
+      {
+        "path": "sp11/companion/catalogues/supported-userspace.json",
+        "sha256": "76ea2f4251ab33f8e43ca95d139b89f6c7dd75226cc55880d920050afa40a33d",
+        "size_bytes": 11334
+      }
+    ],
+    "licences": [
+      {
+        "path": "sp11/companion/licences/LICENSE",
+        "sha256": "5d11a83a6bf443152f7db7d9ff289ec824e91291f149dddfd107249f86340373",
+        "size_bytes": 10858
+      },
+      {
+        "path": "sp11/companion/licences/NOTICE",
+        "sha256": "f6a0fb9e09aadfbfcebaa23e6ad041a4acc93e4926c9561e630591b76cb987fc",
+        "size_bytes": 80
+      },
+      {
+        "path": "sp11/companion/licences/THIRD_PARTY_NOTICES.md",
+        "sha256": "f2ffa33fc790579e8699fe2a292042be86cc02c1b8b335a7882ae4eafa8fe13e",
+        "size_bytes": 12961
+      }
+    ],
+    "userspace": [
+      {
+        "component": "iptsd-v1",
+        "release": "sp11-iptsd-v2",
+        "redistribution": "source-required",
+        "root": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2",
+        "artifacts": [
+          {
+            "path": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2/SHA256SUMS",
+            "sha256": "3910e64748674525b7e1e401aa18fcffd3c3918227086085e665034732f38141",
+            "size_bytes": 103
+          },
+          {
+            "path": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2/lexr-userspace-bundle.json",
+            "sha256": "1eabb935c2db3927eb13afcb0a1172cfd24974f2d7d2b4e3ecb5addce6eb3203",
+            "size_bytes": 594
+          },
+          {
+            "path": "sp11/companion/userspace/iptsd-v1/sp11-iptsd-v2/sp11-iptsd-3.1.0-sp11.2-arm64.tar.xz",
+            "sha256": "c3a6235d7c0a7cc588add7b1f5aab68c6e980b2e03c1e938cc4c5751899719e6",
+            "size_bytes": 4375724
+          }
+        ]
+      }
+    ]
+  },
+  "boot_arguments": [
+    "boot=casper",
+    "clk_ignore_unused",
+    "pd_ignore_unused",
+    "arm64.nopauth",
+    "systemd.tpm2_wait=0"
+  ],
+  "secure_boot": "unsupported; disable Secure Boot for the unsigned custom kernel and direct GRUB"
+}

@@ -1,0 +1,426 @@
+{
+  "schema_version": 5,
+  "created_at": "2026-09-09T00:20:12.892878Z",
+  "tool_version": "v0.4.0-rc.2-24-g4c8aaf5",
+  "layout": "hybrid-iso",
+  "adapter": "archlinux-arm-live",
+  "source_image": {
+    "path": "ArchLinuxARM-aarch64-latest.tar.gz",
+    "sha256": "42a4eeaa038994ffd31fa173256ef2f0ef511358eeb41b9ea1f8626391b9b319",
+    "size_bytes": 829367415
+  },
+  "kernel_bundle": {
+    "schema_version": 2,
+    "release": "local:7.2.0-jg-0sp11v23-qcom-x1e",
+    "repository": "https://github.com/ooaklee/linux_ms_dev_kit-sp11",
+    "abi": "7.2.0-jg-0sp11v23-qcom-x1e",
+    "version": "7.2.0-jg-0sp11v23",
+    "architecture": "arm64",
+    "requested_boot_image_mode": "source",
+    "effective_dtb_delivery": "external-required",
+    "embedded_dtb_count": 0,
+    "packages": [
+      {
+        "role": "boot-support",
+        "name": "lexr-kernel-boot-support_7.2.0-jg-0sp11v23_all.deb",
+        "path": "sp11/kernel/lexr-kernel-boot-support_7.2.0-jg-0sp11v23_all.deb",
+        "sha256": "d772ac646a4467346f9b83b7254789c268cc14de13ebf17313a96c8bd40c42f0",
+        "size_bytes": 5864,
+        "verified": true
+      },
+      {
+        "role": "image",
+        "name": "linux-image-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "path": "sp11/kernel/linux-image-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "sha256": "0e8bcc1051e9d0ec0fe5aef60852507322a1ac0a179af5200b5666fed041d0cd",
+        "size_bytes": 15175872,
+        "verified": true
+      },
+      {
+        "role": "modules",
+        "name": "linux-modules-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "path": "sp11/kernel/linux-modules-7.2.0-jg-0sp11v23-qcom-x1e_7.2.0-jg-0sp11v23_arm64.deb",
+        "sha256": "579c4567a73dc294ff9d3a7fd6da6ddc726839759a56207e56481e5a2c15aca7",
+        "size_bytes": 284743872,
+        "verified": true
+      }
+    ],
+    "device_trees": [
+      {
+        "device": "surface-pro-11-x1e-oled",
+        "basename": "x1e80100-microsoft-denali-oled.dtb",
+        "path": "usr/lib/firmware/7.2.0-jg-0sp11v23-qcom-x1e/device-tree/qcom/x1e80100-microsoft-denali-oled.dtb",
+        "compatible_strings": [
+          "microsoft,denali-oled",
+          "microsoft,denali",
+          "lenovo,thinkpad-t14s",
+          "qcom,x1e80100"
+        ],
+        "sha256": "325cc2476a82c91e0c1011afac7639ffe2bdad7568ef92d316a0dbaaac2e3bd2",
+        "embedded_matches": 0,
+        "selectors": [
+          {
+            "kind": "compatible",
+            "value": "microsoft,denali-oled"
+          }
+        ],
+        "required": true
+      },
+      {
+        "device": "surface-pro-11-x1p-lcd",
+        "basename": "x1p64100-microsoft-denali.dtb",
+        "path": "usr/lib/firmware/7.2.0-jg-0sp11v23-qcom-x1e/device-tree/qcom/x1p64100-microsoft-denali.dtb",
+        "compatible_strings": [
+          "microsoft,denali-lcd",
+          "microsoft,denali",
+          "lenovo,thinkpad-t14s",
+          "qcom,x1p64100",
+          "qcom,x1e80100"
+        ],
+        "sha256": "43903619576e486678c46c82ce9d66d3ee49337bb33f985a29be53e23a691bd9",
+        "embedded_matches": 0,
+        "selectors": [
+          {
+            "kind": "compatible",
+            "value": "microsoft,denali-lcd"
+          }
+        ],
+        "required": false
+      }
+    ]
+  },
+  "boot_artifacts": {
+    "kernel": {
+      "path": "arch/aarch64/boot/vmlinuz-7.2.0-jg-0sp11v23-qcom-x1e",
+      "sha256": "b8c402fe2a18ff1893578495315015e18032c7fcb9dbda3f75bfa547e61487d1",
+      "size_bytes": 15004160
+    },
+    "initrd": {
+      "path": "arch/aarch64/boot/initramfs-7.2.0-jg-0sp11v23-qcom-x1e.img",
+      "sha256": "cce86f141efaa0f80e5f0056330bd6b864886c628fe8b3761b36154951cf9a48",
+      "size_bytes": 53215193
+    },
+    "device_trees": [
+      {
+        "path": "arch/aarch64/boot/dtb-7.2.0-jg-0sp11v23-qcom-x1e/x1e80100-microsoft-denali-oled.dtb",
+        "sha256": "325cc2476a82c91e0c1011afac7639ffe2bdad7568ef92d316a0dbaaac2e3bd2",
+        "size_bytes": 217964
+      },
+      {
+        "path": "arch/aarch64/boot/dtb-7.2.0-jg-0sp11v23-qcom-x1e/x1p64100-microsoft-denali.dtb",
+        "sha256": "43903619576e486678c46c82ce9d66d3ee49337bb33f985a29be53e23a691bd9",
+        "size_bytes": 216203
+      }
+    ]
+  },
+  "media_discovery": {
+    "strategy": "direct-hybrid",
+    "protocol": "archiso",
+    "evidence": [
+      {
+        "role": "image-id",
+        "scope": "iso-filesystem",
+        "path": "arch/b50b7e704a38059574a59eedbfe8906e.uuid",
+        "value": "b50b7e704a38059574a59eedbfe8906e"
+      },
+      {
+        "role": "volume-label",
+        "scope": "iso9660",
+        "value": "LEXR_ARCH_B50B7E704A38059574A5"
+      },
+      {
+        "role": "live-filesystem",
+        "scope": "iso-filesystem",
+        "path": "arch/aarch64/airootfs.sfs",
+        "artifact": {
+          "path": "arch/aarch64/airootfs.sfs",
+          "sha256": "73a2b6f8abe41f5931074635847905681917bc4959d6e075cf88cde4037b55f4",
+          "size_bytes": 1577209856
+        }
+      },
+      {
+        "role": "live-checksum",
+        "scope": "iso-filesystem",
+        "path": "arch/aarch64/airootfs.sha512",
+        "artifact": {
+          "path": "arch/aarch64/airootfs.sha512",
+          "sha256": "e8b158a181d6939846a227de922a4c7c56a5fee9190ded9220cc6281d2ca1538",
+          "size_bytes": 143
+        }
+      },
+      {
+        "role": "efi-bootloader",
+        "scope": "iso-filesystem",
+        "path": "EFI/BOOT/BOOTAA64.EFI",
+        "artifact": {
+          "path": "EFI/BOOT/BOOTAA64.EFI",
+          "sha256": "fc8633ef3cdcaa1eb783ea99f2656f4167154ed94099197370d4bddd9ffa6fbb",
+          "size_bytes": 16179200
+        }
+      },
+      {
+        "role": "efi-system-partition",
+        "scope": "iso-filesystem",
+        "path": "boot/grub/efi.img",
+        "artifact": {
+          "path": "boot/grub/efi.img",
+          "sha256": "efb69be57c92b7dd2a5d1ca2668de774aacedeeadcb6b7e9cd89971fd7c99587",
+          "size_bytes": 25165824
+        }
+      },
+      {
+        "role": "grub-menu",
+        "scope": "iso-filesystem",
+        "path": "boot/grub/grub.cfg",
+        "artifact": {
+          "path": "boot/grub/grub.cfg",
+          "sha256": "d4330070cd2749f8da1e4240aa9cdc85785bc36466d40f820ab7987bbb7c2b9c",
+          "size_bytes": 2814
+        }
+      },
+      {
+        "role": "package-lock",
+        "scope": "iso-filesystem",
+        "path": "sp11/packages.lock.json",
+        "artifact": {
+          "path": "sp11/packages.lock.json",
+          "sha256": "8b7be72bc56f9ecdd140133c3efb89ff34506e5636ea06ef9ad98843c19a8cdc",
+          "size_bytes": 121681
+        }
+      },
+      {
+        "role": "package-inventory",
+        "scope": "iso-filesystem",
+        "path": "sp11/packages.installed",
+        "artifact": {
+          "path": "sp11/packages.installed",
+          "sha256": "818082519d47598230c95192c7c4136946ca151440a0bd5bf41034942ce40746",
+          "size_bytes": 4656
+        }
+      },
+      {
+        "role": "native-kernel-package",
+        "scope": "iso-filesystem",
+        "path": "sp11/lexr-kernel-sp11.pkg.tar.gz",
+        "artifact": {
+          "path": "sp11/lexr-kernel-sp11.pkg.tar.gz",
+          "sha256": "32e63661641107142cea5ab69165b484055557f3775dd8026c117e57b80c8bbc",
+          "size_bytes": 182637192
+        }
+      },
+      {
+        "role": "getting-started",
+        "scope": "iso-filesystem",
+        "path": "LEXR_GETTING_STARTED.txt",
+        "artifact": {
+          "path": "LEXR_GETTING_STARTED.txt",
+          "sha256": "21c0d1a410f0ae368d5a5e1ef9f1bc54bce26c78855aaaa59dcba8ccca4478a3",
+          "size_bytes": 26080
+        }
+      },
+      {
+        "role": "installer-asset-0",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/installed.conf",
+        "artifact": {
+          "path": "sp11/installer/installed.conf",
+          "sha256": "9fd92ab751e356dd21c65f8080316e7e81513bcc4dee788b59091f281fe6906f",
+          "size_bytes": 1255
+        }
+      },
+      {
+        "role": "installer-asset-1",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/lexr_sp11",
+        "artifact": {
+          "path": "sp11/installer/lexr_sp11",
+          "sha256": "73f4925c7367c4956c23438250d8a12568649e6b8b12672ac8cbe5d2b5017656",
+          "size_bytes": 880
+        }
+      },
+      {
+        "role": "installer-asset-2",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/runtime.json",
+        "artifact": {
+          "path": "sp11/installer/runtime.json",
+          "sha256": "bb509557118691cc2ccc8c4093b4182d200e84b5c33fcda5ac4dc7eee17c6b42",
+          "size_bytes": 571
+        }
+      },
+      {
+        "role": "installer-asset-3",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/firmware/qcom/gen70500_gmu.bin",
+        "artifact": {
+          "path": "sp11/installer/firmware/qcom/gen70500_gmu.bin",
+          "sha256": "5dfba247d548cabcb892ffa716e8dc82a345fd54b5dbae46ba523230e7ae37dd",
+          "size_bytes": 81312
+        }
+      },
+      {
+        "role": "installer-asset-4",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/firmware/qcom/gen70500_sqe.fw",
+        "artifact": {
+          "path": "sp11/installer/firmware/qcom/gen70500_sqe.fw",
+          "sha256": "05ae89e6dea62268cec3f4abb5d7d6db2c95270ff105fd056f77262e39d2e527",
+          "size_bytes": 77332
+        }
+      },
+      {
+        "role": "installer-asset-5",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/board.bin",
+        "artifact": {
+          "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/board.bin",
+          "sha256": "0ef5f6f3cb124f33c6de52371819ccd7c13763ceb86d476a178fd56e4cdc26a3",
+          "size_bytes": 88872
+        }
+      },
+      {
+        "role": "installer-asset-6",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/board-2.bin",
+        "artifact": {
+          "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/board-2.bin",
+          "sha256": "1abee7132dbccb523cca44a8de4e8968aa7bf5a5fcc032c338f687f94ea5bf4e",
+          "size_bytes": 2253964
+        }
+      },
+      {
+        "role": "installer-asset-7",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/amss.bin",
+        "artifact": {
+          "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/amss.bin",
+          "sha256": "43aadfd3df887f27de74020273aee484bac6a31dd53068f91baf2a9b094d6a68",
+          "size_bytes": 6090816
+        }
+      },
+      {
+        "role": "installer-asset-8",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/m3.bin",
+        "artifact": {
+          "path": "sp11/installer/firmware/ath12k/WCN7850/hw2.0/m3.bin",
+          "sha256": "0e72f44df7defc269fe92dcea25d4d409046c04b77d41c510c52879b3dfc1055",
+          "size_bytes": 299660
+        }
+      },
+      {
+        "role": "installer-asset-9",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/surface-pro-11-x1e-oled.cfg",
+        "artifact": {
+          "path": "sp11/installer/surface-pro-11-x1e-oled.cfg",
+          "sha256": "50041b594aaf53eaceab41708b1689e2da48e743df7abf58c418dfffb72ed097",
+          "size_bytes": 1222
+        }
+      },
+      {
+        "role": "installer-asset-10",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/surface-pro-11-x1p-lcd.cfg",
+        "artifact": {
+          "path": "sp11/installer/surface-pro-11-x1p-lcd.cfg",
+          "sha256": "0acded1f9325f34a579c53c16ec6e4c5d239b4591c5841d133474fba53b559ef",
+          "size_bytes": 1212
+        }
+      },
+      {
+        "role": "installer-asset-11",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/payload.json",
+        "artifact": {
+          "path": "sp11/installer/payload.json",
+          "sha256": "c1ab3a5b522d023f6635175ec51a8014533222d8669d011676654392266fc02b",
+          "size_bytes": 2118
+        }
+      },
+      {
+        "role": "installer-asset-12",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/guided.py",
+        "artifact": {
+          "path": "sp11/installer/guided.py",
+          "sha256": "1b9b866c304f7d646af6f319831e1ce0c0b30df0745823da0be85012bb95ae1d",
+          "size_bytes": 17912
+        }
+      },
+      {
+        "role": "installer-asset-13",
+        "scope": "iso-filesystem",
+        "path": "sp11/installer/target.py",
+        "artifact": {
+          "path": "sp11/installer/target.py",
+          "sha256": "5774b33bcbfbd6c4ec929c7a342a450283c9e9ce8abc12189a0183e0356fa738",
+          "size_bytes": 19667
+        }
+      }
+    ]
+  },
+  "companion_bundle": {
+    "included": true,
+    "root": "sp11/companion",
+    "tool": {
+      "version": "v0.4.0-rc.2-24-g4c8aaf5",
+      "commit": "4c8aaf5bda4c813938275633d08fed93260ede45",
+      "build_date": "2026-09-09T00:17:30Z"
+    },
+    "project_licence": "declared",
+    "executable": {
+      "artifact": {
+        "path": "sp11/companion/bin/linux-arm64/lexr",
+        "sha256": "98d9cf6e42750d0d2d9cf46b05048ac62a918a1df7d11e7e4f7e4c26b00a888b",
+        "size_bytes": 12910718
+      },
+      "operating_system": "linux",
+      "architecture": "arm64",
+      "format": "ELF",
+      "mode": "0755"
+    },
+    "source_archive": {
+      "path": "sp11/companion/source/lexr_v0.4.0-rc.2-24-g4c8aaf5_source.tar.gz",
+      "sha256": "f2bc7629abb34952c8b803a00320fd1c8bfd26193ced79ad7fefcda00a8eb702",
+      "size_bytes": 1333990
+    },
+    "catalogues": [
+      {
+        "path": "sp11/companion/catalogues/supported-isos.json",
+        "sha256": "3eb653994268e95c2af42e5087ebb4dee898878e241d6414ef17fe77e16886b2",
+        "size_bytes": 10215
+      },
+      {
+        "path": "sp11/companion/catalogues/supported-userspace.json",
+        "sha256": "76ea2f4251ab33f8e43ca95d139b89f6c7dd75226cc55880d920050afa40a33d",
+        "size_bytes": 11334
+      }
+    ],
+    "licences": [
+      {
+        "path": "sp11/companion/licences/LICENSE",
+        "sha256": "5d11a83a6bf443152f7db7d9ff289ec824e91291f149dddfd107249f86340373",
+        "size_bytes": 10858
+      },
+      {
+        "path": "sp11/companion/licences/NOTICE",
+        "sha256": "f6a0fb9e09aadfbfcebaa23e6ad041a4acc93e4926c9561e630591b76cb987fc",
+        "size_bytes": 80
+      },
+      {
+        "path": "sp11/companion/licences/THIRD_PARTY_NOTICES.md",
+        "sha256": "3e3eb0f02802d3b0d1861aa57794c8883120a0bf23321ddc406a3a917b1e8b8b",
+        "size_bytes": 14535
+      }
+    ],
+    "userspace": []
+  },
+  "boot_arguments": [
+    "clk_ignore_unused",
+    "pd_ignore_unused",
+    "arm64.nopauth",
+    "systemd.tpm2_wait=0"
+  ],
+  "secure_boot": "unsupported; disable Secure Boot for the unsigned custom kernel and external device tree"
+}
