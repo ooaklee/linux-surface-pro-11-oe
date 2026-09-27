@@ -1,7 +1,7 @@
 ---
 id: image-release-refresh-20260927
 title: "2026-09-27 Image Release Refresh"
-description: Pre-retirement audit of three experimental image releases selected for replacement with the five-distribution Lexr v0.5.0-rc.3 release set.
+description: Pre-retirement audit and reaction-retention policy for three experimental image releases selected for the five-distribution Lexr v0.5.0-rc.3 refresh.
 ---
 
 # 2026-09-27 image release refresh
@@ -14,9 +14,9 @@ assets below were captured on 2026-09-27, before deletion. This record does
 not assert that replacements have been published or that retirement has
 finished. Commit this record and its evidence before removing any release.
 
-The owner explicitly requested rebuilding all five implemented distributions
-with Lexr `v0.5.0-rc.3`, then removing exactly these three older GitHub release
-entries and their uploaded assets after the replacements pass validation:
+The owner's original request was to rebuild all five implemented distributions
+with Lexr `v0.5.0-rc.3`, then remove these three older GitHub release entries
+and their uploaded assets after the replacements pass validation:
 
 - `sp11-ubuntu-concept-26.04-v23-20260905`
 - `sp11-elementary-os-8.1-v23-20260906`
@@ -26,6 +26,35 @@ entries and their uploaded assets after the replacements pass validation:
 names for new images. Kernel and userspace releases and all other image
 releases are outside this retirement scope.
 
+### Owner policy amendment: retain releases with reactions
+
+The owner subsequently amended the request: **preserve any of these three
+releases that has reactions**, retain its uploaded assets, and prepend a notice
+linking its verified replacement. Remove only the selected releases without
+reactions, after all five replacements pass the publication and validation
+gates. This amendment supersedes the original instruction to remove all three.
+
+The publication operator queried each release's reaction endpoint on
+2026-09-27. The verified results at `2026-09-27T01:18:29.746876+00:00` were:
+
+| Selected legacy release | Verified reaction count | Current planned action |
+| --- | --- | --- |
+| `sp11-ubuntu-concept-26.04-v23-20260905` | 2 (both `+1`) | Retain the release and its assets; prepend a supersession notice linking `sp11-ubuntu-concept-26.04-v23-20260927` after verified publication. |
+| `sp11-elementary-os-8.1-v23-20260906` | 0 | Remove the release and its assets only after a fresh zero-reaction check and replacement validation. |
+| `sp11-arch-linux-arm-terminal-v23-20260909` | 0 | Remove the release and its assets only after a fresh zero-reaction check and replacement validation. |
+
+The fresh count came from the dedicated reaction endpoints. An absent
+`reactions` field in a release API response is not evidence of zero reactions.
+**Immediately before each removal, recheck that release's reactions.** If any
+reaction has appeared, retain the release and its assets and link its verified
+replacement instead. If the count cannot be established, do not delete it.
+Preserve the historical body beneath any supersession notice; do not rewrite
+earlier image identities or qualification claims as results for the new ISO.
+
+These are planned actions, not completed remote mutations. The original
+18-file metadata capture and its snapshot checksums remain unchanged; this
+later policy amendment records the newer reaction observation separately.
+
 The reason is an owner-requested replacement of older embedded Lexr versions
 with the same `v0.5.0-rc.3` version across the five images. This audit does not
 establish that the retiring images are broken, corrupt or incorrectly
@@ -34,9 +63,10 @@ identified. It preserves their distinct hardware-evidence boundaries below.
 [ADR0051](../adr/adr-0051-release-and-tag-cleanup.md) normally preserves valid
 historical releases and requires deleting tags when removing broken or
 incorrectly identified releases. The explicit owner request here is a bounded
-exception to supersession-only preservation. It removes release entries and
-assets while retaining their source tags; it is not an application of that
-ADR's broken-release/tag deletion procedure. The audit and validation
+exception to supersession-only preservation, now limited by the reaction
+retention amendment above. Only selected unreacted release entries and assets
+may be removed, while all source tags remain. This is not an application of
+that ADR's broken-release/tag deletion procedure. The audit and validation
 requirements remain in effect.
 
 ## Replacement set and qualification
@@ -61,13 +91,15 @@ installation, installed-system boot or recovery test is recorded here, and
 there is no X1P/LCD qualification claim. The final README download section
 will identify the completed releases and their source snapshots.
 
-Before retiring the three selected releases, the publication operator must
+Before changing any of the three selected legacy releases, the publication operator must
 verify all five replacement releases, their exact asset membership, recorded
 producer and kernel identities, and reconstruction/checksum validation against
-freshly downloaded assets. Preserve this committed audit, then remove only
-the selected release entries/assets and confirm the three retained tag refs
-still have the recorded targets. Record completion separately once observed;
-this pre-retirement document is not an execution receipt.
+freshly downloaded assets. Preserve this committed audit, retain Ubuntu with
+a supersession notice, and recheck reactions immediately before removing either
+remaining candidate. Any candidate with reactions must instead be retained
+with a notice. Confirm all three tag refs still have the recorded targets.
+Record completion separately once observed; this pre-retirement document is
+not an execution receipt.
 
 ## Provenance boundary
 
@@ -117,7 +149,7 @@ not download the large split parts or reconstruct these ISOs again.
   audio, camera and power-profile results do not make those features automatic
   in a fresh installation.
 
-Removing the release downloads does not retract these accurately bounded
+Removing an unreacted release's downloads does not retract these accurately bounded
 historical observations. Preserve the candidate revisions and image hashes in
 the Lexr hardware test records.
 
