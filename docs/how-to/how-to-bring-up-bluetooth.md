@@ -18,7 +18,7 @@ from the same Surface Pro 11. The maintained implementation is internal to
 [Initialise the Lexr submodule](../../README.md#build-the-cli) on the same
 Surface. The public HTTPS submodule can be initialised anonymously. In an
 elevated PowerShell session, first complete Lexr's
-[protected-parent procedure](https://github.com/ooaklee/lexr.sh#collect-on-windows)
+[protected-parent procedure](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-handoff.md#1-create-the-protected-windows-parent)
 to create a new private parent on the fixed local NTFS volume. From the root of
 the checkout in that same session, run:
 

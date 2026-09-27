@@ -13,7 +13,7 @@ The OE repository retains low-level integration evidence and pins the reviewed
 Lexr source revision beneath `cli/lexr`.
 
 To prepare a prebuilt distro image on Windows, use the canonical
-[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md). It covers joining parts,
+[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-image-usb.md). It covers joining parts,
 decompression, checksum verification, Etcher, Secure Boot and USB boot. On
 Linux, follow the selected release's Lexr download and validation commands,
 then [write a reviewed USB device](#write-a-reviewed-usb-device) below.
@@ -217,7 +217,7 @@ explicit path. If a check needs user-level state, also pass `--user-home` as the
 absolute home path visible inside that target. Userspace installation is a
 separate, receipt-backed mutation and requires its own dry run, effective root,
 and confirmation. See the
-[Lexr userspace guide](https://github.com/ooaklee/lexr.sh#userspace-companion)
+[Lexr userspace guide](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/userspace-support.md)
 for component-specific pull, build, and install commands.
 
 ## Keep Windows hand-offs private
@@ -230,7 +230,7 @@ a release, an image, or an ordinary support report.
 
 The non-private collector source is
 `cli/lexr/tools/collect-sp11-windows-handoff.ps1`. Follow the
-[Lexr private hand-off procedure](https://github.com/ooaklee/lexr.sh#private-windows-hand-offs)
+[Lexr private hand-off procedure](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-handoff.md)
 to collect into protected Windows storage and transfer it privately. Importing
 copies a strictly validated version 3 hand-off into a protected,
 content-addressed store beneath the current user's home; it does not modify the

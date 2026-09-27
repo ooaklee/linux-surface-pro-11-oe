@@ -32,7 +32,7 @@ old `sp11v3` bundle or copy separate `gpi.ko`, `spi-geni-qcom.ko`, or
   GRUB.
 - Recovery media kept available throughout testing.
 
-For prebuilt recovery media, follow the [Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md)
+For prebuilt recovery media, follow the [Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-image-usb.md)
 when preparing the drive on Windows, or the release's Lexr commands and
 [Lexr USB workflow](how-to-use-lexr.md#write-a-reviewed-usb-device) on Linux.
 

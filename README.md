@@ -8,8 +8,9 @@ and the
 [Surface Pro 11 v23 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23)
 (`7.2.0-jg-0sp11v23-qcom-x1e`) and are available below. Each release passed
 structural validation and post-publication fresh-download checks of the
-complete asset set, checksums and reconstructed ISO identity. The new ISO
-bytes have not been physically boot-tested.
+complete asset set, checksums and reconstructed ISO identity. The published
+Fedora image has also passed the X1E/OLED live-boot check described below;
+the other four rebuilt images have not been physically retested.
 
 | Distribution | Upstream source | Image release |
 | --- | --- | --- |
@@ -36,7 +37,7 @@ URLs do not make them current distribution media. Follow each release's
 checksum, reconstruction and USB-writing instructions for its exact assets.
 
 **Preparing the USB on Windows?** Use the
-[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/30ccd9e36091d5c25d8c946ca8d7d286132eceba/docs/user-guide/windows-image-usb.md) to join the parts, decompress
+[Windows image-to-USB guide](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-image-usb.md) to join the parts, decompress
 and verify the image, flash it with Etcher, and configure Secure Boot and USB
 boot. **Already running Linux?** Follow the release's Lexr download and
 validation commands, then the [Lexr USB workflow](docs/how-to/how-to-use-lexr.md#write-a-reviewed-usb-device).
@@ -47,10 +48,19 @@ records the tested candidate revisions, working features and limitations.
 Arch candidate 4 also completed installation and a first boot from internal
 NVMe; its [hardware test record](https://github.com/ooaklee/lexr.sh/blob/v0.5.0-rc.3/docs/operator-manual/arch-linux-arm-install.md#hardware-test-record)
 identifies the tested image and subsequent installed-system setup checks.
-These earlier results do not qualify the newly rebuilt bytes. Live boot,
+These earlier results do not qualify the newly rebuilt bytes.
+
+On 2026-09-27, the published Fedora Workstation Live 44 image above passed
+structural validation and a full USB write/readback check using the native Lexr
+CLI from [merged Lexr PR #68](https://github.com/ooaklee/lexr.sh/pull/68).
+The subsequent user-reported X1E/OLED test confirmed the live desktop, Wi-Fi,
+touchscreen and power profiles. This tested the published rc.3-produced ISO;
+it was not rebuilt with the PR's CLI changes.
+
+The other four rebuilt images have not been physically retested. Completed
 installation, installed-system boot, recovery, the full peripheral matrix and
-X1P/LCD have not been physically retested for this release set. Structural
-validation and checksum verification do not establish hardware bootability.
+X1P/LCD remain unverified for this release set. Structural validation and
+checksum verification alone do not establish hardware bootability.
 
 ## About this repository
 
@@ -405,7 +415,7 @@ paths; device diagnostics deliberately omit private device identities.
 Some device-bound platform firmware and the Bluetooth public address must come
 from the same Surface. On Windows, run the canonical collector from this
 checkout's initialised Lexr submodule. First follow Lexr's
-[protected-parent procedure](https://github.com/ooaklee/lexr.sh#collect-on-windows)
+[protected-parent procedure](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/windows-handoff.md#1-create-the-protected-windows-parent)
 in the same elevated PowerShell session. It creates a new private parent on the
 fixed local NTFS volume; never use removable storage as the collector's live
 output transaction.
