@@ -24,7 +24,6 @@ For a fresh checkout, initialise the Lexr submodule with the repository:
 
 ```sh
 git clone --recurse-submodules \
-  --branch cli/linux-armer \
   https://github.com/ooaklee/linux-surface-pro-11-oe.git
 cd linux-surface-pro-11-oe
 git submodule status -- cli/lexr
@@ -33,17 +32,21 @@ git submodule status -- cli/lexr
 For an existing checkout:
 
 ```sh
-git fetch origin cli/linux-armer
-git switch cli/linux-armer
+git fetch origin main
+git switch main
 git pull --ff-only
 git submodule sync -- cli/lexr
 git submodule update --init --recursive cli/lexr
 git submodule status -- cli/lexr
 ```
 
-These examples select the integration branch explicitly while the cut-over is
-under review. Omit `--branch cli/linux-armer` and the branch-switching steps
-after the same changes reach the repository's default branch.
+The repository's default `main` branch contains the Lexr integration. This
+checkout pins [Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
+at commit
+[`120941632db2d2b086983c6cd2e90320d25a0999`](https://github.com/ooaklee/lexr.sh/commit/120941632db2d2b086983c6cd2e90320d25a0999).
+The
+[compatible distribution downloads](../../README.md#compatible-distributions-and-image-downloads)
+record the Lexr and kernel versions used for the current image release set.
 
 Both repositories are public, so the recorded HTTPS URL supports anonymous
 recursive initialisation. GitHub credentials are needed only for operations
@@ -84,8 +87,12 @@ the host. Add `--json` when a machine-readable report is required.
 
 ## Create and validate an image
 
-The Ubuntu Concept Casper adapter is the first implemented image adapter. A dry
-run prints its deterministic plan without downloading or building:
+Lexr v0.5.0-rc.3 implements image adapters for Ubuntu Concept, elementary OS,
+Debian Live, Fedora Live and Arch Linux ARM. See the
+[distribution table](../../README.md#compatible-distributions-and-image-downloads)
+for source identities and qualification limits. The examples below use the
+default Ubuntu Concept adapter. A dry run prints its deterministic plan
+without downloading or building:
 
 ```sh
 "$LEXR" image create \

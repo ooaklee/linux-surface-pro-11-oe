@@ -1,5 +1,40 @@
 # ARM64 Linux on Microsoft Surface Pro 11
 
+## Compatible distributions and image downloads
+
+Five experimental live images are being rebuilt with
+[Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
+and the
+[Surface Pro 11 v23 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23)
+(`7.2.0-jg-0sp11v23-qcom-x1e`). The release links below are planned download
+locations and become available after each rebuild is validated and published.
+
+| Distribution | Upstream source | Planned image release |
+| --- | --- | --- |
+| Ubuntu Concept Resolute | ARM64 X1E desktop snapshot, 2026-03-26 | [Ubuntu Concept v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-ubuntu-concept-26.04-v23-20260927) |
+| elementary OS 8.1 | ARM64 stable image, 2026-02-19 | [elementary OS v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-elementary-os-8.1-v23-20260927) |
+| Debian Live GNOME | ARM64 Debian 13 testing snapshot, 2024-09-02 | [Debian Live v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-debian-13-gnome-v23-20260927) |
+| Fedora Workstation Live 44 | AArch64 image, 44-1.7 | [Fedora Workstation v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-fedora-workstation-44-v23-20260927) |
+| Arch Linux ARM | AArch64 root filesystem snapshot, 2026-08-05; terminal live ISO with no desktop preselected | [Arch Linux ARM terminal v23](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-arch-linux-arm-terminal-v23-20260927) |
+
+These images target the Surface Pro 11 **X1E/OLED** by default. The dated
+Debian and Arch sources are pinned historical snapshots; their rolling source
+URLs do not make them current distribution media. Follow each release's
+checksum, reconstruction and USB-writing instructions for its exact assets.
+
+Earlier candidates reached the live desktop or terminal on X1E/OLED hardware.
+The [Lexr catalogue at v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/blob/v0.5.0-rc.3/supported-isos.json)
+records the tested candidate revisions, working features and limitations.
+Arch candidate 4 also completed installation and a first boot from internal
+NVMe; its [hardware test record](https://github.com/ooaklee/lexr.sh/blob/v0.5.0-rc.3/docs/operator-manual/arch-linux-arm-install.md#hardware-test-record)
+identifies the tested image and subsequent installed-system setup checks.
+These earlier results do not qualify the newly rebuilt bytes. Live boot,
+installation, installed-system boot, recovery, the full peripheral matrix and
+X1P/LCD have not been physically retested for this release set. Structural
+validation and checksum verification do not establish hardware bootability.
+
+## About this repository
+
 ![Ubuntu with KDE Plasma desktop running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
 
 This repository is the experimental hardware-integration, evidence and release
@@ -41,19 +76,18 @@ The primary recorded X1E hardware target is:
 | Firmware/UEFI | `175.222.235`, dated 2026-02-23 |
 | Internal disk | Samsung `MZ9L4512HBLU-00BMV-SAMSUNG`, 476.9 GiB NVMe |
 | Windows source checked | Windows 11 Home Insider Preview build `29585` |
-| Most recent experimental kernel release | [`7.2.2-jg-0sp11v1`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.2-jg-0sp11v1), based on Linux 7.2.2 |
-| Exact project source | [`050f0cb5…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/050f0cb5533e1d88e3955a515b5e8e4c847ffe0d) |
+| Kernel used for these images | [`7.2.0-jg-0sp11v23`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23), based on Linux 7.2.0 |
+| Exact kernel source | [`ce78e6ebc3d7…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/ce78e6ebc3d70c4a316b5721a62478ca87d6cb46) |
 
-The published `7.2.2-jg-0sp11v1` bundle is a Linux 7.2.2-based downstream
-integration, not a claim about the latest official Linux kernel. As of
-2026-08-31, kernel.org lists stable 7.2.2 and mainline 7.3-rc1. Check the
-current [kernel.org release record](https://www.kernel.org/releases.json)
-instead of inferring upstream status from the project release number.
-
-The v1 bundle was package-, source-, and Stubble-image-validated, but has not
-been boot-tested on Surface hardware as one all-up image. Individual green
-entries below name hardware evidence from the relevant accepted integration
-generation.
+The v23 bundle uses external, exact-ABI device trees. Its
+[release manifest](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/download/sp11-qcom-x1e-7.2.0-jg-0sp11v23/lexr-kernel-release-manifest.json)
+records the source revision and structural qualification boundary. The
+[v23 release notes](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23)
+separately record installed X1E/OLED boot, touchscreen, pen, volume-button,
+speaker and microphone tests with their matching userspace. These
+installed-system results do not qualify the newly rebuilt images.
+Individual entries below retain their original hardware evidence and
+generation-specific limits.
 
 Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
 older-version scope; 🧪 experimental hardware result, not supported; 🧩
@@ -94,10 +128,11 @@ enables the common GPU, display, Wi-Fi, NVMe, Bluetooth and USB paths. The
 explicitly left touch, pen, cameras and status LEDs incomplete; the project
 kernel supplies reviewed downstream integrations for several of those gaps.
 
-The first implemented image adapter is
-`ubuntu-concept-resolute-x1e`. Other ARM64 images can appear in the catalogue
-without being buildable; `catalog show` reports an entry's actual support
-level.
+Lexr v0.5.0-rc.3 implements adapters for all five distributions in the
+[image download table](#compatible-distributions-and-image-downloads).
+`lexr catalog show <id>` reports an entry's support level and qualification
+limits. An implemented adapter remains experimental until its end-to-end
+hardware checks pass.
 
 Fedora Workstation Live 44 is implemented by Lexr's `fedora-live` adapter.
 Lexr owns its EROFS remastering, native custom-kernel RPM, boot policy,
@@ -115,7 +150,6 @@ For a new checkout, clone both public repositories together:
 
 ```sh
 git clone --recurse-submodules \
-  --branch cli/linux-armer \
   https://github.com/ooaklee/linux-surface-pro-11-oe.git
 cd linux-surface-pro-11-oe
 ```
@@ -123,16 +157,20 @@ cd linux-surface-pro-11-oe
 For an existing checkout, initialise the same pinned submodule explicitly:
 
 ```sh
-git fetch origin cli/linux-armer
-git switch cli/linux-armer
+git fetch origin main
+git switch main
 git pull --ff-only
 git submodule sync -- cli/lexr
 git submodule update --init --recursive cli/lexr
 ```
 
-These examples select the integration branch explicitly while the cut-over is
-under review. Omit `--branch cli/linux-armer` and the branch-switching steps
-after the same changes reach the repository's default branch.
+The repository's default `main` branch contains the Lexr integration. This
+checkout pins [Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
+at commit
+[`120941632db2d2b086983c6cd2e90320d25a0999`](https://github.com/ooaklee/lexr.sh/commit/120941632db2d2b086983c6cd2e90320d25a0999),
+the source revision selected for the five-image release set above. Submodule
+initialisation checks out that exact revision instead of following Lexr's
+default branch.
 
 The recorded HTTPS submodule URL works anonymously. Add GitHub credentials only
 when pushing changes or when your chosen fork is private.
