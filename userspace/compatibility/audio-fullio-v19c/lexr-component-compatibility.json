@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "kind": "lexr.userspace-component-compatibility",
+  "component_id": "audio-fullio-v19c",
+  "release": "sp11-audio-v19c-full",
+  "capabilities": [
+    "audio"
+  ],
+  "lexr": {
+    "minimum_inclusive": "0.5.0",
+    "tested_through_inclusive": "0.5.0"
+  },
+  "targets": [
+    {
+      "architectures": [
+        "arm64"
+      ],
+      "device_profiles": [
+        "surface-pro-11-x1e-oled"
+      ],
+      "operating_systems": [
+        {
+          "id": "ubuntu",
+          "version_ranges": [
+            {
+              "minimum_inclusive": "26.04",
+              "maximum_exclusive": "26.10"
+            }
+          ],
+          "tested_versions": []
+        }
+      ],
+      "kernels": [
+        {
+          "patch_line": "7.2.0",
+          "platform_flavour": "qcom-x1e",
+          "scope": "sp11",
+          "abi_generation": {
+            "minimum_inclusive": 12,
+            "tested_through_inclusive": 19
+          }
+        }
+      ]
+    }
+  ]
+}
