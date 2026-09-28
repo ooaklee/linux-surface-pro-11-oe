@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "kind": "lexr.userspace-component-compatibility",
+  "component_id": "iptsd-v1",
+  "release": "sp11-iptsd-v3",
+  "capabilities": [
+    "pen"
+  ],
+  "lexr": {
+    "minimum_inclusive": "0.5.0",
+    "tested_through_inclusive": "0.5.0"
+  },
+  "targets": [
+    {
+      "architectures": [
+        "arm64"
+      ],
+      "device_profiles": [
+        "x1e80100-microsoft-denali-oled",
+        "x1p64100-microsoft-denali"
+      ],
+      "operating_systems": [
+        {
+          "id": "ubuntu",
+          "version_ranges": [
+            {
+              "minimum_inclusive": "26.04",
+              "maximum_exclusive": "26.10"
+            }
+          ],
+          "tested_versions": []
+        }
+      ],
+      "kernels": [
+        {
+          "patch_line": "7.2.0",
+          "platform_flavour": "qcom-x1e",
+          "scope": "sp11",
+          "abi_generation": {
+            "minimum_inclusive": 19,
+            "tested_through_inclusive": 19
+          }
+        }
+      ]
+    }
+  ]
+}
