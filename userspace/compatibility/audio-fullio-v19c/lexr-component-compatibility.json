@@ -16,7 +16,8 @@
         "arm64"
       ],
       "device_profiles": [
-        "surface-pro-11-x1e-oled"
+        "x1e80100-microsoft-denali-oled",
+        "x1p64100-microsoft-denali"
       ],
       "operating_systems": [
         {
