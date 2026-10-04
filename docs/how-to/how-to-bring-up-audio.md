@@ -13,6 +13,13 @@ The maintained path pairs a compatible custom kernel with the audited
 `audio-fullio-v19c` userspace component. It does not require an additional
 audio-routing workaround.
 
+The [7.2.5 v8 checkpoint](../qualification-sp11-7.2.5-v8-20261004.md) records
+normal built-in-speaker audio and concurrent camera/quiet-playback observations
+with the retained FullIO setup. This is one existing installation's bounded
+result, not clean-install UCM routing or physical-protection certification.
+Its catalogue and dispatcher caveats remain explicit; do not replace working
+audio files solely to make diagnostics pass.
+
 ## Before you begin
 
 - Boot the intended Surface kernel and retain a known-good GRUB entry.
