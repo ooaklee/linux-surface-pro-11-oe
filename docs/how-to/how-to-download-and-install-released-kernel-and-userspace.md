@@ -7,7 +7,7 @@ description: How-to guide for downloading an exact released Surface Pro 11 kerne
 
 # How To: Download and Install a Released Kernel and Userspace
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-10-11
 
 Use this guide to install an exact kernel release from the OE release channel,
 keep the running kernel as a recovery path, and add the matching audited
@@ -40,6 +40,23 @@ Lexr rejects an incomplete fallback and a target ABI which already has kernel,
 module, header, or GRUB state on the target.
 
 ## Download an exact kernel release
+
+For the separate experimental 7.2.5 v8 candidate, follow its
+[version-pinned release instructions](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.5-jg-0sp11v8)
+and [qualification checkpoint](../qualification-sp11-7.2.5-v8-20261004.md).
+That tested flow keeps v23 as an explicitly verified fallback/default even
+while another ABI runs; the example below instead selects the running ABI.
+Do not infer v8 component compatibility from a higher kernel version or
+replace userspace merely to clear an unsupported catalogue result.
+
+> [!WARNING]
+> The v8 release has a known [fresh-boot touchscreen module-autoload
+> regression](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/69).
+> Manual module loading can restore touch, but that recovery is not evidence
+> of automatic fresh-boot binding. Keep v23 available and do not treat
+> [kernel PR #69](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/69)
+> as a qualified replacement until its v9 packages and physical fresh-boot
+> checks are complete.
 
 List the non-draft releases which contain a candidate image and modules pair,
 then copy one exact tag into `KERNEL_REF`. An exact tag is reproducible;

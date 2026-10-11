@@ -73,6 +73,17 @@ identify the kernel, matching device trees and tested userspace combinations.
 The table below spans several integration versions; it does not certify every
 feature on every image above.
 
+The separate [7.2.5 v8 qualification checkpoint](docs/qualification-sp11-7.2.5-v8-20261004.md)
+records the newer combined kernel's X1E/OLED ordinary-use results and the
+October 4 camera/reopen/indicator test with simultaneous quiet playback in
+Power Saver. Its [experimental kernel release](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.5-jg-0sp11v8)
+does not replace the v23 images above, qualify X1P/LCD, or imply final
+beta/stable acceptance. An October 11 fresh-boot retest found that v8 does not
+automatically load its touchscreen module; [OE issue #69](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/69)
+tracks the regression and [kernel PR #69](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/69)
+is an unbuilt, hardware-unqualified replacement proposal. V23 remains the
+recovery reference.
+
 Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
 older-version scope; 🧪 experimental hardware result, not supported; 🧩
 integrated and build-verified without variant-specific hardware acceptance; ❌
@@ -92,15 +103,15 @@ unsupported in the current project; ❓ no evidence found.
 | Bluetooth | ⚠️ | 🧩 | X1E pairing and A2DP music playback work well. Audible volume changes, but the desktop gauge can jump back to its connection-time position; [issue 58](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/58) tracks that indicator desynchronisation. Suspend coverage remains incomplete. |
 | Speakers | ✅ | 🧩 | X1E passed with the [FullIO v19c userspace/kernel pairing](docs/adr/adr-0064-sp11-audio-release-strategy.md); X1P has no separate hardware acceptance. |
 | Microphone | ✅ | 🧩 | X1E PipeWire, browser and local capture passed with the v12 + FullIO v19c pairing in [issue 48's closing acceptance](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/48#issuecomment-5436171174); [kernel PR 21](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/21) supplies the current 4.8 MHz kernel path. |
-| Touchscreen | ✅ | ✅ | X1P physical touch was explicitly tested in [kernel PR 18](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/18); support is downstream project code. |
+| Touchscreen | ⚠️ | ✅ | X1E has hardware evidence on earlier candidates, but 7.2.5 v8 has a [fresh-boot module-autoload regression](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/69); manual loading restores touch but is not fresh-boot qualification. X1P physical touch was explicitly tested in [kernel PR 18](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/18). Support is downstream project code. |
 | Pen | ⚠️ | 🧩 | X1E pressure, tilt, hover and barrel-button paths passed under [ADR0067](docs/adr/adr-0067-sp11-kernel-hidraw-iptsd-pen-integration.md); eraser, recovery and repeated suspend remain open, and X1P lacks a device run. |
 | Attached Flex Keyboard/touchpad | ⚠️ | 🧩 | X1E attached mode has [historical hardware evidence](https://github.com/dwhinham/linux-surface-pro-11/blob/169864c10ce902cf29600ecab4094c0d07ae3376/README.md#L29); the kernel uses the upstream [Surface Aggregator/KIP path](https://github.com/torvalds/linux/commit/c4a069095395ecd1e936f488511dfd9016b9c479). Detached Bluetooth and a current all-up regression remain open. |
 | Volume rocker | ✅ | 🧩 | X1E press, hold-repeat and no-spurious-event checks passed in [issue 37](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/37). |
-| Battery | 🧩 | 🧩 | Provider arbitration is integrated, but no explicit charging and capacity acceptance record was found. |
+| Battery | ⚠️ | 🧩 | [7.2.5 v8 charging/indicator observations](docs/qualification-sp11-7.2.5-v8-20261004.md) passed on X1E; measured discharge, endurance and broader provider lifecycles remain unqualified. |
 | Power profiles | ✅ | 🧩 | X1E desktop mappings for power saver, balanced and performance passed in [kernel PR 16](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/16); `balanced-performance` was exposed but not switched separately. |
 | Suspend/resume | ⚠️ | ❓ | X1E remains partial and [issue 39](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/39) is open. |
 | Front RGB camera | 🧪 | ❌ | X1E raw and processed browser video passed under [kernel PR 22](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/22), but calibration, auto-exposure, privacy and suspend gates remain; X1P has no camera node. |
-| Front privacy LED | 🧩 | ❌ | X1E wiring exists, but polarity, lifetime and privacy behaviour are not qualified. |
+| Front privacy LED | ⚠️ | ❌ | X1E [v8 normal preview/reopen on/off checks](docs/qualification-sp11-7.2.5-v8-20261004.md) passed; failed-start, suspend and other privacy/lifetime paths remain unqualified. |
 | Rear camera | ❌ | ❌ | [Issue 41](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/41) remains open. |
 | IR/Windows Hello | ❌ | ❌ | [Issue 42](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/42) remains open. |
 | 5G | ❌ | ❌ | No project support evidence is recorded; the primary installed test target is Wi-Fi-only. |

@@ -54,6 +54,12 @@ The
 [compatible distribution downloads](../../README.md#compatible-distributions-and-image-downloads)
 record the Lexr and kernel versions used for the current image release set.
 
+The separate [7.2.5 v8 qualification checkpoint](../qualification-sp11-7.2.5-v8-20261004.md)
+used Lexr `0.5.0-rc.5`; it does not update this repository's pinned rc.3
+submodule or the v23 image set. Follow the exact selected release's CLI,
+userspace and fallback instructions rather than assuming the pin qualifies a
+different kernel line.
+
 Both repositories are public, so the recorded HTTPS URL supports anonymous
 recursive initialisation. GitHub credentials are needed only for operations
 that write to GitHub or for private forks; do not place a token in a clone URL,
