@@ -1,12 +1,18 @@
 # Surface Pro 11 7.2.5 v8 qualification checkpoint
 
-Recorded: 2026-10-04. Status: **experimental, bounded ordinary-use checks passed;
-not final beta/stable or upstream acceptance**.
+Recorded: 2026-10-04; amended: 2026-10-11. Status: **experimental,
+bounded ordinary-use checks passed, but fresh-boot touchscreen autoload is
+regressed; not final beta/stable or upstream acceptance**.
 
 This report records the exact combined X1E/OLED trial and the additional
 coordinated camera/audio checks. It does not transfer qualification from an
 older kernel, certify every camera mode or device, or replace historical test
 records and ADRs.
+
+The October 11 amendment records a fresh-boot touchscreen autoload regression
+found after the original checkpoint. It narrows the touchscreen result; it
+does not invalidate the separately observed camera, audio, power or battery
+results.
 
 ## Exact candidate and recovery boundary
 
@@ -31,6 +37,34 @@ These checks did not alter kernel source, userspace, boot defaults or package
 configuration. Temporary diagnostics were removed; no additional diagnostic
 test harness was added to the shipping kernel.
 
+## October 11 touchscreen autoload regression
+
+A fresh boot of the exact v8 ABI left `spi0.0` unbound. The device exposed the
+`spi:mshw0485` modalias, and the exact-ABI `mshw0485_touch` module was installed
+with matching vermagic, but module-alias resolution did not select it. No
+blacklist was present. The released driver had OF and HID match tables but no
+SPI device-ID table, and the kernel reported the corresponding missing
+`spi_device_id` warning.
+
+Loading `mshw0485_touch` manually bound the device and created the touch, pen,
+hidraw and IPTSD paths; physical touch was then confirmed. This demonstrates
+that the v8 runtime path can recover once the module is loaded. It does **not**
+qualify automatic binding on a fresh boot, and it does not constitute a new
+physical pen acceptance run. A v8-only service which loads the module is a
+temporary recovery measure, not the permanent fix or release qualification.
+
+The regression is tracked in [OE issue #69](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/69).
+[Kernel PR #69](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/69)
+proposes the SPI alias fix on a replacement v9 candidate. No v9 package build,
+installation or hardware result is claimed here. Before that candidate can
+replace v8, it still needs:
+
+1. a successful package build and exact-ABI module checks;
+2. compiled alias verification through `modinfo`, `modules.alias` and `depmod`;
+3. installation with the temporary v8 autoload service disabled or removed;
+4. a fresh boot which automatically binds `spi0.0`, followed by physical touch
+   and the intended pen-path checks.
+
 ## Results and their limits
 
 | Check | Result on this candidate | What it does not establish |
@@ -41,7 +75,7 @@ test harness was added to the shipping kernel.
 | Protected-playback software path | Observed successful configure, nested protection-enable and same-graph start returns | A newly transmitted DSP start command, physical feedback health, or graph-stop/error coverage |
 | Power profiles | Ordinary-use report passed; native low-power/Power Saver and all three CPU-policy caps independently observed | Every transition, fan response, policy hotplug, fault or teardown path |
 | Battery/charger | User reports charging from 9% to 97%; near-full samples report Charging and USB online; earlier combined indicator checklist passed | Net charge in the near-full window, discharge rate, endurance or every supplier lifecycle |
-| Touch, pen, Wi-Fi and ordinary USB | Combined ordinary-use checklist reported working | Every GPI client, recovery/concurrency path, X1P/LCD acceptance or USB4 tunnelling |
+| Touch, pen, Wi-Fi and ordinary USB | The October 4 combined ordinary-use checklist reported working; the October 11 fresh-boot retest found touchscreen autoload regressed, with manual module loading restoring touch | Automatic touchscreen binding on v8 fresh boot; every GPI client, recovery/concurrency path, X1P/LCD acceptance or USB4 tunnelling |
 
 ### Coordinated camera/playback observation
 
@@ -123,25 +157,28 @@ separate. Old cumulative test vehicles remain closed as superseded, not merged.
 
 Before fork beta/stable promotion:
 
-1. Complete and disposition the targeted source, buffer-layout and
+1. Replace the v8 touchscreen workaround only after the v9 proposal passes the
+   build, alias, clean fresh-boot and physical-device gates above. Do not treat
+   a manual module load or autoload service as equivalent evidence.
+2. Complete and disposition the targeted source, buffer-layout and
    error/lifecycle acceptance items already recorded on #68. Ordinary-use
    success is not the entire acceptance checklist. Distinguish necessary
    correctness evidence from optional tuning; do not turn every future camera
    mode or endurance feature into a new implicit gate.
-2. Clarify the supporting provenance/rights basis for the 13 retained
+3. Clarify the supporting provenance/rights basis for the 13 retained
    geoca-authored ports with Leon's submitter sign-off. Missing author-matching
    sign-offs alone do not establish a licensing violation. Preserve author
    credit and source mapping; never invent certification or blanket-relicense.
-3. Record explicit acceptance or follow-up for intentional deviations. The
+4. Record explicit acceptance or follow-up for intentional deviations. The
    **two additional GPI corrections are already deferred** in
    [OE #67](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/67), without
    changing tested v8 source. Their generic-path residual risks remain; Denali
    QSPI guards do not exclude the device's other GPI channels. The separate
    intermediate-width portability proposal needs its own disposition.
-4. Complete the reviewed fork-only CI rollout using workflow-write access.
+5. Complete the reviewed fork-only CI rollout using workflow-write access.
    Earlier sparse hosted checks omitted checkpatch support tables and are not
    retroactively complete. Local complete-input results remain separate.
-5. Recheck upstream, accept one exact composition, verify its tree, and protect
+6. Recheck upstream, accept one exact composition, verify its tree, and protect
    beta plus the new `sp11/ubuntu-qcom-x1e-7.2.y` stable branch before changing
    the default. Do not merge every cumulative test PR or replay repairs twice.
 
@@ -160,12 +197,14 @@ other Snapdragon X devices are not qualified by this X1E/OLED report.
 
 ## What the tester needs to do next
 
-No repeat of the completed ordinary-use or coordinated camera/audio checklist
-is requested. Keep v23 and recovery media available. The immediate user inputs
-are workflow-write access, existing supporting contributor provenance, and
-review of the remaining documented deviations/dispositions. Further hardware
-checks, if needed after source review, require a separate bounded supervised
-plan; do not begin suspend, fault injection or uncontrolled speaker tests.
+No repeat of the completed camera/audio, power or battery checklist is
+requested. Keep v23 and recovery media available. The touchscreen replacement
+does require the bounded fresh-boot and physical-device gates listed above.
+The other immediate user inputs are workflow-write access, existing supporting
+contributor provenance, and review of the remaining documented
+deviations/dispositions. Further hardware checks, if needed after source
+review, require a separate bounded supervised plan; do not begin suspend,
+fault injection or uncontrolled speaker tests.
 
 Related context: [OE parity tracker #33](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/33),
 [earlier v1 report #62](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/62),
