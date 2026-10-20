@@ -62,3 +62,7 @@ report-*/
 !payload/audio/*.bin
 
 .vscode/
+
+# Reviewed raw-source kits, not generated kernel checkout/build directories.
+!userspace/native-compute/source/
+!userspace/cdsp-capabilities/source/

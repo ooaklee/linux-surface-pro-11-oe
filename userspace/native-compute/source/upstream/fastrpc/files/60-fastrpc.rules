@@ -1,0 +1,19 @@
+# Applications that use libfastrpc must belong to the fastrpc group
+
+# DMA heap access required for fastrpc
+ACTION=="add", SUBSYSTEM=="dma_heap", KERNEL=="system", RUN+="/bin/setfacl -m g:fastrpc:rw $env{DEVNAME}"
+
+# FastRPC DSP device nodes
+# Device nodes are owned by root:fastrpc with 0640 permissions
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp",         OWNER="root", GROUP="fastrpc", MODE="0640", TAG+="systemd", ENV{SYSTEMD_WANTS}+="adsprpcd.service", ENV{SYSTEMD_WANTS}+="adsprpcd_audiopd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp-secure",  TAG+="systemd", ENV{SYSTEMD_WANTS}+="adsprpcd.service", ENV{SYSTEMD_WANTS}+="adsprpcd_audiopd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-cdsp",         OWNER="root", GROUP="fastrpc", MODE="0640", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cdsprpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-cdsp-secure",  TAG+="systemd", ENV{SYSTEMD_WANTS}+="cdsprpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-cdsp1",        OWNER="root", GROUP="fastrpc", MODE="0640", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cdsp1rpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-cdsp1-secure", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cdsp1rpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-gdsp0",        OWNER="root", GROUP="fastrpc", MODE="0640", TAG+="systemd", ENV{SYSTEMD_WANTS}+="gdsp0rpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-gdsp0-secure", TAG+="systemd", ENV{SYSTEMD_WANTS}+="gdsp0rpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-gdsp1",        OWNER="root", GROUP="fastrpc", MODE="0640", TAG+="systemd", ENV{SYSTEMD_WANTS}+="gdsp1rpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-gdsp1-secure", TAG+="systemd", ENV{SYSTEMD_WANTS}+="gdsp1rpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-sdsp",         OWNER="root", GROUP="fastrpc", MODE="0640", TAG+="systemd", ENV{SYSTEMD_WANTS}+="sdsprpcd.service"
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-sdsp-secure",  TAG+="systemd", ENV{SYSTEMD_WANTS}+="sdsprpcd.service"

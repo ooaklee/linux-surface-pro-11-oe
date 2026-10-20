@@ -1,1 +1,5 @@
 *.patch -whitespace
+
+# Hash-pinned source deliveries must retain upstream bytes, including CRLF.
+userspace/native-compute/source/** -text
+userspace/cdsp-capabilities/source/** -text
