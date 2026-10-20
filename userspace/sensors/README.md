@@ -47,14 +47,25 @@ executable workflow. `SOURCE.json` is an OE source
 inventory, **not** a Lexr catalogue, compatibility promise or install recipe.
 There is no supported `lexr userspace build sensors` command at this boundary.
 
-This export is structured for a future typed Lexr adapter: independently
-identified components, pinned dependency lineage, retained licences and
-non-activating build inputs. Before calling it Lexr-compatible, that work must
-provide compiled build/install policy, immutable artefact authority, dry-run
-and refusal checks, transactional rollback, service/package conflict handling
-and a hardware-qualified kernel/OS pairing. Do not guess a minimum Lexr or
-kernel version from the `sp11vN` number. Existing recommended audio/IPTSD and
-camera workflows are unchanged.
+Keep three separate milestones:
+
+- **Raw sources:** available here with licences, inventories and a manual
+  maintainer build recipe. This does not promise an installable bundle.
+- **Lexr build-only support:** not advertised at the checked revision above.
+  A future compiled adapter must authenticate this source composition, own
+  dependency preparation and supervised native ARM64 compilation, validate
+  the outputs, and pass its normal end-to-end CLI flow, dry-run and refusal
+  checks. A source-only entry must stay experimental and build-only, with no
+  install action or invented kernel/OS qualification. Build-only qualification
+  is separate from desktop deployment and physical sensor compatibility.
+- **Desktop installation and hardware support:** still unqualified. This
+  separately needs reviewed packaging and runtime providers, service/package
+  conflict handling, privileges, transactional rollback, explicit activation
+  and physical qualification of the declared kernel/OS/device pairing.
+
+An editable manifest alone does not deliver any of these executable workflows.
+Do not guess a minimum Lexr or kernel version from the `sp11vN` number. Existing
+recommended audio/IPTSD and camera workflows are unchanged.
 
 Workflow ownership remains with Lexr under
 [ADR0069](../../docs/adr/adr-0069-standalone-lexr-workflow-ownership.md) and

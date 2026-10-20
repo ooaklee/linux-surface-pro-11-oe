@@ -146,8 +146,11 @@ Shutdown fences later publication but is not proof of remote firmware quiescence
 
 - Define reviewed service/package conflict and privilege boundaries, including
   distribution proxy coexistence, rollback and explicit activation.
-- Add a typed Lexr sensor adapter and catalogue capability before advertising
-  Lexr build/install support. Metadata alone cannot grant execution.
+- Qualify the normal typed Lexr sensor build-only workflow end to end before
+  advertising it. Source authentication, dependency preparation, native
+  compilation, output validation and CLI checks are distinct from desktop
+  installation. Keep installation disabled until its separate gates pass;
+  metadata alone cannot grant execution or hardware compatibility.
 - Qualify sensor identity, physical roles, axes/mounting, calibration and
   clocks on declared hardware. Then test desktop behavior and suspend/resume.
 - Establish explicit kernel/OS compatibility from that qualification, not by
