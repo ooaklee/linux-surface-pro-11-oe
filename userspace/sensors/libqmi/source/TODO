@@ -1,0 +1,39 @@
+
+
+List of things left for later:
+----------------------------------------
+
+ * qmi-codegen: Skip additional heap allocation for Strings marked with
+   'max-size'. If the 'max-size' is short enough, we can just use arrays of
+   gchars with a specific size directly in the input/output bundle.
+
+ * qmi-codegen: support new `digit-string' format type
+
+ * qmi-codegen: allow specifying max number of items expected in an array.
+
+ * qmi-codegen: allow specifying a constant value, when a field only allows one.
+
+ * qmi-codegen: allow specifying 'version' for TLVs, to indicate in which
+   version of the service they were introduced, so that we return an error when
+   trying to use those unsupported by our device.
+
+ * qmi-codegen: allow specifying 'description' to both messages and TLVs.
+
+ * qmi-codegen: some bitmask fields could have some more love. A new
+   'bit-sequence' format type would allow us to have getters for specific bit
+   values, and would also allow us to split a given set of flags into more
+   detailed sub-types, e.g.: the 'QmiNasRadioTechnologyPreference' flags type,
+   where the first two bits define the type of the next ones.
+
+ * qmicli: Implement `--dms-set-time'.
+ * qmicli: Implement `--dms-get-alt-net-config'.
+ * qmicli: Implement `--dms-set-alt-net-config'.
+ * qmicli: Implement `--dms-get-software-version'.
+ * qmicli: Implement `--dms-set-service-programming-code'.
+
+ * qmicli: Print 3GPP2 network description in "Get Home Network"
+
+ * nas: Define the 'QmiNasRegistrationRejectCause' enum for the "Event Report"
+   indication and "Get System Info" response.
+
+ * pds: Parse all possible TLVs in the Event Report indications

@@ -1,0 +1,408 @@
+{
+  "schema": "oe-sensor-source-inventory-v1",
+  "component": "iio-sensor-proxy",
+  "status": "experimental-source-only",
+  "upstream": {
+    "repository": "https://gitlab.freedesktop.org/hadess/iio-sensor-proxy.git",
+    "base_commit": "ca0d5b08bd647afc5f8ead3ce00a44018fbc633f"
+  },
+  "source_version": "3.9-development",
+  "local_modifications": true,
+  "provenance_note": "Complete downstream source snapshot; the upstream commit is its base, not a claim of byte identity with upstream. See README.md for scope and limitations.",
+  "inventory_root": "source",
+  "files": {
+    ".editorconfig": {
+      "bytes": 128,
+      "sha256": "1719bbc63c246eaf0ef77c4e75c76706ca5514f8b388ba9f819fc85f9ade178e",
+      "git_mode": "100644"
+    },
+    ".gitignore": {
+      "bytes": 50,
+      "sha256": "0114d1f029db4a4428ba349e8a2152bb288ee6b47677bbc20f3b52df5c261c60",
+      "git_mode": "100644"
+    },
+    ".gitlab-ci.yml": {
+      "bytes": 2182,
+      "sha256": "8e3fe4630bfabfff4a5c7423644290d4f7c2d60c43ea1c01a91bebc307c7bd05",
+      "git_mode": "100644"
+    },
+    "COPYING": {
+      "bytes": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "git_mode": "100644"
+    },
+    "data/80-iio-sensor-proxy.rules": {
+      "bytes": 2167,
+      "sha256": "3d50c919f17e5140921fd6629f7d51ed89daef3a345e6ebaf70610c6299397d6",
+      "git_mode": "100644"
+    },
+    "data/iio-sensor-proxy.service.in": {
+      "bytes": 435,
+      "sha256": "fa01303cc8f725ab3b666d223dbb0ffed32aad5e96391942c2e0ea3c15cb3422",
+      "git_mode": "100644"
+    },
+    "data/meson.build": {
+      "bytes": 870,
+      "sha256": "8257d024e98175767d8ba60aca87edb25ff42f9aa670860bcdc49f0dab7f73b3",
+      "git_mode": "100644"
+    },
+    "data/net.hadess.SensorProxy.conf.in": {
+      "bytes": 1261,
+      "sha256": "33c9d5ee47c839a640ce549c57ef91b85ccab7dd4a8097c3225662655030fb25",
+      "git_mode": "100644"
+    },
+    "data/net.hadess.SensorProxy.policy": {
+      "bytes": 686,
+      "sha256": "035194978c2d9f3ca53af81e1936334ffd97f6efeabdf44420f52e74dc8fcea9",
+      "git_mode": "100644"
+    },
+    "docs/iio-sensor-proxy-docs.xml": {
+      "bytes": 2542,
+      "sha256": "81311bee7eaeb74731696b409a8da44be0376826e9e074c69211f556dfb27aff",
+      "git_mode": "100644"
+    },
+    "docs/meson.build": {
+      "bytes": 1368,
+      "sha256": "c9d6160afaec680e943e7709f381640b66a16389065a8c303c901554dc1abd90",
+      "git_mode": "100644"
+    },
+    "docs/version.xml.in": {
+      "bytes": 10,
+      "sha256": "e17c0158b831d506641b48f47a1617a2910163f0c19c952c816a68c457bc61d0",
+      "git_mode": "100644"
+    },
+    "meson_options.txt": {
+      "bytes": 820,
+      "sha256": "61595bc43a27481356a6e99af5daca20d7311a9b903876fdda0db6ac741b77cc",
+      "git_mode": "100644"
+    },
+    "meson.build": {
+      "bytes": 2644,
+      "sha256": "ffc191a344478ffafaf1d69933f83be971b8d760c31ef03c09a021597f8e46b3",
+      "git_mode": "100644"
+    },
+    "NEWS": {
+      "bytes": 6732,
+      "sha256": "3b858132738bbf511f6bc41807f1139942ed88f0aaf15125b60217a4912b0237",
+      "git_mode": "100644"
+    },
+    "README.md": {
+      "bytes": 9008,
+      "sha256": "5bece027630cbdd2563a34bc020d97836ac20c32d3296a3727754154928147a1",
+      "git_mode": "100644"
+    },
+    "RELEASE.md": {
+      "bytes": 184,
+      "sha256": "47735609dc4aee92d4afab6a257a5aed0ef8e287d8a08ed1a295ff22a41132cc",
+      "git_mode": "100644"
+    },
+    "src/accel-attributes.c": {
+      "bytes": 4102,
+      "sha256": "9299680cee92bb7c49498653c78c138f2a6d4a3d44e9b771e863871888dfd714",
+      "git_mode": "100644"
+    },
+    "src/accel-attributes.h": {
+      "bytes": 883,
+      "sha256": "42a3a74c8cd720e273631e06c22dddd75ae4fa857da10f084605e3e1cfc49dbb",
+      "git_mode": "100644"
+    },
+    "src/accel-mount-matrix.c": {
+      "bytes": 5934,
+      "sha256": "e0fc8095da2e28729bc04dba7ec59341547f188a61300feddd3c4eba21f2ff14",
+      "git_mode": "100644"
+    },
+    "src/accel-mount-matrix.h": {
+      "bytes": 629,
+      "sha256": "d6e9a52d7469013394c9cc66c442a96e0bff7c172cf4d7af2fe0ec1111659ebc",
+      "git_mode": "100644"
+    },
+    "src/accel-scale.c": {
+      "bytes": 1533,
+      "sha256": "058ce428c0cc586f32fdf1bc392ac840490fdbc28950bca7302d68281a2416cf",
+      "git_mode": "100644"
+    },
+    "src/accel-scale.h": {
+      "bytes": 659,
+      "sha256": "7b299c285805db5d8dcf0ae1b8c683ba397b551df12712712062f203dde0d64c",
+      "git_mode": "100644"
+    },
+    "src/drivers.c": {
+      "bytes": 761,
+      "sha256": "e58456210657e045d47bb8822e4d603fc3e6a5dcca540fd581ead36ad6611c9f",
+      "git_mode": "100644"
+    },
+    "src/drivers.h": {
+      "bytes": 6438,
+      "sha256": "73a9f4850a0976383c82a8c34c239502a14e093be42dcb24e26307e8bcbcd7f0",
+      "git_mode": "100644"
+    },
+    "src/drv-fake-compass.c": {
+      "bytes": 2579,
+      "sha256": "b8ccbe3c1a9861a2994a794baccd8f8680bec9bd228ea77f661030ffde455730",
+      "git_mode": "100644"
+    },
+    "src/drv-fake-light.c": {
+      "bytes": 2696,
+      "sha256": "fdca7af736011bc2dc1e704ad6afa2a9eb36863107568ecca05619487c40ae04",
+      "git_mode": "100644"
+    },
+    "src/drv-hwmon-light.c": {
+      "bytes": 2975,
+      "sha256": "0d8918bb647455911d8efdd9c7b97de75c1c6a5658b7ea7de58f63c73d7f6b01",
+      "git_mode": "100644"
+    },
+    "src/drv-iio-buffer-accel.c": {
+      "bytes": 7586,
+      "sha256": "26bdceaa4ae3db21393d81dcde3d63e88437f7ff5c9222474fa16eb0d42a107e",
+      "git_mode": "100644"
+    },
+    "src/drv-iio-buffer-compass.c": {
+      "bytes": 6642,
+      "sha256": "2040bdbfdafbd0f292682987b69e1b2fc46b071bc96a7c18e3e9277e65715bb0",
+      "git_mode": "100644"
+    },
+    "src/drv-iio-buffer-light.c": {
+      "bytes": 6498,
+      "sha256": "f534d32c3359177b49f7e0db439ff665cf679d06b6bcf2dca7e4f94fbfc840f9",
+      "git_mode": "100644"
+    },
+    "src/drv-iio-poll-accel.c": {
+      "bytes": 6872,
+      "sha256": "12f5723b17b48b76c43f0b14ebae73bff66fd885f4f20c5b02cf9e28c0b44209",
+      "git_mode": "100644"
+    },
+    "src/drv-iio-poll-light.c": {
+      "bytes": 5032,
+      "sha256": "c2c539a0b6bd1cbcc68a7a75fdc2e0f7296540082056c846f5167ce59c2741d5",
+      "git_mode": "100644"
+    },
+    "src/drv-iio-poll-proximity.c": {
+      "bytes": 4799,
+      "sha256": "5eb021e12f6de0c808e526c6650bdfa9356f8d6997a396487c9eac6e1d64e72d",
+      "git_mode": "100644"
+    },
+    "src/drv-input-accel.c": {
+      "bytes": 9216,
+      "sha256": "473b3a9dfed3862e14849e9a442cc9e15a006d49a6cd531b40dbd154ba7152c3",
+      "git_mode": "100644"
+    },
+    "src/drv-input-proximity.c": {
+      "bytes": 7957,
+      "sha256": "361541362441f98acb6565dc17448f462cc22650b7277ee8dd42677d7d88c199",
+      "git_mode": "100644"
+    },
+    "src/drv-ssc-accel.c": {
+      "bytes": 5113,
+      "sha256": "ac596d6724659dbd6e4cee65d247a87fde51957a90f0d34b29919a64c846f90c",
+      "git_mode": "100644"
+    },
+    "src/drv-ssc-compass.c": {
+      "bytes": 4568,
+      "sha256": "1ed40ef1773fe2a1cb9a66dcc3a7bade3394132f00177e670935e649549ae006",
+      "git_mode": "100644"
+    },
+    "src/drv-ssc-light.c": {
+      "bytes": 4305,
+      "sha256": "629d761aa557926b387d4a2a1d1491de4c4eb64cb757078b382adfe5e7ca8da6",
+      "git_mode": "100644"
+    },
+    "src/drv-ssc-polling.c": {
+      "bytes": 12540,
+      "sha256": "08125d0e3322463fb278b9749c22253e084d53c451fc068cf299f29c3d3027c1",
+      "git_mode": "100644"
+    },
+    "src/drv-ssc-polling.h": {
+      "bytes": 1033,
+      "sha256": "a3aba5af23a87dec1dbd18053c92b4c74fb812c5edbb26127cc06bd5a888d27c",
+      "git_mode": "100644"
+    },
+    "src/drv-ssc-proximity.c": {
+      "bytes": 4344,
+      "sha256": "24a13dd42d2d4147534269d2ed25ee56c95327bc0707d0679b5a98eb088bd106",
+      "git_mode": "100644"
+    },
+    "src/fake-input-accelerometer.c": {
+      "bytes": 6309,
+      "sha256": "a75879802bf97c7789dcc9e1c6509584b73934d71a171010597d4c43382007e2",
+      "git_mode": "100644"
+    },
+    "src/iio-buffer-utils.c": {
+      "bytes": 30341,
+      "sha256": "ed74a62f61b96278dd2c10fb0e8b8ce871db2181068652cfcf2821dae3e1355f",
+      "git_mode": "100644"
+    },
+    "src/iio-buffer-utils.h": {
+      "bytes": 2023,
+      "sha256": "54b66ee8fbf979de914f45130ba56067bf31ced14071fc7c28864ecbd3fe6746",
+      "git_mode": "100644"
+    },
+    "src/iio-sensor-proxy.c": {
+      "bytes": 48774,
+      "sha256": "d13da126503c04a6a744ea7e7ec2f112a27a1f6d5cadf3b7521d90854c1fe5fb",
+      "git_mode": "100644"
+    },
+    "src/iio-sensor-proxy.gresource.xml": {
+      "bytes": 198,
+      "sha256": "cb71e908a2008795ba4d822e415a10b38479e1cebd390bad099de22fce4e3d2a",
+      "git_mode": "100644"
+    },
+    "src/meson.build": {
+      "bytes": 2299,
+      "sha256": "c1e39cf31f60eff9292d2d914d2f25884c2f4f59983535a8b39ae92b7affcbfc",
+      "git_mode": "100644"
+    },
+    "src/monitor-sensor.c": {
+      "bytes": 10326,
+      "sha256": "7f56a05fd2c5ee3145dd53bd75241594cbacc3407d4a8dbe619f4e4e34e9aa0e",
+      "git_mode": "100644"
+    },
+    "src/net.hadess.SensorProxy.xml": {
+      "bytes": 8860,
+      "sha256": "ac96e1e63deb8fb0cdf245b30f75ce58cb3a64d0fe03d4b4f8f4586dcc7895b4",
+      "git_mode": "100644"
+    },
+    "src/orientation.c": {
+      "bytes": 6436,
+      "sha256": "6e6b967b874083534e9aeb8adb090c17888d4d66a2ee5136d1e71b17e1d85a69",
+      "git_mode": "100644"
+    },
+    "src/orientation.h": {
+      "bytes": 1430,
+      "sha256": "87a22aa8d92ce4dacb676915b4f3877a7b1e28306d6e031cd7a8806d2aeef9e8",
+      "git_mode": "100644"
+    },
+    "src/test-accel-location.c": {
+      "bytes": 2101,
+      "sha256": "7283f440609225bae8269a13b6ccdb719dd2bac960f9167c1f47e13f0ddd655e",
+      "git_mode": "100644"
+    },
+    "src/test-mount-matrix.c": {
+      "bytes": 8503,
+      "sha256": "11c8e5d3cf93d5b0d52c4877df283df8e84a6ec761a328c56a18843f27e67c64",
+      "git_mode": "100644"
+    },
+    "src/test-orientation-gtk.c": {
+      "bytes": 2554,
+      "sha256": "6f4000bfff5d7dcf36c9a65d5dcb5770ad0cc8d51788f890c50b15c5b69ab04b",
+      "git_mode": "100644"
+    },
+    "src/test-orientation.c": {
+      "bytes": 16483,
+      "sha256": "24c71cbaf0ff12db843c03f8c339be42c86411ce5e784f9ce53ba801cc936f4f",
+      "git_mode": "100644"
+    },
+    "src/uinput.h": {
+      "bytes": 18395,
+      "sha256": "5c5e5cb5cbd1bf2e40ee21166512289ae3f86782343c094e3897f66823f90f20",
+      "git_mode": "100644"
+    },
+    "src/utils.c": {
+      "bytes": 2705,
+      "sha256": "c1aeef09c607f47449f8f678dd749bb44d85514ba47eb42f125bb04767ef972c",
+      "git_mode": "100644"
+    },
+    "src/utils.h": {
+      "bytes": 965,
+      "sha256": "df75090cb61abd035b7e7040685c984a428b5ef3b77f068327b6490269053241",
+      "git_mode": "100644"
+    },
+    "tests/iio-buffer-accel-data/orientation-left-up.bin": {
+      "bytes": 360,
+      "sha256": "8ea36b2b46ce70dd30e707eb629dbc8247d08f957e194eef3d49f10aaf1c7c85",
+      "git_mode": "100644"
+    },
+    "tests/iio-buffer-accel-data/orientation-normal.bin": {
+      "bytes": 24,
+      "sha256": "8d31dca637432a5d330db6c39db674ff4e8c3dbc6e3be32fb2d502dbdaab2bec",
+      "git_mode": "100644"
+    },
+    "tests/input-accel-capture.ioctl": {
+      "bytes": 276,
+      "sha256": "7dd201eb1103c30156b3da0df343156230a18a7f4656becc9557dc6a5d3656af",
+      "git_mode": "100644"
+    },
+    "tests/input-accel-device": {
+      "bytes": 1307,
+      "sha256": "279cb6c2bc576040c9ac1882420d121647adb6513404c9332448bb134885849d",
+      "git_mode": "100644"
+    },
+    "tests/input-proximity-data/device": {
+      "bytes": 2337,
+      "sha256": "ea14e035bc46bab2dbae0f1b0e8623d04b120e5444139d2c4a825280fed5a8d4",
+      "git_mode": "100644"
+    },
+    "tests/input-proximity-data/ioctl": {
+      "bytes": 69,
+      "sha256": "07d724365ac297c3dfa3b7b37637f4fc113c125687ebce479b81ed618ef2957e",
+      "git_mode": "100644"
+    },
+    "tests/integration-test.py": {
+      "bytes": 68016,
+      "sha256": "2c5affa8a44afce01d99aaf0500a338758a9cf3df6a9fb4bba5d5576367cec3b",
+      "git_mode": "100755"
+    },
+    "tests/meson.build": {
+      "bytes": 4938,
+      "sha256": "7b31ec5ccfe3996038f53a05e2762b09ece18c962c5fa48f31846538fe10f41f",
+      "git_mode": "100644"
+    },
+    "tests/ssc-claim-provider.c": {
+      "bytes": 12106,
+      "sha256": "26ca8f4ff50babce4ec3834eff0ea53cf14ee193e97fb9601dc903e5e6547d72",
+      "git_mode": "100644"
+    },
+    "tests/ssc-claim-test.py": {
+      "bytes": 44706,
+      "sha256": "07e64583daca76b4354ced63a1cac04e84480a2c4eae6ae04a512d08004b413b",
+      "git_mode": "100644"
+    },
+    "tests/ssc-test.py": {
+      "bytes": 14063,
+      "sha256": "64e8aad2a0f176515dcfaf1233b19f5ee46d59d3ca8a05f888183b0e749f74db",
+      "git_mode": "100755"
+    },
+    "tests/test-iio-acquisition-buffer.c": {
+      "bytes": 3903,
+      "sha256": "815bcb749dd6995fb467f0bcb1b41ec7f524c2286c24352271d76a4030905bb7",
+      "git_mode": "100644"
+    },
+    "tests/test-iio-acquisition-input.c": {
+      "bytes": 27644,
+      "sha256": "4dd06d0fbbc4142105821c30be8cc434109aa546f50d13b2092a887e453b7271",
+      "git_mode": "100644"
+    },
+    "tests/test-iio-acquisition-poll.c": {
+      "bytes": 27755,
+      "sha256": "109979636583240ef92d569bf5c0c38e7c264ceaf5afc9f5d2176ee6d9c01116",
+      "git_mode": "100644"
+    },
+    "tests/test-iio-acquisition.c": {
+      "bytes": 14534,
+      "sha256": "c0cd5e1c60beb4d00351cd8d11909f2657816bc39643b482f981176433948be1",
+      "git_mode": "100644"
+    },
+    "tests/test-iio-buffer.c": {
+      "bytes": 18398,
+      "sha256": "d81716ba2898dbf6951872a1b39449a2eb7142fb1bbe55c94c77f01977af804f",
+      "git_mode": "100644"
+    },
+    "tests/test-iio-sysfs-write.c": {
+      "bytes": 9324,
+      "sha256": "d30c0ebf7c96cfbff66c01730af913cf92a345e009a70ed317bda2113e3245c2",
+      "git_mode": "100644"
+    },
+    "tests/test-ssc-drivers.c": {
+      "bytes": 57154,
+      "sha256": "bd2cd4413195f704cd7c42978337495fd0b1c88cecf7cff73c75d709e5a82a71",
+      "git_mode": "100644"
+    },
+    "tests/unittest_inspector.py": {
+      "bytes": 1654,
+      "sha256": "5750a31b3920aa348c81b79f36ef9488f6982af24aefd51218e51e3775286f6a",
+      "git_mode": "100755"
+    }
+  },
+  "symlinks": {},
+  "excluded_upstream_material": {},
+  "inventory_note": "Relative source byte hashes and Git executable modes. Git does not retain delivery directory permissions. Not a Lexr catalog or compatibility declaration."
+}

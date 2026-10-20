@@ -1,0 +1,3990 @@
+{
+  "schema": "oe-sensor-source-inventory-v1",
+  "component": "libqmi",
+  "status": "experimental-source-only",
+  "upstream": {
+    "repository": "https://gitlab.freedesktop.org/mobile-broadband/libqmi.git",
+    "base_commit": "d9e8af5cae7fdf9749baf87606568d3af4d03082"
+  },
+  "source_version": "1.39.1",
+  "local_modifications": false,
+  "provenance_note": "Pinned upstream source; no local source modifications. Only Git-compatible read/write modes differ from the read-only delivery.",
+  "inventory_root": "source",
+  "files": {
+    ".editorconfig": {
+      "bytes": 210,
+      "sha256": "3ddf07f48f1bf22d7d67440d839ccc709984bb325405aa6d455673a88cf1bff7",
+      "git_mode": "100644"
+    },
+    ".gitignore": {
+      "bytes": 41,
+      "sha256": "3264b8c31f02bfc81f8621ff611a12a1d9ef639146e4628e4e4e2c1c40bda690",
+      "git_mode": "100644"
+    },
+    ".gitlab-ci.yml": {
+      "bytes": 7739,
+      "sha256": "35418ada6db587a60b2033b0c5de4374278e110d2345eec402bb4c4b7163fd6a",
+      "git_mode": "100644"
+    },
+    "AUTHORS": {
+      "bytes": 1359,
+      "sha256": "3eb68e83e4e2c4202a85580fc0efa5b3412f44167df28426e429f94298730f00",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/Client.py": {
+      "bytes": 29386,
+      "sha256": "934d9b8eb5340ae3abcf904da15b551828b8b151f6488eed0a875a51016f0370",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/Container.py": {
+      "bytes": 17560,
+      "sha256": "0eadd961dd88060a9969ea49f3afdd4a28a5cbb4152d29268b42249d963206c6",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/Field.py": {
+      "bytes": 23049,
+      "sha256": "389a01f903b0771551c335fee05a9b6430b6c0c66b7af31c8e3bf65f696d91c4",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/FieldResult.py": {
+      "bytes": 7551,
+      "sha256": "06e752cadda4cc54687d57b517a59348bda40ff91a31b29a27b59c14ff2a97ff",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/Message.py": {
+      "bytes": 24181,
+      "sha256": "71d03819ede38cce1f2374ddd09df12fb520e94414d972da950fbac56061d67a",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/MessageList.py": {
+      "bytes": 14468,
+      "sha256": "d50a118592266a14f833f64fb5061a67c8d2bda70ca8595da4dc460ac98b6744",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/qmi-codegen": {
+      "bytes": 4465,
+      "sha256": "91ae8e727d4ff8758f2d207910da67c9d25a93c4a75aeb9dd170b65009f9c3ab",
+      "git_mode": "100755"
+    },
+    "build-aux/qmi-codegen/TypeFactory.py": {
+      "bytes": 2556,
+      "sha256": "42efb44c29e6fe58c3ff3e030623caf5ee4e52f0c083c46ca703d14d7423c898",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/utils.py": {
+      "bytes": 8600,
+      "sha256": "357dfb4978d2a53ac23398b575646507facb512b09268e23a7c6f2fe1d2e3a06",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/Variable.py": {
+      "bytes": 10223,
+      "sha256": "ce7f8b08c3b0d20f292175c686297ec33e2b1133d7e1130172053ff1da190970",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/VariableArray.py": {
+      "bytes": 34737,
+      "sha256": "3158cd31c546d363fef669b089e86ee7b6b8056f6fdd28f21ca0f3f576a81615",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/VariableFactory.py": {
+      "bytes": 2087,
+      "sha256": "059e22001098bd0888abb42858518d1cf426ff17f40f2210602805d38949c21f",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/VariableInteger.py": {
+      "bytes": 16515,
+      "sha256": "f7ca553c23393e79cb0f06795c2be00512ac4bad0ec2894203a441e701596e2e",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/VariableSequence.py": {
+      "bytes": 11171,
+      "sha256": "75fc3864a4a1cb3580dda00f564b806c28539dda1854297e89a69e1ca094277e",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/VariableString.py": {
+      "bytes": 15226,
+      "sha256": "3cbc5c26f70528cc1318511a0e692d91941aaecdad5ed4d7342a87f2aa9eacf2",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-codegen/VariableStruct.py": {
+      "bytes": 15705,
+      "sha256": "3e20f7f2e25c0cae1a27ac3313a979210d37835cadcd0781ba83e6771719d3fa",
+      "git_mode": "100644"
+    },
+    "build-aux/qmi-mkenums": {
+      "bytes": 30369,
+      "sha256": "e02881775587def6b23021543cc13bbf400d201bfd702a38c179dc56297b38ff",
+      "git_mode": "100755"
+    },
+    "build-aux/templates/qmi-enum-types-nodoc.h.template": {
+      "bytes": 554,
+      "sha256": "583d60192958d0429e5f2239d76539c82bbc5f86d4d513bcbf79e6689bcee914",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-enum-types.c.template": {
+      "bytes": 1426,
+      "sha256": "f56cd488c2b2d73a2d023210c18f0db438135ae9d01701b3201ab043fc98fa26",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-enum-types.h.template": {
+      "bytes": 819,
+      "sha256": "c69bcc013966d387ad12752e068bcb5ddd116654398bdf9ee888a0a18a44c701",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-error-quarks.c.template": {
+      "bytes": 995,
+      "sha256": "4da8b5df88a2192e083145e8fcdaf851cd29b3f1b89459a5fc6b69ef2497382f",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-error-types.c.template": {
+      "bytes": 1453,
+      "sha256": "1bd87dd138e5b80be0eb294514837cf35957f129be2ec716a62dfa4ad667bf7c",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-error-types.h.template": {
+      "bytes": 828,
+      "sha256": "e817ebb19b1883aa31200c0bc9150594ca7d37f4b37e27ef76ab3a15f59b8c79",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-flag-types-nodoc.h.template": {
+      "bytes": 561,
+      "sha256": "6e7b96192b25ae335ecf573071ccc9bf4d6e8fdbf0ca811d8a79a4c822e9d8dd",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-flag-types.c.template": {
+      "bytes": 2322,
+      "sha256": "8a4fd272f1d9a351c9e2132d89335aa73d98d734aa6b95402152eecf220b26d4",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-flag-types.h.template": {
+      "bytes": 916,
+      "sha256": "3c84ba6dc4114a731c903615b9c8901673e8814cf80c7d991781caf71a993539",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-flags64-types.c.template": {
+      "bytes": 1722,
+      "sha256": "b82d10fe5f9f540dc7d4fc2c793f76f6063c563a5bf9448da7d6ca05528bc277",
+      "git_mode": "100644"
+    },
+    "build-aux/templates/qmi-flags64-types.h.template": {
+      "bytes": 869,
+      "sha256": "3ed5ef75a1bc13255a4d5eec92583137783e664240383f307e8fb6dbce093d77",
+      "git_mode": "100644"
+    },
+    "ChangeLog": {
+      "bytes": 50,
+      "sha256": "dc4bd620ea82d41083ce40f30d76ef9aa776c08ebe81f392ecc4d45aea045c5d",
+      "git_mode": "100644"
+    },
+    "COPYING": {
+      "bytes": 18092,
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "git_mode": "100644"
+    },
+    "COPYING.LIB": {
+      "bytes": 26530,
+      "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "git_mode": "100644"
+    },
+    "data/qmi-collection-basic.json": {
+      "bytes": 8341,
+      "sha256": "2a2687c05616e44ea7f382d21a5c8f60220d890196ba82b44f7e304591af2ef8",
+      "git_mode": "100644"
+    },
+    "data/qmi-collection-minimal.json": {
+      "bytes": 1381,
+      "sha256": "88cba682ba4b701bcd9c53238d5a0304dc96ef834776ce1d80f40026148d8a79",
+      "git_mode": "100644"
+    },
+    "data/qmi-common.json": {
+      "bytes": 788,
+      "sha256": "e9d227c40921ddebe8acf4940f26fe97ddf6c6a5ccca202fc52ab946acd2217a",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-atr.json": {
+      "bytes": 1918,
+      "sha256": "282aa2ecefc3398f5222be93edfad608a9a930a6f67fe4dabcc1e486afb07c2a",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-ctl.json": {
+      "bytes": 10746,
+      "sha256": "14fdd5aa8b9cc84b9c4634d56bbebccbaab7cb06232bc87080986238b37658f0",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-dms.json": {
+      "bytes": 75436,
+      "sha256": "196e2da7c006bd3a021857134473217fd7f11a4515b86390c78dd9966b17e438",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-dpm.json": {
+      "bytes": 4662,
+      "sha256": "8292e20b5cb22b6d62ac5922f20b35d84c282a104d8e07091cb966e27e36502a",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-dsd.json": {
+      "bytes": 6770,
+      "sha256": "c828b87fd2fbdd2b6829e19b3fbab3c7ecd23aaae03bb1015353f5fb23228bd9",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-fox.json": {
+      "bytes": 2284,
+      "sha256": "069ffcc0ca4b96fb8ec5f2fc4c2af1d8138da15e947edac4f24c8c6c7f33ca88",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-foxap.json": {
+      "bytes": 2143,
+      "sha256": "a93633d9266da73b4e49bc770d7e4fa076fd81418196a353b18a49b950dfed01",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-gas.json": {
+      "bytes": 13540,
+      "sha256": "1eea0e802449596b8954297c963ba73c090c087bd62bca3ec6ea9704f99c7cd4",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-gms.json": {
+      "bytes": 2271,
+      "sha256": "cc18120500000a1572113cdc4c6290630085b02d4dc6ee81f76c7b3c1b6237df",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-ims.json": {
+      "bytes": 19807,
+      "sha256": "bed137b7ea75de70e93cae6a42e58a52c1f49dbcc0df70e5f234cd754dd3f115",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-imsa.json": {
+      "bytes": 13953,
+      "sha256": "53788452b34f31372664973ccb83a65f475e700f79db827b6cf4d1cca4f7f485",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-imsdcm.json": {
+      "bytes": 7385,
+      "sha256": "64d14dac18f34f343470f481309ce6d34ae5168deda8345ef42c37b1f311b470",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-imsp.json": {
+      "bytes": 1235,
+      "sha256": "a402c234c4b1ddd240e9482b99b6fff08cf88321d219d74ae35f9aea2debd40b",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-loc.json": {
+      "bytes": 53550,
+      "sha256": "e63d1abd9a0a266325ba1a026dd4425972b533081b03e76fa5d4d41d106746b4",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-nas.json": {
+      "bytes": 298952,
+      "sha256": "55e9a39dd9c9c3341dad47ccd60b0e0da1728908dddd6b472adbec4f634740e0",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-oma.json": {
+      "bytes": 11209,
+      "sha256": "cf93d6d035db24ea24dc2ea673c86be203ed26d8a606e7e4a95b5f82d0a71420",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-pbm.json": {
+      "bytes": 24254,
+      "sha256": "4bace9870e13cc915190f4a567a287f07741cf66301ad17917bcc64b4cffcc88",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-pdc.json": {
+      "bytes": 19348,
+      "sha256": "7f9f8f49b31250313a051e585eee1204d1d13f7b370346a637a24cacf0ee08c8",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-pds.json": {
+      "bytes": 24004,
+      "sha256": "2b2a286d2a80a7c20f56863cc653c0450d13cc11031a31a34712e88f56482d58",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-qos.json": {
+      "bytes": 9874,
+      "sha256": "63d05d2cc4745fd726d38c1d9a7349b082a19ad7e5d05b73ad47bab2cf563b97",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-sar.json": {
+      "bytes": 1795,
+      "sha256": "0c5b23ea8052efc4ff06521d4455f074cd8261f8075cd6ba75a01c37acfc771f",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-ssc.json": {
+      "bytes": 3919,
+      "sha256": "203dc14c53353d1024babe08ea1dc99a620a9e906ffdce8858c993800f8b8cb7",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-uim.json": {
+      "bytes": 68911,
+      "sha256": "4808b1f724165d724410088e8ab9c70da394594ead221dbe886c212ea1a60dfe",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-voice.json": {
+      "bytes": 45893,
+      "sha256": "c9edb0571c4a8825bc07d8d0e896c22e59918fa89bd363f4879bc8faa0e7ca26",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-wda.json": {
+      "bytes": 18126,
+      "sha256": "dc549c159f0267a7fda6f0f8e65a2b16630e80a4cf8cc71ed63b644a36349666",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-wds.json": {
+      "bytes": 128765,
+      "sha256": "1075980946b039f42fc9292e056370013bdd16218b08a871c459d826976bab59",
+      "git_mode": "100644"
+    },
+    "data/qmi-service-wms.json": {
+      "bytes": 44430,
+      "sha256": "667d1116d90e41c2fc057afafc7ca366cb3ae2d9367c97c528cf984d668bef8c",
+      "git_mode": "100644"
+    },
+    "docs/libqmi-icon.svg": {
+      "bytes": 6504,
+      "sha256": "afbceb8dbbde60d9660d8ed62b04db3c7511709e8d4a61fd87f4f7a97108357f",
+      "git_mode": "100644"
+    },
+    "docs/libqmi-logo.png": {
+      "bytes": 5417,
+      "sha256": "9a0b69e50f8aae2b07c06df37dc20112b8983f078d4e118eb9e7d0b8241eaeb3",
+      "git_mode": "100644"
+    },
+    "docs/libqmi-logo.svg": {
+      "bytes": 7641,
+      "sha256": "1c71b536f796be50e3433c7c4d57b31f532e968e5939bffeeb7c64b6654fbfb9",
+      "git_mode": "100644"
+    },
+    "docs/man/meson.build": {
+      "bytes": 726,
+      "sha256": "88835d81d97c357bf00ac72357f271ac06869356ddad021d90499d3344a68690",
+      "git_mode": "100644"
+    },
+    "docs/reference/libqmi-glib/libqmi-glib.toml.in": {
+      "bytes": 1262,
+      "sha256": "1e59e6e42953d1c0aed1f3cb9acf277c427ab5439aab932277d2bf7e8152ad50",
+      "git_mode": "100644"
+    },
+    "docs/reference/libqmi-glib/libqmi.svg": {
+      "bytes": 2135,
+      "sha256": "dbc5243c8db887017a058223aab8d9f3d3dc1882d9b53df7f7817e271f99ef6b",
+      "git_mode": "100644"
+    },
+    "docs/reference/libqmi-glib/meson.build": {
+      "bytes": 1212,
+      "sha256": "7fa2bb1729172c8b64ebd3a6539a0ea50b4c82de92f759a0a8c212ec428f015f",
+      "git_mode": "100644"
+    },
+    "docs/reference/libqmi-glib/urlmap.js": {
+      "bytes": 326,
+      "sha256": "e38d554ac81c8eb434445a9e1fa1ac6fb49ef5ae38b8ad59bd44a670e8a23ff7",
+      "git_mode": "100644"
+    },
+    "examples/asyncio-python/main.py": {
+      "bytes": 2327,
+      "sha256": "7281754341fe3984fe64b131e1b8f5db27839b3885c6edeafaafc81d14a85cd7",
+      "git_mode": "100644"
+    },
+    "examples/asyncio-python/README.md": {
+      "bytes": 251,
+      "sha256": "adf0cfcd77936cdf9edbf547016d0917c2f340572124b2e8e2a718c98ad9ae79",
+      "git_mode": "100644"
+    },
+    "examples/simple-tester-c/meson.build": {
+      "bytes": 244,
+      "sha256": "3dca1872ee510f1d607c5c2f970acd4f242de7eb78d2e890173e5be443e08558",
+      "git_mode": "100644"
+    },
+    "examples/simple-tester-c/README": {
+      "bytes": 519,
+      "sha256": "c801d9fc35278338aa7768d0211f3ea381fb50178026d9f10e4a6c28a814481a",
+      "git_mode": "100644"
+    },
+    "examples/simple-tester-c/simple-tester-c.c": {
+      "bytes": 8754,
+      "sha256": "ed9f6a665d18ff43195db5142c7961149a6e31f8c6792bc36412efac39d40680",
+      "git_mode": "100644"
+    },
+    "examples/simple-tester-python/README": {
+      "bytes": 697,
+      "sha256": "55a23f0ae82b5fff240fd4dca4a5514176a4e8b63e50e36e02341464bbd75d17",
+      "git_mode": "100644"
+    },
+    "examples/simple-tester-python/simple-tester-python": {
+      "bytes": 5327,
+      "sha256": "ea908592d80485130198c272cea8de5e7979f3b9e8692fe384c6a916e71ea93c",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/autogen.sh": {
+      "bytes": 583,
+      "sha256": "7631a964d70abccd4c6a36e7ab51aaeae1e865934fbfe0792b57467613b0c37f",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/configure.ac": {
+      "bytes": 537,
+      "sha256": "c840f70259ffc44a53ad40fb7c6e776df4c5c9dc7c239dcfd12f6c65f0706f96",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/COPYING": {
+      "bytes": 1529,
+      "sha256": "14af91f029cc45c409839d1b8b2fbd99d5bd43d391cda54fb7211b66fca859d3",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/apidefs.h": {
+      "bytes": 284,
+      "sha256": "d785ac97a339e83dd66828e4f809d4308bddc0056b5dd3e76e55ff3e1cfa5f99",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/BitPacker.cpp": {
+      "bytes": 14777,
+      "sha256": "9f1d3abceafe624fbe614361dbff0e795407e4065f2a965e2f6d69655a281b57",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/BitPacker.h": {
+      "bytes": 5935,
+      "sha256": "949daee002569a01812136d1ec9c4759789dddbffe6c0af52c15a123a85c56e4",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/BitParser.cpp": {
+      "bytes": 15531,
+      "sha256": "fcc077ce5145be0c36c47b6cc589f78a940773c70fcebb1f9fb2d2f64fc9d068",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/BitParser.h": {
+      "bytes": 6283,
+      "sha256": "e56be8da698fde6f0efc96fb5e3180ac3235c3d724bbdfb10918a903ac106656",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/Comm.cpp": {
+      "bytes": 13502,
+      "sha256": "0391e935daa251cc1ef3b5c979b8609695548defb51c0ef482d54373ba4dacdc",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/Comm.h": {
+      "bytes": 4884,
+      "sha256": "7c872a8fc6377a2aed9ed47a5415a2a19f66336861c9e4b2616296faf4caa23d",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/CoreDatabase.cpp": {
+      "bytes": 83162,
+      "sha256": "bc55998994e576ee9c8d2864cbf4fb8653323c6ad51d6121c32763fa6f3670dc",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/CoreDatabase.h": {
+      "bytes": 61368,
+      "sha256": "4f176e9f5a45a75130de3e959fdab063cb0a6c8c5103f10be62cb22cb9575912",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/CoreUtilities.cpp": {
+      "bytes": 40346,
+      "sha256": "92bbe2c4e4c96b5067ce0ea20c9c71ff637973d3f6343287658987d81368e502",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/CoreUtilities.h": {
+      "bytes": 17578,
+      "sha256": "3d06b6dbbebd4caa6164cb8abfe1e143b2869b5ca74b1df99505b55f8be8bc29",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/CRC.cpp": {
+      "bytes": 6821,
+      "sha256": "be8c00e9b3b42e9876e01377fdce2f13d557b90de9b19bcb1cf1b01b5d8953dc",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/CRC.h": {
+      "bytes": 3129,
+      "sha256": "17a22f0c36218ae27e134162cbcf32c4316bb9f96155d1476dc8d4c4d2c3f99e",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DataPacker.cpp": {
+      "bytes": 23349,
+      "sha256": "20dfcd630ff230f2e733278e42a5ed44b3aa35089d5d715f0fa50b287674407b",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DataPacker.h": {
+      "bytes": 7291,
+      "sha256": "e64aef0b031060af3d9e0072e964bb11aa08c51a0f9095fbd387e1f631c030b0",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DataParser.cpp": {
+      "bytes": 32716,
+      "sha256": "5a7a8bbbe5d95b37fc196b520f098592b4fd9fca893170001ad837df745d7084",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DataParser.h": {
+      "bytes": 12169,
+      "sha256": "afd63bead3bea40371ea102a7a2cc3659d3ee300dc4d163bcabeb3effd32aa6b",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DB2NavTree.cpp": {
+      "bytes": 12377,
+      "sha256": "ecee126ee68284507a2c6be5e40801ccdcd2adf5af8d7167df6119d407349bc2",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DB2NavTree.h": {
+      "bytes": 4811,
+      "sha256": "afded0c03efa2629710aeb5d8b85d841c3a53ab74a0e64ede2273192ce02909b",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DB2TextFile.cpp": {
+      "bytes": 6786,
+      "sha256": "00f792d748692135bfa8dc8ff8f02ef54280d29fce232437e56aedb19d5261f3",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DB2TextFile.h": {
+      "bytes": 3802,
+      "sha256": "c8919fe91e93a32d9e7f400832a698f0ea778ca1971b5ee0c18b8c4b052aa0f1",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DB2Utilities.cpp": {
+      "bytes": 23158,
+      "sha256": "d10fed048be6351ecd38dc8849d2a6316988a7a9f8d65669b3bf9c915f3643b6",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/DB2Utilities.h": {
+      "bytes": 8379,
+      "sha256": "dcc6d69b7d36a1eeda5c4b4ea1679679f0b8d55b59ac0a0d2724c0642cb33971",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/Event.cpp": {
+      "bytes": 11277,
+      "sha256": "479db8576d8c4ca58141e7fc58dd82e37c7c97953a40bab609108679d4c679eb",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/Event.h": {
+      "bytes": 4227,
+      "sha256": "456bfea6d0376f0b43a6c38573391af38b1e2e3e6d0aca9bbe8c2d1abba6d537",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/HDLC.cpp": {
+      "bytes": 8278,
+      "sha256": "3df8a500f3e381c0f1c13843f754d10e0a4e5914f1ffee118dbad180649bb310",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/HDLC.h": {
+      "bytes": 2914,
+      "sha256": "ca3b90de8e76b52bf484338bec89c486181c4320736cfcfa900ba0da596603c2",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/HDLCProtocolServer.cpp": {
+      "bytes": 9479,
+      "sha256": "cd584b2c474d3034fdc12a20787a7f82e174eaa0f1762fdf6ca3a584969995c3",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/HDLCProtocolServer.h": {
+      "bytes": 4242,
+      "sha256": "fd1def0315e5ccc5a207bd1e0a6a2b689925aaa3c198fb339711a9a1b4d4dbbc",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/Makefile.am": {
+      "bytes": 1265,
+      "sha256": "7f5dd2284edb9b5ff0c123b49a1cb3a16cd7633fe3dfc47fe35072f2ac97aa83",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/MemoryMappedFile.cpp": {
+      "bytes": 5527,
+      "sha256": "17f7108019b927c55056dcfcdf03aae332c9bee19a8e2a0c4a40c7529a6064bb",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/MemoryMappedFile.h": {
+      "bytes": 3773,
+      "sha256": "414fdec195d4409d6baaa5328d166560aa9d72af632c59af64838a91aa87aa29",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolBuffer.cpp": {
+      "bytes": 6384,
+      "sha256": "32d3bab4b073921615c4f2b04e302dd04c1a4e0a4557211076c8850f3766afe5",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolBuffer.h": {
+      "bytes": 5008,
+      "sha256": "68f375801c97c364a365ba5addb9283f12406d6a14737754ed288293ca46cb9c",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolEntityFieldEnumerator.h": {
+      "bytes": 4864,
+      "sha256": "66794232916f5e2bde03a91937c4d52459d16a6edeee3f02e8a562b65f0ac221",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolEntityNav.cpp": {
+      "bytes": 26762,
+      "sha256": "35e42ac7da760b38c955a52a509d7d402d59befe95a3a8df49c2f0cccef76e80",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolEntityNav.h": {
+      "bytes": 8538,
+      "sha256": "7f7ffe241681b3b64167edce5b7c3a6388bc5f84f97c5befc1a89fabc6f5d136",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolEnum.h": {
+      "bytes": 7395,
+      "sha256": "1ed1f7fe94fd588bcd04a94db1669192a873ab0dd2d014b1f77b6f9de217c652",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolLog.cpp": {
+      "bytes": 5844,
+      "sha256": "78f1584cde6efaa696e5ca19e949c084bb5a6bdd592e86b1ef2852817bec46e3",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolLog.h": {
+      "bytes": 3606,
+      "sha256": "75d99490b162744a7dc651dab73cf8ae87d8e6165173f7cdef3453a92765acfd",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolNotification.cpp": {
+      "bytes": 5788,
+      "sha256": "d4da3bc4f6e0ed487767c71175d025a12142ad36c062bfe47e8e81f4542afc1e",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolNotification.h": {
+      "bytes": 7961,
+      "sha256": "c9a520ef0322cda6dae26ae2b8c454d7f0d41e11e0e276295bb88d848437d347",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolRequest.cpp": {
+      "bytes": 8167,
+      "sha256": "89ef9d32ee7495923309888bff8193d66de08551737c1f35ab4967058f17fac6",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolRequest.h": {
+      "bytes": 6550,
+      "sha256": "ffd23232a7cc8d04fb5ac95f730e9923234b076c1669122630c4b569ce7ecf45",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolServer.cpp": {
+      "bytes": 45803,
+      "sha256": "58e1f11c637586ec36ff84f23d119ab85c8aa19ca244f63d72c3422bda2c013e",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/ProtocolServer.h": {
+      "bytes": 11247,
+      "sha256": "fcaaa5c62a1a077c178126776d424a401a6061481e7a9d384527813f7f668634",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QDLBuffers.cpp": {
+      "bytes": 27615,
+      "sha256": "c6a0422723caf7da3773eba24003a8b5372c67caaaccb9e0c9a72618c53edad4",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QDLBuffers.h": {
+      "bytes": 20412,
+      "sha256": "3045eb489ee9c767636c295b32074289a5928d8249ad88787c3d24d7aca1e3af",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QDLEnum.h": {
+      "bytes": 12274,
+      "sha256": "125c73e5a644eeb1f69f35a2095ef99eeeec401b8fa7a7ed3513ba1005ca2b46",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QDLProtocolServer.cpp": {
+      "bytes": 7822,
+      "sha256": "c81d224ac4740fc16bdbb7f35ab44a4103146b48a42d0c3d0152d25f5e8974e2",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QDLProtocolServer.h": {
+      "bytes": 3277,
+      "sha256": "9080f7cdadc83950c2134937da0a90b1dae2699fa921edc0e4925af6982db981",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QMIBuffers.cpp": {
+      "bytes": 10022,
+      "sha256": "a89653f62ace59e221f7b6474093101789f90d64acdf8190414f5c2ce9be22ce",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QMIBuffers.h": {
+      "bytes": 11654,
+      "sha256": "1125b6dd2b9dc65e5a7631867834e323b925b25b56120e140543c065a3a7d121",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QMIEnum.h": {
+      "bytes": 46369,
+      "sha256": "4759b935cde6595963eaff0e2277cdfb47effd72fc21c1ac96d1d2df70bf7f4c",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QMIProtocolServer.cpp": {
+      "bytes": 11665,
+      "sha256": "406df382f77844fb6b93134056617993cdcf83c9fdbd2c8275da912529dbdc82",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/QMIProtocolServer.h": {
+      "bytes": 4724,
+      "sha256": "64ff2098ac8bad4e42b8bd5b9ecaacda6965aa2055519593bdb62714669f43db",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/SharedBuffer.cpp": {
+      "bytes": 10739,
+      "sha256": "2dd174a4fced946ec8cc024ec79f8e9891137def675ac8455d6749dab307e858",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/SharedBuffer.h": {
+      "bytes": 5623,
+      "sha256": "4d9185863b75f358bda8090e80a632e28ddcdd3d3642ee3b6992f2d1869e4c94",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/StdAfx.h": {
+      "bytes": 5594,
+      "sha256": "27624c9e8c925b47940e20c760c5d09930849f832136f3cfa0fadd15faddf62c",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/SyncQueue.h": {
+      "bytes": 12358,
+      "sha256": "e4f6be567856eccb3602a63d3be55a1b6f858e93fac46abf7253ee784dea6d15",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Core/types.h": {
+      "bytes": 400,
+      "sha256": "8bba8fed197b1fcadf9dc44ee34a00335e9cb53af34c31a239a1d56559390882",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/Makefile.am": {
+      "bytes": 13,
+      "sha256": "0efd8c6557a9a3c295b73ede42af4ae150e875424f4f90dfa5ddfda00ad850a6",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/QMI/Entity.txt": {
+      "bytes": 62985,
+      "sha256": "bd1c8f56073d74ee750e893ebc7048cb6e7aef98d85850dd4f761610087d945e",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/QMI/Enum.txt": {
+      "bytes": 5551,
+      "sha256": "29e5310099eb3209f980cdaa7cf160b0fde1404bced527601046d4ea2aa12484",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/QMI/EnumEntry.txt": {
+      "bytes": 23952,
+      "sha256": "6a57433488971599a6a0b88259ae2cd9ef4709c2cfc2ba870047d2a1208a3fbd",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/QMI/Field.txt": {
+      "bytes": 33374,
+      "sha256": "e3e91ca014eea449a9a258a4a02fbfc8713d52fcc67aed666a1ce925e7cce7e3",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/QMI/foo.c": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/QMI/Makefile.am": {
+      "bytes": 333,
+      "sha256": "434354768a5003343893dfc548a697288ad0499da9c0eb10a0b73effc50385d8",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Database/QMI/Struct.txt": {
+      "bytes": 36512,
+      "sha256": "0af56de989849dfb85b088bdb63441aafc5d33817458f521690d376451f79c44",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiConnectionMgmt/GobiConnectionMgmt.cpp": {
+      "bytes": 79033,
+      "sha256": "e432496b7b8e08a85d1e68706c8233bb5ffa6a8848d8c3f48b1ebcb32137f99e",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiConnectionMgmt/GobiConnectionMgmt.h": {
+      "bytes": 38765,
+      "sha256": "28833cae1983a4cbbcc16dc220a6955a4cd1877e2efb70a85ebbd9035409888b",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiConnectionMgmt/GobiConnectionMgmtAPI.h": {
+      "bytes": 111614,
+      "sha256": "0adb12d047a7ffbbf055b8e0433c8c7a65e8b32f26748efc41b94434cb176c4a",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp": {
+      "bytes": 154297,
+      "sha256": "cd10e95dc39b41e040c217687ba37f4a113ff4c723a4b2449d82272225b1ccda",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiConnectionMgmt/Makefile.am": {
+      "bytes": 675,
+      "sha256": "109d6a12017ff5179d4ed282c5267144835f9975dd8ddd550ccb9eaa305a087a",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiImageMgmt/GobiImageMgmt.cpp": {
+      "bytes": 8363,
+      "sha256": "353563ac593359f1d0f270376bbd79e9a71e8281051d6bf18ad3b22ab4cf6500",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiImageMgmt/GobiImageMgmt.h": {
+      "bytes": 6475,
+      "sha256": "044af43724bd4e6a7c8d3bbf1457ca5662ec2f9bdbd5fb5198fa91cb135ba6f5",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiImageMgmt/GobiImageMgmtAPI.h": {
+      "bytes": 13869,
+      "sha256": "ca38337afb19e8d2222b5779154f10c141156969c4c473fb8b8750054fa7aa7f",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiImageMgmt/GobiImageMgmtExports.cpp": {
+      "bytes": 25437,
+      "sha256": "479e15d3a594e2a03247a56dfe68c49cdc485a1e6295019cb1e8b2f8bf6e4df2",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiImageMgmt/Makefile.am": {
+      "bytes": 635,
+      "sha256": "2c6bf745d78b38703f42f5059d452419586d0bbf348a64cb862f9c3fac474a9b",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiQDLService/99-GobiQDLService.rules": {
+      "bytes": 2008,
+      "sha256": "6f6521f52f0aafe4f8d1a840e13c47e40ef32e49541decd681758d70735d5d69",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiQDLService/Main.cpp": {
+      "bytes": 6134,
+      "sha256": "20bd67e9198c866ee7685c4b8fe618e22b2ab2d13369b58bdd195f5486e5fb27",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/GobiQDLService/Makefile.am": {
+      "bytes": 574,
+      "sha256": "c5fa1a1d00225987c69648bd67f589e4aee479c7a6952d85ea94e5ec392337cf",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Makefile.am": {
+      "bytes": 121,
+      "sha256": "dd4492b52b8779d4efd5777d76a724cd4a0f341a486ff406888477b65bb30539",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/NEWS": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/README": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiError.h": {
+      "bytes": 6469,
+      "sha256": "8420b2b2f026d54a3209b52ffeaef35ea6ed5919c0d885bc8975cf13c7716750",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiImageDefinitions.h": {
+      "bytes": 6835,
+      "sha256": "10f95ede963e2895cbb468120fcc206cdbbcc3154df9a0ddfe2a95d7814f6353",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiMBNMgmt.cpp": {
+      "bytes": 29353,
+      "sha256": "fbef827d536cb13e7c9e8fc307797d14ba449b83d956b898eeea9ea2e4674cf3",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiMBNMgmt.h": {
+      "bytes": 7900,
+      "sha256": "316b0609161398efbce26c40d97a0411cd779eb0afa8f0f3c7f19f934d1a0772",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQDLCore.cpp": {
+      "bytes": 24153,
+      "sha256": "cfd090cc3156231db61ef0acb45da20145b474ee5b17874885273c2497419657",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQDLCore.h": {
+      "bytes": 5835,
+      "sha256": "3ec051afc86c07d3ea683d702ae4f3324b61bb1c911efc83f5b7d02c4fa5c3e4",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICore.cpp": {
+      "bytes": 26651,
+      "sha256": "567ea5e3cb1d6402e8153bae4d3b0804e5f0051f47126c40afce1c8fa1d3d232",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICore.h": {
+      "bytes": 39201,
+      "sha256": "efbed1e2ca4aef5f46b72cb466bee4f44de83e4a5b29173cc47c39e741716610",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreCAT.cpp": {
+      "bytes": 7819,
+      "sha256": "20ee454b0ff16aa01f7655822642d649f5515e24c0f678b8918e0b7429cb31b7",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreDMS.cpp": {
+      "bytes": 56889,
+      "sha256": "c894057dd21357d798a133a11c36badd4d02da528b3d54e5327672957b689a51",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreImg.cpp": {
+      "bytes": 18573,
+      "sha256": "0be96c9ad2330118a331b79fd464143183810bf068740de2282e1dcb98d93829",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreImg2k.cpp": {
+      "bytes": 16264,
+      "sha256": "af3f5eeaab3585c915a35793dff5e43d989cd89520f6f3a995ec0d04a0f795e8",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreNAS.cpp": {
+      "bytes": 57264,
+      "sha256": "99889b8328d2c9f97325130bbb1f98cd61b17ea476a63626823d1b90ee55ed88",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreOMA.cpp": {
+      "bytes": 15606,
+      "sha256": "ecb7b0afe3f7b0aa58749e8930ec01a720abfaf375240c06b7e0c3266dbae311",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICorePDS.cpp": {
+      "bytes": 36518,
+      "sha256": "496d1ee818c8f7da549b8c627331264ca95ab2787a680127bc38e8b6ac4d1d45",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreRMS.cpp": {
+      "bytes": 5944,
+      "sha256": "960fe07d7fa46d8d3555821e50f6fe8f3bf9f4cdfb842af89365f8652bea8621",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreSMS.cpp": {
+      "bytes": 27356,
+      "sha256": "e132591167dccc7204dac01ce804e1b82b641df550af388bb37aa24e58b268c2",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreUIM.cpp": {
+      "bytes": 29559,
+      "sha256": "87b9274e53c9631fa1281674fd0e7df327bb76fa7ff0ca5912c87f1a0aa25e9f",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreWDS.cpp": {
+      "bytes": 81459,
+      "sha256": "82339d09950762d35965532804d7cb9ca83942f496551c99862622336965ed18",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMIVoice.cpp": {
+      "bytes": 6463,
+      "sha256": "63fa46fd9dfae570574645bddad492739a453d1022734bee8873c8489817e933",
+      "git_mode": "100755"
+    },
+    "gobi-api/fixed-GobiAPI-1.0.40/Shared/Makefile.am": {
+      "bytes": 753,
+      "sha256": "c5d8975a042cecafde3f63a7d1a69bf83a59d0a8497195f3ed7e99d6039477e7",
+      "git_mode": "100644"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/Comm.cpp": {
+      "bytes": 16540,
+      "sha256": "6a384810946e57bf70979cf56b62849059904e329247966d7b753f572bbb27b1",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/Comm.h": {
+      "bytes": 5093,
+      "sha256": "345e413d80b87867ae6b3124fef055f76b18503fff229932896ac0572f7d6003",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/Event.cpp": {
+      "bytes": 11465,
+      "sha256": "b794113de8ebb881c935f972dabcefbbfd4e879dfd488814f553e64cd431f533",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/Event.h": {
+      "bytes": 4318,
+      "sha256": "75b3ef0dd7005ba4a976fc4824a2581c13110183482f80f863ffa18e90e12c39",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolBuffer.cpp": {
+      "bytes": 6580,
+      "sha256": "63fcf60f7dbc0e17650472dcce39d88875fd4dadeb20511e35672ea1184711ed",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolBuffer.h": {
+      "bytes": 5144,
+      "sha256": "fbd1aff9ffecb915bbcee54cd226cf372b634bf4d66910cf85ed0e3371e8996a",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolEnum.h": {
+      "bytes": 10045,
+      "sha256": "6e2efb3fa4931f6686cb08877f4ed1f14280f822f28f1f83eb619eb071f97d15",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolLog.cpp": {
+      "bytes": 6008,
+      "sha256": "cedb1b6d0fa26c20a164b72fed0cd0cf07fa5974aa94ff2658cb03efc35a1382",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolLog.h": {
+      "bytes": 3671,
+      "sha256": "cba7bdec123350993c2742a52445c4fefb87d7d07cf56508c6d896f4d4b6e584",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolNotification.cpp": {
+      "bytes": 5933,
+      "sha256": "f39a6e39143a5c0a5f31389adc78b12e8dbc9146bbbd11aa672576ad5b4047e3",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolNotification.h": {
+      "bytes": 8172,
+      "sha256": "6c84655f28c793c7a5973d288479769fab3615afbba12f34f5c70e890408bf26",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolRequest.cpp": {
+      "bytes": 8395,
+      "sha256": "c16921c0632c9ed3d42ee813f0aa92ed9bbb7cf836c4d5083f6fc45139f0337e",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolRequest.h": {
+      "bytes": 6717,
+      "sha256": "2c5375e621b14bae248cc3fdfbcd17edb55f9c572ac20b1d6c21b9795ec907ce",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolServer.cpp": {
+      "bytes": 48359,
+      "sha256": "40d60676a9f74636b9d8a3dab2a4490877914a3d28c60999426445f6e9a914de",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/ProtocolServer.h": {
+      "bytes": 11572,
+      "sha256": "f9c91df1673549534b3dc077fbca01fa16c7117bd5e944f7213b8db19ce48837",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/QMIBuffers.cpp": {
+      "bytes": 10362,
+      "sha256": "f37ead8b6fa4a42d692b81772c81e5b433fea2a61f179c1ff0b56726e0eca28d",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/QMIBuffers.h": {
+      "bytes": 12504,
+      "sha256": "c008a78cf9e87f8824847769241e2e7fd41fb0f370b1c31830df2a4141d3efad",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/QMIEnum.h": {
+      "bytes": 74554,
+      "sha256": "8f00e33871645d048b368fffcd0c50864c59c30837abdec61f8aab9ead72a7d1",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/QMIProtocolServer.cpp": {
+      "bytes": 10978,
+      "sha256": "a1caba0ee66be0a90354db44cbf77615159f693cdc97a70d1f3c4d170d85f40d",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/QMIProtocolServer.h": {
+      "bytes": 4522,
+      "sha256": "a633956210b8875a3e6a93345007a2d6dde84daf9e8817333f900584a3aa3870",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/SharedBuffer.cpp": {
+      "bytes": 10737,
+      "sha256": "76bdbb3a9c892e7a702571c96fb6c0841f166369cb91ff0d77ab2cf5d037c7af",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/SharedBuffer.h": {
+      "bytes": 5763,
+      "sha256": "7faa53f10111c951dd5ff3ec91d2d7c413c382135f42fd921dc19c9a8399c489",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/StdAfx.h": {
+      "bytes": 5855,
+      "sha256": "30d401a9a4789025f8333e7c610fff4e38dc0924b8c85ff41d299f48c50d20df",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Core/SyncQueue.h": {
+      "bytes": 12751,
+      "sha256": "3ab9add7572de43705d759be5a0e1fb0c545e8e48ddc313d16b7c37f5d4d846e",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000Translation.cpp": {
+      "bytes": 3736,
+      "sha256": "9b9442a763fb3dc49e4f5e5586019afbe899b43cd2d2df4c0416c77d7bdac10f",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000Translation.h": {
+      "bytes": 28453,
+      "sha256": "2083372180a2205945ad767cc0b7547491e812d4fcf1bc5f25aa936310f3cd17",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationCAT.cpp": {
+      "bytes": 6131,
+      "sha256": "4bbfda897b7e0049cfba8a7f1cd4572a78758d71a625253d02236c8c37f6353f",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationDMS.cpp": {
+      "bytes": 42476,
+      "sha256": "2e51aac9f5d6e3484398a6db83d8878940e1b3301006cf4b938452ea31e79ca2",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationNAS.cpp": {
+      "bytes": 60472,
+      "sha256": "2276799cb18ab0009339ef8388a3b064b1ea0bcf7e0daf741c2619037f57faf0",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationOMA.cpp": {
+      "bytes": 14671,
+      "sha256": "3ee7e1078facf7785113e6dccfd44238bf0939c0bd5f0f09e936de52c9c2dd4e",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationPDS.cpp": {
+      "bytes": 35714,
+      "sha256": "bef5501c5dfdec1b29eefb34123797ae3a03254b21ac96823a25fea081d631dd",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationRMS.cpp": {
+      "bytes": 6072,
+      "sha256": "55c40c3488cee7367b05c23a28df4ffe4be3bbbb9972c93f05ab02f5e83136f6",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationUIM.cpp": {
+      "bytes": 37319,
+      "sha256": "c4a4707081d256d256e1b4de30ce2c135b6f212acad217c88ff6e6aaceca6ce4",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationVoice.cpp": {
+      "bytes": 5869,
+      "sha256": "b57b84838f24a2e24bc9ae8dfffd9e683d5df08d3f731f7f26901046bce00d20",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationWDS.cpp": {
+      "bytes": 105139,
+      "sha256": "483d114e26de4c30b69cbe9d77ac2d442a8af2de851703f6af89311874b95dc2",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Gobi3000Translation/Gobi3000TranslationWMS.cpp": {
+      "bytes": 33789,
+      "sha256": "9d19549e86f07af7599ccd0559fbab05b895125f8e49dcc0db2958c364155e84",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/GobiConnectionMgmt/GobiConnectionMgmt.cpp": {
+      "bytes": 16940,
+      "sha256": "3a5e72a6de7ffcfb2a901e7ef21b5912468fc7fcfbe55874cc5cac242085157f",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/GobiConnectionMgmt/GobiConnectionMgmt.h": {
+      "bytes": 8643,
+      "sha256": "714efd987ae0761a5aa83d88c6686340ced5465f2f6b5f16e9040564b673fe7c",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/GobiConnectionMgmt/GobiConnectionMgmtAPI.h": {
+      "bytes": 450219,
+      "sha256": "be681d829d2dd4d21b1df1bd7dcb11ed5a31530c622a29938e1b748aa1abbe41",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/GobiConnectionMgmt/GobiConnectionMgmtAPIEnums.h": {
+      "bytes": 216576,
+      "sha256": "c9aabf13400960e83459de0d13a18c2c960f7feb5d9ba8360cd6dd5a806606be",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/GobiConnectionMgmt/GobiConnectionMgmtAPIStructs.h": {
+      "bytes": 616931,
+      "sha256": "154fee1b428bc3c302cacfb9c981f2c9f7af949b988bdf36342a8963deff5c04",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp": {
+      "bytes": 556906,
+      "sha256": "0abb64351e62f926cc0f7b9e6b28fda08f63f127970d18f8a1e8dc56c35d6a5f",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Readme.txt": {
+      "bytes": 874,
+      "sha256": "2988e26a0b857e6c0c55a542f843a3bfde3b872acacb6a86383c32f1d2d0771a",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Shared/GobiError.h": {
+      "bytes": 6276,
+      "sha256": "5317f9c3fbc1488a849b51694ab91ae51790ba66bfcf1c5e55a643f05f8f2f39",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Shared/GobiQMICore.cpp": {
+      "bytes": 14525,
+      "sha256": "ffbcb27fefe742500bb062ed88d189bd93fd0207ffc388843c269e66c09c7f48",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2011-11-28-1533/Shared/GobiQMICore.h": {
+      "bytes": 6542,
+      "sha256": "b5429ba8fb4bc3734bc3ce371fccfe210a40fc731923f4d1a7bf1509d6267eca",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/Comm.cpp": {
+      "bytes": 15897,
+      "sha256": "6fa62f6156a6fdde09b2cd86bc5b25df7e7064a6190f35d7ab252435543e5dc7",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/Comm.h": {
+      "bytes": 4362,
+      "sha256": "e183d83962e1f8088af012aba200871505f97fdfdd3a745baa1f8cae8aa81662",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/Connection.h": {
+      "bytes": 4504,
+      "sha256": "f2d65eb657c359fea381bf387b0ab8208b6b006efec0ce7c698b6d80e37b4718",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/Event.cpp": {
+      "bytes": 11063,
+      "sha256": "bb56067811076f9ea074282acc05cfca631754603796dc47b562b1c1eb82b63c",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/Event.h": {
+      "bytes": 4227,
+      "sha256": "c53834660f24b953901621160df913026745f80a9a9803639edd392e75358570",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolBuffer.cpp": {
+      "bytes": 6384,
+      "sha256": "d468be8f11d4bf6d76366b1ae4cffbc9c715824ba75f10d8fed54ce29d311f14",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolBuffer.h": {
+      "bytes": 5008,
+      "sha256": "eb88a80662be1296dec9e1ed6df050eff9ad4198ae5ed037397aeb64346ec2dc",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolEnum.h": {
+      "bytes": 10377,
+      "sha256": "a1b16997b35337b2040f088293792f40ea37becbaefd8f63cd9367c7e670b582",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolLog.cpp": {
+      "bytes": 5844,
+      "sha256": "dd76859490b1919b2e22434a319486047aec6326608879177e884384d0322af1",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolLog.h": {
+      "bytes": 3606,
+      "sha256": "609c84a9f32f2c6a42b945ba3fde77c82f3aaf7551163b52852ab3392f366ecb",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolNotification.cpp": {
+      "bytes": 5788,
+      "sha256": "39de3664970a3f927034662f9c2a3b90dc3c592f99c84067577567c1d51ed4bd",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolNotification.h": {
+      "bytes": 7961,
+      "sha256": "f98c5e6eeba00fb5aa2d9e161e8264ea672fcdee16cc41e5fbbfa7dc85a21a90",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolRequest.cpp": {
+      "bytes": 8167,
+      "sha256": "1e80a6395c381e9eb2fd1583fd3f0bb33f756d846d9df9e812f6f43fcb3d51a3",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolRequest.h": {
+      "bytes": 6550,
+      "sha256": "c4e2a84ff4cad3b2fe3ab064230b056ad3cb54c56fa84c08f3c98a0884c23ee6",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolServer.cpp": {
+      "bytes": 47336,
+      "sha256": "01da8b68771cfbc22fca960655f5e8d11d477f948237d46f9c88e3b8ab5c68b2",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/ProtocolServer.h": {
+      "bytes": 11514,
+      "sha256": "511c79cae7ba83da6719980d72f9bdbb94f269b4436252e6c0694d5c8ea7b21d",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/QMIBuffers.cpp": {
+      "bytes": 10022,
+      "sha256": "46c62bcfa730bc390268a57f3460d88e1c47f91c70cc1162e050428f36e9712f",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/QMIBuffers.h": {
+      "bytes": 12139,
+      "sha256": "67e753d33e5e6ddac8f8686dff91cfeaa101ca6c696639160cddb3510ed1c260",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/QMIEnum.h": {
+      "bytes": 74958,
+      "sha256": "913f88572ef43a8850ab295b985bc7b7fedb2893d5d63f92a49a74a33e199d42",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/QMIProtocolServer.cpp": {
+      "bytes": 11696,
+      "sha256": "8b757b4746a55d16ffe3f42cb169d94ea9e583061e6188ccbf157236f8883ea0",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/QMIProtocolServer.h": {
+      "bytes": 4432,
+      "sha256": "227515c915c19413cbf847e0d781a3c3376a9585fa4ed2bab7f1b2689b537341",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/SharedBuffer.cpp": {
+      "bytes": 10388,
+      "sha256": "3181fceb0cb2b7c88829a69c6c3b6dab83a7fc94ff82d845f5038d9ad2053056",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/SharedBuffer.h": {
+      "bytes": 5623,
+      "sha256": "ce205a8927ff0702be76716a20e25eca39362edafccf3b195f814ea0a6ba6169",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/Socket.cpp": {
+      "bytes": 20856,
+      "sha256": "c2b26eab41c404b7b198200c4673f5e5ab419a8cb63b63bc18dba4a60c3dce5e",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/Socket.h": {
+      "bytes": 5050,
+      "sha256": "6e4a3022f6a523ab99a285e2671856b16a5c373541ba6f85e0218f4373d41b83",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/StdAfx.h": {
+      "bytes": 6269,
+      "sha256": "8fd110243ceaad95ca2658af769e28f7c49b10a9c912fec3de251a9f260bc08d",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Core/SyncQueue.h": {
+      "bytes": 12358,
+      "sha256": "ca8bf247e176bc84404cc1d221f8fd55cf487c8260f3bfc6b1e30c827ea7992b",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000Translation.cpp": {
+      "bytes": 3661,
+      "sha256": "6d2ca8ac36e2062149ab318bed4f66a788d6a284d63f75ed9f9932b0bce811b0",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000Translation.h": {
+      "bytes": 27451,
+      "sha256": "e845418dfcc61c63b7427fc1a26dcf521c7e69223df2920145c66996ffeeaa2f",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationCAT.cpp": {
+      "bytes": 5980,
+      "sha256": "66c38da8b1480be91f1848044bcb6fbfe3662eeeac9f7a6862fed6780b8c78a6",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationDMS.cpp": {
+      "bytes": 41019,
+      "sha256": "dbd598917d04acb0f9dc47884bd4cc8de4f0043931eb6e9ec3cb14b8e1433073",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationNAS.cpp": {
+      "bytes": 58476,
+      "sha256": "c8fdf879a6281a1dd42880997dd100708bff24393aa57df246d3b2754b6f0b62",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationOMA.cpp": {
+      "bytes": 14216,
+      "sha256": "224a9d74d5a58832689a22302626a0cad36cbe5ebe5230991764d4e9c7beadf3",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationPDS.cpp": {
+      "bytes": 34533,
+      "sha256": "bd080623db711ef9efb9375395242bbdab96f09c6dd0a763915e7d250ba38517",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationRMS.cpp": {
+      "bytes": 5910,
+      "sha256": "11acf01023d76da242e7f5d100373ecd11a1ce8ccaf64c48ccf07f3123952f8c",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationUIM.cpp": {
+      "bytes": 36175,
+      "sha256": "21af6bd086540338fa5efb9cefe478017d29363cce0d8cbf3a6a9271717c30a4",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationVoice.cpp": {
+      "bytes": 5721,
+      "sha256": "b8c9710dbeeb481af2dec430cd4e5ae6bb0c0c0695c6635335ac2dd459b53461",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationWDS.cpp": {
+      "bytes": 101679,
+      "sha256": "7bb23b61d4d5385e03aad2324c8aabc8931368fad40192b0e73ef7290236a036",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationWMS.cpp": {
+      "bytes": 32694,
+      "sha256": "b100774092d44743df4097f6da80bc3802be95deca8ba148a1b7ff2baf911a83",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiConnectionMgmt/GobiConnectionMgmt.cpp": {
+      "bytes": 16360,
+      "sha256": "f5141c35519d3212ddf2ddda5602b4baa8aac6cd84fd498ff4950134be0d8770",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiConnectionMgmt/GobiConnectionMgmt.h": {
+      "bytes": 8399,
+      "sha256": "68ea19d0e041ae93a568c6a38b3a747fd47e753671bafe8ddb1f21fb21e8b2da",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiConnectionMgmt/GobiConnectionMgmtAPI.h": {
+      "bytes": 496232,
+      "sha256": "d93c9ff862de24ef176a88b78041c8b5c3b1756d0803c6fc8c1995d3f228979d",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiConnectionMgmt/GobiConnectionMgmtAPIEnums.h": {
+      "bytes": 243416,
+      "sha256": "c68612c033d227bb55a7df3050db41cf237283719f736938a7a70e94e3e10164",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiConnectionMgmt/GobiConnectionMgmtAPIStructs.h": {
+      "bytes": 693564,
+      "sha256": "ee3f6006e1a6fee7f35a94706ec66ed7f1aea3ea7b25653d99a22ba75f690e4b",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp": {
+      "bytes": 611734,
+      "sha256": "482388e2e1aab017195a9c1052d2ae3f4303076d415152bf61fbe4ce48a85145",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/android/assets/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5034,
+      "sha256": "c380864d8dbdc6892a33ca329fb6f870c1ccfa9dfc83db1da1a0a95b2bc7c755",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/android/assets/qml/GobiSampleCM/Info.png": {
+      "bytes": 4686,
+      "sha256": "68a1bfd7222ccb6c5cb6c10c978ba2f1fbfe89246766ce5388a8815b3bf4d463",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/android/assets/qml/GobiSampleCM/main.qml": {
+      "bytes": 17129,
+      "sha256": "bd4c505408bb5def900f06975e0a7decad0c6f4387ae838f10c73938e6ec475a",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/android/res/drawable/icon.png": {
+      "bytes": 8993,
+      "sha256": "374cf3d178d2e9d42183de71ecf5ddba830fefaddfb4f43b51493f35b777a885",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/android/res/drawable/logo.png": {
+      "bytes": 427576,
+      "sha256": "442876a188c8018a38d2359896e28492942fb459b254e290d3804e2d64ff70b4",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/GobiCMCallback.cpp": {
+      "bytes": 10164,
+      "sha256": "d980ae55c4423e4962b1002193d0261749b65791089090c7c5dd8263114686c3",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/GobiCMCallback.h": {
+      "bytes": 3545,
+      "sha256": "30e434ecfeec33eb6396bd71e062b96554b8771ecba5c458d09c94d31d8f13ff",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/GobiCMDLL.cpp": {
+      "bytes": 33106,
+      "sha256": "24aa9b8fdeb8f00a0711cb08dec2d68fbdd6ffd13e6ef8a7ab42d29d89f49625",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/GobiCMDLL.h": {
+      "bytes": 8863,
+      "sha256": "33ad7651f90bbee277fd99fc409296bc5d3f08998b1efd5938bdac6b5f6c0b69",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/main.cpp": {
+      "bytes": 1953,
+      "sha256": "f756fdf4b3eab5984d6998f7b7f07e8a4bc2c172fe1f78a8490701480360ce86",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5034,
+      "sha256": "c380864d8dbdc6892a33ca329fb6f870c1ccfa9dfc83db1da1a0a95b2bc7c755",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/qml/GobiSampleCM/Info.png": {
+      "bytes": 4686,
+      "sha256": "68a1bfd7222ccb6c5cb6c10c978ba2f1fbfe89246766ce5388a8815b3bf4d463",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/qml/GobiSampleCM/main.qml": {
+      "bytes": 17129,
+      "sha256": "bd4c505408bb5def900f06975e0a7decad0c6f4387ae838f10c73938e6ec475a",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/QTSampleCM.cpp": {
+      "bytes": 9694,
+      "sha256": "448c06ca27505587611f1d72d0d2c18a6b74d64ef2b28f50c889dd0ab41ecb5f",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/QTSampleCM.h": {
+      "bytes": 12741,
+      "sha256": "de4c17cacca823b605f61cccef6a0ad37acdc65fe9b369eb0088a153da80745a",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/SampleCM.cpp": {
+      "bytes": 47063,
+      "sha256": "e55ab6748b7134b3bb1f858267ac5660574b9d7890f94885f7581d0ae5c24ae8",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/GobiSampleCM/SampleCM.h": {
+      "bytes": 11789,
+      "sha256": "d7fb7e8967d11a6b770b0ecc28890a5b0ce99528f274dcaa54787638cd5c91fb",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Readme.txt": {
+      "bytes": 2105,
+      "sha256": "615a9e24aa1d675df883cd9f80f5127dbe77e64e2948e4811eca43f4274338fd",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Shared/GobiError.h": {
+      "bytes": 6166,
+      "sha256": "357fbbae9094b8f95f34542a5464455494d61ddd9c1fc946bd5f35a560e53515",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Shared/GobiQMICore.cpp": {
+      "bytes": 14020,
+      "sha256": "8f9f74cffb9f033fcbdbc3244ff84aada47e3b1186ef72e38bfb4795430b8457",
+      "git_mode": "100755"
+    },
+    "gobi-api/Gobi_2012-06-18-1054/Shared/GobiQMICore.h": {
+      "bytes": 6376,
+      "sha256": "7396149fd21e4dd235b0844532dd0f265b85e4c1887681eee8947661c3cccb44",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/AUTHORS": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/autogen.sh": {
+      "bytes": 583,
+      "sha256": "7631a964d70abccd4c6a36e7ab51aaeae1e865934fbfe0792b57467613b0c37f",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/ChangeLog": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/configure.ac": {
+      "bytes": 537,
+      "sha256": "c840f70259ffc44a53ad40fb7c6e776df4c5c9dc7c239dcfd12f6c65f0706f96",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/COPYING": {
+      "bytes": 1529,
+      "sha256": "14af91f029cc45c409839d1b8b2fbd99d5bd43d391cda54fb7211b66fca859d3",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/BitPacker.cpp": {
+      "bytes": 14777,
+      "sha256": "9f1d3abceafe624fbe614361dbff0e795407e4065f2a965e2f6d69655a281b57",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/BitPacker.h": {
+      "bytes": 5935,
+      "sha256": "949daee002569a01812136d1ec9c4759789dddbffe6c0af52c15a123a85c56e4",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/BitParser.cpp": {
+      "bytes": 15531,
+      "sha256": "fcc077ce5145be0c36c47b6cc589f78a940773c70fcebb1f9fb2d2f64fc9d068",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/BitParser.h": {
+      "bytes": 6283,
+      "sha256": "e56be8da698fde6f0efc96fb5e3180ac3235c3d724bbdfb10918a903ac106656",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/Comm.cpp": {
+      "bytes": 15907,
+      "sha256": "63ec8193ad698a3334a8a3c34d1a08de0d4524639217281e2f66ab6bf128c4ff",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/Comm.h": {
+      "bytes": 4960,
+      "sha256": "940f4f44f8f1502d90089bfa7780adc412443ca3abb4e6d9ff0a4c94f3c54170",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/CoreDatabase.cpp": {
+      "bytes": 83162,
+      "sha256": "bc55998994e576ee9c8d2864cbf4fb8653323c6ad51d6121c32763fa6f3670dc",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/CoreDatabase.h": {
+      "bytes": 61368,
+      "sha256": "4f176e9f5a45a75130de3e959fdab063cb0a6c8c5103f10be62cb22cb9575912",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/CoreUtilities.cpp": {
+      "bytes": 42919,
+      "sha256": "9819408c8b5f635cdc604a225a3a6ebcab5366850c95f35dbcf74594a9644fba",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/CoreUtilities.h": {
+      "bytes": 17824,
+      "sha256": "70b2f95d7c12f272ff5c9ea1b0ac24cc474e335be181f07ee6b886ed49c7e989",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/CRC.cpp": {
+      "bytes": 6821,
+      "sha256": "be8c00e9b3b42e9876e01377fdce2f13d557b90de9b19bcb1cf1b01b5d8953dc",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/CRC.h": {
+      "bytes": 3129,
+      "sha256": "17a22f0c36218ae27e134162cbcf32c4316bb9f96155d1476dc8d4c4d2c3f99e",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DataPacker.cpp": {
+      "bytes": 23349,
+      "sha256": "20dfcd630ff230f2e733278e42a5ed44b3aa35089d5d715f0fa50b287674407b",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DataPacker.h": {
+      "bytes": 7291,
+      "sha256": "e64aef0b031060af3d9e0072e964bb11aa08c51a0f9095fbd387e1f631c030b0",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DataParser.cpp": {
+      "bytes": 32721,
+      "sha256": "356b9fe9ada1951df850d6cee4781f4b52c7de177a4faf7a9d1185b4b44330db",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DataParser.h": {
+      "bytes": 12169,
+      "sha256": "afd63bead3bea40371ea102a7a2cc3659d3ee300dc4d163bcabeb3effd32aa6b",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DB2NavTree.cpp": {
+      "bytes": 12377,
+      "sha256": "ecee126ee68284507a2c6be5e40801ccdcd2adf5af8d7167df6119d407349bc2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DB2NavTree.h": {
+      "bytes": 4811,
+      "sha256": "afded0c03efa2629710aeb5d8b85d841c3a53ab74a0e64ede2273192ce02909b",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DB2TextFile.cpp": {
+      "bytes": 6786,
+      "sha256": "00f792d748692135bfa8dc8ff8f02ef54280d29fce232437e56aedb19d5261f3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DB2TextFile.h": {
+      "bytes": 3802,
+      "sha256": "c8919fe91e93a32d9e7f400832a698f0ea778ca1971b5ee0c18b8c4b052aa0f1",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DB2Utilities.cpp": {
+      "bytes": 23401,
+      "sha256": "87579860025b374002d9ea4880658775ec1c380c30365e45cd36d8d40a470fd3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/DB2Utilities.h": {
+      "bytes": 8379,
+      "sha256": "dcc6d69b7d36a1eeda5c4b4ea1679679f0b8d55b59ac0a0d2724c0642cb33971",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/Event.cpp": {
+      "bytes": 11055,
+      "sha256": "79c51570bb271b4ebf467c6520564f936aa959e7cfa8413b3bacc74016f4a45c",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/Event.h": {
+      "bytes": 4227,
+      "sha256": "456bfea6d0376f0b43a6c38573391af38b1e2e3e6d0aca9bbe8c2d1abba6d537",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/HDLC.cpp": {
+      "bytes": 8278,
+      "sha256": "3df8a500f3e381c0f1c13843f754d10e0a4e5914f1ffee118dbad180649bb310",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/HDLC.h": {
+      "bytes": 2914,
+      "sha256": "ca3b90de8e76b52bf484338bec89c486181c4320736cfcfa900ba0da596603c2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/HDLCProtocolServer.cpp": {
+      "bytes": 9479,
+      "sha256": "cd584b2c474d3034fdc12a20787a7f82e174eaa0f1762fdf6ca3a584969995c3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/HDLCProtocolServer.h": {
+      "bytes": 4242,
+      "sha256": "fd1def0315e5ccc5a207bd1e0a6a2b689925aaa3c198fb339711a9a1b4d4dbbc",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/Makefile.am": {
+      "bytes": 1066,
+      "sha256": "6ac10c8d7a330fbbfbdcbf286aba81327d8d7a737bd0f6f20be6f8cd1822bf1c",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/MemoryMappedFile.cpp": {
+      "bytes": 5527,
+      "sha256": "17f7108019b927c55056dcfcdf03aae332c9bee19a8e2a0c4a40c7529a6064bb",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/MemoryMappedFile.h": {
+      "bytes": 3773,
+      "sha256": "414fdec195d4409d6baaa5328d166560aa9d72af632c59af64838a91aa87aa29",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolBuffer.cpp": {
+      "bytes": 6384,
+      "sha256": "32d3bab4b073921615c4f2b04e302dd04c1a4e0a4557211076c8850f3766afe5",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolBuffer.h": {
+      "bytes": 5008,
+      "sha256": "68f375801c97c364a365ba5addb9283f12406d6a14737754ed288293ca46cb9c",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolEntityFieldEnumerator.h": {
+      "bytes": 4864,
+      "sha256": "66794232916f5e2bde03a91937c4d52459d16a6edeee3f02e8a562b65f0ac221",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolEntityNav.cpp": {
+      "bytes": 26762,
+      "sha256": "35e42ac7da760b38c955a52a509d7d402d59befe95a3a8df49c2f0cccef76e80",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolEntityNav.h": {
+      "bytes": 8538,
+      "sha256": "7f7ffe241681b3b64167edce5b7c3a6388bc5f84f97c5befc1a89fabc6f5d136",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolEnum.h": {
+      "bytes": 7395,
+      "sha256": "1ed1f7fe94fd588bcd04a94db1669192a873ab0dd2d014b1f77b6f9de217c652",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolLog.cpp": {
+      "bytes": 5844,
+      "sha256": "78f1584cde6efaa696e5ca19e949c084bb5a6bdd592e86b1ef2852817bec46e3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolLog.h": {
+      "bytes": 3606,
+      "sha256": "75d99490b162744a7dc651dab73cf8ae87d8e6165173f7cdef3453a92765acfd",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolNotification.cpp": {
+      "bytes": 5788,
+      "sha256": "d4da3bc4f6e0ed487767c71175d025a12142ad36c062bfe47e8e81f4542afc1e",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolNotification.h": {
+      "bytes": 7961,
+      "sha256": "c9a520ef0322cda6dae26ae2b8c454d7f0d41e11e0e276295bb88d848437d347",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolRequest.cpp": {
+      "bytes": 8167,
+      "sha256": "89ef9d32ee7495923309888bff8193d66de08551737c1f35ab4967058f17fac6",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolRequest.h": {
+      "bytes": 6550,
+      "sha256": "ffd23232a7cc8d04fb5ac95f730e9923234b076c1669122630c4b569ce7ecf45",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolServer.cpp": {
+      "bytes": 46414,
+      "sha256": "5cba9dd0b342a715452de1bab01ccd32dbd99607930c08de07eac4e0e3991ea2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/ProtocolServer.h": {
+      "bytes": 11247,
+      "sha256": "fcaaa5c62a1a077c178126776d424a401a6061481e7a9d384527813f7f668634",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QDLBuffers.cpp": {
+      "bytes": 27615,
+      "sha256": "c6a0422723caf7da3773eba24003a8b5372c67caaaccb9e0c9a72618c53edad4",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QDLBuffers.h": {
+      "bytes": 20412,
+      "sha256": "3045eb489ee9c767636c295b32074289a5928d8249ad88787c3d24d7aca1e3af",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QDLEnum.h": {
+      "bytes": 12274,
+      "sha256": "125c73e5a644eeb1f69f35a2095ef99eeeec401b8fa7a7ed3513ba1005ca2b46",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QDLProtocolServer.cpp": {
+      "bytes": 7822,
+      "sha256": "c81d224ac4740fc16bdbb7f35ab44a4103146b48a42d0c3d0152d25f5e8974e2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QDLProtocolServer.h": {
+      "bytes": 3277,
+      "sha256": "9080f7cdadc83950c2134937da0a90b1dae2699fa921edc0e4925af6982db981",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QMIBuffers.cpp": {
+      "bytes": 10022,
+      "sha256": "a89653f62ace59e221f7b6474093101789f90d64acdf8190414f5c2ce9be22ce",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QMIBuffers.h": {
+      "bytes": 11654,
+      "sha256": "1125b6dd2b9dc65e5a7631867834e323b925b25b56120e140543c065a3a7d121",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QMIEnum.h": {
+      "bytes": 46369,
+      "sha256": "4759b935cde6595963eaff0e2277cdfb47effd72fc21c1ac96d1d2df70bf7f4c",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QMIProtocolServer.cpp": {
+      "bytes": 11632,
+      "sha256": "1a99182aeec5980e2c7a4980f2d56640f696e5cbd37c42753419ffa177fddc88",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/QMIProtocolServer.h": {
+      "bytes": 4724,
+      "sha256": "64ff2098ac8bad4e42b8bd5b9ecaacda6965aa2055519593bdb62714669f43db",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/SharedBuffer.cpp": {
+      "bytes": 10739,
+      "sha256": "2dd174a4fced946ec8cc024ec79f8e9891137def675ac8455d6749dab307e858",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/SharedBuffer.h": {
+      "bytes": 5623,
+      "sha256": "4d9185863b75f358bda8090e80a632e28ddcdd3d3642ee3b6992f2d1869e4c94",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/StdAfx.h": {
+      "bytes": 5667,
+      "sha256": "b49ebfbab8b45246f11563517f39b930be260f94b63810ceb9e97786f19f87a2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Core/SyncQueue.h": {
+      "bytes": 12358,
+      "sha256": "e4f6be567856eccb3602a63d3be55a1b6f858e93fac46abf7253ee784dea6d15",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/Makefile.am": {
+      "bytes": 13,
+      "sha256": "0efd8c6557a9a3c295b73ede42af4ae150e875424f4f90dfa5ddfda00ad850a6",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/QMI/Entity.txt": {
+      "bytes": 62985,
+      "sha256": "bd1c8f56073d74ee750e893ebc7048cb6e7aef98d85850dd4f761610087d945e",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/QMI/Enum.txt": {
+      "bytes": 5551,
+      "sha256": "29e5310099eb3209f980cdaa7cf160b0fde1404bced527601046d4ea2aa12484",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/QMI/EnumEntry.txt": {
+      "bytes": 23952,
+      "sha256": "6a57433488971599a6a0b88259ae2cd9ef4709c2cfc2ba870047d2a1208a3fbd",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/QMI/Field.txt": {
+      "bytes": 33374,
+      "sha256": "e3e91ca014eea449a9a258a4a02fbfc8713d52fcc67aed666a1ce925e7cce7e3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/QMI/foo.c": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/QMI/Makefile.am": {
+      "bytes": 258,
+      "sha256": "733f9cfda21f345fc8e0b39c44a36f58ee6ec08e46d443dd99f9ca59d645f1ae",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/Database/QMI/Struct.txt": {
+      "bytes": 36512,
+      "sha256": "0af56de989849dfb85b088bdb63441aafc5d33817458f521690d376451f79c44",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiConnectionMgmt/GobiConnectionMgmt.cpp": {
+      "bytes": 79033,
+      "sha256": "e432496b7b8e08a85d1e68706c8233bb5ffa6a8848d8c3f48b1ebcb32137f99e",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiConnectionMgmt/GobiConnectionMgmt.h": {
+      "bytes": 38765,
+      "sha256": "28833cae1983a4cbbcc16dc220a6955a4cd1877e2efb70a85ebbd9035409888b",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiConnectionMgmt/GobiConnectionMgmtAPI.h": {
+      "bytes": 111847,
+      "sha256": "95219a295702100a902f29de4645b207e6e33188b5046496518aaeb88b3c9c78",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp": {
+      "bytes": 154090,
+      "sha256": "b3604c485454469edf5c41dbd504ba7732ef6b6d41a20b0144b86b2d4fe20482",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiConnectionMgmt/Makefile.am": {
+      "bytes": 662,
+      "sha256": "bf4e95b7a141611eb0b2a686f05851a7965ecc766245b92c17f070a2ac546cdd",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiImageMgmt/GobiImageMgmt.cpp": {
+      "bytes": 8363,
+      "sha256": "353563ac593359f1d0f270376bbd79e9a71e8281051d6bf18ad3b22ab4cf6500",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiImageMgmt/GobiImageMgmt.h": {
+      "bytes": 6475,
+      "sha256": "044af43724bd4e6a7c8d3bbf1457ca5662ec2f9bdbd5fb5198fa91cb135ba6f5",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiImageMgmt/GobiImageMgmtAPI.h": {
+      "bytes": 14197,
+      "sha256": "ffa2212d96fda24c7608538ca1c3cc32fffb4feba0c55f58e82f06207ab36a9d",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiImageMgmt/GobiImageMgmtExports.cpp": {
+      "bytes": 25437,
+      "sha256": "479e15d3a594e2a03247a56dfe68c49cdc485a1e6295019cb1e8b2f8bf6e4df2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiImageMgmt/Makefile.am": {
+      "bytes": 622,
+      "sha256": "93a2d1136731a67500c44405a80d963ac04d84d50b26bd27237318fcb40da323",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiQDLService/99-GobiQDLService.rules": {
+      "bytes": 2008,
+      "sha256": "6f6521f52f0aafe4f8d1a840e13c47e40ef32e49541decd681758d70735d5d69",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiQDLService/Main.cpp": {
+      "bytes": 6125,
+      "sha256": "d0aa306d777e8aeb1fd74ed39e7c69cc78132e85ef17ac917889743acbf5768e",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/GobiQDLService/Makefile.am": {
+      "bytes": 525,
+      "sha256": "3b53482e7ee7da1b91cf5cc639aa22d818970a6bb9f8aaf6a3db1e92cb680bac",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/INSTALL": {
+      "bytes": 15578,
+      "sha256": "91826b889739b720e0da7055b74a5a579dd31ad2f3b683b15302039df676e34f",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/Makefile.am": {
+      "bytes": 121,
+      "sha256": "dd4492b52b8779d4efd5777d76a724cd4a0f341a486ff406888477b65bb30539",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/NEWS": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/README": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiError.h": {
+      "bytes": 6469,
+      "sha256": "8420b2b2f026d54a3209b52ffeaef35ea6ed5919c0d885bc8975cf13c7716750",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiImageDefinitions.h": {
+      "bytes": 6835,
+      "sha256": "10f95ede963e2895cbb468120fcc206cdbbcc3154df9a0ddfe2a95d7814f6353",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiMBNMgmt.cpp": {
+      "bytes": 27444,
+      "sha256": "9eead66066085cc7c8d09cc0f9d752afb10ac651b7e45e08d4508fa85bbb2700",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiMBNMgmt.h": {
+      "bytes": 7783,
+      "sha256": "e1d07d6da70d7fec572286be155e6ebbb75887d6e716aa6b4db7ee313c0943b8",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQDLCore.cpp": {
+      "bytes": 24708,
+      "sha256": "0e97cb1eeab30637305a012b441bebc8c2a83638d9d54b5dd9d5b094d2c5b2ce",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQDLCore.h": {
+      "bytes": 5836,
+      "sha256": "50c29f05c5b7d010f52d38fd8c357b43e67b887107e13bc267966b5429737b3d",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICore.cpp": {
+      "bytes": 26137,
+      "sha256": "bb7b3e465ee1d20f8dbb6cc6108553925b70d282580deda232a09e192bce1a82",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICore.h": {
+      "bytes": 39036,
+      "sha256": "105edb774ae618b359cf5bf262a1d9ec7dbd11c0350357e4d48c7c21b96113c2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreCAT.cpp": {
+      "bytes": 7819,
+      "sha256": "20ee454b0ff16aa01f7655822642d649f5515e24c0f678b8918e0b7429cb31b7",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreDMS.cpp": {
+      "bytes": 56889,
+      "sha256": "c894057dd21357d798a133a11c36badd4d02da528b3d54e5327672957b689a51",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreImg.cpp": {
+      "bytes": 18573,
+      "sha256": "0be96c9ad2330118a331b79fd464143183810bf068740de2282e1dcb98d93829",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreImg2k.cpp": {
+      "bytes": 17330,
+      "sha256": "04dd8a950f9f28969e3706924346ee24e4d072facb3041334e643256543d5f93",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreNAS.cpp": {
+      "bytes": 57264,
+      "sha256": "99889b8328d2c9f97325130bbb1f98cd61b17ea476a63626823d1b90ee55ed88",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreOMA.cpp": {
+      "bytes": 15606,
+      "sha256": "ecb7b0afe3f7b0aa58749e8930ec01a720abfaf375240c06b7e0c3266dbae311",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICorePDS.cpp": {
+      "bytes": 36518,
+      "sha256": "496d1ee818c8f7da549b8c627331264ca95ab2787a680127bc38e8b6ac4d1d45",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreRMS.cpp": {
+      "bytes": 5944,
+      "sha256": "960fe07d7fa46d8d3555821e50f6fe8f3bf9f4cdfb842af89365f8652bea8621",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreSMS.cpp": {
+      "bytes": 27356,
+      "sha256": "e132591167dccc7204dac01ce804e1b82b641df550af388bb37aa24e58b268c2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreUIM.cpp": {
+      "bytes": 29559,
+      "sha256": "87b9274e53c9631fa1281674fd0e7df327bb76fa7ff0ca5912c87f1a0aa25e9f",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreWDS.cpp": {
+      "bytes": 81459,
+      "sha256": "82339d09950762d35965532804d7cb9ca83942f496551c99862622336965ed18",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/GobiQMIVoice.cpp": {
+      "bytes": 6463,
+      "sha256": "63fa46fd9dfae570574645bddad492739a453d1022734bee8873c8489817e933",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_1.0.40/Shared/Makefile.am": {
+      "bytes": 753,
+      "sha256": "c5d8975a042cecafde3f63a7d1a69bf83a59d0a8497195f3ed7e99d6039477e7",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/Comm.cpp": {
+      "bytes": 15999,
+      "sha256": "3a758b05f8bb9d08586b7ff9c54bb6aedf2a7f695fcd881cac7957b46820abbb",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/Comm.h": {
+      "bytes": 4362,
+      "sha256": "e183d83962e1f8088af012aba200871505f97fdfdd3a745baa1f8cae8aa81662",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/Connection.h": {
+      "bytes": 4504,
+      "sha256": "f2d65eb657c359fea381bf387b0ab8208b6b006efec0ce7c698b6d80e37b4718",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/Event.cpp": {
+      "bytes": 11063,
+      "sha256": "bb56067811076f9ea074282acc05cfca631754603796dc47b562b1c1eb82b63c",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/Event.h": {
+      "bytes": 4227,
+      "sha256": "c53834660f24b953901621160df913026745f80a9a9803639edd392e75358570",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolBuffer.cpp": {
+      "bytes": 6384,
+      "sha256": "d468be8f11d4bf6d76366b1ae4cffbc9c715824ba75f10d8fed54ce29d311f14",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolBuffer.h": {
+      "bytes": 5008,
+      "sha256": "eb88a80662be1296dec9e1ed6df050eff9ad4198ae5ed037397aeb64346ec2dc",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolEnum.h": {
+      "bytes": 10377,
+      "sha256": "a1b16997b35337b2040f088293792f40ea37becbaefd8f63cd9367c7e670b582",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolLog.cpp": {
+      "bytes": 5844,
+      "sha256": "dd76859490b1919b2e22434a319486047aec6326608879177e884384d0322af1",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolLog.h": {
+      "bytes": 3606,
+      "sha256": "609c84a9f32f2c6a42b945ba3fde77c82f3aaf7551163b52852ab3392f366ecb",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolNotification.cpp": {
+      "bytes": 5788,
+      "sha256": "39de3664970a3f927034662f9c2a3b90dc3c592f99c84067577567c1d51ed4bd",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolNotification.h": {
+      "bytes": 7961,
+      "sha256": "f98c5e6eeba00fb5aa2d9e161e8264ea672fcdee16cc41e5fbbfa7dc85a21a90",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolRequest.cpp": {
+      "bytes": 8167,
+      "sha256": "1e80a6395c381e9eb2fd1583fd3f0bb33f756d846d9df9e812f6f43fcb3d51a3",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolRequest.h": {
+      "bytes": 6550,
+      "sha256": "c4e2a84ff4cad3b2fe3ab064230b056ad3cb54c56fa84c08f3c98a0884c23ee6",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolServer.cpp": {
+      "bytes": 47336,
+      "sha256": "01da8b68771cfbc22fca960655f5e8d11d477f948237d46f9c88e3b8ab5c68b2",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolServer.h": {
+      "bytes": 11514,
+      "sha256": "511c79cae7ba83da6719980d72f9bdbb94f269b4436252e6c0694d5c8ea7b21d",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/QMIBuffers.cpp": {
+      "bytes": 10022,
+      "sha256": "46c62bcfa730bc390268a57f3460d88e1c47f91c70cc1162e050428f36e9712f",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/QMIBuffers.h": {
+      "bytes": 12139,
+      "sha256": "67e753d33e5e6ddac8f8686dff91cfeaa101ca6c696639160cddb3510ed1c260",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/QMIEnum.h": {
+      "bytes": 74958,
+      "sha256": "913f88572ef43a8850ab295b985bc7b7fedb2893d5d63f92a49a74a33e199d42",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/QMIProtocolServer.cpp": {
+      "bytes": 11817,
+      "sha256": "f1893b62eb93461d9b488ff52edbe2052940193e654e638e1c832fe256cc244a",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/QMIProtocolServer.h": {
+      "bytes": 4432,
+      "sha256": "227515c915c19413cbf847e0d781a3c3376a9585fa4ed2bab7f1b2689b537341",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/SharedBuffer.cpp": {
+      "bytes": 10388,
+      "sha256": "3181fceb0cb2b7c88829a69c6c3b6dab83a7fc94ff82d845f5038d9ad2053056",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/SharedBuffer.h": {
+      "bytes": 5623,
+      "sha256": "ce205a8927ff0702be76716a20e25eca39362edafccf3b195f814ea0a6ba6169",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/Socket.cpp": {
+      "bytes": 20960,
+      "sha256": "fb8bea5417b98dd9d3eb6332525981cfd8c633d558d65519685c39d2ad9d5e91",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/Socket.h": {
+      "bytes": 5050,
+      "sha256": "6e4a3022f6a523ab99a285e2671856b16a5c373541ba6f85e0218f4373d41b83",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/StdAfx.h": {
+      "bytes": 6269,
+      "sha256": "8fd110243ceaad95ca2658af769e28f7c49b10a9c912fec3de251a9f260bc08d",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Core/SyncQueue.h": {
+      "bytes": 12358,
+      "sha256": "ca8bf247e176bc84404cc1d221f8fd55cf487c8260f3bfc6b1e30c827ea7992b",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000Translation.cpp": {
+      "bytes": 3661,
+      "sha256": "6d2ca8ac36e2062149ab318bed4f66a788d6a284d63f75ed9f9932b0bce811b0",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000Translation.h": {
+      "bytes": 27451,
+      "sha256": "e845418dfcc61c63b7427fc1a26dcf521c7e69223df2920145c66996ffeeaa2f",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationCAT.cpp": {
+      "bytes": 5980,
+      "sha256": "66c38da8b1480be91f1848044bcb6fbfe3662eeeac9f7a6862fed6780b8c78a6",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationDMS.cpp": {
+      "bytes": 41019,
+      "sha256": "dbd598917d04acb0f9dc47884bd4cc8de4f0043931eb6e9ec3cb14b8e1433073",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationNAS.cpp": {
+      "bytes": 58476,
+      "sha256": "c8fdf879a6281a1dd42880997dd100708bff24393aa57df246d3b2754b6f0b62",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationOMA.cpp": {
+      "bytes": 14216,
+      "sha256": "224a9d74d5a58832689a22302626a0cad36cbe5ebe5230991764d4e9c7beadf3",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationPDS.cpp": {
+      "bytes": 34533,
+      "sha256": "bd080623db711ef9efb9375395242bbdab96f09c6dd0a763915e7d250ba38517",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationRMS.cpp": {
+      "bytes": 5910,
+      "sha256": "11acf01023d76da242e7f5d100373ecd11a1ce8ccaf64c48ccf07f3123952f8c",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationUIM.cpp": {
+      "bytes": 36175,
+      "sha256": "21af6bd086540338fa5efb9cefe478017d29363cce0d8cbf3a6a9271717c30a4",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationVoice.cpp": {
+      "bytes": 5721,
+      "sha256": "b8c9710dbeeb481af2dec430cd4e5ae6bb0c0c0695c6635335ac2dd459b53461",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationWDS.cpp": {
+      "bytes": 101679,
+      "sha256": "7bb23b61d4d5385e03aad2324c8aabc8931368fad40192b0e73ef7290236a036",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationWMS.cpp": {
+      "bytes": 32694,
+      "sha256": "b100774092d44743df4097f6da80bc3802be95deca8ba148a1b7ff2baf911a83",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiConnectionMgmt/GobiConnectionMgmt.cpp": {
+      "bytes": 16360,
+      "sha256": "f5141c35519d3212ddf2ddda5602b4baa8aac6cd84fd498ff4950134be0d8770",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiConnectionMgmt/GobiConnectionMgmt.h": {
+      "bytes": 8399,
+      "sha256": "68ea19d0e041ae93a568c6a38b3a747fd47e753671bafe8ddb1f21fb21e8b2da",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiConnectionMgmt/GobiConnectionMgmtAPI.h": {
+      "bytes": 500419,
+      "sha256": "f270748c8caedded9fde6d4b7bc9bb0492ab59fc863da328a422d2d43389cc31",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiConnectionMgmt/GobiConnectionMgmtAPIEnums.h": {
+      "bytes": 313107,
+      "sha256": "58248977c62857d125774cdeb788c3429379fddeb8856d36b0d6b73b4a944ba4",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiConnectionMgmt/GobiConnectionMgmtAPIStructs.h": {
+      "bytes": 721379,
+      "sha256": "732cdd7447143c1328f6801576145668b387e1f9ec8dd9a0b9935792530b1dec",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp": {
+      "bytes": 616871,
+      "sha256": "36fb3cf39e57c123d11e095064a83f95d19e64b7681ff2d8f64b5ee6b8e4fadb",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/android/assets/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5034,
+      "sha256": "c380864d8dbdc6892a33ca329fb6f870c1ccfa9dfc83db1da1a0a95b2bc7c755",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/android/assets/qml/GobiSampleCM/Info.png": {
+      "bytes": 4686,
+      "sha256": "68a1bfd7222ccb6c5cb6c10c978ba2f1fbfe89246766ce5388a8815b3bf4d463",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/android/assets/qml/GobiSampleCM/main.qml": {
+      "bytes": 17129,
+      "sha256": "bd4c505408bb5def900f06975e0a7decad0c6f4387ae838f10c73938e6ec475a",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/android/res/drawable/icon.png": {
+      "bytes": 8993,
+      "sha256": "374cf3d178d2e9d42183de71ecf5ddba830fefaddfb4f43b51493f35b777a885",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/android/res/drawable/logo.png": {
+      "bytes": 427576,
+      "sha256": "442876a188c8018a38d2359896e28492942fb459b254e290d3804e2d64ff70b4",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/GobiCMCallback.cpp": {
+      "bytes": 10164,
+      "sha256": "d980ae55c4423e4962b1002193d0261749b65791089090c7c5dd8263114686c3",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/GobiCMCallback.h": {
+      "bytes": 3545,
+      "sha256": "30e434ecfeec33eb6396bd71e062b96554b8771ecba5c458d09c94d31d8f13ff",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/GobiCMDLL.cpp": {
+      "bytes": 33106,
+      "sha256": "24aa9b8fdeb8f00a0711cb08dec2d68fbdd6ffd13e6ef8a7ab42d29d89f49625",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/GobiCMDLL.h": {
+      "bytes": 8863,
+      "sha256": "33ad7651f90bbee277fd99fc409296bc5d3f08998b1efd5938bdac6b5f6c0b69",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/main.cpp": {
+      "bytes": 1953,
+      "sha256": "f756fdf4b3eab5984d6998f7b7f07e8a4bc2c172fe1f78a8490701480360ce86",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5034,
+      "sha256": "c380864d8dbdc6892a33ca329fb6f870c1ccfa9dfc83db1da1a0a95b2bc7c755",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/qml/GobiSampleCM/Info.png": {
+      "bytes": 4686,
+      "sha256": "68a1bfd7222ccb6c5cb6c10c978ba2f1fbfe89246766ce5388a8815b3bf4d463",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/qml/GobiSampleCM/main.qml": {
+      "bytes": 17129,
+      "sha256": "bd4c505408bb5def900f06975e0a7decad0c6f4387ae838f10c73938e6ec475a",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/QTSampleCM.cpp": {
+      "bytes": 9694,
+      "sha256": "448c06ca27505587611f1d72d0d2c18a6b74d64ef2b28f50c889dd0ab41ecb5f",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/QTSampleCM.h": {
+      "bytes": 12741,
+      "sha256": "de4c17cacca823b605f61cccef6a0ad37acdc65fe9b369eb0088a153da80745a",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/SampleCM.cpp": {
+      "bytes": 47063,
+      "sha256": "e55ab6748b7134b3bb1f858267ac5660574b9d7890f94885f7581d0ae5c24ae8",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/GobiSampleCM/SampleCM.h": {
+      "bytes": 11789,
+      "sha256": "d7fb7e8967d11a6b770b0ecc28890a5b0ce99528f274dcaa54787638cd5c91fb",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Readme.txt": {
+      "bytes": 2928,
+      "sha256": "063e86d5d8fbbe93fea617a7dde5769a7cd21ad0b4f7976a0b2c5b401a19a04b",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Shared/GobiError.h": {
+      "bytes": 6166,
+      "sha256": "357fbbae9094b8f95f34542a5464455494d61ddd9c1fc946bd5f35a560e53515",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Shared/GobiQMICore.cpp": {
+      "bytes": 14020,
+      "sha256": "8f9f74cffb9f033fcbdbc3244ff84aada47e3b1186ef72e38bfb4795430b8457",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-07-12-1036/Shared/GobiQMICore.h": {
+      "bytes": 6376,
+      "sha256": "7396149fd21e4dd235b0844532dd0f265b85e4c1887681eee8947661c3cccb44",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/Comm.cpp": {
+      "bytes": 15999,
+      "sha256": "3a758b05f8bb9d08586b7ff9c54bb6aedf2a7f695fcd881cac7957b46820abbb",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/Comm.h": {
+      "bytes": 4362,
+      "sha256": "e183d83962e1f8088af012aba200871505f97fdfdd3a745baa1f8cae8aa81662",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/Connection.h": {
+      "bytes": 4504,
+      "sha256": "f2d65eb657c359fea381bf387b0ab8208b6b006efec0ce7c698b6d80e37b4718",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/Event.cpp": {
+      "bytes": 11063,
+      "sha256": "bb56067811076f9ea074282acc05cfca631754603796dc47b562b1c1eb82b63c",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/Event.h": {
+      "bytes": 4227,
+      "sha256": "c53834660f24b953901621160df913026745f80a9a9803639edd392e75358570",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolBuffer.cpp": {
+      "bytes": 6384,
+      "sha256": "d468be8f11d4bf6d76366b1ae4cffbc9c715824ba75f10d8fed54ce29d311f14",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolBuffer.h": {
+      "bytes": 5008,
+      "sha256": "eb88a80662be1296dec9e1ed6df050eff9ad4198ae5ed037397aeb64346ec2dc",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolEnum.h": {
+      "bytes": 10377,
+      "sha256": "a1b16997b35337b2040f088293792f40ea37becbaefd8f63cd9367c7e670b582",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolLog.cpp": {
+      "bytes": 5844,
+      "sha256": "dd76859490b1919b2e22434a319486047aec6326608879177e884384d0322af1",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolLog.h": {
+      "bytes": 3606,
+      "sha256": "609c84a9f32f2c6a42b945ba3fde77c82f3aaf7551163b52852ab3392f366ecb",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolNotification.cpp": {
+      "bytes": 5788,
+      "sha256": "39de3664970a3f927034662f9c2a3b90dc3c592f99c84067577567c1d51ed4bd",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolNotification.h": {
+      "bytes": 7961,
+      "sha256": "f98c5e6eeba00fb5aa2d9e161e8264ea672fcdee16cc41e5fbbfa7dc85a21a90",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolRequest.cpp": {
+      "bytes": 8167,
+      "sha256": "1e80a6395c381e9eb2fd1583fd3f0bb33f756d846d9df9e812f6f43fcb3d51a3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolRequest.h": {
+      "bytes": 6550,
+      "sha256": "c4e2a84ff4cad3b2fe3ab064230b056ad3cb54c56fa84c08f3c98a0884c23ee6",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolServer.cpp": {
+      "bytes": 47336,
+      "sha256": "01da8b68771cfbc22fca960655f5e8d11d477f948237d46f9c88e3b8ab5c68b2",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/ProtocolServer.h": {
+      "bytes": 11514,
+      "sha256": "511c79cae7ba83da6719980d72f9bdbb94f269b4436252e6c0694d5c8ea7b21d",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/QMIBuffers.cpp": {
+      "bytes": 10022,
+      "sha256": "46c62bcfa730bc390268a57f3460d88e1c47f91c70cc1162e050428f36e9712f",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/QMIBuffers.h": {
+      "bytes": 12139,
+      "sha256": "67e753d33e5e6ddac8f8686dff91cfeaa101ca6c696639160cddb3510ed1c260",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/QMIEnum.h": {
+      "bytes": 74958,
+      "sha256": "913f88572ef43a8850ab295b985bc7b7fedb2893d5d63f92a49a74a33e199d42",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/QMIProtocolServer.cpp": {
+      "bytes": 11817,
+      "sha256": "f1893b62eb93461d9b488ff52edbe2052940193e654e638e1c832fe256cc244a",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/QMIProtocolServer.h": {
+      "bytes": 4432,
+      "sha256": "227515c915c19413cbf847e0d781a3c3376a9585fa4ed2bab7f1b2689b537341",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/SharedBuffer.cpp": {
+      "bytes": 10388,
+      "sha256": "3181fceb0cb2b7c88829a69c6c3b6dab83a7fc94ff82d845f5038d9ad2053056",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/SharedBuffer.h": {
+      "bytes": 5623,
+      "sha256": "ce205a8927ff0702be76716a20e25eca39362edafccf3b195f814ea0a6ba6169",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/Socket.cpp": {
+      "bytes": 20960,
+      "sha256": "fb8bea5417b98dd9d3eb6332525981cfd8c633d558d65519685c39d2ad9d5e91",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/Socket.h": {
+      "bytes": 5050,
+      "sha256": "6e4a3022f6a523ab99a285e2671856b16a5c373541ba6f85e0218f4373d41b83",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/StdAfx.h": {
+      "bytes": 6269,
+      "sha256": "8fd110243ceaad95ca2658af769e28f7c49b10a9c912fec3de251a9f260bc08d",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Core/SyncQueue.h": {
+      "bytes": 12358,
+      "sha256": "ca8bf247e176bc84404cc1d221f8fd55cf487c8260f3bfc6b1e30c827ea7992b",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000Translation.cpp": {
+      "bytes": 3661,
+      "sha256": "6d2ca8ac36e2062149ab318bed4f66a788d6a284d63f75ed9f9932b0bce811b0",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000Translation.h": {
+      "bytes": 27451,
+      "sha256": "e845418dfcc61c63b7427fc1a26dcf521c7e69223df2920145c66996ffeeaa2f",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationCAT.cpp": {
+      "bytes": 5980,
+      "sha256": "66c38da8b1480be91f1848044bcb6fbfe3662eeeac9f7a6862fed6780b8c78a6",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationDMS.cpp": {
+      "bytes": 41019,
+      "sha256": "dbd598917d04acb0f9dc47884bd4cc8de4f0043931eb6e9ec3cb14b8e1433073",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationNAS.cpp": {
+      "bytes": 58476,
+      "sha256": "c8fdf879a6281a1dd42880997dd100708bff24393aa57df246d3b2754b6f0b62",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationOMA.cpp": {
+      "bytes": 14216,
+      "sha256": "224a9d74d5a58832689a22302626a0cad36cbe5ebe5230991764d4e9c7beadf3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationPDS.cpp": {
+      "bytes": 34533,
+      "sha256": "bd080623db711ef9efb9375395242bbdab96f09c6dd0a763915e7d250ba38517",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationRMS.cpp": {
+      "bytes": 5910,
+      "sha256": "11acf01023d76da242e7f5d100373ecd11a1ce8ccaf64c48ccf07f3123952f8c",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationUIM.cpp": {
+      "bytes": 36175,
+      "sha256": "21af6bd086540338fa5efb9cefe478017d29363cce0d8cbf3a6a9271717c30a4",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationVoice.cpp": {
+      "bytes": 5721,
+      "sha256": "b8c9710dbeeb481af2dec430cd4e5ae6bb0c0c0695c6635335ac2dd459b53461",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationWDS.cpp": {
+      "bytes": 101679,
+      "sha256": "7bb23b61d4d5385e03aad2324c8aabc8931368fad40192b0e73ef7290236a036",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationWMS.cpp": {
+      "bytes": 32694,
+      "sha256": "b100774092d44743df4097f6da80bc3802be95deca8ba148a1b7ff2baf911a83",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiConnectionMgmt/GobiConnectionMgmt.cpp": {
+      "bytes": 16360,
+      "sha256": "f5141c35519d3212ddf2ddda5602b4baa8aac6cd84fd498ff4950134be0d8770",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiConnectionMgmt/GobiConnectionMgmt.h": {
+      "bytes": 8399,
+      "sha256": "68ea19d0e041ae93a568c6a38b3a747fd47e753671bafe8ddb1f21fb21e8b2da",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiConnectionMgmt/GobiConnectionMgmtAPI.h": {
+      "bytes": 518570,
+      "sha256": "9aba8fa87aca11d3019c5b0257338d79172c544c819c6b8a4999c6526c25c294",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiConnectionMgmt/GobiConnectionMgmtAPIEnums.h": {
+      "bytes": 339112,
+      "sha256": "721403ce115dfcc73f21901c29ab93efccee378d0b735ee115b14a9369189584",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiConnectionMgmt/GobiConnectionMgmtAPIStructs.h": {
+      "bytes": 754869,
+      "sha256": "824d80c7323f247528794dd77df0e54f724f2512cb7f3a666189122af79c9835",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp": {
+      "bytes": 639308,
+      "sha256": "2127addd24d8c86cae098ff25c4fb9e4f8480b771719aa9f3dcd253d0dc7cc68",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/android/assets/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5581,
+      "sha256": "3f490ec7c93038e8488833c1afd4b6dcf649b019f7906059b526b2bbaa180f40",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/android/assets/qml/GobiSampleCM/Info.png": {
+      "bytes": 5300,
+      "sha256": "295bc6e554e81e94ec671fab76f38d4b0cfa8af8a8d1e446abf10afa7e4f0681",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/android/assets/qml/GobiSampleCM/main.qml": {
+      "bytes": 17129,
+      "sha256": "bd4c505408bb5def900f06975e0a7decad0c6f4387ae838f10c73938e6ec475a",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/android/res/drawable/icon.png": {
+      "bytes": 7361,
+      "sha256": "074343f9b17968557ee7182f170c71cd25441ce0bee2a1941c252c01a801d5ab",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/android/res/drawable/logo.png": {
+      "bytes": 427576,
+      "sha256": "442876a188c8018a38d2359896e28492942fb459b254e290d3804e2d64ff70b4",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/GobiCMCallback.cpp": {
+      "bytes": 10164,
+      "sha256": "d980ae55c4423e4962b1002193d0261749b65791089090c7c5dd8263114686c3",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/GobiCMCallback.h": {
+      "bytes": 3545,
+      "sha256": "30e434ecfeec33eb6396bd71e062b96554b8771ecba5c458d09c94d31d8f13ff",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/GobiCMDLL.cpp": {
+      "bytes": 33106,
+      "sha256": "24aa9b8fdeb8f00a0711cb08dec2d68fbdd6ffd13e6ef8a7ab42d29d89f49625",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/GobiCMDLL.h": {
+      "bytes": 8863,
+      "sha256": "33ad7651f90bbee277fd99fc409296bc5d3f08998b1efd5938bdac6b5f6c0b69",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/main.cpp": {
+      "bytes": 1953,
+      "sha256": "f756fdf4b3eab5984d6998f7b7f07e8a4bc2c172fe1f78a8490701480360ce86",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5581,
+      "sha256": "3f490ec7c93038e8488833c1afd4b6dcf649b019f7906059b526b2bbaa180f40",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/qml/GobiSampleCM/Info.png": {
+      "bytes": 5300,
+      "sha256": "295bc6e554e81e94ec671fab76f38d4b0cfa8af8a8d1e446abf10afa7e4f0681",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/qml/GobiSampleCM/main.qml": {
+      "bytes": 17129,
+      "sha256": "bd4c505408bb5def900f06975e0a7decad0c6f4387ae838f10c73938e6ec475a",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/QTSampleCM.cpp": {
+      "bytes": 9694,
+      "sha256": "448c06ca27505587611f1d72d0d2c18a6b74d64ef2b28f50c889dd0ab41ecb5f",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/QTSampleCM.h": {
+      "bytes": 12741,
+      "sha256": "de4c17cacca823b605f61cccef6a0ad37acdc65fe9b369eb0088a153da80745a",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/SampleCM.cpp": {
+      "bytes": 47063,
+      "sha256": "e55ab6748b7134b3bb1f858267ac5660574b9d7890f94885f7581d0ae5c24ae8",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/GobiSampleCM/SampleCM.h": {
+      "bytes": 11789,
+      "sha256": "d7fb7e8967d11a6b770b0ecc28890a5b0ce99528f274dcaa54787638cd5c91fb",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Readme.txt": {
+      "bytes": 4831,
+      "sha256": "1c692da1ed203589dedecbe3a867a8e23114b0fdfb75506fbe4b2255d0607678",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Shared/GobiError.h": {
+      "bytes": 6166,
+      "sha256": "357fbbae9094b8f95f34542a5464455494d61ddd9c1fc946bd5f35a560e53515",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Shared/GobiQMICore.cpp": {
+      "bytes": 14020,
+      "sha256": "8f9f74cffb9f033fcbdbc3244ff84aada47e3b1186ef72e38bfb4795430b8457",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2012-09-12-0719/Shared/GobiQMICore.h": {
+      "bytes": 6376,
+      "sha256": "7396149fd21e4dd235b0844532dd0f265b85e4c1887681eee8947661c3cccb44",
+      "git_mode": "100755"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/Comm.cpp": {
+      "bytes": 16042,
+      "sha256": "01b76db69dc64d18e83b60232918d02aeec4af60a3817fd363db8512af1c6d55",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/Comm.h": {
+      "bytes": 4363,
+      "sha256": "35a686e1ba1ad410b4f6dc4fc16ee543d9a6f4eeea7b21691673d6c00bf82f92",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/Connection.h": {
+      "bytes": 4553,
+      "sha256": "ad976b7eac7468c8c0abf8a20924d4e61c31ace6b52620747239d189d024ebe9",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/Event.cpp": {
+      "bytes": 11064,
+      "sha256": "b3cd6edaba849a7ca50248c68405b87f277ab9282fb083fb0946b169bc7b3635",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/Event.h": {
+      "bytes": 4228,
+      "sha256": "8e3403560e9ca9a483f92636130bb0799332ebe66426f16a5df4155f144c915b",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolBuffer.cpp": {
+      "bytes": 6385,
+      "sha256": "e05cd0cdb8a73fadc580650aff2e5ed6a3e2aa299573f980e3f44187cec6257e",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolBuffer.h": {
+      "bytes": 5009,
+      "sha256": "3d441bf5f3d22c701b35d140ebbe12bd6b2ecc74dd827498168cad197c991ef5",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolEnum.h": {
+      "bytes": 15537,
+      "sha256": "920a68b56e35c0690faf192e0206c955c85d9716da19610a80642618ae02250c",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolLog.cpp": {
+      "bytes": 5845,
+      "sha256": "66d96907b2b5e61332571d16a2ef3f015a3a95a226c1127f5a6a528a46c1fbf4",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolLog.h": {
+      "bytes": 3607,
+      "sha256": "b8b4bf643646a356e01e16eef64e7dafd3f701b99b09d414a1403dd129e0ef7f",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolNotification.cpp": {
+      "bytes": 5789,
+      "sha256": "b429998cab084e2d903ae2919dcf424fabc95c2fdb927d9e5f54add5ec00cc93",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolNotification.h": {
+      "bytes": 7962,
+      "sha256": "a28199cd51539604efb8087965d1946a46320cbb4da18f8776fa26d23bec2b9a",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolRequest.cpp": {
+      "bytes": 8168,
+      "sha256": "98f6a6eefe8c275e09c305b03c11a3a7dd2895afeb89df1a4c3b2ffb33b0f22d",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolRequest.h": {
+      "bytes": 6551,
+      "sha256": "f5dafd0ca4aa5c2566db80f5a4c8605bed5a35c0d7799a3eb179b9f6dea36c5e",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolServer.cpp": {
+      "bytes": 47337,
+      "sha256": "233c77ef1a4eafc08f33be942773377a15b069f9d8f34e5dfc8221ac5a90ddc7",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolServer.h": {
+      "bytes": 11515,
+      "sha256": "1e18c847bbfe7993587f4c876b7e83758faf9eeb48b2daffce841909bf9a9159",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/QMIBuffers.cpp": {
+      "bytes": 10023,
+      "sha256": "62406264a4b0daffddccfc9c34413c3af772ee1931235bdbbec892415ed7f7fa",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/QMIBuffers.h": {
+      "bytes": 12140,
+      "sha256": "b12f2a42bf0021b3190b40416da1a9b4a02da2b942662f41d0a4249cc261afe9",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/QMIEnum.h": {
+      "bytes": 101860,
+      "sha256": "8eaa2a65ca9f37610acc91c3cf912aaff636ca494953b55600cf33d656bfc269",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/QMIProtocolServer.cpp": {
+      "bytes": 12172,
+      "sha256": "6ab1794ed8e6e4e2e3f04c9e8c86bbb9ccce636e40739ca9cfbda47a8b0e4ab0",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/QMIProtocolServer.h": {
+      "bytes": 4433,
+      "sha256": "4736a0a309c4fc90230f9ad9c354348a46918611ec44b8ef535a3d92346e41fc",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/SharedBuffer.cpp": {
+      "bytes": 10389,
+      "sha256": "1c1e1874743105dacc87c840ff984a587ac9e81effe8e4adf071006baa9f882e",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/SharedBuffer.h": {
+      "bytes": 5624,
+      "sha256": "1372a796b3be479757abf07d5ce2e45d66d3b9ab92edb4a11791be0423402d14",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/Socket.cpp": {
+      "bytes": 21728,
+      "sha256": "92d8cc6397ca4b0cd9f8e12e9135a64076796839be6d091918335b6e0e73d985",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/Socket.h": {
+      "bytes": 5045,
+      "sha256": "1a2d501e2aa6c9f65823498e443d4b0aca1b1efdd8c7afa0502134b7a03fe1a8",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/StdAfx.h": {
+      "bytes": 6270,
+      "sha256": "83a98b8e1fb51184fc2145346b65d8dfadac702e45029f9afb182412a6f3bd77",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Core/SyncQueue.h": {
+      "bytes": 12359,
+      "sha256": "62bf38a878b22eb025f269de2708c01ca468c274efe8eab7acf0036e7565345e",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000Translation.cpp": {
+      "bytes": 3662,
+      "sha256": "020b8495fb26a86c3b843d8f2bce4366eb539df8303780c01ea15928662ff658",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000Translation.h": {
+      "bytes": 27452,
+      "sha256": "c4c05bec7b32dc387c579453e16a6e0caa3072683209076183822724245954e9",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationCAT.cpp": {
+      "bytes": 5981,
+      "sha256": "75841986b8c104605a3b77498c850bd870b52a1968673f4f1e06bc5051f8dea8",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationDMS.cpp": {
+      "bytes": 41020,
+      "sha256": "c6d1ed21fc9bf0df1239d07a0bccbdbb39cc9e16f4d2fb726b572f36e45797f2",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationNAS.cpp": {
+      "bytes": 58477,
+      "sha256": "06f8ecb3a9fb63640d6e09f886243d5dbc7b0e6c3a7d4947cf868ef608bbad21",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationOMA.cpp": {
+      "bytes": 14217,
+      "sha256": "aca4d5faba173e13eb8cec8971b2922674a2553dec0279f57a410e54f128d084",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationPDS.cpp": {
+      "bytes": 34534,
+      "sha256": "e3592e8b60b5d3b6de80469cb8a3233aab260ca69c49c938a442db5e2125b0db",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationRMS.cpp": {
+      "bytes": 5911,
+      "sha256": "84a79ea32f3688fe221c1490e76890c7e284cb174cb99729fe44ad64d2343a4a",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationUIM.cpp": {
+      "bytes": 36176,
+      "sha256": "a43192195539a4441289b441f3162c33ddac0e23c3daed012022534e2c5091df",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationVoice.cpp": {
+      "bytes": 5722,
+      "sha256": "8ae2a505182c6b56e65bf522d6bd034b86069cc6a634d03767fd035f88410baa",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationWDS.cpp": {
+      "bytes": 101680,
+      "sha256": "b1068b39c567503efd44237b54dbbe70a471d475524622f0f63579254d80880e",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationWMS.cpp": {
+      "bytes": 32695,
+      "sha256": "52cba148a8199fa2178d95ef3b034ce2c33b08ff25740b8262bc2fc8e26300ee",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiConnectionMgmt/GobiConnectionMgmt.cpp": {
+      "bytes": 16361,
+      "sha256": "5315f57ae39f7ca1a24638e8e1fab61520c0115e60986b7e21def7fd8ec880ee",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiConnectionMgmt/GobiConnectionMgmt.h": {
+      "bytes": 8400,
+      "sha256": "799e9b7ceb5866a73a881d7ba04f25f99ebcb28cd8ef83637c934e586cebaccc",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiConnectionMgmt/GobiConnectionMgmtAPI.h": {
+      "bytes": 658000,
+      "sha256": "4247bbac9def2d732b0378f177ae923abf3abf1d2e9b197a9c43ad8d31f1f00f",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiConnectionMgmt/GobiConnectionMgmtAPIEnums.h": {
+      "bytes": 381838,
+      "sha256": "4f9568bce8bcd3ea3d108e3a412e97222aceedc36786d408e48d149a48bd5bca",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiConnectionMgmt/GobiConnectionMgmtAPIStructs.h": {
+      "bytes": 903918,
+      "sha256": "622dcabf32ee8fa9dd66c6c511479cdf978fddbe6dbf3c1308b6393ab55c393d",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp": {
+      "bytes": 811263,
+      "sha256": "163d5acbfa75a59cc8d9618d5b3283cf4a03fe0f47c2d3f3e7da2837c2a244a8",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/android/assets/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5581,
+      "sha256": "3f490ec7c93038e8488833c1afd4b6dcf649b019f7906059b526b2bbaa180f40",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/android/assets/qml/GobiSampleCM/Info.png": {
+      "bytes": 5300,
+      "sha256": "295bc6e554e81e94ec671fab76f38d4b0cfa8af8a8d1e446abf10afa7e4f0681",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/android/assets/qml/GobiSampleCM/main.qml": {
+      "bytes": 17130,
+      "sha256": "bc1220d0960e16462a5a2dddc4e21e814c180ad70546e0cbb1ebdad20b0abd73",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/android/res/drawable/icon.png": {
+      "bytes": 7361,
+      "sha256": "074343f9b17968557ee7182f170c71cd25441ce0bee2a1941c252c01a801d5ab",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/android/res/drawable/logo.png": {
+      "bytes": 427576,
+      "sha256": "442876a188c8018a38d2359896e28492942fb459b254e290d3804e2d64ff70b4",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/GobiCMCallback.cpp": {
+      "bytes": 10165,
+      "sha256": "34fa39d568f5666fa92c30f5cbf6c9f6326b0c0dd55fbb876714893b59639a6b",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/GobiCMCallback.h": {
+      "bytes": 3546,
+      "sha256": "c6e7d11e2361ea75f6b69517ab20ccaa56fa88ff9d579fa4b9432120b53489a3",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/GobiCMDLL.cpp": {
+      "bytes": 33095,
+      "sha256": "dbd1ebd7ded8de683a63c7164ae1ac398dde69582972f2206fa2d576e26f61ba",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/GobiCMDLL.h": {
+      "bytes": 8864,
+      "sha256": "235fa9d02c4cbc383c02f3b4313b065c124c1f897c8a79f9731ca7c5eeffb4ca",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/main.cpp": {
+      "bytes": 1954,
+      "sha256": "7ebb16b95f74ebb0dd7004e9d11624d4b8b1e019b2155a5e9a8a544581e76dc6",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/qml/GobiSampleCM/Connect.png": {
+      "bytes": 5581,
+      "sha256": "3f490ec7c93038e8488833c1afd4b6dcf649b019f7906059b526b2bbaa180f40",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/qml/GobiSampleCM/Info.png": {
+      "bytes": 5300,
+      "sha256": "295bc6e554e81e94ec671fab76f38d4b0cfa8af8a8d1e446abf10afa7e4f0681",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/qml/GobiSampleCM/main.qml": {
+      "bytes": 17130,
+      "sha256": "bc1220d0960e16462a5a2dddc4e21e814c180ad70546e0cbb1ebdad20b0abd73",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/QTSampleCM.cpp": {
+      "bytes": 9695,
+      "sha256": "0c61727869dc2ff3cd42e8f658c7e63bd3473d4556ffe0ab3fe27bce36a537e6",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/QTSampleCM.h": {
+      "bytes": 12742,
+      "sha256": "5d031e3ab01d54d7ee5293a1677e4e6a72e0e2298300855bf7046445c114ce15",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/SampleCM.cpp": {
+      "bytes": 47064,
+      "sha256": "4ddfd9305db46dd84d31644ba9e9319e241b1f2a0870fd4b36dcf1207cf4d870",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/SampleCM.h": {
+      "bytes": 11790,
+      "sha256": "01c9147845c0e31699ad595d4fa55acc1daac0c2061c26aaa32dfc486fa530f4",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Readme.txt": {
+      "bytes": 6286,
+      "sha256": "d9011417ad86179e30ac5b8839a21fe4541a34a528a5298af5347e64d9dee37c",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Shared/GobiError.h": {
+      "bytes": 6167,
+      "sha256": "b8d1886ad8f269f5cd979d7c65e9fbb85b18123b4401eec7a982827fa42dee60",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Shared/GobiQMICore.cpp": {
+      "bytes": 14059,
+      "sha256": "11b64856eddda15ffe868321ac4d896793496738b0d2fccde599dae7bb284450",
+      "git_mode": "100644"
+    },
+    "gobi-api/GobiAPI_2013-07-31-1347/Shared/GobiQMICore.h": {
+      "bytes": 6377,
+      "sha256": "cd3c471c2872c3ec79d44332a73d0964d5f84eb41504c4afe9b4a1a3a4779d61",
+      "git_mode": "100644"
+    },
+    "meson_options.txt": {
+      "bytes": 1739,
+      "sha256": "1df356d452a07312060be31479efb7ab9013e3638689ed75f0d7c7ea96293f4b",
+      "git_mode": "100644"
+    },
+    "meson.build": {
+      "bytes": 9262,
+      "sha256": "c966350bd1085c92a21307ab3911f4bb4e4bffed4097eacd7c1da1b552b28f0a",
+      "git_mode": "100644"
+    },
+    "NEWS": {
+      "bytes": 59680,
+      "sha256": "8fa4042fe852ed503682d15bf0bb5e9e701b909258ee20a826346013df9807b0",
+      "git_mode": "100644"
+    },
+    "README.md": {
+      "bytes": 912,
+      "sha256": "f5559cb197aa5f38328ea998f73e907b5135c66d4aa948355b53bd80380b6db3",
+      "git_mode": "100644"
+    },
+    "RELEASING": {
+      "bytes": 2730,
+      "sha256": "3c234e17eab1765d434155af964b32594a75fd59a269496739d3a061f98ce2a2",
+      "git_mode": "100644"
+    },
+    "src/common/meson.build": {
+      "bytes": 369,
+      "sha256": "4d191ba47979613f7668dce8b4e6c290650ab48a5a47a8fc5ead1ed5974be76b",
+      "git_mode": "100644"
+    },
+    "src/common/qmi-common.c": {
+      "bytes": 1395,
+      "sha256": "a91c6830b5a730b426ed89b9adf2354a4941ba4cbb0486505f0fee97edd6c379",
+      "git_mode": "100644"
+    },
+    "src/common/qmi-common.h": {
+      "bytes": 460,
+      "sha256": "a562fb86f2a7834cb146c9c84fbfbdfdacb29d462798e3a2db291f9932864e36",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/76-qmi-device-group.rules.in": {
+      "bytes": 888,
+      "sha256": "4a513851d596d6a9aa17b00e5b6738bf71a1b4d67da340dd0f4458564a12b9f2",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/76-qmi-device-ownership.rules.in": {
+      "bytes": 756,
+      "sha256": "b6508b243c318a605a22e2bbc3926b8fab121865bb3a4e30aa15df0c6c289f50",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/generated/meson.build": {
+      "bytes": 9769,
+      "sha256": "c62e03652445fc9a1914b0cc25c7c825017709fd2b573ebb1d04ef5877124c83",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/kernel/if_link_rmnet.h": {
+      "bytes": 1353,
+      "sha256": "c19e01b2fe66826144a98dfad05ae103878a7efba408545c76622657e1c6e205",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/libqmi-glib.h": {
+      "bytes": 2888,
+      "sha256": "ba9a4cdb2d86a29b1e0f7ed885e82c745ff8436588dd39923a7c0c8a912a842a",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/meson.build": {
+      "bytes": 4587,
+      "sha256": "0bacedac11caf834963e22101ba027a6c3ddbf77a2a6b22a608f3888562a6ff8",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-client.c": {
+      "bytes": 10038,
+      "sha256": "ee4e05f7efcce9a02e3e219be03d6dd9298566e5b8a664acd0d3dd3ca622e07b",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-client.h": {
+      "bytes": 7346,
+      "sha256": "f58aa002e03807a9f46e59170c88ef067f048a7fc5e230b103b087087b607648",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-compat.c": {
+      "bytes": 103490,
+      "sha256": "826fca4bc949d03374553ad11a3ebe5a0c6e4a26942430d6b167afd7fef88884",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-compat.h": {
+      "bytes": 203001,
+      "sha256": "316746d871332e4358b8bb2d0a90d06ea1b5adda1d9a1791ab66b8c0ba8ea5f2",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-device.c": {
+      "bytes": 128722,
+      "sha256": "8180de9f7355812b27344d6bbbd5c3b461b157ef55ebd005be919e6622ddf3a8",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-device.h": {
+      "bytes": 49094,
+      "sha256": "b64001f8ecf3fe478215ee701f5e94f7fdea5f14078b3918538caa995b4feeab",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint-mbim.c": {
+      "bytes": 16913,
+      "sha256": "d14bec5b2ab18c4bfee06b222e83423f8c3d44efb657cd338478d385f99dd97e",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint-mbim.h": {
+      "bytes": 2314,
+      "sha256": "693d7ff2a9c16d6d85033df0f5f21abc3f9d97405d548c13cff1b83dd7c6d895",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint-qmux.c": {
+      "bytes": 20230,
+      "sha256": "6190de4b275c1a61a866bd8aa516ca50fd79e5025852488627b54a415f92d316",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint-qmux.h": {
+      "bytes": 2472,
+      "sha256": "c8c111f9a7b84176f4ab58483abc1d56502eab9d0dd31fcf0c2b357c840985fb",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint-qrtr.c": {
+      "bytes": 22431,
+      "sha256": "bc243f9293f4e107e005e32ae0a92658b59abb63eced3f4d624deefd1f0fde0d",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint-qrtr.h": {
+      "bytes": 2329,
+      "sha256": "8702b61992b4642d1080930e181e1ea98db20277e1196824fd3f95690bb49baf",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint.c": {
+      "bytes": 11802,
+      "sha256": "1083b52a68205f66cb2f89a9bf8a6cb48b937224c92677fa8134151d5879bf09",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-endpoint.h": {
+      "bytes": 7234,
+      "sha256": "ae403d679cc42aaf927a086d3af22a04b3338ffb20748f5dc32239ccf1ec109a",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-dms.c": {
+      "bytes": 3385,
+      "sha256": "daedf8f88520fe02637d28cd27f8b73269fe562cf226c137814bb4004a6d63de",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-dms.h": {
+      "bytes": 20202,
+      "sha256": "59a3cb21409ace45df98f0f568b9fbe0b7aa4eea5169d4f3f3a6c3d7b4a092f8",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-dsd.h": {
+      "bytes": 4435,
+      "sha256": "b91e59573e7d2c411d38bda5a495c49bf1da9b23edce622246063b7fff2aecff",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-fox.h": {
+      "bytes": 2010,
+      "sha256": "11e83d96f2ef0fab0d0c136f840dbee8ebd714afcf08d1d3f1469e580ad3a620",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-gas.h": {
+      "bytes": 3305,
+      "sha256": "69e826fa7d254b0a3b0a954665830f6c209770e297f09227022a13120ed88fba",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-ims.h": {
+      "bytes": 2231,
+      "sha256": "d48313627486d9d4bfcab251d13d22664024e7c3225730845be7aaf0184887f0",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-imsa.h": {
+      "bytes": 3027,
+      "sha256": "2df4c0256e0eecff160bdf49164584f82b1cfc50c64a697694cb6a680ed1ede8",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-imsdcm.h": {
+      "bytes": 3110,
+      "sha256": "11e85c6593597c81b418d1f98efd2606ef976be508e6227829b4f16e59ae1e94",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-imsp.h": {
+      "bytes": 2139,
+      "sha256": "f5fbc93c1c035ae308985105a764b28af369e0cb2b405bf51eee426dd052ce6b",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-loc.h": {
+      "bytes": 29632,
+      "sha256": "8ddf920670e11930871ead67c17656c42cc5512cb625e3bbb26c4d7109c092f2",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-nas.c": {
+      "bytes": 2404,
+      "sha256": "cd9ef0a0783ce70139c821f7058dd34b013041b40142f3067df4d306fbf6d79c",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-nas.h": {
+      "bytes": 77067,
+      "sha256": "2f973b1ace75f9b7944b8f217921cf2cf462e16217587fab2b70163f5bd66cf0",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-oma.h": {
+      "bytes": 5851,
+      "sha256": "63591d32e8aabfa0f7d9e3792d423bfbdab8e7d87a017670c11b80ca5c1fb946",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-pbm.h": {
+      "bytes": 6908,
+      "sha256": "9bab066df88a1bce8b26a84b87764ade4ad002e0ad83131cfc9d0524bec02c7a",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-pdc.h": {
+      "bytes": 2379,
+      "sha256": "c58b5aa5e2edb6984389563ff6b8565049b5dad11fe6ddc734c71c801ff8c3a8",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-pds.h": {
+      "bytes": 8619,
+      "sha256": "050c733a45654ee6f8db42ea367ff5d9b090135b83b0de98dedf2461609d4bde",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-private.h": {
+      "bytes": 2917,
+      "sha256": "8e68c7e9a1b42e266c7005a96f245090121c3af8c6534f56a63c889bc784f258",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-qos.h": {
+      "bytes": 2566,
+      "sha256": "102ccf9be4d134d1c5146b2426c7fa3de99961b2866408a2906ec62d41fa0d69",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-sar.h": {
+      "bytes": 3077,
+      "sha256": "f4afb390a1e987d0040cab9baf3bb211b5c19d73a8bb56781c85222d080271a9",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-ssc.h": {
+      "bytes": 1758,
+      "sha256": "444aab96867b61516970ecf18d4aebcc5e2b8a1ad32a96658e8d3f58a7306d8d",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-uim.h": {
+      "bytes": 25498,
+      "sha256": "6190b35ff701078df98c6275c3de04c1dfc43098bf1febf4271ac18ab9476e5a",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-voice.h": {
+      "bytes": 53449,
+      "sha256": "f87f33d8da543318ba16b808717fb5eafb6216aea96b81be6e8768ac79267f34",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-wda.h": {
+      "bytes": 4268,
+      "sha256": "8d7298dbb3b5547d2744ed2b80af7f16d8508c6aab96608d88c3cdb3482bc3c3",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-wds.c": {
+      "bytes": 2407,
+      "sha256": "54fb61c23111eb790655f5bee76e1c4964b3ba8b7c640a8cb5dca8cef0bc2058",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-wds.h": {
+      "bytes": 133112,
+      "sha256": "d996dab3d9bed89a48f53b1fbf3df1efe0c0727236580501737a4f84c7c75c9d",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums-wms.h": {
+      "bytes": 23080,
+      "sha256": "11fc53318d4df4467bb63e985c8c81508f3e83cfc8e9a50e07f14f5b5bec3621",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-enums.h": {
+      "bytes": 9807,
+      "sha256": "b1976db20c50fb2ca64959f34432c72a0a0aeccb3bfb0ebaa7511e327ff9af1e",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-errors.h": {
+      "bytes": 23527,
+      "sha256": "20338363406547f675c512f59640d8f2a70a20bd6d0dff63f17a2069854f9137",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-file.c": {
+      "bytes": 5627,
+      "sha256": "0a534959e83a620f297e61d9fcad8b40767cee9c99439db7a8779b031a6ac8eb",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-file.h": {
+      "bytes": 2836,
+      "sha256": "ec4292c9820d6c5d5c962374a769089586fe1a930a16ac25c1d1c196bfe78e43",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-flags64-dms.h": {
+      "bytes": 11428,
+      "sha256": "775f3622071ac798c219d60f463ba2deb3bfc631309f1e301358209c6a8b3f20",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-flags64-dsd.h": {
+      "bytes": 7240,
+      "sha256": "3e6c550d32f0794bb71cdcce8436d79788bcf0a246a7cdf3810063d8769dbd3e",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-flags64-loc.h": {
+      "bytes": 7718,
+      "sha256": "525bbc6b025ae6b19bf01a3eaceaebb413ccb6c11c1723722ec0792f94461c0d",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-flags64-nas.h": {
+      "bytes": 11294,
+      "sha256": "e3d6a115a06f699d41269ccbc262a706ef71d3021cd5e50a9c555eea4f59dfd6",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-flags64-wds.h": {
+      "bytes": 2725,
+      "sha256": "a54bf152a9d17b793583db16bc10defdc9607243bdf4abf8ca7963f97072f3a5",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-helpers.c": {
+      "bytes": 25874,
+      "sha256": "2cab0ff48027883155a18626a4bb0378559a82f119bef383f93e8bae8f27c2d2",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-helpers.h": {
+      "bytes": 5617,
+      "sha256": "8b92229039f3463934b0170dca79e0c013a458d3bf871120724540d6798294c9",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-message-context.c": {
+      "bytes": 2839,
+      "sha256": "0b441c9e75465f9601fae2fd0ad7a36b90fdc6994f2ef7dd9ef5268a194aaee4",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-message-context.h": {
+      "bytes": 4706,
+      "sha256": "258f7660ff672c212a9da32ba6cfbf78f679b6a60fdd2b3196ab04563d55cc6c",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-message.c": {
+      "bytes": 64642,
+      "sha256": "a315cd2feb8273d3492bfdbc66bb809d5602739e97cfbcd0e84d260e8bdc99ff",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-message.h": {
+      "bytes": 42385,
+      "sha256": "ad0d19bd17310601b3216a6379ac91fd71259271129802848f9cd3e3833275d2",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-net-port-manager-qmiwwan.c": {
+      "bytes": 24423,
+      "sha256": "073b792e18bf62e41c9646621eb21897a3ed09a6d8b4e86e5280cc0a1f8ce246",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-net-port-manager-qmiwwan.h": {
+      "bytes": 2738,
+      "sha256": "90eee5187d84fca22d6cf0589523ca54686a7650224bed755856f293a5885d6e",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-net-port-manager-rmnet.c": {
+      "bytes": 24494,
+      "sha256": "052a23f31122f0dbf5c12f01cd267ca9bb2cc6307bc7342e18cdef206a155823",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-net-port-manager-rmnet.h": {
+      "bytes": 2661,
+      "sha256": "d7b759eb1631f57ecb30529e5f925ab21154ae6286dbede128cbdd9336efd048",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-net-port-manager.c": {
+      "bytes": 9175,
+      "sha256": "16ff1032879d6c1633bca1f16a4343de256a0bf3d92c5b9ff4f529aef0c4747b",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-net-port-manager.h": {
+      "bytes": 7690,
+      "sha256": "2777545cfe2e31f9365d2e131eea8398513c6035c4c39fd2bae1994abdcb2e89",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-proxy.c": {
+      "bytes": 41809,
+      "sha256": "54b5821f92a5c4066bfdfa708527369f702de4e5445ddf77ef164e16658aa40a",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-proxy.h": {
+      "bytes": 3531,
+      "sha256": "1213a1bb11bafa743c963f764081f9968ea23fdc5a77ebaba8ae5304770b608e",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-utils.c": {
+      "bytes": 1782,
+      "sha256": "d731ce8699f42a181319147080f52c28596d14c4dd7c4705b90b4abecd6cf471",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-utils.h": {
+      "bytes": 2826,
+      "sha256": "d8e03423d763512aa324a1a4a9068d05a331feba5a245a340f950c6feb4cfc6a",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/qmi-version.h.in": {
+      "bytes": 3447,
+      "sha256": "23b596bf8d3f3439a180724e2902963ef457d1f0a5c4c00623207dee0ce3baa2",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/meson.build": {
+      "bytes": 1302,
+      "sha256": "8cba3690b0a83d9a6b6897cef496fd47e50e36183e7990753e1e8646b2996f58",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-compat-utils.c": {
+      "bytes": 40202,
+      "sha256": "60a4f6e6f0af951416c52b83d7c0e5f0f2347ef2e440421303aee4ecc3136071",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-fixture.c": {
+      "bytes": 11828,
+      "sha256": "c5033ffca0882f174afcf44c638b79e9614907c325b51c582c945226f8d99420",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-fixture.h": {
+      "bytes": 1833,
+      "sha256": "762ea133a43ba4d0d58994282e37a52aada98758de9fd14a5cfaa65257bc1a72",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-generated.c": {
+      "bytes": 60641,
+      "sha256": "b1a8e5d524455b8c7eeb4ce6a5377f71c8b4fe6f14ad34d6780e4c3ee994f2bd",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-message-fuzzer.c": {
+      "bytes": 686,
+      "sha256": "f98abffd4a592e781ef5ac8d83dbdb0e173b61d9f0679179cadceb15c43d37f1",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-message.c": {
+      "bytes": 71748,
+      "sha256": "38e6a88d6d7b1cc69e59cb9f55023e7683544b4675fb970174b4c22011b828d1",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-port-context.c": {
+      "bytes": 13574,
+      "sha256": "b33efa4c98da676ac562beafda2607f36a513270b115e837932448c37e6f176f",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-port-context.h": {
+      "bytes": 1674,
+      "sha256": "4ef6b41e00b655154f5da4bcd31ec30eb783706a600cd7097ecf766b31a49816",
+      "git_mode": "100644"
+    },
+    "src/libqmi-glib/test/test-utils.c": {
+      "bytes": 12239,
+      "sha256": "e69f545d629682226d892cbc3a565888dca922708083cc8841d0ee11f56cd0db",
+      "git_mode": "100644"
+    },
+    "src/meson.build": {
+      "bytes": 256,
+      "sha256": "25c9b4463d766863ff86b2788bac4a2b564c6d1702ccdf100bb5d31e06f59c03",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/meson.build": {
+      "bytes": 2478,
+      "sha256": "32affa2374553eb82934f1161844a0c05d0f2cbe899f312454ba07235ec847ce",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-at-device.c": {
+      "bytes": 13757,
+      "sha256": "3aa7560a0dc0817db37ac00afce482f04bd4667778abc3e4ab7733a674e65a11",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-at-device.h": {
+      "bytes": 2497,
+      "sha256": "462baba3b71900e27432b77defc9856570b0af4453b84c9791291bc12c4ecd86",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-device-selection.c": {
+      "bytes": 11684,
+      "sha256": "57a1a0de397d9e8ba6f590cd8df78adf08ae7bf09fab826645e49247d720541d",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-device-selection.h": {
+      "bytes": 4491,
+      "sha256": "5534fb0612972c2bd74e96cd296ac9f48a616c8af81415baf7b4ff871ca0adb1",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-dload-message.c": {
+      "bytes": 2936,
+      "sha256": "80e980785d5d1f965d37fb5c3f4e4950cc2ab864d447dff423329ed902607014",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-dload-message.h": {
+      "bytes": 2069,
+      "sha256": "7fb498cc876e96c907e5d7397de7953c8b871df8413ee71ac2e3c72f39a47837",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-download-reseter.c": {
+      "bytes": 6758,
+      "sha256": "47cbcbb9ae4ead4ac94b75b432105424da748a1f893b11a6be9696dd9a0d2106",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-download-reseter.h": {
+      "bytes": 3031,
+      "sha256": "cd878c159b3aa43d559121737d419547c161b93593a7efd63366433cddc566ec",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-firehose-message.c": {
+      "bytes": 7499,
+      "sha256": "2524e4e98bb3f682a9bc29f33fb46466dc7c1178ccbf9139ba3e37cc092896a0",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-firehose-message.h": {
+      "bytes": 2862,
+      "sha256": "d870acb6aa7249d1e90c2ce0ac00af2cbfb251b70f2a56768b9eed713cbbeccf",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-helpers-sysfs.c": {
+      "bytes": 23236,
+      "sha256": "69c08e15e7d52b2381915ef37d41282620212bb722ab4d20ea1aa9fce86d239c",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-helpers-sysfs.h": {
+      "bytes": 2517,
+      "sha256": "10779d86cfc198a7c8fa535beeffa95871b6571f4d00d24dc9baef85fb2f2efe",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-helpers-udev.c": {
+      "bytes": 21546,
+      "sha256": "9906e61680eef7d0bfdf61e2248d0f8b3593edba42e3729878eaec4540d41957",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-helpers-udev.h": {
+      "bytes": 3029,
+      "sha256": "82d9438655b2b29840a3545837ba968caa3017cf9223b8be6b5a902186c39eb0",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-helpers.c": {
+      "bytes": 2680,
+      "sha256": "f831b20719728196e40c2e0191b10e3de01b1382ff04e35713e7f24f4e811198",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-helpers.h": {
+      "bytes": 3017,
+      "sha256": "082bfc3766b2f82b327ce7db41c08ab28e45e59b1df8e2ba798f14c4284bc243",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-image-cwe.c": {
+      "bytes": 19815,
+      "sha256": "685adb2c0988d58379de2a274f0daa265189696577136e6c22daf6cd6d488bdf",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-image-cwe.h": {
+      "bytes": 4190,
+      "sha256": "a2a2031357b624689ae6f40a43b3de17610c068c09888e9417e0e8e35c1428cf",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-image-factory.c": {
+      "bytes": 2639,
+      "sha256": "6e1059d0d28f436956604e7601ce02d764b78fb902c4e53cc6d75fd9a2d2b985",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-image-factory.h": {
+      "bytes": 1373,
+      "sha256": "a41314e0d0a2ce5c180fdac0968da9a2b49bb5d28fa17fdeed3618251f739528",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-image.c": {
+      "bytes": 14169,
+      "sha256": "677616c94b266a947efe7cacf84bc09a78c904db461b46256d68e5bec6d0ed24",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-image.h": {
+      "bytes": 5281,
+      "sha256": "31443215cb9618487c2b50c3198e0b33e9e38652fde470a099c6bd557a1904f7",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-log.c": {
+      "bytes": 4340,
+      "sha256": "71cc379cb0779cfd59c852984c5d630e035cbb75b53b55ff281c07cba4f3757f",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-log.h": {
+      "bytes": 1384,
+      "sha256": "b29ce9752ea72eca66fd6a17a14a2cae520fd9e1b96c51b42d670e338b7bf5c6",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-main.c": {
+      "bytes": 29194,
+      "sha256": "569a55825b85f0d769212cae2c9e1e6682a3543829a5f2db5e01fbdc65fe4001",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-operation-reset-download.c": {
+      "bytes": 3689,
+      "sha256": "170e66ebb5d78e7bdaca1d6a1e81330691a39c6ae51e72dca6f721ecd5745810",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-operation-reset.c": {
+      "bytes": 3668,
+      "sha256": "3f6814f1e04439bdec1ac38aeb35fae8d5f8f7d83de38b23b3346529f7b0c622",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-operation-update.c": {
+      "bytes": 5479,
+      "sha256": "acb3af7de2ae9e35e65d600f85e2bf94ee23a052319a22567a139d98cb83536e",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-operation-verify.c": {
+      "bytes": 4858,
+      "sha256": "072cda2d30b1a5c78a82fb8a9771bd34d17c5d8e30929e885467821907fe0eaf",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-operation.h": {
+      "bytes": 2447,
+      "sha256": "392b0ac7ae085b3eea86167ed88d6225fa5554e508186943e036828506ea2c9b",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-qdl-device.c": {
+      "bytes": 27413,
+      "sha256": "d1ea4c63510aaf17104b4c0cc1967f40a35cfce19817427fbbdd9bda803c911e",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-qdl-device.h": {
+      "bytes": 3492,
+      "sha256": "104d79e6eb5a7a285e785da1fd70a7fdc6d78f7b7368ed23c97641e8fb923271",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-qdl-message.c": {
+      "bytes": 19263,
+      "sha256": "207dd60e54c48e1f9c388668cd4fd3fd087553939fff48bf16b62feb8d492a48",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-qdl-message.h": {
+      "bytes": 4431,
+      "sha256": "a71c297601563f0e2635fac39747eec742daa1724a095fedb1ea2e7717e35c63",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-reseter.c": {
+      "bytes": 14569,
+      "sha256": "54e4c541ab96e6342cebb732d2e6e1e327c0385da7eee6a4ba9ff55b1bb85a21",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-reseter.h": {
+      "bytes": 2790,
+      "sha256": "469ce85ac83eb515517b3c3efea86b5ce4763849df560d0733387c492879bc3b",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-sahara-device.c": {
+      "bytes": 50342,
+      "sha256": "6d2c0912e257a75587bf031589b2ee0e832ab583602c833ded60cc3da76ecd4d",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-sahara-device.h": {
+      "bytes": 3978,
+      "sha256": "2b268c14c4a1f1c948360ca6c05f1fe0c8e8fb68305f6fbff25880ca353a2f35",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-sahara-message.c": {
+      "bytes": 9189,
+      "sha256": "9d71afcab7b93ca134de48f89d286386b7d4dd0648c90857724a2881c5174723",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-sahara-message.h": {
+      "bytes": 7421,
+      "sha256": "16e59c2e2894c92ee1c114aba7c984871b7417a25fadcd6b9bd5a1e05f236cd3",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-updater.c": {
+      "bytes": 59260,
+      "sha256": "8ef5f12576bdba4a22b52b13ff09c43a5e4ef7ca32c2ac907cbff67ae56149ae",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-updater.h": {
+      "bytes": 3401,
+      "sha256": "ddef61d7892539365db1012dfecbc22ed646afc901feaf70548a2ed66dae81aa",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-utils.c": {
+      "bytes": 27564,
+      "sha256": "f79afd5aa022362870759c6e82d83f769a8c4195369238e066a1f1c64bd77379",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/qfu-utils.h": {
+      "bytes": 3924,
+      "sha256": "ebf8b049ba99372d9499c6f329979b4564363b3053a9ef12715c5e7d5b3f0268",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/test/meson.build": {
+      "bytes": 697,
+      "sha256": "7478dd6e91323ea2fcb9c41c59464d5274fcc82937d19296b631fdd2f36620c8",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/test/test-firehose.c": {
+      "bytes": 3497,
+      "sha256": "0b63f235327a35884a12f10c6993686d028bd4ac826c5ded7145f14085e838b5",
+      "git_mode": "100644"
+    },
+    "src/qmi-firmware-update/test/test-utils.c": {
+      "bytes": 3858,
+      "sha256": "bbc58457d823aead36a169cb276dd0ef9525cf455c665ca57461954bea98902f",
+      "git_mode": "100644"
+    },
+    "src/qmi-proxy/meson.build": {
+      "bytes": 294,
+      "sha256": "d8f1eb2e0437e0beda9dbf9c51f854645f5d244224fe4446c98ea517b0a59b13",
+      "git_mode": "100644"
+    },
+    "src/qmi-proxy/qmi-proxy.c": {
+      "bytes": 7328,
+      "sha256": "c323ca64f11c11adf7f8889a23ef9e94973ccd1a569c4b44c116bbd282c72752",
+      "git_mode": "100644"
+    },
+    "src/qmicli/meson.build": {
+      "bytes": 1172,
+      "sha256": "22946303e5b075790ccc5784c9411e40a0c7983d3d3b900753ec25767e076356",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli": {
+      "bytes": 5285,
+      "sha256": "b8ef37cb8bb71c29d1ca1dae8d00bbb32f32c64881e5e540d893f4d8b7942223",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-atr.c": {
+      "bytes": 12972,
+      "sha256": "8124ef4c5c7047c90f2a359eaab741c89869bb7fcd466119b9d64884f6487b69",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-dms.c": {
+      "bytes": 191286,
+      "sha256": "360bc26465ca5ba85c1946640de944da94ca336c6daaf26db4e7ff60004fb213",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-dpm.c": {
+      "bytes": 17898,
+      "sha256": "8c9430df2d4157e218439d8d37f4220d8ea3dcd681caf292404c57e924feff54",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-dsd.c": {
+      "bytes": 12796,
+      "sha256": "6dbe955b8c057ef26bcfed114cc1270166cee848cd96d2256118356d361aa96b",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-fox.c": {
+      "bytes": 9694,
+      "sha256": "b11cc459ef90abee615b65044503f0a1f27b6bd78dcd1c50c80a8797a0f86094",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-foxap.c": {
+      "bytes": 6435,
+      "sha256": "ca58936cc0e68c29744b95130c538f50dfb1fc47884f2fbaacb613ed32158978",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-gas.c": {
+      "bytes": 24930,
+      "sha256": "07966001533e4c5024a4d046afee56cd166099d2d2e8c0a45ecec7b43f928e93",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-gms.c": {
+      "bytes": 9157,
+      "sha256": "723fc0562e8e4a9b4e2676ef8750377464bd520a67a39a4270b45185e4814169",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-helpers.c": {
+      "bytes": 39454,
+      "sha256": "8c9f9f2670daed07a1509f14f23cce77734d9ac39d3822b60634296056e6e7bc",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-helpers.h": {
+      "bytes": 12625,
+      "sha256": "e94a3002a06e11f9ee640d0f315b94e5f8f585c861c8230c54ea874281af3309",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-ims.c": {
+      "bytes": 9339,
+      "sha256": "608dfc201689056073e8e5bc059b6a6d08c5562e1407a605cce009b42629b6fe",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-imsa.c": {
+      "bytes": 13180,
+      "sha256": "0263bd64c20808c13de2536f261782407614a43c079c52de3f16af1fce6896ea",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-imsp.c": {
+      "bytes": 5625,
+      "sha256": "eef330b87ad1ca1746e78079157ffd55f803d814cf7ad9b353bf4f7bd2bbdf3f",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-link-management.c": {
+      "bytes": 14665,
+      "sha256": "e2da3f163095802907164beb2742c7d140ea210e1a4e717a54cc28761389942b",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-loc.c": {
+      "bytes": 77577,
+      "sha256": "9a091347edc6c388edf47c64636c07e6bdf7ab25b1a86276130ba6b543c9b32c",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-nas.c": {
+      "bytes": 204581,
+      "sha256": "e80afa6f591850ea7179c50227fa1e63d208b075b6e52359183ae01eaf8d9d1f",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-pbm.c": {
+      "bytes": 19923,
+      "sha256": "f9cd3acbb4130e7d75a42f338c0f78e1534446a74fca6b77e22b6ff4bb806541",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-pdc.c": {
+      "bytes": 49407,
+      "sha256": "bad1681a88f0a5afd2ebbe7b8b60756ab3b3c9d04a2a53d6db280092c85e3f79",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-qmiwwan.c": {
+      "bytes": 5789,
+      "sha256": "c40eeb03f2ff22a1acdabbaf61dbd6158ec791bd39a7cd90799fff821853bd81",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-qos.c": {
+      "bytes": 13753,
+      "sha256": "c0c717185b598f144cc12f471de7742ae8816fed3dd0621b2b66a5eda0b327af",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-sar.c": {
+      "bytes": 8072,
+      "sha256": "af5610f2538b9b9f5b7d6f6967fc2c31c7425f0258133741a7e15f2ba9b9305f",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-uim.c": {
+      "bytes": 117464,
+      "sha256": "84fa7cb1081a240c9ab26f73ab0b5d02539c9786bde029abcda78501605a2dca",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-voice.c": {
+      "bytes": 13306,
+      "sha256": "83adf06bd8c4afb5c4dec36ab91646d9f6a99b9ceb0e1f58e65c42cee2336ec0",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-wda.c": {
+      "bytes": 42242,
+      "sha256": "433d9813f5d1d770a26432b84d6c682b592306cc53ad99da611862032612c0e9",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-wds.c": {
+      "bytes": 143678,
+      "sha256": "f0eb13d4ceb9fb54455043405402d27ec452be603db4426c1c8739c5d858a4d5",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli-wms.c": {
+      "bytes": 24647,
+      "sha256": "84b421f98f05709a2873df3d9c03bc35199bbd8b351370e25d65acf9ea8a8081",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli.c": {
+      "bytes": 33439,
+      "sha256": "8a40f77873d0106c98d4c0ee69e3c12e3d238d134c25d79e085beb0ff1fadd29",
+      "git_mode": "100644"
+    },
+    "src/qmicli/qmicli.h": {
+      "bytes": 9281,
+      "sha256": "68ffb0c688b3093183bd459d24f1435774f58085b0e3dffb2b284cb205bccac8",
+      "git_mode": "100644"
+    },
+    "src/qmicli/test/meson.build": {
+      "bytes": 427,
+      "sha256": "896925ec236ad660b44de0e4d13624b0f132c9ca471370410ac7ddb5f5b77ca3",
+      "git_mode": "100644"
+    },
+    "src/qmicli/test/test-helpers.c": {
+      "bytes": 15675,
+      "sha256": "566a45b53e84370ef191456b675116fdc3afee0dd6d0cce70e81e9ed207a4282",
+      "git_mode": "100644"
+    },
+    "TODO": {
+      "bytes": 1654,
+      "sha256": "8ae4e415d6a75cad08b8e38978307850a3f7413258e89fe9bfe6ee9966d3f9ba",
+      "git_mode": "100644"
+    },
+    "utils/meson.build": {
+      "bytes": 472,
+      "sha256": "81bc120d818450ea7d704b5cf00b06dce8aae2d023e2269d3adb4e6834304e0d",
+      "git_mode": "100644"
+    },
+    "utils/qmi-network.in": {
+      "bytes": 16431,
+      "sha256": "b31a14b204bc849c462a684203580eac57515293535d73d41c236f21820cabf9",
+      "git_mode": "100755"
+    },
+    "utils/qmidb/Entities.py": {
+      "bytes": 4241,
+      "sha256": "b51c7fd48ac63665b69e513713aecfa8b7fc6d28af71c0a2bcb204e159bd6b14",
+      "git_mode": "100644"
+    },
+    "utils/qmidb/Enums.py": {
+      "bytes": 3038,
+      "sha256": "e72888a4ef1d9753cd5144cf1a20b6965c32d7646616f75e12dc3bfbf6d34c5a",
+      "git_mode": "100644"
+    },
+    "utils/qmidb/Fields.py": {
+      "bytes": 6047,
+      "sha256": "8a546ba0d7b57796409459669fe2009dc01de56b4c5cc6a52903667b3aa47964",
+      "git_mode": "100644"
+    },
+    "utils/qmidb/qmidb.py": {
+      "bytes": 1448,
+      "sha256": "0d82f3b4db4b634ca7ccc67720a9eb569bfaa0f473a4ad23fbb7e32aafeda3ab",
+      "git_mode": "100755"
+    },
+    "utils/qmidb/Structs.py": {
+      "bytes": 13512,
+      "sha256": "bf5dd62018eaaeaa802f6815c44e441cdb823443fb85b10470a551e6760984be",
+      "git_mode": "100644"
+    },
+    "utils/qmidb/utils.py": {
+      "bytes": 3721,
+      "sha256": "de369746dcb305970dc0dbd951844f83c8b28d325740a7292b5c6714b2eeeae1",
+      "git_mode": "100644"
+    },
+    "utils/qmitest.c": {
+      "bytes": 17827,
+      "sha256": "bc38a6867f0f3bd968cff30ae827daf57ae47e15b6b67df496a05d85453d696d",
+      "git_mode": "100644"
+    },
+    "utils/swi-update.c": {
+      "bytes": 30023,
+      "sha256": "df633ca9a5cbfb4d1a7c0812d1883be1d7dd0723ee303daa0df11deb2d224705",
+      "git_mode": "100644"
+    }
+  },
+  "symlinks": {
+    "build-aux/templates/qfu-enum-types.c.template": "qmi-enum-types.c.template",
+    "build-aux/templates/qfu-enum-types.h.template": "qmi-enum-types-nodoc.h.template",
+    "build-aux/templates/qmi-enum-types-private.c.template": "qmi-enum-types.c.template",
+    "build-aux/templates/qmi-enum-types-private.h.template": "qmi-enum-types-nodoc.h.template",
+    "build-aux/templates/qmi-flag-types-private.c.template": "qmi-flag-types.c.template",
+    "build-aux/templates/qmi-flag-types-private.h.template": "qmi-flag-types-nodoc.h.template"
+  },
+  "excluded_upstream_material": {},
+  "inventory_note": "Relative source byte hashes and Git executable modes. Git does not retain delivery directory permissions. Not a Lexr catalog or compatibility declaration."
+}
