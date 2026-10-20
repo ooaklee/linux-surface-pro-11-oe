@@ -58,6 +58,17 @@ iio_acquisition_test = executable('test-iio-acquisition',
     install: false)
 test('test-iio-acquisition', iio_acquisition_test)
 
+# The actual proxy translation unit owns selection and lifetime behavior.
+# Local metadata/driver-effect fixtures cannot contact a native provider;
+# its D-Bus signals use a fresh private GTestDBus connection only.
+sensor_selection_test = executable('test-sensor-selection',
+    ['test-sensor-selection.c', '../src/orientation.c', '../src/accel-scale.c',
+     resources, config_h_files],
+    dependencies: [gio_dep, gudev_dep, mathlib_dep, polkit_gobject_dep],
+    include_directories: include_directories('../src'),
+    install: false)
+test('test-sensor-selection', sensor_selection_test)
+
 if libssc_dep.found()
     # Compile the real drivers with explicit fixture-only lifecycle effects.
     # The executable never initializes or streams an SSC sensor.

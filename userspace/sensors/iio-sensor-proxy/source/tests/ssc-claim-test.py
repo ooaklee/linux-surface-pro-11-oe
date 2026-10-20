@@ -147,6 +147,61 @@ class Claims(dbusmock.DBusTestCase):
             ['NAME', '"SSC Claim Test Light"', 'DEVNAME', '/dev/fastrpc-test',
              'IIO_SENSOR_PROXY_TYPE', 'ssc-light'])
 
+    def candidate_sensor(self, name, sensor_type):
+        return self.testbed.add_device('misc', name, None, [],
+            ['NAME', '"SSC Candidate Test"', 'DEVNAME', '/dev/fastrpc-test',
+             'IIO_SENSOR_PROXY_TYPE', sensor_type])
+
+    def candidate_accel(self, name, scale='0.000001'):
+        return self.testbed.add_device('iio', name, None,
+            ['name', 'Candidate IIO Accelerometer', 'in_accel_x_raw', '0',
+             'in_accel_y_raw', '-256000000', 'in_accel_z_raw', '0',
+             'in_accel_scale', scale, 'sampling_frequency', '5.2'],
+            ['NAME', '"Candidate IIO Accelerometer"',
+             'IIO_SENSOR_PROXY_TYPE', 'iio-poll-accel'])
+
+    def candidate_light(self, name, level='73'):
+        return self.testbed.add_device('iio', name, None,
+            ['name', 'Candidate IIO Light', 'in_illuminance_input', level],
+            ['NAME', '"Candidate IIO Light"',
+             'IIO_SENSOR_PROXY_TYPE', 'iio-poll-als'])
+
+    def start_candidate_daemon(self):
+        # Do not assume availability before a gated constructor is admitted.
+        # The input/fake-compass anchor also keeps all-failed light/accel cases
+        # alive, so absence is a D-Bus assertion rather than a startup timeout.
+        self.anchor_node = self.testbed.add_device('input', 'claim-anchor', None, [],
+                                                  ['NAME', '"Power Button"'])
+        env = os.environ.copy()
+        env['FAKE_COMPASS'] = '1'
+        env['SSC_CLAIM_FIXTURE_DIR'] = str(self.directory)
+        self.start_daemon(env)
+
+    def control_constructor(self, action, role, sensor_type='*', ordinal=1):
+        self.assertIn(action, ('block', 'fail'))
+        self.assertIn(role, ('discover', 'open'))
+        (self.directory / ('construct-' + action + '-role')).write_text(
+            '{} {} {}'.format(sensor_type, role, ordinal))
+
+    def constructor_events(self, event, role, sensor_type=None):
+        # Columns come from the typed provider seam, not the proxy's candidate
+        # bookkeeping. Source identity is checked separately in actual logs.
+        return [line for line in self.events(event)
+                if line.split()[3] == role and
+                (sensor_type is None or line.split()[2] == sensor_type)]
+
+    def blocked_constructor(self, role, sensor_type=None):
+        self.assertEventually(lambda: bool(self.constructor_events(
+            'CONSTRUCT_ROLE_BEGIN', role, sensor_type)))
+        return int(self.constructor_events('CONSTRUCT_ROLE_BEGIN', role, sensor_type)[-1].split()[0])
+
+    def release_constructor(self, sensor):
+        (self.directory / ('construct-release-' + str(sensor))).write_text('release')
+
+    def wait_candidate_event(self, action, node):
+        self.assertEventually(lambda: self.have_text_in_log(
+            'Sensor changes: action = {}, device = {}'.format(action, node)))
+
     def start(self, mode, light=True):
         self.mode(mode)
         self.anchor_node = self.testbed.add_device('input', 'claim-anchor', None, [],
@@ -350,16 +405,20 @@ class Claims(dbusmock.DBusTestCase):
         # Discovery creates object 1; the device constructor creates object 2.
         # The gate runs the actual proxy context, not a duplicate probe model.
         (self.directory / 'construct-block-id').write_text('2')
-        self.start('success', light=not hotplug)
+        if not hotplug:
+            self.light_node = self.light('claim-light')
+        self.start_candidate_daemon()
         if hotplug:
             # add_device itself sends the add event. A second add for the same
             # source would correctly invalidate its still-active probe.
             self.light_node = self.light('probe-hotplug-light')
         self.assertEventually(lambda: bool(self.events('CONSTRUCT_BEGIN', 2)))
+        self.assertFalse(self.get_dbus_property('HasAmbientLight'),
+                         'A constructor in progress is not an admitted sensor')
         client = self.client()
         if not hotplug:
-            # Startup advertises discovery before its constructor returns.
-            # Claim/Release must tolerate the not-yet-published DEVICE slot.
+            # An absent-device Claim records future intent; Release must also
+            # tolerate this not-yet-published DEVICE slot.
             claim = self.call(client)
             self.complete(claim)
             self.assertIsNone(claim['error'])
@@ -367,16 +426,10 @@ class Claims(dbusmock.DBusTestCase):
             self.complete(release)
             self.assertIsNone(release['error'])
         self.testbed.uevent(self.anchor_node, 'change')
-        if not hotplug:
-            # Startup construction runs outside the GUdev event handler, so
-            # the unrelated change must really dispatch while it is gated.
-            self.assertEventually(lambda: self.have_text_in_log(
-                'Sensor changes: action = change, device = ' + self.anchor_node))
-        else:
-            # GUdev's event source is not recursive: a change queued while
-            # handling add is delivered only after this constructor returns.
-            # Do not fabricate nested GUdev dispatch in the provider seam.
-            print('Probe coverage: queued unrelated GUdev change during hotplug constructor')
+        # Both startup and hotplug selection now run outside GUdev's event
+        # handler. Require actual unrelated dispatch while either constructor
+        # is still gated, not merely an event queued until after it returns.
+        self.wait_candidate_event('change', self.anchor_node)
         self.assertIsNone(self.daemon.poll())
         (self.directory / 'construct-release-2').write_text('release')
         self.assertEventually(lambda: bool(self.events('CONSTRUCT_OK', 2)))
@@ -396,8 +449,240 @@ class Claims(dbusmock.DBusTestCase):
         self._check_unrelated_constructor_event(hotplug=False)
 
     def test_hotplug_constructor_ignores_unrelated_event(self):
-        '''queued unrelated GUdev change does not discard hotplug construction'''
+        '''nested unrelated GUdev change does not discard hotplug construction'''
         self._check_unrelated_constructor_event(hotplug=True)
+
+    def test_candidate_startup_invalid_iio_uses_existing_ssc(self):
+        '''A rejected earlier IIO OPEN cannot hide an enumerated SSC candidate.'''
+        rejected = self.candidate_accel('candidate-invalid-iio', scale='junk')
+        accepted = self.candidate_sensor('candidate-ssc-accel', 'ssc-accel')
+        self.start_candidate_daemon()
+        self.assertTrue(self.have_text_in_log('Invalid accelerometer scale'))
+        self.assertEqual(base.Tests.read_sysfs_attr(self, rejected, 'sampling_frequency'), b'5.2')
+        self.assertTrue(self.get_dbus_property('HasAccelerometer'))
+        log = Path(self.log.name).read_text()
+        first = 'Trying device {} of type accelerometer at IIO Poll accelerometer'.format(rejected)
+        second = 'Trying device {} of type accelerometer at SSC accelerometer sensor'.format(accepted)
+        self.assertLess(log.index(first), log.index(second))
+        client = self.client()
+        claimed = self.call(client, 'ClaimAccelerometer')
+        self.complete(claimed)
+        self.assertIsNone(claimed['error'])
+        self.assertEqual(claimed['callbacks'], 1)
+        self.assertEventually(lambda:
+            client.get_cached_property('AccelerometerOrientation').unpack() == 'normal')
+        opened = self.events('OPEN_BEGIN')
+        self.assertEqual(len(opened), 1)
+        sensor = int(opened[0].split()[0])
+        self.assertTrue(self.constructor_events('CONSTRUCT_CALL', 'open', 'SSCSensorAccelerometer'))
+        self.assertTrue(self.events('OPEN_OK', sensor))
+
+    def test_candidate_startup_constructor_failure_uses_existing_alternative(self):
+        '''A failed typed constructor is not a reservation or an automatic retry.'''
+        nodes = {self.light('candidate-first-light'), self.light('candidate-second-light')}
+        self.control_constructor('fail', 'open', 'SSCSensorLight')
+        self.start_candidate_daemon()
+        self.assertTrue(self.get_dbus_property('HasAmbientLight'))
+        attempts = self.constructor_events('CONSTRUCT_CALL', 'open', 'SSCSensorLight')
+        failures = self.constructor_events('CONSTRUCT_FAILED', 'open', 'SSCSensorLight')
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len(failures), 1)
+        failed_sensor = int(failures[0].split()[0])
+        self.assertTrue(self.events('FINALIZED', failed_sensor))
+        trying = [line.split('Trying device ', 1)[1].split(' of type ', 1)[0]
+                  for line in Path(self.log.name).read_text().splitlines()
+                  if ' of type ambient light sensor at SSC light sensor' in line]
+        self.assertEqual(len(trying), 2)
+        self.assertEqual(set(trying), nodes, 'Fallback must use the distinct preexisting source')
+        client = self.client()
+        claimed = self.call(client)
+        self.complete(claimed)
+        self.assertIsNone(claimed['error'])
+        self.assertEventually(lambda: client.get_cached_property('LightLevel').unpack() == 42)
+        self.assertEqual(len(self.events('OPEN_BEGIN')), 1)
+        self.assertNotEqual(int(self.events('OPEN_BEGIN')[0].split()[0]), failed_sensor)
+        self.testbed.uevent(self.anchor_node, 'change')
+        self.wait_candidate_event('change', self.anchor_node)
+        duplicate = self.call(client)
+        self.complete(duplicate)
+        self.assertIsNone(duplicate['error'])
+        self.assertEqual(len(self.constructor_events('CONSTRUCT_CALL', 'open', 'SSCSensorLight')), 2)
+        self.assertEqual(len(self.events('OPEN_BEGIN')), 1)
+
+    def test_candidate_discovery_captures_hotplug(self):
+        '''An add dispatched during startup discovery is retained for later selection.'''
+        self.light_node = self.light('candidate-discovery-light')
+        self.control_constructor('block', 'discover')
+        self.start_candidate_daemon()
+        sensor = self.blocked_constructor('discover')
+        self.assertFalse(self.get_dbus_property('HasAmbientLight'))
+        accel = self.candidate_accel('candidate-hotplug-accel')
+        self.wait_candidate_event('add', accel)  # Actual nested GUdev dispatch.
+        self.assertFalse(self.get_dbus_property('HasAccelerometer'),
+                         'Selection must not run recursively inside discovery')
+        self.release_constructor(sensor)
+        self.assertEventually(lambda: self.get_dbus_property('HasAmbientLight') and
+                              self.get_dbus_property('HasAccelerometer'))
+        client = self.client()
+        accel_claim, light_claim = self.call(client, 'ClaimAccelerometer'), self.call(client)
+        self.complete(accel_claim, light_claim)
+        self.assertIsNone(accel_claim['error'])
+        self.assertIsNone(light_claim['error'])
+        self.assertEventually(lambda: client.get_cached_property('LightLevel').unpack() == 42 and
+                              client.get_cached_property('AccelerometerOrientation').unpack() == 'normal')
+        self.assertEqual(len(self.constructor_events('CONSTRUCT_CALL', 'open', 'SSCSensorLight')), 1)
+        self.assertEqual(len(self.events('OPEN_BEGIN')), 1, 'IIO polling must not use a typed SSC OPEN')
+
+    def test_candidate_pending_source_remove_during_constructor(self):
+        '''Removing a different registered source retires it before its turn.'''
+        nodes = {
+            'SSCSensorLight': (self.light('candidate-pending-light'), 'HasAmbientLight',
+                               'ClaimLight', 'LightLevel', 42),
+            'SSCSensorProximity': (self.candidate_sensor('candidate-pending-proximity', 'ssc-proximity'),
+                                   'HasProximity', 'ClaimProximity', 'ProximityNear', True),
+        }
+        self.control_constructor('block', 'open')
+        self.start_candidate_daemon()
+        sensor = self.blocked_constructor('open')
+        active_type = self.constructor_events('CONSTRUCT_ROLE_BEGIN', 'open')[-1].split()[2]
+        self.assertIn(active_type, nodes)
+        removed_type = next(kind for kind in nodes if kind != active_type)
+        removed = nodes[removed_type]
+        self.testbed.uevent(removed[0], 'remove')
+        self.wait_candidate_event('remove', removed[0])
+        self.testbed.remove_device(removed[0])
+        self.release_constructor(sensor)
+        active = nodes[active_type]
+        self.assertEventually(lambda: self.get_dbus_property(active[1]))
+        self.assertFalse(self.get_dbus_property(removed[1]))
+        self.assertFalse(self.constructor_events('CONSTRUCT_CALL', 'open', removed_type),
+                         'A removed pending source must never be opened from the old snapshot')
+        client = self.client()
+        claimed = self.call(client, active[2])
+        self.complete(claimed)
+        self.assertIsNone(claimed['error'])
+        self.assertEventually(lambda: client.get_cached_property(active[3]).unpack() == active[4])
+        self.assertEqual(len(self.events('OPEN_BEGIN')), 1)
+        self.assertEqual(int(self.events('OPEN_BEGIN')[0].split()[0]), sensor)
+
+    def _check_candidate_shutdown(self, role):
+        self.light_node = self.light('candidate-shutdown-light')
+        self.control_constructor('block', role, 'SSCSensorLight')
+        self.start_candidate_daemon()
+        sensor = self.blocked_constructor(role, 'SSCSensorLight')
+        self.assertFalse(self.get_dbus_property('HasAmbientLight'))
+        observer, changes = self.observe_availability()
+        self.assertFalse(observer.get_cached_property('HasAmbientLight').unpack())
+        self.daemon.terminate()
+        self.assertEventually(lambda: self.have_text_in_log('Shutting down'))
+        self.assertIsNone(self.daemon.poll(), 'The constructor must still be returning through production code')
+        self.release_constructor(sensor)
+        self.assertEventually(lambda: self.daemon.poll() is not None)
+        self.stop_daemon()  # Requires actual graceful exit0, including under SAN.
+        self.assertFalse(any(row.get('HasAmbientLight', False) for row in changes),
+                         'A constructor returning after shutdown published availability')
+        self.assertFalse(any('LightLevel' in row for row in changes), 'Shutdown delivered unclaimed readings')
+        self.assertFalse(self.events('OPEN_BEGIN'))
+        self.assertFalse(self.events('GATE_TIMEOUT'))
+        self.assertEqual(len(self.events('FINALIZED', sensor)), 1)
+        # Gio clears cached properties when the service loses its bus name;
+        # the recorded signal payloads above still prove no TRUE publication.
+        self.assertEventually(lambda: observer.get_name_owner() is None)
+        self.assertIsNone(observer.get_cached_property('HasAmbientLight'))
+
+    def test_candidate_shutdown_during_discovery(self):
+        self._check_candidate_shutdown('discover')
+
+    def test_candidate_shutdown_during_open_constructor(self):
+        self._check_candidate_shutdown('open')
+
+    def test_candidate_successful_owner_survives_queued_alternative(self):
+        '''A valid in-progress owner wins; queued and later alternates cannot preempt it.'''
+        self.light_node = self.light('candidate-owner-light')
+        self.control_constructor('block', 'open', 'SSCSensorLight')
+        self.start_candidate_daemon()
+        sensor = self.blocked_constructor('open', 'SSCSensorLight')
+        alternate = self.candidate_light('candidate-queued-iio-light')
+        self.wait_candidate_event('add', alternate)
+        self.assertFalse(self.get_dbus_property('HasAmbientLight'))
+        self.release_constructor(sensor)
+        self.assertEventually(lambda: self.get_dbus_property('HasAmbientLight'))
+        client = self.client()
+        claimed = self.call(client)
+        self.complete(claimed)
+        self.assertIsNone(claimed['error'])
+        self.assertEventually(lambda: client.get_cached_property('LightLevel').unpack() == 42)
+        self.assertEqual(len(self.events('OPEN_BEGIN', sensor)), 1)
+        self.assertFalse(self.events('CLOSE_OK', sensor))
+        self.testbed.set_attribute(alternate, 'in_illuminance_input', '99')
+        self.testbed.uevent(alternate, 'change')
+        self.wait_candidate_event('change', alternate)
+        later = self.candidate_light('candidate-later-iio-light', level='101')
+        self.wait_candidate_event('add', later)
+        duplicate = self.call(client)
+        self.complete(duplicate)
+        self.assertIsNone(duplicate['error'])
+        self.assertEqual(client.get_cached_property('LightLevel').unpack(), 42)
+        self.assertEqual(len(self.events('OPEN_BEGIN', sensor)), 1)
+        self.assertEqual(len(self.constructor_events('CONSTRUCT_CALL', 'open', 'SSCSensorLight')), 1)
+        self.assertFalse(self.events('CLOSE_OK', sensor), 'An alternate detached the accepted owner')
+
+    def test_candidate_future_intent_replacement_survives_stale_auto_start(self):
+        '''Future intent auto-start cannot serialize a replacement behind stale OPEN.'''
+        self.light_node = self.light('candidate-future-intent-light')
+        self.control_constructor('block', 'open', 'SSCSensorLight')
+        self.mode('fail-block')
+        self.start_candidate_daemon()
+        old_sensor = self.blocked_constructor('open', 'SSCSensorLight')
+        self.assertFalse(self.get_dbus_property('HasAmbientLight'))
+        old_client, replacement_client = self.client(), self.client()
+        future = self.call(old_client)
+        self.complete(future)
+        self.assertIsNone(future['error'], 'Absent-device Claim must record future intent')
+        self.assertEqual(future['callbacks'], 1)
+        self.assertFalse(self.events('OPEN_BEGIN'), 'Native OPEN ran before constructor admission')
+        self.release_constructor(old_sensor)
+        self.assertEqual(self.opening(), old_sensor)
+        self.assertTrue(self.events('CONSTRUCT_OK', old_sensor))
+        self.assertFalse(self.events('OPEN_FAILED', old_sensor))
+
+        self.testbed.uevent(self.light_node, 'remove')
+        self.wait_candidate_event('remove', self.light_node)
+        self.assertEventually(lambda: not self.get_dbus_property('HasAmbientLight'))
+        self.mode('success')
+        replacement = self.light('candidate-future-intent-replacement')
+        self.wait_candidate_event('add', replacement)
+        # This ordering is the regression oracle: do not release the stale
+        # polling OPEN to manufacture progress in the constructor selector.
+        self.assertEventually(lambda: self.get_dbus_property('HasAmbientLight'))
+        accepted = self.call(replacement_client)
+        self.complete(accepted)
+        self.assertIsNone(accepted['error'])
+        self.assertEventually(lambda: replacement_client.get_cached_property('LightLevel').unpack() == 42)
+        new_sensor = int(self.events('OPEN_BEGIN')[-1].split()[0])
+        self.assertNotEqual(old_sensor, new_sensor)
+        self.assertEqual(len(self.events('OPEN_BEGIN', new_sensor)), 1)
+        self.assertFalse(self.events('OPEN_FAILED', old_sensor))
+        self.assertFalse(self.events('CLOSE_OK', old_sensor))
+        self.assertFalse(self.events('GATE_TIMEOUT'))
+
+        self.release_gate(old_sensor)
+        self.assert_recovered(old_sensor)
+        self.assertEqual(future['callbacks'], 1, 'A stale auto-start replied again to old future intent')
+        self.assertIsNone(future['error'])
+        joined = self.call(old_client)
+        self.complete(joined)
+        self.assertIsNone(joined['error'])
+        self.assertEqual(len(self.events('OPEN_BEGIN', new_sensor)), 1)
+        self.assertFalse(self.events('CLOSE_OK', new_sensor), 'Stale auto-start closed the replacement owner')
+        released = self.call(replacement_client, 'ReleaseLight')
+        self.complete(released)
+        self.assertIsNone(released['error'])
+        self.assertFalse(self.events('CLOSE_OK', new_sensor), 'Stale auto-start erased a replacement claim')
+        released = self.call(old_client, 'ReleaseLight')
+        self.complete(released)
+        self.assertIsNone(released['error'])
+        self.assertEqual(len(self.events('CLOSE_OK', new_sensor)), 1)
 
     def observe_availability(self):
         observer = self.client()  # distinct bus name; never claims the sensor

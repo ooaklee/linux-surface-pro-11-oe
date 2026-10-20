@@ -31,6 +31,21 @@
       "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
       "git_mode": "100644"
     },
+    "NEWS": {
+      "bytes": 6732,
+      "sha256": "3b858132738bbf511f6bc41807f1139942ed88f0aaf15125b60217a4912b0237",
+      "git_mode": "100644"
+    },
+    "README.md": {
+      "bytes": 9008,
+      "sha256": "5bece027630cbdd2563a34bc020d97836ac20c32d3296a3727754154928147a1",
+      "git_mode": "100644"
+    },
+    "RELEASE.md": {
+      "bytes": 184,
+      "sha256": "47735609dc4aee92d4afab6a257a5aed0ef8e287d8a08ed1a295ff22a41132cc",
+      "git_mode": "100644"
+    },
     "data/80-iio-sensor-proxy.rules": {
       "bytes": 2167,
       "sha256": "3d50c919f17e5140921fd6629f7d51ed89daef3a345e6ebaf70610c6299397d6",
@@ -71,29 +86,14 @@
       "sha256": "e17c0158b831d506641b48f47a1617a2910163f0c19c952c816a68c457bc61d0",
       "git_mode": "100644"
     },
-    "meson_options.txt": {
-      "bytes": 820,
-      "sha256": "61595bc43a27481356a6e99af5daca20d7311a9b903876fdda0db6ac741b77cc",
-      "git_mode": "100644"
-    },
     "meson.build": {
       "bytes": 2644,
       "sha256": "ffc191a344478ffafaf1d69933f83be971b8d760c31ef03c09a021597f8e46b3",
       "git_mode": "100644"
     },
-    "NEWS": {
-      "bytes": 6732,
-      "sha256": "3b858132738bbf511f6bc41807f1139942ed88f0aaf15125b60217a4912b0237",
-      "git_mode": "100644"
-    },
-    "README.md": {
-      "bytes": 9008,
-      "sha256": "5bece027630cbdd2563a34bc020d97836ac20c32d3296a3727754154928147a1",
-      "git_mode": "100644"
-    },
-    "RELEASE.md": {
-      "bytes": 184,
-      "sha256": "47735609dc4aee92d4afab6a257a5aed0ef8e287d8a08ed1a295ff22a41132cc",
+    "meson_options.txt": {
+      "bytes": 820,
+      "sha256": "61595bc43a27481356a6e99af5daca20d7311a9b903876fdda0db6ac741b77cc",
       "git_mode": "100644"
     },
     "src/accel-attributes.c": {
@@ -237,8 +237,8 @@
       "git_mode": "100644"
     },
     "src/iio-sensor-proxy.c": {
-      "bytes": 48774,
-      "sha256": "d13da126503c04a6a744ea7e7ec2f112a27a1f6d5cadf3b7521d90854c1fe5fb",
+      "bytes": 55061,
+      "sha256": "72ded296093d100fcf474ce62cf38f54d2c6afc14105a41125fc57326ec67f52",
       "git_mode": "100644"
     },
     "src/iio-sensor-proxy.gresource.xml": {
@@ -342,18 +342,18 @@
       "git_mode": "100755"
     },
     "tests/meson.build": {
-      "bytes": 4938,
-      "sha256": "7b31ec5ccfe3996038f53a05e2762b09ece18c962c5fa48f31846538fe10f41f",
+      "bytes": 5529,
+      "sha256": "5e18c8deb7779a08d79d050722e0f4186270873e928ee9f2e6fb7d6646891b4c",
       "git_mode": "100644"
     },
     "tests/ssc-claim-provider.c": {
-      "bytes": 12106,
-      "sha256": "26ca8f4ff50babce4ec3834eff0ea53cf14ee193e97fb9601dc903e5e6547d72",
+      "bytes": 14508,
+      "sha256": "ae930fe1a4b23a35e0213f327735463342f2323227ab1ac36337649d58138eb6",
       "git_mode": "100644"
     },
     "tests/ssc-claim-test.py": {
-      "bytes": 44706,
-      "sha256": "07e64583daca76b4354ced63a1cac04e84480a2c4eae6ae04a512d08004b413b",
+      "bytes": 61417,
+      "sha256": "0a6092ddd8052fe3f0365328de9ca56fa435dba1d3c0df78e4b646f70f4d401c",
       "git_mode": "100644"
     },
     "tests/ssc-test.py": {
@@ -389,6 +389,11 @@
     "tests/test-iio-sysfs-write.c": {
       "bytes": 9324,
       "sha256": "d30c0ebf7c96cfbff66c01730af913cf92a345e009a70ed317bda2113e3245c2",
+      "git_mode": "100644"
+    },
+    "tests/test-sensor-selection.c": {
+      "bytes": 42575,
+      "sha256": "e0e7a93fc219dd85313b9b5e4c0748fb4cbff93cbd098e48a840ce5408b22a55",
       "git_mode": "100644"
     },
     "tests/test-ssc-drivers.c": {

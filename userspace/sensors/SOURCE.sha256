@@ -27,10 +27,10 @@
 074343f9b17968557ee7182f170c71cd25441ce0bee2a1941c252c01a801d5ab  libqmi/source/gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/android/res/drawable/icon.png
 07966001533e4c5024a4d046afee56cd166099d2d2e8c0a45ecec7b43f928e93  libqmi/source/src/qmicli/qmicli-gas.c
 07d724365ac297c3dfa3b7b37637f4fc113c125687ebce479b81ed618ef2957e  iio-sensor-proxy/source/tests/input-proximity-data/ioctl
-07e64583daca76b4354ced63a1cac04e84480a2c4eae6ae04a512d08004b413b  iio-sensor-proxy/source/tests/ssc-claim-test.py
 08125d0e3322463fb278b9749c22253e084d53c451fc068cf299f29c3d3027c1  iio-sensor-proxy/source/src/drv-ssc-polling.c
 082bfc3766b2f82b327ce7db41c08ab28e45e59b1df8e2ba798f14c4284bc243  libqmi/source/src/qmi-firmware-update/qfu-helpers.h
 0a534959e83a620f297e61d9fcad8b40767cee9c99439db7a8779b031a6ac8eb  libqmi/source/src/libqmi-glib/qmi-file.c
+0a6092ddd8052fe3f0365328de9ca56fa435dba1d3c0df78e4b646f70f4d401c  iio-sensor-proxy/source/tests/ssc-claim-test.py
 0abb64351e62f926cc0f7b9e6b28fda08f63f127970d18f8a1e8dc56c35d6a5f  libqmi/source/gobi-api/Gobi_2011-11-28-1533/GobiConnectionMgmt/GobiConnectionMgmtExports.cpp
 0adb12d047a7ffbbf055b8e0433c8c7a65e8b32f26748efc41b94434cb176c4a  libqmi/source/gobi-api/fixed-GobiAPI-1.0.40/GobiConnectionMgmt/GobiConnectionMgmtAPI.h
 0af56de989849dfb85b088bdb63441aafc5d33817458f521690d376451f79c44  libqmi/source/gobi-api/GobiAPI_1.0.40/Database/QMI/Struct.txt
@@ -151,7 +151,6 @@
 258f7660ff672c212a9da32ba6cfbf78f679b6a60fdd2b3196ab04563d55cc6c  libqmi/source/src/libqmi-glib/qmi-message-context.h
 25c9b4463d766863ff86b2788bac4a2b564c6d1702ccdf100bb5d31e06f59c03  libqmi/source/src/meson.build
 26bdceaa4ae3db21393d81dcde3d63e88437f7ff5c9222474fa16eb0d42a107e  iio-sensor-proxy/source/src/drv-iio-buffer-accel.c
-26ca8f4ff50babce4ec3834eff0ea53cf14ee193e97fb9601dc903e5e6547d72  iio-sensor-proxy/source/tests/ssc-claim-provider.c
 27624c9e8c925b47940e20c760c5d09930849f832136f3cfa0fadd15faddf62c  libqmi/source/gobi-api/fixed-GobiAPI-1.0.40/Core/StdAfx.h
 2777545cfe2e31f9365d2e131eea8398513c6035c4c39fd2bae1994abdcb2e89  libqmi/source/src/libqmi-glib/qmi-net-port-manager.h
 279cb6c2bc576040c9ac1882420d121647adb6513404c9332448bb134885849d  iio-sensor-proxy/source/tests/input-accel-device
@@ -348,6 +347,7 @@
 5d031e3ab01d54d7ee5293a1677e4e6a72e0e2298300855bf7046445c114ce15  libqmi/source/gobi-api/GobiAPI_2013-07-31-1347/GobiSampleCM/QTSampleCM.h
 5d29416c07cdc2228f2cb4ff27e0667ee70dd8e3747355ab21a49a2c755f4ed9  libssc/source/mocking/ssc_server/data/meson.build
 5dc4e4033a3f9d858833dda053e08acc8afa6a08373bd57dd10eb52132eaaf91  libssc/source/data/ssc-sensor-light.proto
+5e18c8deb7779a08d79d050722e0f4186270873e928ee9f2e6fb7d6646891b4c  iio-sensor-proxy/source/tests/meson.build
 5eb021e12f6de0c808e526c6650bdfa9356f8d6997a396487c9eac6e1d64e72d  iio-sensor-proxy/source/src/drv-iio-poll-proximity.c
 608dfc201689056073e8e5bc059b6a6d08c5562e1407a605cce009b42629b6fe  libqmi/source/src/qmicli/qmicli-ims.c
 609c84a9f32f2c6a42b945ba3fde77c82f3aaf7551163b52852ab3392f366ecb  libqmi/source/gobi-api/GobiAPI_2012-07-12-1036/Core/ProtocolLog.h
@@ -433,6 +433,7 @@
 723fc0562e8e4a9b4e2676ef8750377464bd520a67a39a4270b45185e4814169  libqmi/source/src/qmicli/qmicli-gms.c
 7281754341fe3984fe64b131e1b8f5db27839b3885c6edeafaafc81d14a85cd7  libqmi/source/examples/asyncio-python/main.py
 7283f440609225bae8269a13b6ccdb719dd2bac960f9167c1f47e13f0ddd655e  iio-sensor-proxy/source/src/test-accel-location.c
+72ded296093d100fcf474ce62cf38f54d2c6afc14105a41125fc57326ec67f52  iio-sensor-proxy/source/src/iio-sensor-proxy.c
 732cdd7447143c1328f6801576145668b387e1f9ec8dd9a0b9935792530b1dec  libqmi/source/gobi-api/GobiAPI_2012-07-12-1036/GobiConnectionMgmt/GobiConnectionMgmtAPIStructs.h
 733f9cfda21f345fc8e0b39c44a36f58ee6ec08e46d443dd99f9ca59d645f1ae  libqmi/source/gobi-api/GobiAPI_1.0.40/Database/QMI/Makefile.am
 7396149fd21e4dd235b0844532dd0f265b85e4c1887681eee8947661c3cccb44  libqmi/source/gobi-api/GobiAPI_2012-07-12-1036/Shared/GobiQMICore.h
@@ -456,7 +457,6 @@
 799e9b7ceb5866a73a881d7ba04f25f99ebcb28cd8ef83637c934e586cebaccc  libqmi/source/gobi-api/GobiAPI_2013-07-31-1347/GobiConnectionMgmt/GobiConnectionMgmt.h
 79c51570bb271b4ebf467c6520564f936aa959e7cfa8413b3bacc74016f4a45c  libqmi/source/gobi-api/GobiAPI_1.0.40/Core/Event.cpp
 7b299c285805db5d8dcf0ae1b8c683ba397b551df12712712062f203dde0d64c  iio-sensor-proxy/source/src/accel-scale.h
-7b31ec5ccfe3996038f53a05e2762b09ece18c962c5fa48f31846538fe10f41f  iio-sensor-proxy/source/tests/meson.build
 7bb23b61d4d5385e03aad2324c8aabc8931368fad40192b0e73ef7290236a036  libqmi/source/gobi-api/GobiAPI_2012-07-12-1036/Gobi3000Translation/Gobi3000TranslationWDS.cpp
 7bb23b61d4d5385e03aad2324c8aabc8931368fad40192b0e73ef7290236a036  libqmi/source/gobi-api/GobiAPI_2012-09-12-0719/Gobi3000Translation/Gobi3000TranslationWDS.cpp
 7bb23b61d4d5385e03aad2324c8aabc8931368fad40192b0e73ef7290236a036  libqmi/source/gobi-api/Gobi_2012-06-18-1054/Gobi3000Translation/Gobi3000TranslationWDS.cpp
@@ -495,7 +495,6 @@
 84a79ea32f3688fe221c1490e76890c7e284cb174cb99729fe44ad64d2343a4a  libqmi/source/gobi-api/GobiAPI_2013-07-31-1347/Gobi3000Translation/Gobi3000TranslationRMS.cpp
 84b421f98f05709a2873df3d9c03bc35199bbd8b351370e25d65acf9ea8a8081  libqmi/source/src/qmicli/qmicli-wms.c
 84fa7cb1081a240c9ab26f73ab0b5d02539c9786bde029abcda78501605a2dca  libqmi/source/src/qmicli/qmicli-uim.c
-8593434b9a140e2f6276f2dc16bef0ef04c6d4f2f4c54547a18de709271dcb95  iio-sensor-proxy/SOURCE.json
 8702b61992b4642d1080930e181e1ea98db20277e1196824fd3f95690bb49baf  libqmi/source/src/libqmi-glib/qmi-endpoint-qrtr.h
 87579860025b374002d9ea4880658775ec1c380c30365e45cd36d8d40a470fd3  libqmi/source/gobi-api/GobiAPI_1.0.40/Core/DB2Utilities.cpp
 87a22aa8d92ce4dacb676915b4f3877a7b1e28306d6e031cd7a8806d2aeef9e8  iio-sensor-proxy/source/src/orientation.h
@@ -603,6 +602,7 @@ a89653f62ace59e221f7b6474093101789f90d64acdf8190414f5c2ce9be22ce  libqmi/source/
 a89653f62ace59e221f7b6474093101789f90d64acdf8190414f5c2ce9be22ce  libqmi/source/gobi-api/fixed-GobiAPI-1.0.40/Core/QMIBuffers.cpp
 a91c6830b5a730b426ed89b9adf2354a4941ba4cbb0486505f0fee97edd6c379  libqmi/source/src/common/qmi-common.c
 a93633d9266da73b4e49bc770d7e4fa076fd81418196a353b18a49b950dfed01  libqmi/source/data/qmi-service-foxap.json
+aa9ac39d11cfdb6f9e1306624458e98579e7340c976bbe573cfb5adf105f8303  iio-sensor-proxy/SOURCE.json
 ab6008235d2f691ce7a8fca2d82aa072ea12bc9874f337f0ebbe1effd82f3083  libqmi/SOURCE.json
 ac596d6724659dbd6e4cee65d247a87fde51957a90f0d34b29919a64c846f90c  iio-sensor-proxy/source/src/drv-ssc-accel.c
 ac96e1e63deb8fb0cdf245b30f75ce58cb3a64d0fe03d4b4f8f4586dcc7895b4  iio-sensor-proxy/source/src/net.hadess.SensorProxy.xml
@@ -612,6 +612,7 @@ ad0d19bd17310601b3216a6379ac91fd71259271129802848f9cd3e3833275d2  libqmi/source/
 ad976b7eac7468c8c0abf8a20924d4e61c31ace6b52620747239d189d024ebe9  libqmi/source/gobi-api/GobiAPI_2013-07-31-1347/Core/Connection.h
 adf0cfcd77936cdf9edbf547016d0917c2f340572124b2e8e2a718c98ad9ae79  libqmi/source/examples/asyncio-python/README.md
 ae403d679cc42aaf927a086d3af22a04b3338ffb20748f5dc32239ccf1ec109a  libqmi/source/src/libqmi-glib/qmi-endpoint.h
+ae930fe1a4b23a35e0213f327735463342f2323227ab1ac36337649d58138eb6  iio-sensor-proxy/source/tests/ssc-claim-provider.c
 aee1d3a2700a0393cd020242ddafb661de7c89fb02b3465df38f9f077c80b231  libssc/source/utils/decoder
 af3f5eeaab3585c915a35793dff5e43d989cd89520f6f3a995ec0d04a0f795e8  libqmi/source/gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreImg2k.cpp
 af5610f2538b9b9f5b7d6f6967fc2c31c7425f0258133741a7e15f2ba9b9305f  libqmi/source/src/qmicli/qmicli-sar.c
@@ -769,7 +770,6 @@ cf93d6d035db24ea24dc2ea673c86be203ed26d8a606e7e4a95b5f82d0a71420  libqmi/source/
 cfd090cc3156231db61ef0acb45da20145b474ee5b17874885273c2497419657  libqmi/source/gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQDLCore.cpp
 d0aa306d777e8aeb1fd74ed39e7c69cc78132e85ef17ac917889743acbf5768e  libqmi/source/gobi-api/GobiAPI_1.0.40/GobiQDLService/Main.cpp
 d10fed048be6351ecd38dc8849d2a6316988a7a9f8d65669b3bf9c915f3643b6  libqmi/source/gobi-api/fixed-GobiAPI-1.0.40/Core/DB2Utilities.cpp
-d13da126503c04a6a744ea7e7ec2f112a27a1f6d5cadf3b7521d90854c1fe5fb  iio-sensor-proxy/source/src/iio-sensor-proxy.c
 d14bec5b2ab18c4bfee06b222e83423f8c3d44efb657cd338478d385f99dd97e  libqmi/source/src/libqmi-glib/qmi-endpoint-mbim.c
 d1ea4c63510aaf17104b4c0cc1967f40a35cfce19817427fbbdd9bda803c911e  libqmi/source/src/qmi-firmware-update/qfu-qdl-device.c
 d30c0ebf7c96cfbff66c01730af913cf92a345e009a70ed317bda2113e3245c2  iio-sensor-proxy/source/tests/test-iio-sysfs-write.c
@@ -826,6 +826,7 @@ df75090cb61abd035b7e7040685c984a428b5ef3b77f068327b6490269053241  iio-sensor-pro
 dfebecf22510131832f2062a5c437c2413c44dcf9034a65dc5b0b7a463728713  libssc/source/mocking/ssc_server/meson.build
 e02881775587def6b23021543cc13bbf400d201bfd702a38c179dc56297b38ff  libqmi/source/build-aux/qmi-mkenums
 e05cd0cdb8a73fadc580650aff2e5ed6a3e2aa299573f980e3f44187cec6257e  libqmi/source/gobi-api/GobiAPI_2013-07-31-1347/Core/ProtocolBuffer.cpp
+e0e7a93fc219dd85313b9b5e4c0748fb4cbff93cbd098e48a840ce5408b22a55  iio-sensor-proxy/source/tests/test-sensor-selection.c
 e0fc8095da2e28729bc04dba7ec59341547f188a61300feddd3c4eba21f2ff14  iio-sensor-proxy/source/src/accel-mount-matrix.c
 e132591167dccc7204dac01ce804e1b82b641df550af388bb37aa24e58b268c2  libqmi/source/gobi-api/GobiAPI_1.0.40/Shared/GobiQMICoreSMS.cpp
 e132591167dccc7204dac01ce804e1b82b641df550af388bb37aa24e58b268c2  libqmi/source/gobi-api/fixed-GobiAPI-1.0.40/Shared/GobiQMICoreSMS.cpp

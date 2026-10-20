@@ -20,6 +20,8 @@ typedef struct {
 
 static guint next_id;
 static guint error_emit_depth;
+static guint constructor_calls[4][2];
+static guint constructor_role_calls[2];
 
 static const char *
 fixture_directory (void)
@@ -51,7 +53,29 @@ fixture_state (GObject *sensor)
 }
 
 static GObject *
-fixture_new (GType type);
+fixture_new (GType type, GError **error);
+
+static gboolean
+constructor_control (const char *leaf, const char *type, const char *role,
+		     guint typed_ordinal, guint role_ordinal)
+{
+	g_autofree char *path = g_build_filename (fixture_directory (), leaf, NULL);
+	g_autofree char *value = NULL;
+	g_autofree char *typed = g_strdup_printf ("%s %s %u", type, role, typed_ordinal);
+	g_autofree char *any = g_strdup_printf ("* %s %u", role, role_ordinal);
+	if (!g_file_get_contents (path, &value, NULL, NULL))
+		return FALSE;
+	g_strstrip (value);
+	return g_str_equal (value, typed) || g_str_equal (value, any);
+}
+
+static void
+constructor_finalized (gpointer value, GObject *object)
+{
+	FixtureSensor identity = { .id = GPOINTER_TO_UINT (value) };
+	(void) object;
+	trace (&identity, "FINALIZED", NULL);
+}
 
 static gboolean
 wait_gate (FixtureSensor *state, const char *prefix, GError **error)
@@ -73,21 +97,57 @@ wait_gate (FixtureSensor *state, const char *prefix, GError **error)
 }
 
 static GObject *
-fixture_new (GType type)
+fixture_new (GType type, GError **error)
 {
 	GObject *sensor = g_object_new (type, NULL);
 	FixtureSensor *state = g_new0 (FixtureSensor, 1);
 	g_autofree char *block_path = g_build_filename (fixture_directory (), "construct-block-id", NULL);
 	g_autofree char *block = NULL;
+	const char *role = error ? "open" : "discover";
+	guint role_index = error ? 1 : 0;
+	guint type_index;
+	guint typed_ordinal, role_ordinal;
+	g_autofree char *detail = NULL;
+	if (type == SSC_TYPE_SENSOR_ACCELEROMETER)
+		type_index = 0;
+	else if (type == SSC_TYPE_SENSOR_LIGHT)
+		type_index = 1;
+	else if (type == SSC_TYPE_SENSOR_COMPASS)
+		type_index = 2;
+	else {
+		g_assert (type == SSC_TYPE_SENSOR_PROXIMITY);
+		type_index = 3;
+	}
+	typed_ordinal = ++constructor_calls[type_index][role_index];
+	role_ordinal = ++constructor_role_calls[role_index];
+	/* These roles describe the exact current driver call sites: discovery
+	 * passes NULL for GError, while driver->open requests an error. They are
+	 * fixture selectors, not a claim about arbitrary public SDK callers.
+	 * A '*' type selects the global role ordinal, not every type's ordinal. */
+	detail = g_strdup_printf ("%s %s %u %u", g_type_name (type), role,
+				  typed_ordinal, role_ordinal);
 	state->id = ++next_id;
 	g_object_set_data_full (sensor, "ssc-claim-test-provider", state, g_free);
+	g_object_weak_ref (sensor, constructor_finalized, GUINT_TO_POINTER (state->id));
 	trace (state, "NEW", g_type_name (type));
+	trace (state, "CONSTRUCT_CALL", detail);
 	g_file_get_contents (block_path, &block, NULL, NULL);
-	if (block && g_ascii_strtoull (block, NULL, 10) == state->id) {
+	if ((block && g_ascii_strtoull (block, NULL, 10) == state->id) ||
+	    constructor_control ("construct-block-role", g_type_name (type), role,
+				 typed_ordinal, role_ordinal)) {
 		trace (state, "CONSTRUCT_BEGIN", NULL);
+		trace (state, "CONSTRUCT_ROLE_BEGIN", detail);
 		if (!wait_gate (state, "construct-release", NULL))
 			g_error ("Test constructor gate timed out");
 		trace (state, "CONSTRUCT_OK", NULL);
+	}
+	if (constructor_control ("construct-fail-role", g_type_name (type), role,
+				 typed_ordinal, role_ordinal)) {
+		trace (state, "CONSTRUCT_FAILED", detail);
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+				     "Injected SSC construction failure");
+		g_object_unref (sensor);
+		return NULL;
 	}
 	return sensor;
 }
@@ -310,7 +370,7 @@ fixture_close (GObject *sensor, GError **error)
 
 #define WRAP_SENSOR(lower, Type, type_id) \
 Type *__wrap_ssc_sensor_##lower##_new_sync (GCancellable *cancellable, GError **error) \
-{ (void) cancellable; (void) error; return (Type *) fixture_new (type_id); } \
+{ (void) cancellable; return (Type *) fixture_new (type_id, error); } \
 gboolean __wrap_ssc_sensor_##lower##_open_sync (Type *sensor, GCancellable *cancellable, GError **error) \
 { (void) cancellable; return fixture_open (G_OBJECT (sensor), error); } \
 gboolean __wrap_ssc_sensor_##lower##_close_sync (Type *sensor, GCancellable *cancellable, GError **error) \

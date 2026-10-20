@@ -44,10 +44,11 @@ composition inspectable without private filesystem paths. They record source
 identity, **not** authenticated release authority, a Lexr package schema or
 tested kernel/OS support ranges.
 
-## Fresh exported-source check — 2026-10-20
+## Initial exported-source check — 2026-10-20
 
-A new isolated native ARM64 job rebuilt QMI and SSC from these exported
-sources, staged them into a private prefix, and built the proxy against that
+A new isolated native ARM64 job checked the initial source publication at
+`047c30bf4bca0d91141f52710704d6c9e8c95415`. It rebuilt QMI and SSC from those
+exports, staged them into a private prefix, and built the proxy against that
 fresh provider stack. Source mounts and the container root were read-only;
 network access was disabled and no physical device was exposed. All 123
 native commands and six host control commands completed successfully without
@@ -85,10 +86,64 @@ evidence remains separately scoped above. Command streams and terminal
 receipts were retained privately rather than embedding host paths in this
 publication; temporary ordinary daemon logs retain the limitation noted above.
 
+## Candidate admission and activation follow-up — 2026-10-20
+
+This source update replaces first-discovered reservations with an owned,
+ordered candidate registry. A rejected constructor can fall through to another
+driver/source; occupied-type alternatives remain eligible after removal. It
+checks the current source revision after discovery and construction, and
+observes device events before startup enumeration. Stream starts are prepared
+as owned attempt tokens during admission and activated only after that phase
+ends. Removal, last-client release and shutdown can invalidate those tokens
+without accidentally activating or clearing a replacement.
+
+A fresh isolated native ARM64 run rebuilt the same pinned QMI/SSC providers
+and this exact proxy source, using the same no-network/read-only boundaries.
+All 141 native commands and six host control commands completed successfully;
+all 294 recorded command streams were rehashed against their receipts.
+
+- Seven unit targets passed in both ordinary and sanitized builds: 304 passed
+  cases and one known unavailable French-locale skip in each build. This
+  includes 18 tests that compile the actual proxy translation unit against
+  controlled driver effects and a real private D-Bus daemon.
+- All 65 ordinary and 30 selected sanitized Python integration cases passed,
+  with no skips. Eight new actual-daemon cases cover constructor fallback,
+  events during discovery, removal/shutdown during construction, retaining a
+  successful owner and future-intent auto-start replacement.
+- The auto-start regression requires a replacement to become available and
+  serve a real fixture reading before the stale native OPEN gate is released.
+  The 18 selection cases also check cancellation before activation without
+  either OPEN or STOP. The production adapter executes; native sensor effects
+  are deliberately substituted, not hardware calls.
+- Executed sanitizer commands included 87 compilations and ten links using
+  ASan/UBSan and explicit float-cast-overflow. Provider/system libraries remained
+  unsanitized. The six known Meson advisories, four missing-XMLLINT notices and
+  inherited 30 file-resource/two subprocess warnings remain disclosed; this
+  is not a warning-free or complete harness-resource-cleanup claim.
+- A separate optimized fixture build passed all 18 selection cases and five
+  selected positive cases. Five production-only inverse controls then each
+  failed by SIGABRT at its exact intended assertion: stopping after a rejected
+  constructor, accepting a retired snapshot, omitting the shutdown fence,
+  losing the in-flight attempt-wave marker and stopping an unstarted token.
+  Test bytes and modes were unchanged in every variant. All 84 recorded
+  streams were rehashed; build failures, unrelated assertions and timeouts
+  were not accepted as successful inverse controls.
+
+The source and its unchanged provider inventories were rechecked after the
+run. The original short-recipe limitation above still applies: this broader
+matrix used `/usr` plus a private `DESTDIR`, not a literal replay of every
+BUILDING.md command. The added shell example was syntax-checked. Public SDK
+consumers and physical providers were not rerun as part of this update.
+
+Only SSC startup-failure hooks receive the bounded first-valid-reading deadline.
+Legacy drivers still wait for a valid reading or client release/removal; this
+change does not add a universal timeout or authorize success without a reading.
+Faulted SSC providers retain manual CLOSE/Claim recovery. Constructor cancellation,
+arbitrary device path moves and all external event storms remain unqualified.
+Shutdown fences later publication but is not proof of remote firmware quiescence.
+
 ## Remaining work
 
-- Repair and separately test candidate admission/reselection: a failed first
-  discovered device can still leave a valid alternate unused.
 - Define reviewed service/package conflict and privilege boundaries, including
   distribution proxy coexistence, rollback and explicit activation.
 - Add a typed Lexr sensor adapter and catalogue capability before advertising

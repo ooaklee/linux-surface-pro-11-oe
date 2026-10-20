@@ -55,6 +55,7 @@ typedef struct {
 	GHashTable *clients;
 	GHashTable *members;
 	GPtrArray *pending;
+	gboolean open_started;
 	gboolean open_done;
 	gboolean open_ok;
 	gboolean first_reading;
@@ -64,13 +65,7 @@ typedef struct {
 	DriverType type;
 } SensorStartAttempt;
 
-typedef struct SensorProbe SensorProbe;
-struct SensorProbe {
-	SensorProbe *next;
-	GUdevDevice *source;
-	char *path;
-	gboolean invalidated;
-};
+typedef struct SensorCandidate SensorCandidate;
 
 struct SensorData {
 	GMainLoop *loop;
@@ -90,7 +85,16 @@ struct SensorData {
 	SensorStartAttempt *starts[NUM_SENSOR_TYPES];
 	gboolean faulted[NUM_SENSOR_TYPES];
 	gboolean shutting_down;
-	SensorProbe *probes; /* Bounded by active synchronous call-stack depth. */
+	GPtrArray *candidates; /* Ordered, owned current source revisions. */
+	GHashTable *seed_events; /* Paths observed before enumeration completes. */
+	gboolean selecting;
+	gboolean selection_ready;
+	gboolean selection_pending;
+	guint selection_idle;
+	GPtrArray *selection_starts; /* Borrowed queue owned by the admission pass. */
+	guint event_depth;
+	guint sigint_id;
+	guint sigterm_id;
 
 	/* Accelerometer */
 	OrientationUp previous_orientation;
@@ -127,8 +131,19 @@ static const SensorDriver * const drivers[] = {
 #endif
 };
 
+struct SensorCandidate {
+	guint refs;
+	GUdevDevice *source;
+	char *path;
+	gboolean retired;
+	gboolean probing;
+	gboolean tried[G_N_ELEMENTS (drivers)];
+};
+
 static ReadingsUpdateFunc driver_type_to_callback_func (DriverType type);
 static void sensor_state_changed_func (SensorDevice *device, const GError *error, gpointer user_data);
+static void select_sensor_candidates (SensorData *data);
+static void queue_sensor_selection (SensorData *data);
 
 static const char *
 driver_type_to_str (DriverType type)
@@ -171,31 +186,92 @@ sensor_type_available (SensorData *data, DriverType type)
 	return driver_type_exists (data, type) && !data->faulted[type];
 }
 
-static void
-sensor_probe_begin (SensorData *data, SensorProbe *probe, GUdevDevice *source)
+static SensorCandidate *
+sensor_candidate_ref (SensorCandidate *candidate)
 {
-	memset (probe, 0, sizeof (*probe));
-	probe->source = g_object_ref (source);
-	probe->path = g_strdup (g_udev_device_get_sysfs_path (source));
-	probe->next = data->probes;
-	data->probes = probe;
+	candidate->refs++;
+	return candidate;
 }
 
 static void
-sensor_probe_end (SensorData *data, SensorProbe *probe)
+sensor_candidate_unref (gpointer value)
 {
-	g_assert (data->probes == probe);
-	data->probes = probe->next;
-	g_object_unref (probe->source);
-	g_free (probe->path);
+	SensorCandidate *candidate = value;
+	if (--candidate->refs != 0)
+		return;
+	g_object_unref (candidate->source);
+	g_free (candidate->path);
+	g_free (candidate);
+}
+
+static gint
+sensor_candidate_index (SensorData *data, const char *path)
+{
+	for (guint i = 0; i < data->candidates->len; i++) {
+		SensorCandidate *candidate = g_ptr_array_index (data->candidates, i);
+		if (g_strcmp0 (candidate->path, path) == 0)
+			return (gint) i;
+	}
+	return -1;
 }
 
 static gboolean
-find_sensors (GUdevClient *client,
-	      SensorData  *data)
+sensor_candidate_is_current (SensorData *data, SensorCandidate *candidate)
+{
+	gint index;
+	if (candidate->retired || data->shutting_down)
+		return FALSE;
+	index = sensor_candidate_index (data, candidate->path);
+	return index >= 0 && g_ptr_array_index (data->candidates, index) == candidate;
+}
+
+static void
+register_sensor_candidate (SensorData *data, GUdevDevice *source,
+			   gboolean carry_inflight_attempts)
+{
+	const char *path = g_udev_device_get_sysfs_path (source);
+	SensorCandidate *candidate;
+	gint index;
+	if (!path || data->shutting_down)
+		return;
+	candidate = g_new0 (SensorCandidate, 1);
+	candidate->refs = 1;
+	candidate->source = g_object_ref (source);
+	candidate->path = g_strdup (path);
+	index = sensor_candidate_index (data, path);
+	if (index >= 0) {
+		SensorCandidate *old = g_ptr_array_index (data->candidates, index);
+		/* A same-source change dispatched inside admission fences the old
+		 * result, but must not create a fresh retry budget for the driver's
+		 * own side effects. Carry every attempted pair, not just the last.
+		 * A later event outside admission, or a new add, starts a fresh wave. */
+		if (carry_inflight_attempts && old->probing) {
+			memcpy (candidate->tried, old->tried, sizeof (candidate->tried));
+			candidate->probing = TRUE;
+		}
+		old->retired = TRUE;
+		g_ptr_array_index (data->candidates, index) = candidate;
+		sensor_candidate_unref (old);
+	} else {
+		g_ptr_array_add (data->candidates, candidate);
+	}
+}
+
+static gboolean
+retire_sensor_candidate (SensorData *data, const char *path)
+{
+	gint index = sensor_candidate_index (data, path);
+	if (index < 0)
+		return FALSE;
+	((SensorCandidate *) g_ptr_array_index (data->candidates, index))->retired = TRUE;
+	g_ptr_array_remove_index (data->candidates, index);
+	return TRUE;
+}
+
+static void
+seed_sensor_candidates (GUdevClient *client, SensorData *data)
 {
 	GList *devices, *input, *platform, *l;
-	gboolean found = FALSE;
 
 	devices = g_udev_client_query_by_subsystem (client, "iio");
 	input = g_udev_client_query_by_subsystem (client, "input");
@@ -208,35 +284,20 @@ find_sensors (GUdevClient *client,
 	devices = g_list_concat (devices, fastrpc);
 #endif
 
-	/* Find the devices */
+	/* Register the whole enumeration before any discover/open can dispatch
+	 * events. Queued sources, not only the currently probed one, have an
+	 * owned identity which a nested remove/change can retire. */
 	for (l = devices; l != NULL; l = l->next) {
 		GUdevDevice *dev = l->data;
-		guint i;
-
-		for (i = 0; i < G_N_ELEMENTS(drivers); i++) {
-			SensorDriver *driver = (SensorDriver *) drivers[i];
-			if (!driver_type_exists (data, driver->type) &&
-			    driver_discover (driver, dev)) {
-				g_debug ("Found device %s of type %s at %s",
-					 g_udev_device_get_sysfs_path (dev),
-					 driver_type_to_str (driver->type),
-					 driver->driver_name);
-				UDEV_DEVICE_FOR_TYPE(driver->type) = g_object_ref (dev);
-				DRIVER_FOR_TYPE(driver->type) = (SensorDriver *) driver;
-
-				found = TRUE;
-			}
-		}
-
-		if (driver_type_exists (data, DRIVER_TYPE_ACCEL) &&
-		    driver_type_exists (data, DRIVER_TYPE_LIGHT) &&
-		    driver_type_exists (data, DRIVER_TYPE_PROXIMITY) &&
-		    driver_type_exists (data, DRIVER_TYPE_COMPASS))
-			break;
+		const char *path = g_udev_device_get_sysfs_path (dev);
+		/* An observed remove must win over a retained enumeration result,
+		 * even if the path had not yet been registered when it arrived. */
+		if (path && sensor_candidate_index (data, path) < 0 &&
+		    (!data->seed_events || !g_hash_table_contains (data->seed_events, path)))
+			register_sensor_candidate (data, dev, FALSE);
 	}
 
 	g_list_free_full (devices, g_object_unref);
-	return found;
 }
 
 static void
@@ -719,18 +780,18 @@ start_attempt_arm_deadline (SensorData *data, DriverType type, SensorStartAttemp
 	g_source_attach (attempt->deadline, g_main_context_get_thread_default ());
 }
 
-static void
-start_sensor (SensorData *data, DriverType type, gboolean announce,
-	      const char *sender, guint watch_id, GDBusMethodInvocation *invocation)
+static SensorStartAttempt *
+prepare_start_attempt (SensorData *data, DriverType type, gboolean announce,
+		       const char *sender, guint watch_id, GDBusMethodInvocation *invocation)
 {
 	SensorStartAttempt *attempt = g_new0 (SensorStartAttempt, 1);
 	GHashTableIter iter;
 	gpointer key, value;
-	g_autoptr(GError) error = NULL;
-	gboolean success;
 
 	g_assert (data->starts[type] == NULL);
 	attempt->refs = 1; /* local ownership survives a nested removal */
+	attempt->data = data;
+	attempt->type = type;
 	attempt->device = DEVICE_FOR_TYPE(type);
 	attempt->clients = g_hash_table_ref (data->clients[type]);
 	attempt->members = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
@@ -742,6 +803,23 @@ start_sensor (SensorData *data, DriverType type, gboolean announce,
 	if (invocation)
 		start_attempt_add_claim (attempt, sender, watch_id, invocation);
 	data->starts[type] = start_attempt_ref (attempt);
+	return attempt;
+}
+
+static void
+execute_start_attempt (SensorData *data, SensorStartAttempt *attempt)
+{
+	DriverType type = attempt->type;
+	g_autoptr(GError) error = NULL;
+	gboolean success;
+
+	/* A prepared token, not a device address, authorizes activation. A nested
+	 * removal/Release may have canceled it before the admission pass ended. */
+	if (data->shutting_down || !start_attempt_is_current (data, type, attempt) ||
+	    attempt->open_started)
+		return;
+	g_assert (!data->selecting);
+	attempt->open_started = TRUE;
 
 	success = driver_set_polling_full (attempt->device, TRUE, &error);
 	/* Only token identity authorizes post-call state access. The driver/device
@@ -754,7 +832,143 @@ start_sensor (SensorData *data, DriverType type, gboolean announce,
 		if (success)
 			start_attempt_arm_deadline (data, type, attempt);
 	}
+}
+
+static void
+start_sensor (SensorData *data, DriverType type, gboolean announce,
+	      const char *sender, guint watch_id, GDBusMethodInvocation *invocation)
+{
+	SensorStartAttempt *attempt = prepare_start_attempt (data, type, announce,
+		sender, watch_id, invocation);
+
+	if (data->selecting) {
+		/* This includes Claims dispatched by another constructor's nested
+		 * context. They join a current token immediately, but OPEN must not
+		 * hold the admission barrier while waiting on the native provider. */
+		g_assert (data->selection_starts != NULL);
+		g_ptr_array_add (data->selection_starts, attempt);
+		return;
+	}
+	execute_start_attempt (data, attempt);
 	start_attempt_unref (attempt);
+}
+
+static gboolean
+sensor_selection_idle (gpointer value)
+{
+	SensorData *data = value;
+	data->selection_idle = 0;
+	/* Consume a busy idle rather than spinning it inside a native nested
+	 * main-context wait. The outer epilogue owns the next scheduling chance. */
+	if (!data->selecting && data->event_depth == 0)
+		select_sensor_candidates (data);
+	return G_SOURCE_REMOVE;
+}
+
+static void
+queue_sensor_selection (SensorData *data)
+{
+	if (data->shutting_down)
+		return;
+	data->selection_pending = TRUE;
+	if (data->selection_ready && !data->selecting && data->event_depth == 0 &&
+	    data->selection_idle == 0)
+		data->selection_idle = g_idle_add (sensor_selection_idle, data);
+}
+
+static void
+select_sensor_candidates (SensorData *data)
+{
+	g_autoptr(GPtrArray) snapshot = NULL;
+	g_autoptr(GPtrArray) prepared = NULL;
+	if (data->shutting_down || !data->selection_ready)
+		return;
+	if (data->selecting || data->event_depth != 0) {
+		data->selection_pending = TRUE;
+		return;
+	}
+	data->selecting = TRUE;
+	data->selection_pending = FALSE;
+	g_assert (data->selection_starts == NULL);
+	prepared = g_ptr_array_new_with_free_func ((GDestroyNotify) start_attempt_unref);
+	data->selection_starts = prepared;
+	snapshot = g_ptr_array_new_with_free_func (sensor_candidate_unref);
+	for (guint i = 0; i < data->candidates->len; i++)
+		g_ptr_array_add (snapshot, sensor_candidate_ref (g_ptr_array_index (data->candidates, i)));
+	for (guint n = 0; n < snapshot->len && !data->shutting_down; n++) {
+		SensorCandidate *candidate = g_ptr_array_index (snapshot, n);
+		if (!sensor_candidate_is_current (data, candidate))
+			continue;
+		candidate->probing = TRUE;
+		for (guint i = 0; i < G_N_ELEMENTS (drivers); i++) {
+			SensorDriver *driver = (SensorDriver *) drivers[i];
+			SensorDevice *device;
+			gboolean found;
+			if (!sensor_candidate_is_current (data, candidate))
+				break;
+			/* Skipped alternates remain eligible if a winner is removed.
+			 * A known faulted provider is still owned and keeps its explicit
+			 * Claim/CLOSE recovery policy, not an automatic retry loop. */
+			if (driver_type_exists (data, driver->type) || candidate->tried[i])
+				continue;
+			candidate->tried[i] = TRUE;
+			found = driver_discover (driver, candidate->source);
+			if (!sensor_candidate_is_current (data, candidate))
+				break;
+			if (!found || driver_type_exists (data, driver->type))
+				continue;
+			g_debug ("Trying device %s of type %s at %s", candidate->path,
+				driver_type_to_str (driver->type), driver->driver_name);
+			device = driver_open (driver, candidate->source,
+				driver_type_to_callback_func (driver->type), data);
+			if (!sensor_candidate_is_current (data, candidate) ||
+			    driver_type_exists (data, driver->type)) {
+				if (device)
+					driver_close (device);
+				continue;
+			}
+			if (!device)
+				continue;
+			/* No unopened reservation is observable. There is no callback
+			 * between these assignments; admission publishes one complete slot. */
+			device->state_callback = sensor_state_changed_func;
+			UDEV_DEVICE_FOR_TYPE(driver->type) = g_object_ref (candidate->source);
+			DEVICE_FOR_TYPE(driver->type) = device;
+			DRIVER_FOR_TYPE(driver->type) = driver;
+			data->faulted[driver->type] = FALSE;
+			g_assert (data->starts[driver->type] == NULL);
+			if (g_hash_table_size (data->clients[driver->type]) > 0)
+				start_sensor (data, driver->type, TRUE, NULL, 0, NULL);
+			else
+				send_driver_changed_dbus_event (data, driver->type);
+		}
+		candidate->probing = FALSE;
+		/* Metadata-only replacements inherit the admission-wave budget.
+		 * End that wave even if the original snapshot has been retired. */
+		gint index = sensor_candidate_index (data, candidate->path);
+		if (index >= 0)
+			((SensorCandidate *) g_ptr_array_index (data->candidates, index))->probing = FALSE;
+	}
+	data->selection_starts = NULL;
+	data->selecting = FALSE;
+	if (data->shutting_down)
+		return;
+	/* Publish all complete slots before any stream activation. An OPEN may
+	 * dispatch remove/add and admit a replacement while the old call waits;
+	 * owned attempt tokens prevent stale activation and allocator-address ABA. */
+	if (data->selection_pending)
+		queue_sensor_selection (data);
+	for (guint i = 0; i < prepared->len && !data->shutting_down; i++)
+		execute_start_attempt (data, g_ptr_array_index (prepared, i));
+	if (data->shutting_down)
+		return;
+	if (data->selection_pending) {
+		queue_sensor_selection (data);
+	} else if (!any_sensors_left (data)) {
+		data->ret = 0;
+		g_message ("No sensors or missing kernel drivers for the sensors. Exiting");
+		g_main_loop_quit (data->loop);
+	}
 }
 
 static void
@@ -793,8 +1007,10 @@ client_release (SensorData            *data,
 	if (driver_type_exists (data, driver_type) && DEVICE_FOR_TYPE(driver_type) &&
 	    g_hash_table_size (ht) == 0) {
 		SensorDevice *sensor_device = DEVICE_FOR_TYPE(driver_type);
+		gboolean stop = !data->starts[driver_type] || data->starts[driver_type]->open_started;
 		cancel_start_attempt (data, driver_type, "Sensor start has no remaining clients");
-		driver_set_polling (sensor_device, FALSE);
+		if (stop)
+			driver_set_polling (sensor_device, FALSE);
 	}
 }
 
@@ -1109,6 +1325,10 @@ bus_acquired_handler (GDBusConnection *connection,
 		data->clients[i] = create_clients_hash_table ();
 
 	data->connection = g_object_ref (connection);
+	/* Discovery can dispatch a nested main context. Observe events before
+	 * even the first discover call, not after it has already reserved slots. */
+	g_signal_connect (G_OBJECT (data->client), "uevent",
+			  G_CALLBACK (sensor_changes), data);
 }
 
 static void
@@ -1117,73 +1337,18 @@ name_acquired_handler (GDBusConnection *connection,
 		       gpointer         user_data)
 {
 	SensorData *data = user_data;
-	guint i;
-
-	if (!find_sensors (data->client, data))
-		goto bail;
-
-	g_signal_connect (G_OBJECT (data->client), "uevent",
-			  G_CALLBACK (sensor_changes), data);
-
-	for (i = 0; i < NUM_SENSOR_TYPES; i++) {
-		SensorDevice *sensor_device;
-		SensorDriver *driver;
-		g_autoptr(GUdevDevice) source_device = NULL;
-		SensorProbe probe;
-		gboolean valid;
-
-		/* A nested hotplug during an earlier constructor may already have
-		 * published this type. Do not replace its live device a second time. */
-		if (!driver_type_exists (data, i) || DEVICE_FOR_TYPE(i))
-			continue;
-
-		driver = DRIVER_FOR_TYPE(i);
-		source_device = g_object_ref (UDEV_DEVICE_FOR_TYPE(i));
-		sensor_probe_begin (data, &probe, source_device);
-		sensor_device = driver_open (driver, source_device,
-					     driver_type_to_callback_func (driver->type), data);
-		if (sensor_device)
-			sensor_device->state_callback = sensor_state_changed_func;
-		valid = !probe.invalidated && DRIVER_FOR_TYPE(i) == driver &&
-			UDEV_DEVICE_FOR_TYPE(i) == source_device && !data->shutting_down;
-		sensor_probe_end (data, &probe);
-		if (!valid) {
-			/* A same-source change may invalidate construction without
-			 * replacing its slots. Do not advertise an unopened device. */
-			if (DRIVER_FOR_TYPE(i) == driver && UDEV_DEVICE_FOR_TYPE(i) == source_device &&
-			    DEVICE_FOR_TYPE(i) == NULL) {
-				DRIVER_FOR_TYPE(i) = NULL;
-				g_clear_object (&UDEV_DEVICE_FOR_TYPE(i));
-				if (!data->shutting_down)
-					send_driver_changed_dbus_event (data, i);
-			}
-			if (sensor_device)
-				driver_close (sensor_device);
-			continue;
-		}
-		if (!sensor_device) {
-			DRIVER_FOR_TYPE(i) = NULL;
-			g_clear_object (&UDEV_DEVICE_FOR_TYPE(i));
-			continue;
-		}
-
-		data->faulted[i] = FALSE;
-		DEVICE_FOR_TYPE(i) = sensor_device;
-		if (g_hash_table_size (data->clients[i]) > 0)
-			start_sensor (data, i, TRUE, NULL, 0, NULL);
+	if (data->shutting_down)
+		return;
+	seed_sensor_candidates (data->client, data);
+	g_clear_pointer (&data->seed_events, g_hash_table_unref);
+	if (data->shutting_down)
+		return;
+	data->selection_ready = TRUE;
+	select_sensor_candidates (data);
+	if (!data->shutting_down && any_sensors_left (data)) {
+		send_dbus_event (data, PROP_ALL);
+		send_dbus_event (data, PROP_ALL_COMPASS);
 	}
-
-	if (!any_sensors_left (data))
-		goto bail;
-
-	send_dbus_event (data, PROP_ALL);
-	send_dbus_event (data, PROP_ALL_COMPASS);
-	return;
-
-bail:
-	data->ret = 0;
-	g_message ("No sensors or missing kernel drivers for the sensors. Exiting");
-	g_main_loop_quit (data->loop);
 }
 
 static gboolean
@@ -1401,6 +1566,10 @@ free_sensor_data (SensorData *data)
 	if (data == NULL)
 		return;
 	data->shutting_down = TRUE;
+	data->selection_pending = FALSE;
+	g_clear_handle_id (&data->selection_idle, g_source_remove);
+	g_clear_handle_id (&data->sigint_id, g_source_remove);
+	g_clear_handle_id (&data->sigterm_id, g_source_remove);
 
 	if (data->name_id != 0) {
 		g_bus_unown_name (data->name_id);
@@ -1417,6 +1586,8 @@ free_sensor_data (SensorData *data)
 		g_clear_object (&UDEV_DEVICE_FOR_TYPE(i));
 		g_clear_pointer (&data->clients[i], g_hash_table_unref);
 	}
+	g_clear_pointer (&data->candidates, g_ptr_array_unref);
+	g_clear_pointer (&data->seed_events, g_hash_table_unref);
 
 	g_clear_object (&data->auth);
 	g_clear_pointer (&data->introspection_data, g_dbus_node_info_unref);
@@ -1433,20 +1604,22 @@ sensor_changes (GUdevClient *client,
 		SensorData  *data)
 {
 	guint i;
+	const char *path = g_udev_device_get_sysfs_path (device);
 	if (data->shutting_down)
 		return;
-	/* Only events concerning a probe's retained source can invalidate it.
-	 * Unrelated devices changing during a synchronous call are harmless. */
-	for (SensorProbe *probe = data->probes; probe; probe = probe->next) {
-		if (g_strcmp0 (probe->path, g_udev_device_get_sysfs_path (device)) == 0)
-			probe->invalidated = TRUE;
-	}
-
 	g_debug ("Sensor changes: action = %s, device = %s",
-		 action, g_udev_device_get_sysfs_path (device));
+		 action, path);
+	if (!path)
+		return;
+	if (!data->selection_ready && data->seed_events)
+		g_hash_table_add (data->seed_events, g_strdup (path));
+	data->event_depth++;
 
-	if (g_strcmp0 (action, "remove") == 0) {
+	if (g_strcmp0 (action, "remove") == 0 ||
+	    g_strcmp0 (action, "unbind") == 0 ||
+	    g_strcmp0 (action, "offline") == 0) {
 		SensorDevice *old_devices[NUM_SENSOR_TYPES] = { NULL };
+		gboolean changed = retire_sensor_candidate (data, path);
 
 		for (i = 0; i < NUM_SENSOR_TYPES; i++) {
 			GUdevDevice *dev = UDEV_DEVICE_FOR_TYPE(i);
@@ -1454,10 +1627,11 @@ sensor_changes (GUdevClient *client,
 			if (!dev)
 				continue;
 
-			if (g_strcmp0 (g_udev_device_get_sysfs_path (device), g_udev_device_get_sysfs_path (dev)) == 0) {
+			if (g_strcmp0 (path, g_udev_device_get_sysfs_path (dev)) == 0) {
 				SensorStartAttempt *old_start = g_steal_pointer (&data->starts[i]);
 				GHashTable *old_clients = data->clients[i];
 				old_devices[i] = DEVICE_FOR_TYPE(i);
+				changed = TRUE;
 
 				g_debug ("Sensor type %s got removed (%s)",
 					 driver_type_to_str (i),
@@ -1487,69 +1661,24 @@ sensor_changes (GUdevClient *client,
 				driver_close (old_devices[i]);
 		}
 
-		if (!any_sensors_left (data))
-			g_main_loop_quit (data->loop);
-	} else if (g_strcmp0 (action, "add") == 0) {
-		SensorProbe probe;
-		sensor_probe_begin (data, &probe, device);
-		for (i = 0; i < G_N_ELEMENTS(drivers); i++) {
-			SensorDriver *driver = (SensorDriver *) drivers[i];
-			if (probe.invalidated || data->shutting_down)
-				break;
-			if (!driver_type_exists (data, driver->type) &&
-			    driver_discover (driver, device)) {
-				SensorDevice *sensor_device = NULL;
-				if (probe.invalidated || data->shutting_down)
-					break;
-
-				g_debug ("Found hotplugged device %s of type %s at %s",
-					 g_udev_device_get_sysfs_path (device),
-					 driver_type_to_str (driver->type),
-					 driver->driver_name);
-
-				sensor_device = driver_open (driver, device,
-					driver_type_to_callback_func (driver->type), data);
-				if (sensor_device)
-					sensor_device->state_callback = sensor_state_changed_func;
-				if (probe.invalidated || data->shutting_down) {
-					if (sensor_device)
-						driver_close (sensor_device);
-					break;
-				}
-				if (driver_type_exists (data, driver->type)) {
-					if (sensor_device)
-						driver_close (sensor_device);
-					/* Another source filled only this type; keep checking
-					 * the remaining types on our still-valid source. */
-					continue;
-				}
-
-				if (sensor_device) {
-					GHashTable *ht;
-
-					UDEV_DEVICE_FOR_TYPE(driver->type) = g_object_ref (device);
-					data->faulted[driver->type] = FALSE;
-					DEVICE_FOR_TYPE(driver->type) = sensor_device;
-					DRIVER_FOR_TYPE(driver->type) = (SensorDriver *) driver;
-
-					g_assert (data->starts[driver->type] == NULL);
-
-					ht = data->clients[driver->type];
-
-					if (g_hash_table_size (ht) > 0) {
-						start_sensor (data, driver->type, TRUE, NULL, 0, NULL);
-					} else {
-						send_driver_changed_dbus_event (data, driver->type);
-					}
-				}
-				/* One transport can expose several sensor types (for example,
-				 * SSC light and compass). Keep probing, as find_sensors() does. */
-			}
-			if (probe.invalidated || data->shutting_down)
-				break;
-		}
-		sensor_probe_end (data, &probe);
+		if (changed)
+			queue_sensor_selection (data);
+	} else if (g_strcmp0 (action, "add") == 0 ||
+		   g_strcmp0 (action, "change") == 0 ||
+		   g_strcmp0 (action, "bind") == 0 ||
+		   g_strcmp0 (action, "online") == 0) {
+		register_sensor_candidate (data, device, g_strcmp0 (action, "change") == 0);
+		queue_sensor_selection (data);
+	} else {
+		/* Unknown actions do not authorize constructor traffic. Fence a
+		 * queued source rather than admitting its potentially stale snapshot.
+		 * Path moves are not inferred as physical replacement here. */
+		if (retire_sensor_candidate (data, path))
+			queue_sensor_selection (data);
 	}
+	data->event_depth--;
+	if (data->selection_pending)
+		queue_sensor_selection (data);
 }
 
 gboolean
@@ -1558,6 +1687,13 @@ termination_signal_handler (gpointer user_data)
 	SensorData *data = user_data;
 
 	g_debug ("Shutting down");
+	/* A synchronous constructor may be pumping this context. Quit alone
+	 * does not fence its returning result or remove deferred callbacks. */
+	data->shutting_down = TRUE;
+	data->selection_pending = FALSE;
+	g_clear_handle_id (&data->selection_idle, g_source_remove);
+	g_clear_handle_id (&data->sigint_id, g_source_remove);
+	g_clear_handle_id (&data->sigterm_id, g_source_remove);
 	g_main_loop_quit (data->loop);
 
 	return G_SOURCE_REMOVE;
@@ -1599,17 +1735,20 @@ int main (int argc, char **argv)
 	data->previous_orientation = ORIENTATION_UNDEFINED;
 	data->previous_tilt = TILT_UNDEFINED;
 	data->uses_lux = TRUE;
-
-	/* Set up D-Bus */
-	setup_dbus (data, replace);
-
-	data->auth = polkit_authority_get_sync (NULL, NULL);
+	data->candidates = g_ptr_array_new_with_free_func (sensor_candidate_unref);
+	data->seed_events = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 	data->loop = g_main_loop_new (NULL, TRUE);
+	data->sigint_id = g_unix_signal_add (SIGINT, termination_signal_handler, data);
+	data->sigterm_id = g_unix_signal_add (SIGTERM, termination_signal_handler, data);
 
-	g_unix_signal_add (SIGINT, (GSourceFunc) termination_signal_handler, data);
-	g_unix_signal_add (SIGTERM, (GSourceFunc) termination_signal_handler, data);
-
-	g_main_loop_run (data->loop);
+	/* Initialize callback state before bus ownership or any synchronous
+	 * setup call can dispatch the context. A shutdown during setup must
+	 * not be undone by subsequently starting the outer loop. */
+	data->auth = polkit_authority_get_sync (NULL, NULL);
+	if (!data->shutting_down) {
+		setup_dbus (data, replace);
+		g_main_loop_run (data->loop);
+	}
 	ret = data->ret;
 	free_sensor_data (data);
 

@@ -2,7 +2,7 @@
 
 This recipe builds the source snapshots in this directory on **native Linux
 ARM64**. It stages only QMI/SSC into a fresh private prefix, builds the proxy
-and runs six explicitly selected fixture-only test binaries. Nothing is
+and runs seven explicitly selected fixture-only test binaries. Nothing is
 installed into `/usr`, no service is enabled and no sensor is queried.
 Do not run the commands with `sudo` or on a daily-use device as a substitute
 for reviewed deployment packaging. Use a disposable development environment
@@ -15,8 +15,9 @@ process. The reference environment used GCC 14.2, binutils 2.44, Meson 1.7.0,
 Ninja 1.12.1, Python 3.13, pkgconf 1.8.1, GLib 2.84.4, qrtr-glib 1.2.2,
 protobuf-c 1.5.1 and protoc 3.21.12. The proxy additionally needs GUdev >=237,
 GLib/GIO >=2.76, polkit development files and libm. Test configuration requires
-Python psutil, python-dbusmock and PyGObject; UMockdev and D-Bus are needed only
-for the wider private-bus integration matrix, not the six test binaries below.
+Python psutil, python-dbusmock and PyGObject. The selection test starts its own
+private D-Bus daemon; it does not contact the system bus. UMockdev is needed
+for the wider integration matrix, not the seven test binaries below.
 In Debian package terms these include:
 
 ```text
@@ -98,7 +99,7 @@ not reuse a failed output directory as a clean build.
   meson compile -C "$SENSOR_BUILD_ROOT/proxy" -j2
   meson test -C "$SENSOR_BUILD_ROOT/proxy" --num-processes 1 --print-errorlogs \
     test-mount-matrix test-orientation test-ssc-drivers \
-    test-iio-buffer test-iio-acquisition test-iio-sysfs-write
+    test-iio-buffer test-iio-acquisition test-iio-sysfs-write test-sensor-selection
   printf 'Build and selected software tests completed: %s\n' "$SENSOR_BUILD_ROOT"
 )
 ```

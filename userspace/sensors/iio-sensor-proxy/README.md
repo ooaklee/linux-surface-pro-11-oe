@@ -2,7 +2,7 @@
 
 `source/` contains a downstream development snapshot based on upstream
 [`ca0d5b08bd647afc5f8ead3ce00a44018fbc633f`](https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/-/commit/ca0d5b08bd647afc5f8ead3ce00a44018fbc633f).
-Meson reports 3.9; this is not a new upstream release. All 78 exported source
+Meson reports 3.9; this is not a new upstream release. All 79 exported source
 files are pinned in [SOURCE.json](SOURCE.json). No private build paths,
 provider binaries, Windows drivers or local firmware captures are required.
 
@@ -12,15 +12,26 @@ This modified snapshot is published on 2026-10-20 as part of Leon Silcott's
 SP11 integration work, retaining original authorship and copyright notices.
 It contains the native SSC measurement adapter integration,
 claim and polling lifecycle checks, bounded first-reading handling and
-IIO input/buffer/polling corrections. The latest accepted change distinguishes
+IIO input/buffer/polling corrections. Calibration admission distinguishes
 an absent optional accelerometer scale/offset from an attribute read error,
 rejects malformed calibration and delays sampling-frequency fixup until
 calibration admission succeeds.
 
+Candidate admission now tries usable alternatives after discovery or
+construction failure, retains known alternatives when a type is occupied and
+fences stale discovery/construction results after removal or shutdown. Stream
+activation happens after admission, using owned attempt identities: an old
+pending OPEN cannot hold up replacement admission or erase its claims. Releasing
+the last future-intent client before activation sends neither OPEN nor STOP.
+These are software-fixture results, not hardware sensor qualification.
+
 Existing non-null GUdev calibration snapshots are copied, not proven fresh.
-File-removal checks are not an atomic hotplug snapshot. Sensor candidate
-selection can still miss an alternate device when the first discovered
-candidate fails; that follow-up is not repaired by this publication.
+File-removal checks are not an atomic hotplug snapshot. Faulted SSC providers
+retain the existing explicit CLOSE/Claim recovery policy; this change adds no
+automatic stream-fault failover. It does not establish cancellation of a stuck
+native constructor, arbitrary path-move recovery or safety under every external
+event storm. Only SSC drivers with the startup-failure hook receive the bounded
+first-reading deadline; legacy drivers retain their existing first-reading wait.
 See [VALIDATION.md](../VALIDATION.md) for the exact software-only boundary.
 
 Build against [this libssc](../libssc/README.md) and its pinned dependency,
