@@ -37,6 +37,8 @@ separate, explicit hardware qualification plan.
 
 ## Lexr boundary
 
+### Historical checkpoint — 2026-10-20
+
 Lexr integration is checked against
 [`b74247d08f7ccf90110a291c62c5fb56d895c55f`](https://github.com/ooaklee/lexr.sh/commit/b74247d08f7ccf90110a291c62c5fb56d895c55f).
 That revision has no sensor source-build/install adapter or sensor catalogue
@@ -47,14 +49,33 @@ executable workflow. `SOURCE.json` is an OE source
 inventory, **not** a Lexr catalogue, compatibility promise or install recipe.
 There is no supported `lexr userspace build sensors` command at this boundary.
 
-This export is structured for a future typed Lexr adapter: independently
-identified components, pinned dependency lineage, retained licences and
-non-activating build inputs. Before calling it Lexr-compatible, that work must
-provide compiled build/install policy, immutable artefact authority, dry-run
-and refusal checks, transactional rollback, service/package conflict handling
-and a hardware-qualified kernel/OS pairing. Do not guess a minimum Lexr or
-kernel version from the `sp11vN` number. Existing recommended audio/IPTSD and
-camera workflows are unchanged.
+### Current build-only status — 2026-10-22
+
+As of 2026-10-22, [Lexr 0.6.0-rc.1](https://github.com/ooaklee/lexr.sh/releases/tag/v0.6.0-rc.1)
+contains a compiled experimental sensor build-only adapter for this exact
+source composition. Its normal native producer and durable local publication
+gate passed. [The dated validation record](VALIDATION.md#normal-lexr-producer--2026-10-22)
+records the evidence and limits. Sensors remain absent from the shipped
+catalogue, and installation remains disabled.
+
+Keep three separate milestones:
+
+- **Raw sources:** available here with licences, inventories and a manual
+  maintainer build recipe. This does not promise an installable bundle.
+- **Lexr build-only support:** the compiled adapter authenticates this source
+  composition, owns dependency preparation and supervised native ARM64
+  compilation, and validates the outputs before local publication. It requires
+  an experimental build-only catalogue. A source-only entry must have no
+  install action or invented kernel/OS qualification. Build-only qualification
+  is separate from desktop deployment and physical sensor compatibility.
+- **Desktop installation and hardware support:** still unqualified. This
+  separately needs reviewed packaging and runtime providers, service/package
+  conflict handling, privileges, transactional rollback, explicit activation
+  and physical qualification of the declared kernel/OS/device pairing.
+
+An editable manifest alone does not deliver any of these executable workflows.
+Do not guess a minimum Lexr or kernel version from the `sp11vN` number. Existing
+recommended audio/IPTSD and camera workflows are unchanged.
 
 Workflow ownership remains with Lexr under
 [ADR0069](../../docs/adr/adr-0069-standalone-lexr-workflow-ownership.md) and

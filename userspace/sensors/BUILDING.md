@@ -29,10 +29,13 @@ gir1.2-umockdev-1.0 umockdev dbus-daemon libxml2-utils
 ```
 
 Package names/versions describe a reference, not a complete authenticated APT
-lock or a promise of compatibility with every distribution. Keep at least
-6 GiB free for a build; retain logs if it fails. No subproject download is
-allowed. GIR/VAPI, QMI firmware update and the legacy SSC hardware/QRTR tests
-are intentionally disabled in this recipe.
+lock or a promise of compatibility with every distribution. The block below
+checks for at least 6 GiB free on the actual build filesystem before compiling.
+This is an entry check, not a reservation or a guarantee that the build will
+fit. `/tmp` may be a separate filesystem or memory-backed; choose a development
+environment with adequate disk and memory, and retain failed outputs/logs.
+No subproject download is allowed. GIR/VAPI, QMI firmware update and the legacy
+SSC hardware/QRTR tests are intentionally disabled in this recipe.
 The libssc recipe treats warnings as errors with the reference compiler;
 new compiler diagnostics require review, not disabling that check silently.
 
@@ -45,7 +48,14 @@ provenance as well. No generated files should be written under `source/`.
 
 This whole block runs in a subshell. A failure ends the block, not your
 interactive terminal. Keep the printed output directory for diagnosis; do
-not reuse a failed output directory as a clean build.
+not reuse a failed output directory as a clean build. It uses a private home,
+cache and temporary directory, and resets inherited compiler/linker and
+pkg-config sysroot overrides. This is build-environment hygiene, not a sandbox:
+the disposable environment must provide the network/device isolation itself.
+
+The [dated Lexr producer qualification](VALIDATION.md#normal-lexr-producer--2026-10-22)
+used Lexr's compiled recipe. It does not record a literal end-to-end replay of
+the manual block below; its syntax-only and qualification limits remain.
 
 ```sh
 (
@@ -57,11 +67,27 @@ not reuse a failed output directory as a clean build.
   sha256sum -c SOURCE.sha256
   SENSOR_BUILD_ROOT=$(mktemp -d /tmp/oe-native-sensors.XXXXXX)
   SENSOR_STAGE="$SENSOR_BUILD_ROOT/stage"
-  mkdir "$SENSOR_STAGE"
   printf 'Build output: %s\n' "$SENSOR_BUILD_ROOT"
-  export CC=gcc-14
+  SENSOR_FREE_KIB=$(LC_ALL=C df -Pk "$SENSOR_BUILD_ROOT" | awk 'END { print $4 }')
+  case "$SENSOR_FREE_KIB" in
+    ''|*[!0-9]*) echo 'Unable to determine build-filesystem free space' >&2; exit 1 ;;
+  esac
+  if ! test "$SENSOR_FREE_KIB" -ge 6291456; then
+    printf 'Build requires at least 6291456 available KiB (6 GiB); observed %s\n' "$SENSOR_FREE_KIB" >&2
+    exit 1
+  fi
+  mkdir "$SENSOR_STAGE" "$SENSOR_BUILD_ROOT/home" \
+    "$SENSOR_BUILD_ROOT/cache" "$SENSOR_BUILD_ROOT/tmp" \
+    "$SENSOR_BUILD_ROOT/config" "$SENSOR_BUILD_ROOT/data"
+  export HOME="$SENSOR_BUILD_ROOT/home"
+  export XDG_CACHE_HOME="$SENSOR_BUILD_ROOT/cache"
+  export XDG_CONFIG_HOME="$SENSOR_BUILD_ROOT/config"
+  export XDG_DATA_HOME="$SENSOR_BUILD_ROOT/data"
+  export TMPDIR="$SENSOR_BUILD_ROOT/tmp"
+  export LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC
+  export CC=gcc-14 CFLAGS= CPPFLAGS= CXXFLAGS= LDFLAGS=
   export PYTHONDONTWRITEBYTECODE=1
-  export PKG_CONFIG_PATH=
+  export PKG_CONFIG_PATH= PKG_CONFIG_SYSROOT_DIR=
   export PKG_CONFIG_LIBDIR="$SENSOR_STAGE/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
   export LD_LIBRARY_PATH="$SENSOR_STAGE/lib"
   export LD_BIND_NOW=1

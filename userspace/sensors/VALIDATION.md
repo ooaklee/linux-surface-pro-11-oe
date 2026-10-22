@@ -142,12 +142,37 @@ Faulted SSC providers retain manual CLOSE/Claim recovery. Constructor cancellati
 arbitrary device path moves and all external event storms remain unqualified.
 Shutdown fences later publication but is not proof of remote firmware quiescence.
 
+## Normal Lexr producer — 2026-10-22
+
+The normal experimental CLI producer at Lexr
+[`73aafd72beb05c89e18e0b1e1fccb9874ef1d9d9`](https://github.com/ooaklee/lexr.sh/commit/73aafd72beb05c89e18e0b1e1fccb9874ef1d9d9)
+authenticated and built OE `649cc875d08c04ce33bc8afc2a0ff7a22ce362e0`.
+Dependency preparation, volume initialisation and offline source compilation
+each reached a verified terminal exit of zero. Seven native software fixture
+targets passed. Strict validation accepted 16 regular artefact files and three
+library aliases, followed by durable local publication and its receipt. An
+independent replay of the retained archive passed the unchanged strict consumer.
+The [dated Lexr qualification record](https://github.com/ooaklee/lexr.sh/blob/v0.6.0-rc.1/docs/adr/adr-045-local-sensor-build-transport-and-bind-namespaces.md#2026-10-22-local-producer-evidence)
+records the software-only boundary.
+
+The producer implementation is unchanged in published Lexr `0.6.0-rc.1`, source
+commit [`157e5d3e81c0d0c0c63437a7c549789d021c1bdb`](https://github.com/ooaklee/lexr.sh/commit/157e5d3e81c0d0c0c63437a7c549789d021c1bdb).
+No fresh RC native run was performed. This latest run used `b_sanitize=none`
+and retained known diagnostics; earlier sanitized evidence remains separately
+scoped above.
+
+This completes the software producer/local-publication gate. It does not
+establish literal replay of BUILDING.md, installation, service activation,
+runtime-provider coexistence, rollback, physical sensor roles, axes, calibration,
+clocks, desktop behaviour or suspend/resume qualification.
+
 ## Remaining work
 
 - Define reviewed service/package conflict and privilege boundaries, including
   distribution proxy coexistence, rollback and explicit activation.
-- Add a typed Lexr sensor adapter and catalogue capability before advertising
-  Lexr build/install support. Metadata alone cannot grant execution.
+- Keep catalogue entries experimental and build-only, with installation
+  disabled until its separate gates pass. Metadata alone cannot grant
+  execution or hardware compatibility.
 - Qualify sensor identity, physical roles, axes/mounting, calibration and
   clocks on declared hardware. Then test desktop behavior and suspend/resume.
 - Establish explicit kernel/OS compatibility from that qualification, not by
