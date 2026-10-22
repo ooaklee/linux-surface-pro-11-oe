@@ -1,0 +1,409 @@
+{
+  "schema": "oe-sensor-source-inventory-v1",
+  "component": "libssc",
+  "status": "experimental-source-only",
+  "upstream": {
+    "repository": "https://codeberg.org/DylanVanAssche/libssc.git",
+    "base_commit": "4e4c6c8cc702a754bd700506c01961aaf971a23b"
+  },
+  "source_version": "0.4.7-development",
+  "local_modifications": true,
+  "provenance_note": "Complete downstream source snapshot; the upstream commit is its base, not a claim of byte identity with upstream. See README.md for scope and limitations.",
+  "inventory_root": "source",
+  "files": {
+    ".forgejo/workflows/tests.yaml": {
+      "bytes": 729,
+      "sha256": "b9119d46f89d21500f714ef0fdcfbb1259d9156b1bcc2a918ddde80b75ce9be0",
+      "git_mode": "100644"
+    },
+    ".gitmodules": {
+      "bytes": 195,
+      "sha256": "16d615ab802ffac359f4c03a67252448c0b0f6d0e186d5038be054c9a478d955",
+      "git_mode": "100644"
+    },
+    "CHANGELOG.md": {
+      "bytes": 6194,
+      "sha256": "220b19d507362b4ff0830e570e1c53f679610466eae3057278952dbf62a51f91",
+      "git_mode": "100644"
+    },
+    "data/meson.build": {
+      "bytes": 1615,
+      "sha256": "408caf59271834fc981394541ce65c291ca19164b01bf52236e2987bb23ed7cc",
+      "git_mode": "100644"
+    },
+    "data/ssc-common.proto": {
+      "bytes": 4153,
+      "sha256": "1fb2d07b2f752723c1e9d4927c52247a6900c66be2dc3cbf4e26e8a08e682165",
+      "git_mode": "100644"
+    },
+    "data/ssc-sensor-accelerometer.proto": {
+      "bytes": 1111,
+      "sha256": "54c1eebaaae849013405741333e850c7a5266d9d21abe1dfb09e2f53d6c47c5f",
+      "git_mode": "100644"
+    },
+    "data/ssc-sensor-gyroscope.proto": {
+      "bytes": 1109,
+      "sha256": "9eeb27525c8098d2c6777a320427987ac40ac842dfaffef44c56b81729e2f44c",
+      "git_mode": "100644"
+    },
+    "data/ssc-sensor-light.proto": {
+      "bytes": 1067,
+      "sha256": "5dc4e4033a3f9d858833dda053e08acc8afa6a08373bd57dd10eb52132eaaf91",
+      "git_mode": "100644"
+    },
+    "data/ssc-sensor-magnetometer.proto": {
+      "bytes": 1113,
+      "sha256": "be37f97c20a74c33494064e3d65547bb52dbe6e06f0eabe94b99ee3564648910",
+      "git_mode": "100644"
+    },
+    "data/ssc-sensor-proximity.proto": {
+      "bytes": 1491,
+      "sha256": "f26cc99a5d6dd1430d1806b96a382cd7af1c78ea47116520402b1f27c6e5d596",
+      "git_mode": "100644"
+    },
+    "data/ssc-sensor-rotationvector.proto": {
+      "bytes": 1127,
+      "sha256": "39ff6b0a60d35ab590583d1e0c8221db3b61606ff8c385b67dde9ff93bbcf83c",
+      "git_mode": "100644"
+    },
+    "data/ssc-sensor-suid.proto": {
+      "bytes": 1562,
+      "sha256": "e7237d39dffa248ca84bf65bacf255cbae3176cf67f05c1068947cd77fe34e76",
+      "git_mode": "100644"
+    },
+    "docs/Qualcomm-Sensorcore-Docs.md": {
+      "bytes": 57438,
+      "sha256": "14ac37082cbe185aacd62dbcd4ec34133c7ec8f12866537b7ebc622eb1edee26",
+      "git_mode": "100644"
+    },
+    "libssc.map": {
+      "bytes": 3316,
+      "sha256": "62893ea19c2dc8cb0fd200e516c6f6a4613cc64b66e8f2a6bd42dd1e70f425df",
+      "git_mode": "100644"
+    },
+    "LICENSE": {
+      "bytes": 35149,
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "git_mode": "100644"
+    },
+    "meson_options.txt": {
+      "bytes": 1182,
+      "sha256": "3a320a1d71765e22772fcd629340ff2a232f10a31bd0a66567846e12da5ab0b8",
+      "git_mode": "100644"
+    },
+    "meson.build": {
+      "bytes": 3229,
+      "sha256": "b2e0e56c587bbb62570990410fcae1349cfab889fd590f1616ad0ab19b9ff227",
+      "git_mode": "100644"
+    },
+    "mocking/.gitignore": {
+      "bytes": 21,
+      "sha256": "a511e32d11537e884eeae07b48e12583b78a6d89fd020eac263ae45e010b131c",
+      "git_mode": "100644"
+    },
+    "mocking/meson.build": {
+      "bytes": 21,
+      "sha256": "0c51ebf91e60cdfdd3195bd3b367457116d64269414a7f7d37ef89b35f9e5d56",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/__init__.py": {
+      "bytes": 910,
+      "sha256": "fd0ec3d24cdc89c6426bb8240a2b0a98cacc522111bd7afd13bbe717d8799c68",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/meson.build": {
+      "bytes": 806,
+      "sha256": "5d29416c07cdc2228f2cb4ff27e0667ee70dd8e3747355ab21a49a2c755f4ed9",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-accelerometer.json": {
+      "bytes": 1169,
+      "sha256": "b47a3cac3d18eb2317680b93f5b3d76dbc937906da83eba1e325187663efc286",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-light.json": {
+      "bytes": 1016,
+      "sha256": "87d887e8b93bf9fb7c5e513d34ff2486652268ba65f79ff1c2736d8dec0d9969",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-magnetometer.json": {
+      "bytes": 1092,
+      "sha256": "a78a896e157ea33270da3a4f954cb6dde46aa79defda34aa3c2a0c4a19914cf0",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-no-sample-rate.json": {
+      "bytes": 349,
+      "sha256": "a66ba92884614052cdf06aeee23db38f7f873f57401ef430dd7aa05eb01b2d34",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-proximity.json": {
+      "bytes": 1255,
+      "sha256": "e770da3032190c5d8c4f4b275591241783dd86722b4890588bf2d3ad43f4c463",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-registry.json": {
+      "bytes": 383,
+      "sha256": "7869d22a4f1019fe41de0fd6e7d70fb1865f80d2b95c2af9413a4a4988cc8644",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-rotationvector.json": {
+      "bytes": 1090,
+      "sha256": "842fac4550e1c456fba0db6e91c362b6c2a1728d7b06fc38ce191543439a0e4c",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/data/sensor-unavailable.json": {
+      "bytes": 388,
+      "sha256": "915b70b3e57d1b03f3a4c5ebcbbd25692ab19803ea3d42310df969371df5fdbe",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/meson.build": {
+      "bytes": 1810,
+      "sha256": "dfebecf22510131832f2062a5c437c2413c44dcf9034a65dc5b0b7a463728713",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/qmi.py": {
+      "bytes": 6679,
+      "sha256": "f516ca61f385cf5d66a09f204d03402a3144a89139b507819e679de8a63966c6",
+      "git_mode": "100644"
+    },
+    "mocking/ssc_server/ssc-server-tests": {
+      "bytes": 9165,
+      "sha256": "9b4ec07e306aeeba5768cb5fba8bf2d3513226d5f768f1a8461f7b4aa3a3bac3",
+      "git_mode": "100755"
+    },
+    "mocking/ssc_server/ssc-server.in": {
+      "bytes": 13733,
+      "sha256": "e15d25da8e60ff213855b2fd0172fa3e846e355ff7b174d5dc770fb54be63437",
+      "git_mode": "100755"
+    },
+    "mocking/ssc_server/ssc.py": {
+      "bytes": 18705,
+      "sha256": "0e06c5c703aae0b4e0357d0b53f7a659d8c46c6b68bf2326cdd19382241530a2",
+      "git_mode": "100644"
+    },
+    "README.md": {
+      "bytes": 2586,
+      "sha256": "ecb46c1d5c6bbf0df67c1f40fc788db7f0f77a60aa9eaeb23c36c324f5cbe3d2",
+      "git_mode": "100644"
+    },
+    "RELEASE.md": {
+      "bytes": 219,
+      "sha256": "d7f04a5d5aed830d3803f11b8a88c2b67ec764d7faf9059a8893d412476850c1",
+      "git_mode": "100644"
+    },
+    "src/.gitignore": {
+      "bytes": 8,
+      "sha256": "df2bd8c8c8bc9b6e2578eca5c25600943b3662776d04e0e77538634e83f5e434",
+      "git_mode": "100644"
+    },
+    "src/libssc-cli-private.h": {
+      "bytes": 3107,
+      "sha256": "feec5e4a43eaaaa29f6ba46716f84bc2c4fb558d03d668f60a1e52b6ea5ee4e9",
+      "git_mode": "100644"
+    },
+    "src/libssc-cli.c": {
+      "bytes": 38886,
+      "sha256": "9099f6d02779c4cdc6edb09e30af03f086d76665b5b3b82807fd8a9e98c7f484",
+      "git_mode": "100644"
+    },
+    "src/libssc-client-private.h": {
+      "bytes": 6118,
+      "sha256": "244fc14199ea53930311cf4e76be5ecdc9d87f7d3fed8ee8f3196a47934a20fe",
+      "git_mode": "100644"
+    },
+    "src/libssc-client.c": {
+      "bytes": 53640,
+      "sha256": "c182624c309c666f72f0a44a2c82c417e9ba17a0886d9e3f7494ce5730db17e8",
+      "git_mode": "100644"
+    },
+    "src/libssc-common-private.h": {
+      "bytes": 3133,
+      "sha256": "1a8ae7989b6c809ea084cf0713d76d7706fea1d8b7c879dfbc827538c3354c36",
+      "git_mode": "100644"
+    },
+    "src/libssc-common.c": {
+      "bytes": 2445,
+      "sha256": "a39ecdbce46788e17999ff068d865b62342b13c5d6b2c77bbaa66386de6313a3",
+      "git_mode": "100644"
+    },
+    "src/libssc-lifetime-private.h": {
+      "bytes": 3125,
+      "sha256": "138594a05c4c5495284753358598e101ecfa915ab2f5b441e94efd7be50d93f1",
+      "git_mode": "100644"
+    },
+    "src/libssc-lifetime.c": {
+      "bytes": 13228,
+      "sha256": "704bcae7fc4ca3c56a7b75c273883a5fd3b8fc01115bcb618a7fbdcd2e284613",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-accelerometer.c": {
+      "bytes": 7678,
+      "sha256": "130c28ef87664139fb8075c18400c0d87d1f8c44604b24d5fea6f8e964c3d5bb",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-accelerometer.h": {
+      "bytes": 2353,
+      "sha256": "9bd3cb0821a115f57960f3893b3e3d38987aa73e00254de94f3b9e78744a4f57",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-compass.c": {
+      "bytes": 7105,
+      "sha256": "1dd531ab051ba7c746a63ff078c5e788011fad7d9f585b5039b4e9c6acb5f9b9",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-compass.h": {
+      "bytes": 2192,
+      "sha256": "e523d1517848816b2c8e14b60d4419242fd078f7100dfc424d4d70eba6ea93ad",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-gyroscope.c": {
+      "bytes": 6510,
+      "sha256": "9a47618f2bb28ca1c83b91b3e23e65b33b33cb663dbd376a877615eca2b9bc2c",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-gyroscope.h": {
+      "bytes": 2276,
+      "sha256": "4749f32e68def1cc9f18b525e21ee519fcdc6fb21ed5dd44ed0add0b2588ccd1",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-light.c": {
+      "bytes": 6077,
+      "sha256": "f0f025787d10d4fb5359cf30c0209380f5f835c4b82ea763a8a006366ca17bbf",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-light.h": {
+      "bytes": 2108,
+      "sha256": "da7da1b56cfa4f46b2a834ae234a59b1fd7f4289172270e9f21680fe96ae45a4",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-magnetometer.c": {
+      "bytes": 6678,
+      "sha256": "0f3aca39bbceddd98fbf50c40d7ea21b2946ec705275fac39841d0004d3d28ab",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-magnetometer.h": {
+      "bytes": 2332,
+      "sha256": "720ab9807d9c8f9d1942964ee0bdd433cff511534c9aa45f98e57d55f6b5f661",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-private.h": {
+      "bytes": 3834,
+      "sha256": "f7bbbfc901b8dd008bb9f9f64712ce0222602fdd3036f40acbd3b6fdefd030f7",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-proximity-private.h": {
+      "bytes": 2209,
+      "sha256": "932c605284d1f8adfed8a70c24ad8ba1655987bf7fe55404730fdce79a5fb1eb",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-proximity.c": {
+      "bytes": 6497,
+      "sha256": "54d279b87e54fcef93dfc87b791f6fa9011567d438cf7af140020e9ab20a74df",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-proximity.h": {
+      "bytes": 2219,
+      "sha256": "a66ee1327b3de41f60aabd6f6e0247d0e8bd74e134912f9d839a19af26e25754",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-retirement.h": {
+      "bytes": 2234,
+      "sha256": "6bd2496937b8b46243d53334c391223e1f44f212b6b98f0371ba3de0aefa9210",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-sample.c": {
+      "bytes": 5263,
+      "sha256": "1374251dbdcb5e5a6c2ad695f768a6bcd1bb96a6b5d7d53943ae1cd33ba1e136",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor-sample.h": {
+      "bytes": 6828,
+      "sha256": "6128e7c904f29be4bf3f226e8cebd45c33e74ce52155e1507fd56344f6b7716f",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor.c": {
+      "bytes": 108889,
+      "sha256": "3a80a26466a90ce7fd1b789cf767e52fa0207bcc419c75d483858dbc622a4ba2",
+      "git_mode": "100644"
+    },
+    "src/libssc-sensor.h": {
+      "bytes": 9995,
+      "sha256": "58c21b8d224335e0816c82196f97bfcfc090d52e91eb12826153e9f5510dabb3",
+      "git_mode": "100644"
+    },
+    "src/libssc-version-private.h.in": {
+      "bytes": 2074,
+      "sha256": "39b175b48ee280b436eb8ded6d73d1acd5bd412afd293fc6bec16130e04c09b7",
+      "git_mode": "100644"
+    },
+    "src/libssc.h": {
+      "bytes": 1146,
+      "sha256": "8141aca7d36e69384226e61107ff97851b373c862a9850ff6ea76cdc07027083",
+      "git_mode": "100644"
+    },
+    "src/meson.build": {
+      "bytes": 4026,
+      "sha256": "ee773d80330c60af50805ed6d35170bbf7787db83ffd796b60af866709b5936b",
+      "git_mode": "100644"
+    },
+    "tests/accelerometer.c": {
+      "bytes": 10084,
+      "sha256": "4f77a6c6e984b54e201b334c8ac116521de72eb6fe67884010f86dbb6eda79ab",
+      "git_mode": "100644"
+    },
+    "tests/compass.c": {
+      "bytes": 4427,
+      "sha256": "b0e5a4bec916c6f7247b9def5fb634e0216e5fad827c2263c4610c205387c2ed",
+      "git_mode": "100644"
+    },
+    "tests/general.c": {
+      "bytes": 4426,
+      "sha256": "515c3834aaeb3325e34100524455d4062d3714bfd8c445eb5e67b4e5b24c9f9c",
+      "git_mode": "100644"
+    },
+    "tests/light.c": {
+      "bytes": 4223,
+      "sha256": "8193e4d21ba6b32a4ea92031fde18548b400325276d1c1841ac94427e9744f54",
+      "git_mode": "100644"
+    },
+    "tests/magnetometer.c": {
+      "bytes": 6312,
+      "sha256": "3e6445eb23471764b2f8e95cf79f88b1710eaff66f033e0ebc7836dce7814700",
+      "git_mode": "100644"
+    },
+    "tests/meson.build": {
+      "bytes": 2373,
+      "sha256": "c971216b5e76d22af00f9e8723729334779a31bd77e04b2f63115570f44893b3",
+      "git_mode": "100644"
+    },
+    "tests/no-service.c": {
+      "bytes": 1730,
+      "sha256": "e1b7c4dce9b0c198c38fbf19f640b656d658b1560a7a31543aad1f1e504de434",
+      "git_mode": "100644"
+    },
+    "tests/proximity.c": {
+      "bytes": 4384,
+      "sha256": "331866bf99aaebfb4a9fd6bbeef68cdd13ac2e30d424e373ddc6d483ade7a7f5",
+      "git_mode": "100644"
+    },
+    "utils/decoder": {
+      "bytes": 1532,
+      "sha256": "aee1d3a2700a0393cd020242ddafb661de7c89fb02b3465df38f9f077c80b231",
+      "git_mode": "100755"
+    },
+    "utils/requirements.txt": {
+      "bytes": 19,
+      "sha256": "0eb08759bca00912231a391f34261ea3bf4872da8d1a8a609bd86909a940a5b2",
+      "git_mode": "100644"
+    }
+  },
+  "symlinks": {},
+  "excluded_upstream_material": {
+    "utils/strace.txt": {
+      "bytes": 1119649,
+      "sha256": "e5c7fe5b55bd7c1a38778b2b50571a6707f444da4e02bd947f6d7839b46991b3",
+      "reason": "Upstream raw Android diagnostic capture, not needed by the native Meson build; omitted for data minimization. Not an OE or current Surface capture."
+    }
+  },
+  "inventory_note": "Relative source byte hashes and Git executable modes. Git does not retain delivery directory permissions. Not a Lexr catalog or compatibility declaration."
+}

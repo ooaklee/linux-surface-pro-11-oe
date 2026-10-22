@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# libssc: Library to expose Qualcomm Sensor Core sensors
+# Copyright (C) 2022-2026 Dylan Van Assche
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#  
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+option('introspection', type: 'feature', value: 'auto',
+  description: 'Generate GIR and typelib; enabled requires usable introspection tools')
+option('vapi', type: 'feature', value: 'auto',
+  description: 'Generate VAPI; enabled also requires GIR and its dependencies')
+option('build-tests', type: 'boolean', value: true,
+  description: 'Build all legacy tests and the Python mocking server')

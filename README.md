@@ -166,6 +166,7 @@ CLI development belongs in the [Lexr repository](https://github.com/ooaklee/lexr
 | --- | --- |
 | Kernel patches and archived integration notes | [patches/](patches/) |
 | Device-support sources, including Fedora IPTSD package inputs | [userspace/](userspace/) and [Fedora packaging](userspace/iptsd-sp11/packaging/fedora/README.md) |
+| Experimental native sensor sources (not yet Lexr-installable) | [userspace/sensors/](userspace/sensors/README.md) |
 | OpenEmbedded recipes | [meta-sp11/](meta-sp11/README.md) |
 | Hardware reports and integration guides | [docs/](docs/) |
 | Architecture decisions | [docs/adr/](docs/adr/) |

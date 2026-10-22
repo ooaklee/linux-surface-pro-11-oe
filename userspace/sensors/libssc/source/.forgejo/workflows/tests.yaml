@@ -1,0 +1,28 @@
+name: Tests
+
+on: [push]
+
+jobs:
+  test:
+    name: Tests
+    runs-on: codeberg-tiny
+    container:
+      image: docker.io/alpine:edge
+    steps:
+      - name: Dependencies
+        run: |
+          # clone
+          apk add nodejs
+          # libssc
+          apk add alpine-sdk python3-dev gobject-introspection-dev meson libqmi-dev glib-dev protobuf-c-dev
+          # libssc tests
+          apk add protobuf-dev qrtr-libs py3-gobject3 py3-protobuf
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Compile
+        run: |
+          meson setup _build
+          meson compile -C _build
+      - name: Integration tests
+        run: meson test --print-errorlogs -C _build

@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+# -*- Mode: python; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+#
+# This program is free software; you can redistribute it and/or modify it under
+# the terms of the GNU Lesser General Public License as published by the Free
+# Software Foundation; either version 2 of the License, or (at your option) any
+# later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more
+# details.
+#
+# You should have received a copy of the GNU Lesser General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc., 51
+# Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
+# Copyright (C) 2020 Aleksander Morgado <aleksander@aleksander.es>
+#
+
+import sys, signal, gi
+
+gi.require_version('Qmi', '1.0')
+from gi.repository import GLib, Gio, Qmi
+
+main_loop = None
+device = None
+
+def signal_handler(data):
+    main_loop.quit()
+
+
+def device_close_ready(dev,result,user_data=None):
+    try:
+        dev.close_finish(result)
+    except GLib.GError as error:
+        sys.stderr.write("error: couldn't close QMI device: %s\n" % error.message)
+    main_loop.quit()
+
+
+def device_close():
+    device.close_async(10, None, device_close_ready, None)
+
+
+def release_client_ready(dev,result,user_data=None):
+    try:
+        dev.release_client_finish(result)
+    except GLib.GError as error:
+        sys.stderr.write("error: couldn't release QMI client: %s\n" % error.message)
+    device_close()
+
+
+def release_client(client):
+    device.release_client(client, Qmi.DeviceReleaseClientFlags.RELEASE_CID, 10, None, release_client_ready, None)
+
+
+def get_ids_ready(client,result,user_data=None):
+    try:
+        output = client.get_ids_finish(result)
+        output.get_result()
+    except GLib.GError as error:
+        sys.stderr.write("error: couldn't query device ids: %s\n" % error.message)
+        release_client(client)
+        return
+
+    try:
+        imei = output.get_imei()
+        print("imei:                  %s" % imei)
+    except:
+        pass
+
+    try:
+        imei_software_version = output.get_imei_software_version()
+        print("imei software version: %s" % imei_software_version)
+    except:
+        pass
+
+    try:
+        meid = output.get_meid()
+        print("meid:                  %s" % meid)
+    except:
+        pass
+
+    try:
+        esn = output.get_esn()
+        print("esn:                   %s" % esn)
+    except:
+        pass
+
+    release_client(client)
+
+
+def get_capabilities_ready(client,result,user_data=None):
+    try:
+        output = client.get_capabilities_finish(result)
+        output.get_result()
+
+        maxtxrate, maxrxrate, dataservicecaps, simcaps, radioifaces = output.get_info()
+        print("max tx channel rate:   %u" % maxtxrate)
+        print("max rx channel rate:   %u" % maxrxrate)
+        print("data service:          %s" % Qmi.DmsDataServiceCapability.get_string(dataservicecaps))
+        print("sim:                   %s" % Qmi.DmsSimCapability.get_string(simcaps))
+        networks = ""
+        for radioiface in radioifaces:
+            if networks != "":
+                networks += ", "
+            networks += Qmi.DmsRadioInterface.get_string(radioiface)
+        print("networks:              %s" % networks)
+
+    except GLib.GError as error:
+        sys.stderr.write("error: couldn't query device capabilities: %s\n" % error.message)
+
+    client.get_ids(None, 10, None, get_ids_ready, None)
+
+
+def allocate_client_ready(dev,result,user_data=None):
+    try:
+        client = dev.allocate_client_finish(result)
+    except GLib.GError as error:
+        sys.stderr.write("error: couldn't allocate QMI client: %s\n" % error.message)
+        device_close()
+        return
+
+    client.get_capabilities(None, 10, None, get_capabilities_ready, None)
+
+
+def open_ready(dev,result,user_data=None):
+    try:
+        dev.open_finish(result)
+    except GLib.GError as error:
+        sys.stderr.write("error: couldn't open QMI device: %s\n" % error.message)
+        main_loop.quit()
+        return
+
+    device.allocate_client(Qmi.Service.DMS, Qmi.CID_NONE, 10, None, allocate_client_ready, None)
+
+
+def new_ready(unused,result,user_data=None):
+    try:
+        global device
+        device = Qmi.Device.new_finish(result)
+    except GLib.GError as error:
+        sys.stderr.write("error: couldn't create QMI device: %s\n" % error.message)
+        main_loop.quit()
+        return
+
+    device.open(Qmi.DeviceOpenFlags.PROXY | Qmi.DeviceOpenFlags.AUTO, 10, None, open_ready, None)
+
+
+if __name__ == "__main__":
+
+    # Process input arguments
+    if len(sys.argv) != 2:
+        sys.stderr.write('error: wrong number of arguments\n')
+        sys.stdout.write('usage: simple-tester-python <DEVICE>\n')
+        sys.exit(1)
+
+    # Create Mbim device asynchronously
+    file = Gio.File.new_for_path(sys.argv[1])
+    Qmi.Device.new (file, None, new_ready, None)
+
+    # Main loop
+    main_loop = GLib.MainLoop()
+    GLib.unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGHUP, signal_handler, None)
+    GLib.unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGTERM, signal_handler, None)
+    try:
+        main_loop.run()
+    except KeyboardInterrupt:
+        pass
