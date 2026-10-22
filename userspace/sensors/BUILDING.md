@@ -53,6 +53,10 @@ cache and temporary directory, and resets inherited compiler/linker and
 pkg-config sysroot overrides. This is build-environment hygiene, not a sandbox:
 the disposable environment must provide the network/device isolation itself.
 
+The [dated Lexr producer qualification](VALIDATION.md#normal-lexr-producer--2026-10-22)
+used Lexr's compiled recipe. It does not record a literal end-to-end replay of
+the manual block below; its syntax-only and qualification limits remain.
+
 ```sh
 (
   set -eu

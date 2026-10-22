@@ -37,6 +37,8 @@ separate, explicit hardware qualification plan.
 
 ## Lexr boundary
 
+### Historical checkpoint — 2026-10-20
+
 Lexr integration is checked against
 [`b74247d08f7ccf90110a291c62c5fb56d895c55f`](https://github.com/ooaklee/lexr.sh/commit/b74247d08f7ccf90110a291c62c5fb56d895c55f).
 That revision has no sensor source-build/install adapter or sensor catalogue
@@ -47,15 +49,23 @@ executable workflow. `SOURCE.json` is an OE source
 inventory, **not** a Lexr catalogue, compatibility promise or install recipe.
 There is no supported `lexr userspace build sensors` command at this boundary.
 
+### Current build-only status — 2026-10-22
+
+As of 2026-10-22, [Lexr 0.6.0-rc.1](https://github.com/ooaklee/lexr.sh/releases/tag/v0.6.0-rc.1)
+contains a compiled experimental sensor build-only adapter for this exact
+source composition. Its normal native producer and durable local publication
+gate passed. [The dated validation record](VALIDATION.md#normal-lexr-producer--2026-10-22)
+records the evidence and limits. Sensors remain absent from the shipped
+catalogue, and installation remains disabled.
+
 Keep three separate milestones:
 
 - **Raw sources:** available here with licences, inventories and a manual
   maintainer build recipe. This does not promise an installable bundle.
-- **Lexr build-only support:** not advertised at the checked revision above.
-  A future compiled adapter must authenticate this source composition, own
-  dependency preparation and supervised native ARM64 compilation, validate
-  the outputs, and pass its normal end-to-end CLI flow, dry-run and refusal
-  checks. A source-only entry must stay experimental and build-only, with no
+- **Lexr build-only support:** the compiled adapter authenticates this source
+  composition, owns dependency preparation and supervised native ARM64
+  compilation, and validates the outputs before local publication. It requires
+  an experimental build-only catalogue. A source-only entry must have no
   install action or invented kernel/OS qualification. Build-only qualification
   is separate from desktop deployment and physical sensor compatibility.
 - **Desktop installation and hardware support:** still unqualified. This

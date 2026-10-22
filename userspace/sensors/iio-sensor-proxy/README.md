@@ -48,6 +48,7 @@ Bastien Nocera, Purism, Dylan Van Assche and other upstream contributors.
 [The upstream README](source/README.md) is preserved as upstream context,
 not an instruction to deploy this experimental build.
 
-This component is not included in v26/v27, has not been installed on a Surface
-and is not currently supported by a Lexr sensor adapter. See the
+This component is not included in v26/v27 and has not been installed on a
+Surface. Lexr 0.6.0-rc.1 contains an experimental build-only adapter for this
+exact composition; sensor installation and activation remain disabled. See the
 [shared Lexr boundary](../README.md#lexr-boundary).
