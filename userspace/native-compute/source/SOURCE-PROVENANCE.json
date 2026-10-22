@@ -1,0 +1,45 @@
+{
+  "schema": "sp11-native-compute-source-provenance-v1",
+  "origins": {
+    "fastrpc": {
+      "revision": "a56e9d4de3614a8d8f4b0e15ff561350c4b686e3",
+      "url": "https://github.com/qualcomm/fastrpc",
+      "prefix": "upstream/fastrpc"
+    },
+    "qaic": {
+      "revision": "a66a0019fb488abae955bbc9b3a9de3dc15962d0",
+      "url": "https://github.com/qualcomm/QAIC",
+      "prefix": "upstream/qaic"
+    }
+  },
+  "r82AcceptanceSHA": "c2e24db9fb997fede64c85852bd2be51513fabb7be382b4d4d735724a8588ea3",
+  "basePlusPatch": {
+    "fastrpcBaseUnmodified": true,
+    "patch": "native/patches/0001-mainline-capability-call-local.patch",
+    "patchSHA256": "27d437a1cc79cbb1b6a8b8b5ae4f82fc96f1cb7cc2cd18107c3d157345a9d829",
+    "application": "Build helper applies the patch to a fresh writable source copy."
+  },
+  "supportDescriptorSHA256": "132dbe445c6936bf93c72bb611ad3168358892ea8fa6bd7146f62f9fd8346611",
+  "compositionScope": "Source directory composition only; not a fresh build, installation, DSP execution or hardware qualification.",
+  "checkedAPIRevision": {
+    "stage": "R84",
+    "baseSourceManifestSHA256": "0ecb9800fca0b2098566916c193ce52bd2daf25a71fb8ac0961f62e717461cb5",
+    "baseAcceptanceSHA256": "dd1fe7d95e6d17e99d8955b38902bdb503b236bae8e4366aaaa0bacc14e8145b",
+    "scope": "Authored host admission wrapper and mock-only negative/forwarding checks; example client uses checked calls. Generated and upstream sources remain unchanged. No new Windows-binary analysis or hardware execution is claimed."
+  },
+  "launcherBoundaryRevision": {
+    "stage": "R86-r2",
+    "r1SourceManifestSHA256": "9cbb0ba4d79ef9f8257aa69b34dffb92d7fea2eaf2c24f9f68e0a524c7203681",
+    "r1Revision": "First fresh build passed. Actual OpenCode source review identified the empty-argv usage-formatting edge; r2 adds safe fallback naming and two mock-control rejections, plus PATH-first impostors within the existing 27 launcher cases.",
+    "baseSourceManifestSHA256": "0e392530cfb8801e84a82ca1b2eabb3d6b88f91a94d37f3f7f52bf4c1c5b33d5",
+    "baseBuildAuditSHA256": "70700f3f79ef08740ba24c90686f4410f0f9b2b6ac794715ee31266fa68336aa",
+    "baseFinalModelClosureObtained": false,
+    "scope": "Public libc-only intent launcher executes the unchanged SDK-linked worker only after shared argument admission. SDK/upstream sources unchanged; worker remains active and link-only in offline checks. Local mock worker tests do not establish DSP runtime or hardware compatibility."
+  },
+  "wireTestRevision": {
+    "stage": "R85",
+    "baseSourceManifestSHA256": "5d10f3f8f8a5dbd2cbca6dc700c56234c2ab99edbbe615af8616ae68904e70e1",
+    "baseAcceptanceSHA256": "1cdbc3dcf34ad55059bec94e0dcb247d1cb35e5b06f37288c27548ec014106e9",
+    "scope": "Genuine generated AP-stub local marshalling checks against explicit transport/logging mocks, no SDK/DSP implementation linked into the executed fixture. Upstream sources and generated code unchanged; no new Windows binary or device observation."
+  }
+}

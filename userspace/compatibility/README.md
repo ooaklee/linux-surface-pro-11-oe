@@ -17,11 +17,17 @@ Surface Pro 11: `x1e80100-microsoft-denali-oled` (X Elite OLED) and
 `x1p64100-microsoft-denali` (X Plus LCD). These match `lexr profile list`;
 kernel platform aliases are not compatibility identities. The declarations
 retain the existing `7.2.0` / `qcom-x1e` / `sp11` generation bounds. The initial OS
-interval covers Ubuntu `26.04` only. Lexr `0.5.0` is the first planned consumer
+interval covers Ubuntu `26.04` only. Lexr `0.7.0` is the first planned consumer
 of this schema. These are component compatibility bounds, not permission to
 redistribute a payload or install to arbitrary paths.
 
-`tested_versions` is deliberately empty for the new packaging identities.
+Each declaration may include a human-readable `description` immediately after
+`capabilities`. When present, it is nonblank UTF-8 text of at most 1024 bytes
+without control characters; it grants no executable policy or compatibility
+evidence. Omission retains the canonical form of older declarations.
+
+OS `tested_versions` is deliberately empty for the new packaging identities,
+and Lexr `tested_through_inclusive` is omitted because it is not yet known.
 Historical device results remain evidence for their exact packages and kernel;
 creating these declarations does not qualify a new build or either hardware
 profile. If later evidence qualifies only one profile, give it a separate
@@ -30,6 +36,10 @@ qualification update records an OS version, the shared evaluator reports
 `unverified` and mutation requires the dedicated
 `--allow-unverified-compatibility` flag. A hard incompatibility or missing target
 identity still blocks the operation.
+
+The hard Lexr minimum is stable `0.7.0`: a canonical `0.7.0-rc.1` is below it
+and cannot bypass that bound with the dedicated override. The existing 7.2.0
+kernel bounds do not qualify a newly built 7.2.9 payload.
 
 ## Prepare a release
 
@@ -59,6 +69,9 @@ The published `sp11-audio-v19c`, `sp11-iptsd-v2` and
 `sp11-imx681-libcamera-v1` releases remain unchanged. Older Lexr versions keep
 their pinned legacy behaviour. These declarations do not retrofit new
 metadata into those historical releases.
+
+These declarations do not change source acquisition or make the separate
+experimental sensor source stack installable.
 
 Native IPTSD builds preserve the existing closed `stage/` payload and retain
 these declaration bytes and the producer assessment beside it, covered by an

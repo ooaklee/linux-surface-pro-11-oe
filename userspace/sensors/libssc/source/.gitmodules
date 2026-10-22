@@ -1,0 +1,6 @@
+[submodule "libqmi"]
+	path = libqmi
+	url = https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
+[submodule "mocking/qrtr"]
+	path = mocking/qrtr
+	url = https://github.com/linux-msm/qrtr.git

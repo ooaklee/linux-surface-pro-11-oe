@@ -6,9 +6,9 @@
   "capabilities": [
     "pen"
   ],
+  "description": "Pinned IPTSD pen-input integration for the next manifest-aware release.",
   "lexr": {
-    "minimum_inclusive": "0.5.0",
-    "tested_through_inclusive": "0.5.0"
+    "minimum_inclusive": "0.7.0"
   },
   "targets": [
     {

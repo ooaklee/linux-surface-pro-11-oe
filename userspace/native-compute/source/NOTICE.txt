@@ -1,0 +1,25 @@
+This source kit is a collection, not a relicensing of its contents.
+
+native/ and tools/: BSD-3-Clause. See LICENSES/BSD-3-Clause.txt and individual
+SPDX notices. The FastRPC patch applies only to a fresh build copy; upstream
+base sources remain unchanged in this kit.
+
+upstream/fastrpc/: Qualcomm sources retain their original notices. Its root
+LICENSE.txt is preserved verbatim and also copied into LICENSES. Some files
+use BSD-3-Clause-Clear, including the patent-rights disclaimer. The matching
+Clear text is included. src/rpcmem_linux.c retains its Linux Foundation 2019
+notice; inc/uthash.h retains its Troy D. Hanson notice. Read the individual
+source notices rather than assuming one licence applies to every file.
+
+upstream/qaic/: Qualcomm BSD-3-Clause-Clear. Its root LICENSE.txt is preserved
+verbatim and copied into LICENSES/BSD-3-Clause-Clear-Qualcomm.txt.
+
+interfaces/linux/fastrpc.h: GPL-2.0 WITH Linux-syscall-note, as marked in the
+header. GPL-2.0 and the Linux-syscall-note exception are included unchanged in
+LICENSES. The syscall exception covers use of this UAPI from userspace; this
+kit does not relicense kernel implementation code.
+
+The optional toolchain container obtains public Ubuntu packages under their
+respective licences. The source kit does not bundle the container layers or
+their binary packages. Package versions and source origins are recorded by
+the build recipe/results; those records are not grants of patent rights.

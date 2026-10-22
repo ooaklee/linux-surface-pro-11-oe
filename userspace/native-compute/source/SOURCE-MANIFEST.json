@@ -1,0 +1,1527 @@
+{
+  "excluded": [
+    "SOURCE-MANIFEST.json",
+    "SHA256SUMS"
+  ],
+  "files": [
+    {
+      "bytes": 1241,
+      "mode": 420,
+      "path": "LICENSE-INVENTORY.json",
+      "sha256": "adff43131fa1122e94c965f416dc3b96bef070b9353aa9122ea3b58a1de3d8b6"
+    },
+    {
+      "bytes": 1689,
+      "mode": 420,
+      "path": "LICENSES/BSD-3-Clause-Clear-Qualcomm.txt",
+      "sha256": "3a15c06f7c0f8e38e884e0a20e739fe0d92c1ac0996928af4ab119170603d1f8"
+    },
+    {
+      "bytes": 1565,
+      "mode": 420,
+      "path": "LICENSES/BSD-3-Clause-FastRPC.txt",
+      "sha256": "683e80f5436e6b0761139e626d2c764870ea0ed19b14916ef4c82772b99c4d44"
+    },
+    {
+      "bytes": 1518,
+      "mode": 420,
+      "path": "LICENSES/BSD-3-Clause.txt",
+      "sha256": "c02ecb07af10211cd039e085b0eae0e4e79b0d9c3ebda931718ea9365b591888"
+    },
+    {
+      "bytes": 18600,
+      "mode": 420,
+      "path": "LICENSES/GPL-2.0.txt",
+      "sha256": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa"
+    },
+    {
+      "bytes": 1258,
+      "mode": 420,
+      "path": "LICENSES/Linux-syscall-note.txt",
+      "sha256": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f"
+    },
+    {
+      "bytes": 1456,
+      "mode": 420,
+      "path": "NOTICE.txt",
+      "sha256": "229c990a9a9d080453cb4c0817ab70090ca683d0aace17ee2585dd2c363e5bfa"
+    },
+    {
+      "bytes": 17620,
+      "mode": 420,
+      "path": "README.txt",
+      "sha256": "f47757615a1725e99b2c94eb62cf8688be6463190e5e3eb11996f907b7cc884f"
+    },
+    {
+      "bytes": 2977,
+      "mode": 420,
+      "path": "SOURCE-PROVENANCE.json",
+      "sha256": "ee4a3bb8ebfc266f0b9bcc1a3eb5d3520b2e9c7e8ff775db8980cdcef8a9978e"
+    },
+    {
+      "bytes": 4455,
+      "mode": 420,
+      "path": "interfaces/linux/fastrpc.h",
+      "sha256": "1b75dd9e95a2cda193cff7b9ba4a306642c9f6e1454bf99771b3a1e5862b1132"
+    },
+    {
+      "bytes": 2240,
+      "mode": 420,
+      "path": "native/dsp/compute.c",
+      "sha256": "1cbb5b9985a71330aa7f089f0e6a7b9c2248f87cdcbf903cf5cd590d3d112177"
+    },
+    {
+      "bytes": 345,
+      "mode": 420,
+      "path": "native/freestanding/include/stdio.h",
+      "sha256": "78422a997416fee0c1bd8939eafe5dffa9748e0219f4df9f20366d42e8f0b59e"
+    },
+    {
+      "bytes": 269,
+      "mode": 420,
+      "path": "native/freestanding/include/stdlib.h",
+      "sha256": "f2693faa4c1bc101ab324f6f4a66a8acfc037ca736c1ef7790c3598a76cb8048"
+    },
+    {
+      "bytes": 574,
+      "mode": 420,
+      "path": "native/freestanding/include/string.h",
+      "sha256": "2f1c5d87956269b8ca2e81027a03948169beb61514641c7f55c76de402e2ec47"
+    },
+    {
+      "bytes": 216,
+      "mode": 420,
+      "path": "native/freestanding/include/sys/types.h",
+      "sha256": "d46447e2bb6bf1bc9b2c57146fcc5890a308f9e1f9f32efde697b41a163f4e02"
+    },
+    {
+      "bytes": 1466,
+      "mode": 420,
+      "path": "native/host/compute-checked.c",
+      "sha256": "d234e5e48d0f36739c5a6e7e91283c1c0679d7804237e1ea172bd05c5a0d2c4d"
+    },
+    {
+      "bytes": 5242,
+      "mode": 420,
+      "path": "native/host/compute-client.c",
+      "sha256": "754572e4b95da22ff6505b247a8912721b542e8537d0545a82c392acc393e50a"
+    },
+    {
+      "bytes": 2440,
+      "mode": 420,
+      "path": "native/host/compute-launcher.c",
+      "sha256": "ff03cef59a0935cd429b060d7f301f8ef0126654660918262f62ffce7969f984"
+    },
+    {
+      "bytes": 670,
+      "mode": 420,
+      "path": "native/idl/sp11_native_compute_v1.idl",
+      "sha256": "6502900689957c4730c79195f7975cbf62504345b74f7584900ec8d9099dc585"
+    },
+    {
+      "bytes": 1850,
+      "mode": 420,
+      "path": "native/include/sp11_compute_checked.h",
+      "sha256": "1e18adecb5afdb5c356918aa7c55c04e93d0bcb272ccef3db04e0ea473fbaf18"
+    },
+    {
+      "bytes": 2059,
+      "mode": 420,
+      "path": "native/include/sp11_compute_cli.h",
+      "sha256": "6cf02d23388777d52a921684e4140b60c3b91c2b855716e97e4767ab541c5381"
+    },
+    {
+      "bytes": 265,
+      "mode": 420,
+      "path": "native/include/sp11_compute_limits.h",
+      "sha256": "f69ca180d3013772cf2cf8f8fb80d2e2ffc03c466691f1f6c1e7b1b145aa9653"
+    },
+    {
+      "bytes": 1050,
+      "mode": 420,
+      "path": "native/patches/0001-mainline-capability-call-local.patch",
+      "sha256": "27d437a1cc79cbb1b6a8b8b5ae4f82fc96f1cb7cc2cd18107c3d157345a9d829"
+    },
+    {
+      "bytes": 17049,
+      "mode": 420,
+      "path": "native/tests/client-control-unit.c",
+      "sha256": "acd54bc001d370abe65bf1c14dda9486596f2a6927a16a3c8101dcf25802205f"
+    },
+    {
+      "bytes": 12296,
+      "mode": 420,
+      "path": "native/tests/compute-ap-wire-unit.c",
+      "sha256": "01f1d226e32e30697f0fcdf8175fde21b4e30a8a4983d386274e9841446a30ab"
+    },
+    {
+      "bytes": 8961,
+      "mode": 420,
+      "path": "native/tests/compute-checked-unit.c",
+      "sha256": "754cb38b4a965dea7d79a14c5762510a3f4c11755f9be13378024c3ef32d4f24"
+    },
+    {
+      "bytes": 5359,
+      "mode": 420,
+      "path": "native/tests/compute-unit.c",
+      "sha256": "70ed186bd10d2eabc88d70dd9f6d878c3748cbe7e2f5cdf6a1c3a6d479d18add"
+    },
+    {
+      "bytes": 15581,
+      "mode": 420,
+      "path": "native/tests/launcher-unit.py",
+      "sha256": "27ee36489834027139485cf52ead2de9a44b6fd439fcbe69e33e97f2b7006846"
+    },
+    {
+      "bytes": 1856,
+      "mode": 420,
+      "path": "native/tests/launcher-worker-mock.c",
+      "sha256": "6b34f0303364db81ed268474c5dadc8cc3095b60544d2316b975952a119d7d9b"
+    },
+    {
+      "bytes": 4112,
+      "mode": 420,
+      "path": "native/tests/uapi-layout.c",
+      "sha256": "f06d26db64e29d168a7d2a9dd569f5d39503de1add783480fb03fcc0c9ec6353"
+    },
+    {
+      "bytes": 45,
+      "mode": 420,
+      "path": "toolchain/.dockerignore",
+      "sha256": "9ae97ba48b372922e27d161c4481e0d7e61bf5b2b38751147f23472659f310c2"
+    },
+    {
+      "bytes": 1537,
+      "mode": 420,
+      "path": "toolchain/Dockerfile",
+      "sha256": "33b995ed83521aa7699bd6be4c8c88e712cac93a4b8bb3ff7cde12f4bc761000"
+    },
+    {
+      "bytes": 210,
+      "mode": 420,
+      "path": "toolchain/ubuntu.sources",
+      "sha256": "ec1d6325f4403b4f05d819fb21ec61f72d452424ceebc82ec32d516aa5a016a4"
+    },
+    {
+      "bytes": 30127,
+      "mode": 420,
+      "path": "tools/build-cpu.py",
+      "sha256": "f9884a018f4b2d2fc9380d0053e189e31dca40439286e0667eddda0daa6c3a8c"
+    },
+    {
+      "bytes": 24754,
+      "mode": 420,
+      "path": "tools/build-hexagon.py",
+      "sha256": "50d52261cd295a9170ad9b1cfe40dce7cdaaad54361cce6c400ae1eb492e5cf2"
+    },
+    {
+      "bytes": 16760,
+      "mode": 420,
+      "path": "tools/build.py",
+      "sha256": "c8f8085abf0c46b9f6efe43aab73d72dc1cf740effe7fc58871cd08c1581c2ce"
+    },
+    {
+      "bytes": 508,
+      "mode": 420,
+      "path": "upstream/fastrpc/Docs/manpages/Makefile.am",
+      "sha256": "ac9f19e08acbcd56a4539f97d9def029663ee4a41cf0aff7ae079aa379b6f3f3"
+    },
+    {
+      "bytes": 4618,
+      "mode": 420,
+      "path": "upstream/fastrpc/Docs/manpages/dsprpcd.8",
+      "sha256": "e9640b6b213d399e5f2363f51e6b39f385dfc55d0a997f76a533cb2d1c431f9c"
+    },
+    {
+      "bytes": 4221,
+      "mode": 420,
+      "path": "upstream/fastrpc/Docs/manpages/fastrpc-healthcheck.1",
+      "sha256": "1c84bc59cbe8ea5832e8efde72fa27b3eff84cb469e22acb432c5c7949b70e86"
+    },
+    {
+      "bytes": 5875,
+      "mode": 420,
+      "path": "upstream/fastrpc/Docs/manpages/fastrpc.3",
+      "sha256": "8b546754a27413cc8d6c93850f5d503eed4941a7b0bda0414d01e51bc9c1e897"
+    },
+    {
+      "bytes": 1565,
+      "mode": 420,
+      "path": "upstream/fastrpc/LICENSE.txt",
+      "sha256": "683e80f5436e6b0761139e626d2c764870ea0ed19b14916ef4c82772b99c4d44"
+    },
+    {
+      "bytes": 68,
+      "mode": 420,
+      "path": "upstream/fastrpc/Makefile.am",
+      "sha256": "437c67a28f102dea83be8ed45da91c04bf80c3066c33ac1b8654f2af9405e932"
+    },
+    {
+      "bytes": 210,
+      "mode": 420,
+      "path": "upstream/fastrpc/autogen.sh",
+      "sha256": "c767c9b1668cebd81f6f3fa87d21f5bf0d42f384a087cfff70619135be321050"
+    },
+    {
+      "bytes": 5760,
+      "mode": 420,
+      "path": "upstream/fastrpc/configure.ac",
+      "sha256": "49a8165e7b9f788de5bd0931310fcf3ad14159bc42208fdb525d630e4011c510"
+    },
+    {
+      "bytes": 2123,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/60-fastrpc.rules",
+      "sha256": "73f81277a76f8b5ba9291c4499bfd34e3172d40008cdf8df210397936a93a121"
+    },
+    {
+      "bytes": 991,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/Makefile.am",
+      "sha256": "28268c35195e5c35691553bf2a6f648b320378c52c3ba00bc7cad3e868079916"
+    },
+    {
+      "bytes": 347,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/adsprpcd.service.in",
+      "sha256": "4c40c030c035bc6741b385d0b4d0a9cd6d34c7010ae878ea1873f04680034841"
+    },
+    {
+      "bytes": 379,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/adsprpcd_audiopd.service.in",
+      "sha256": "86e23c7c77eec6dbd851174e85217f178bf1f463f408f543652fa8306b7dcde4"
+    },
+    {
+      "bytes": 364,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/cdsp1rpcd.service.in",
+      "sha256": "d2416b199f2d7491749d1092af4a95c3aa933857062278ae06dd699a5622d777"
+    },
+    {
+      "bytes": 347,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/cdsprpcd.service.in",
+      "sha256": "86bce3aff89385771f4ccfdf06557e71ec92cc1102f1960d72eedc895d6a3cf9"
+    },
+    {
+      "bytes": 243,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/fastrpc.conf",
+      "sha256": "4067e56573be1053991f029a0a59cd4af35512b5faf6874a65f4472e904e83f4"
+    },
+    {
+      "bytes": 364,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/gdsp0rpcd.service.in",
+      "sha256": "6e6861089ebcd5a294acb2c2e9b1af690f9b09f18b4293072408e21b256f2350"
+    },
+    {
+      "bytes": 364,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/gdsp1rpcd.service.in",
+      "sha256": "2ab4bb3bf8ebbdfae3f2b22b9ca355164b0801f642a1ac38f2ff4b0ae25b7891"
+    },
+    {
+      "bytes": 347,
+      "mode": 420,
+      "path": "upstream/fastrpc/files/sdsprpcd.service.in",
+      "sha256": "595125cf5f3ddd75ccdb295cc80bf66a27c9266d51363b06a49d6a0a71e5d78f"
+    },
+    {
+      "bytes": 1793,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/AEEStdDef.idl",
+      "sha256": "dda9bee2163b148be27365c101c11356cbefa691c3687a34586e705c074c7ddc"
+    },
+    {
+      "bytes": 5676,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/AEEStdErr.idl",
+      "sha256": "068894ff410f9b77c389ef36c6858435a02a322c4340efd10ce9a5d8acd94111"
+    },
+    {
+      "bytes": 608,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_current_process.idl",
+      "sha256": "3734cc204ef38f059b60ec409394332611e269155f1a327e7d0ab09e054cb320"
+    },
+    {
+      "bytes": 814,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_current_process1.idl",
+      "sha256": "15f0e17d61874c28f76ed6d6a0b409172d4bf0608aa735132c2cc9a8493b6c2a"
+    },
+    {
+      "bytes": 189,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_default_listener.idl",
+      "sha256": "0baa1aecb1558eed2015d694dd44bccddce5e87b408fa6291721ce742766ac82"
+    },
+    {
+      "bytes": 380,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_default_listener1.idl",
+      "sha256": "f0426bdac392b527dc44dd1c7041327da3aa39f425b555d6d0fe4d88de91aa5c"
+    },
+    {
+      "bytes": 1549,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_listener.idl",
+      "sha256": "413e0dbeb0b6b0166d286670d805bb9e0a5331ffa0010fd5932bdbd799bfd200"
+    },
+    {
+      "bytes": 1591,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_listener1.idl",
+      "sha256": "dd2355dcfeb980ecb1481a35896580ff5177034f0da75dcc9395106b13a311b6"
+    },
+    {
+      "bytes": 1652,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_perf.idl",
+      "sha256": "4a324742a9a1881bbf5ad584240bde48ee3b240dcff680a4592fe20d0fe4595a"
+    },
+    {
+      "bytes": 1749,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adsp_perf1.idl",
+      "sha256": "449c8c0d9549c2eb5fd0d85cc95218b8e56262e84674d7d045b1fc56d35faab5"
+    },
+    {
+      "bytes": 405,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adspmsgd_adsp.idl",
+      "sha256": "862a2004182eba6b9e79b9ab9d1b9b1acd1c00ab0abce81b32a5570d53298884"
+    },
+    {
+      "bytes": 586,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adspmsgd_adsp1.idl",
+      "sha256": "34aef3a1cffe73f5bdd7d148a404304fe966096e16a6dce1e5df0866d85e2a7d"
+    },
+    {
+      "bytes": 433,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/adspmsgd_apps.idl",
+      "sha256": "43d76e64f5253937e926ef805b3469ee9e87665bb3e9a965d69ed01539337b11"
+    },
+    {
+      "bytes": 855,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/apps_mem.idl",
+      "sha256": "f4038e7b227cdb1f32ba5b7a1e4f72ab4dc700e5101fadb0f4b5b6431cb390a9"
+    },
+    {
+      "bytes": 333,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/apps_remotectl.idl",
+      "sha256": "e6e52a8f3c852eb3c97fd446bb0be001d1cb74edfae04b2a577bf93c4a0e46fa"
+    },
+    {
+      "bytes": 7423,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/apps_std.idl",
+      "sha256": "11c06b06fed8db2de8c8070518459be52984fa549d0b5353ce0c1f1ca6b65a6a"
+    },
+    {
+      "bytes": 1139,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/dspqueue_rpc.idl",
+      "sha256": "a50c6b93853f63206d85f8bd3559526c24415e7014e3d17bb29174f67d802db7"
+    },
+    {
+      "bytes": 1498,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/remote.idl",
+      "sha256": "43b4130d14dc4152b9b3cafc7899d781e2e3546076383a65159774000275021e"
+    },
+    {
+      "bytes": 485,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/remotectl.idl",
+      "sha256": "2c2643667167f8d38488b9190624c053899f9720c5f19aff2441db11fa6c853e"
+    },
+    {
+      "bytes": 584,
+      "mode": 420,
+      "path": "upstream/fastrpc/idl/remotectl1.idl",
+      "sha256": "4dbe83dcdfb1b0d572df41fabb7916bdc03a6c608867f4d5d2f24ac338b88a66"
+    },
+    {
+      "bytes": 9755,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/AEEBufBound.h",
+      "sha256": "2de72bbd4814e7cd2acf79a331a5c6bebb00d963528f8b678f2ccc5ec15f0b3a"
+    },
+    {
+      "bytes": 14556,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/AEEQList.h",
+      "sha256": "556356738cd0609475a55cfe624a0dda6bc596c677b6ac221256a69b16ab47eb"
+    },
+    {
+      "bytes": 7999,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/AEEStdDef.h",
+      "sha256": "319a834050e0a53eaecaef0c54d84dab3133ea340de5f68d9f213a7d5463ed3d"
+    },
+    {
+      "bytes": 21724,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/AEEStdErr.h",
+      "sha256": "e25d3f48cfff870394c2af5a18b21c7b050c1370594f3193b5ad7d8033a3ff57"
+    },
+    {
+      "bytes": 15650,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/AEEstd.h",
+      "sha256": "06ac2b9c7d3da648dc8d1f712da1d986740e50d5cf1c526d5b2d9849c8d66f82"
+    },
+    {
+      "bytes": 2822,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/HAP_debug.h",
+      "sha256": "68103f23d79da9149588d07fb1397e3508730e8b0f71e4a5a1ffaa5b3baf4c43"
+    },
+    {
+      "bytes": 7692,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/HAP_farf.h",
+      "sha256": "08656b697776a6a25b34d57e2bb908ddba499972c202e103c21ebebbbf47e07a"
+    },
+    {
+      "bytes": 245,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/HAP_farf_internal.h",
+      "sha256": "9ee7b42c1244d3e5d06802b2fea4fbbb28a709bd7f3d9a39ca59655540c7f70c"
+    },
+    {
+      "bytes": 4000,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/HAP_pls.h",
+      "sha256": "5c9aa4f4bbab084793ea459797f70e3ee4e1cd7f668f5099870444fcb7571dbd"
+    },
+    {
+      "bytes": 1559,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/Makefile.am",
+      "sha256": "42ba29492dd9a605b8f97e26b371a3dc42449c7c2b69d59e28ec29fd59cea89c"
+    },
+    {
+      "bytes": 2236,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_current_process.h",
+      "sha256": "6cc7ad52627b95a7e24dc7451aa5a833564f962fc45979f0aaae6d3d1b3933a1"
+    },
+    {
+      "bytes": 4316,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_current_process1.h",
+      "sha256": "4553515d08e4540df09e4f338c51d340e79393d4c4e81d9c7f83f005f5473fd1"
+    },
+    {
+      "bytes": 940,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_default_listener.h",
+      "sha256": "cbeabcd7f063200d47be74a808de2bfe63693bfdfedf1ef74ee68dd4d5e8f223"
+    },
+    {
+      "bytes": 6993,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_default_listener1.h",
+      "sha256": "39239810ddd69454ba0f6ec727a2e8df5c103ddf0247d610f6c1be1a9e6bc619"
+    },
+    {
+      "bytes": 2416,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_listener.h",
+      "sha256": "c4d3c2964538d16a49240489d38f95e47eafc69110bc5d83456f28bfb910cf5e"
+    },
+    {
+      "bytes": 8531,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_listener1.h",
+      "sha256": "e117a95279ce88ce7c21d142c5998d1d2d999d5d7305e6b0d7d805ca7cf25def"
+    },
+    {
+      "bytes": 2466,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_perf.h",
+      "sha256": "fe096fcda2efe6b08e8eb66723d0654a5cdd74b3958c2ec02cd5a18636e76e05"
+    },
+    {
+      "bytes": 8485,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_perf1.h",
+      "sha256": "962f8e0fd7935c611be39747c5c8d9fc251f10b1259902d92ce0a1f92bf7d485"
+    },
+    {
+      "bytes": 2284,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adsp_pls.h",
+      "sha256": "db810dd72a0c8f518b95a77ccae5afbaa0f1a27622b946a4a5608073680eb64d"
+    },
+    {
+      "bytes": 1166,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adspmsgd_adsp.h",
+      "sha256": "a44cf9f2c2e9983392c481aefbe9c6d090efafa139855020d1673adb179e39e3"
+    },
+    {
+      "bytes": 3049,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adspmsgd_adsp1.h",
+      "sha256": "962c631498d3845f08d4671a9677c7ad43031e482b9b5040069866a15476204c"
+    },
+    {
+      "bytes": 1393,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adspmsgd_apps.h",
+      "sha256": "0c294f6f57c7e799587dc29ed5b70a3120d84bd9f9972ab600ee80dc6ba97978"
+    },
+    {
+      "bytes": 1457,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/adspmsgd_internal.h",
+      "sha256": "73b2666929ff75c1061d4e21ea164eed06f1d33cbd742d0326f71d1bc7ae4991"
+    },
+    {
+      "bytes": 1906,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/apps_mem.h",
+      "sha256": "f9d25a3e527e2658640317297b49ebc7918e64d196d6c01ceef6493a53451fa3"
+    },
+    {
+      "bytes": 556,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/apps_mem_internal.h",
+      "sha256": "2d94cc04d5731b0a714dc5ecf040dee183754bfda9a21e417ec20360f9431598"
+    },
+    {
+      "bytes": 1382,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/apps_remotectl.h",
+      "sha256": "27e21f342ad9f40a9c7fa8a450a2e918743b3d7ec102222135c601ce463eddc7"
+    },
+    {
+      "bytes": 9288,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/apps_std.h",
+      "sha256": "170f337fefbaccc505e6560823e9aa2c35c9b9b150ba467fcf9fb54f776fcf08"
+    },
+    {
+      "bytes": 1036,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/apps_std_internal.h",
+      "sha256": "8320ac128c49e9908f10ce203eefb83988c4c348d57be535cf422cd2e162efc2"
+    },
+    {
+      "bytes": 24632,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/dspqueue.h",
+      "sha256": "571c74ce3651042873b0e93eb53baa7d9ec0963665355933d4a8518272e1e2a3"
+    },
+    {
+      "bytes": 3443,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/dspqueue_rpc.h",
+      "sha256": "ec1d86e664b7293b2820c4e56c7538a921c2087c5271ce7632396b84e8ee0dd5"
+    },
+    {
+      "bytes": 5455,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/dspqueue_shared.h",
+      "sha256": "b815e28452a5a131bbdcfe1d45f9d8815e874b4695d77498389609d937305a3e"
+    },
+    {
+      "bytes": 7477,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/dspsignal.h",
+      "sha256": "dd62b1e2bcdceff998e11085e7015e7c423a825339a40f4e6082dbd902b0d5e7"
+    },
+    {
+      "bytes": 3673,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_apps_user.h",
+      "sha256": "646b12d0d9028c3335b21af0c56626cab445cde44ceceba8b627e21891ad0896"
+    },
+    {
+      "bytes": 1307,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_cap.h",
+      "sha256": "e428f85c29a8fe3efead811b26fce789e3bbe2507aa34426e0bfc1a80e3057fa"
+    },
+    {
+      "bytes": 9117,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_common.h",
+      "sha256": "3560ac74692051d03ba031df790c175a017c1c01dfdf1c4340f9682ff9b028b2"
+    },
+    {
+      "bytes": 6049,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_config.h",
+      "sha256": "cba06998e34ee10a7bb0dad3ede7f7110bb00faea69a3b071a00b081c8502ba9"
+    },
+    {
+      "bytes": 963,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_config_parser.h",
+      "sha256": "919262ca1e91facdb6fc57254d372c94327dd449b56470bf63f4ca1a3c25c295"
+    },
+    {
+      "bytes": 2281,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_context.h",
+      "sha256": "b8c625d5385e9849b16ca32c1ce27f79f09862c3a8a3a75e741d7e648f1fd75f"
+    },
+    {
+      "bytes": 1774,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_hash_table.h",
+      "sha256": "688efa3a4359aba061ce9f3ff893d75da6c07fa0a32632a6439696289c93759c"
+    },
+    {
+      "bytes": 18457,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_internal.h",
+      "sha256": "82c3393d69669f9ae401724ffdc76b76936a1b3a85dff13571602457cc244757"
+    },
+    {
+      "bytes": 7541,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_ioctl.h",
+      "sha256": "1a8c16290a34d9605120aba1eec87e767f5ac023b535c8ba62ab94f5fe15f9f9"
+    },
+    {
+      "bytes": 403,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_log.h",
+      "sha256": "b4cb934765066742804ec61712213cb78d6fe2898f768d0d60bc693f40afe6f9"
+    },
+    {
+      "bytes": 4296,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_mem.h",
+      "sha256": "5f8a09d1945e04a89de9b5a0d76f4132792d8d140e68e180ddcaefd4b9ca55e0"
+    },
+    {
+      "bytes": 1575,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_notif.h",
+      "sha256": "47573b40d291473be6f59615152a0cbc0ba3382b963cb4a8581dd29c83cd8578"
+    },
+    {
+      "bytes": 1086,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_perf.h",
+      "sha256": "aff84afe82dcc3b8213d611d5bf850bdd1acae0d6bea109b3d8e94b3c7f466a7"
+    },
+    {
+      "bytes": 733,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_pm.h",
+      "sha256": "431ecf578f615d08892289e5c2b5da777fab4f21f58bcfb880166fe28aeadc01"
+    },
+    {
+      "bytes": 347,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_procbuf.h",
+      "sha256": "139641ffd4656985c003a9c24813311356284956c5fdc148621d5b4a8c8776fd"
+    },
+    {
+      "bytes": 1255,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_process_attributes.h",
+      "sha256": "7fcfda4e7f5b7cd694f4ff928261db1cd493f47fb247eccdf4c8ba6fbe64d8b9"
+    },
+    {
+      "bytes": 1720,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/fastrpc_trace.h",
+      "sha256": "61ceaca317b2f55601f219a6093127dd6af77a7d11d324c701fc1922af674d13"
+    },
+    {
+      "bytes": 1266,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/listener_android.h",
+      "sha256": "3c8b479b299dd2bd80443925538f89fec1fc607017422145ebb13da201a5fba5"
+    },
+    {
+      "bytes": 2737,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/listener_buf.h",
+      "sha256": "f71c1e275479cd3403f74de558e4a0b0eeb8aad59160fb5e308d5c2d6c419617"
+    },
+    {
+      "bytes": 578,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/log_config.h",
+      "sha256": "92e90558021c2f0834a385742dacc604c788e79b95bd8844565480d80e33d25c"
+    },
+    {
+      "bytes": 3431,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/mod_table.h",
+      "sha256": "95b9aee390f56dd481b71177e6e7488764f0c94aef5342cf5a3e8cd0933dc27e"
+    },
+    {
+      "bytes": 2486,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/mutex.h",
+      "sha256": "6149a6105f7b67e14f7c035ae8625dff244cc407688185ebe2f898508dcbe515"
+    },
+    {
+      "bytes": 3424,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/platform_libs.h",
+      "sha256": "d5a211f557d6873d59e4e854d177afe9a76ebbb1274da2294e12b17febe41a67"
+    },
+    {
+      "bytes": 5616,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/pls.h",
+      "sha256": "4e655da1cad80b92595d502e367776500e02c702c4ad0449aa83ec5ed7774481"
+    },
+    {
+      "bytes": 1102,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/pthread_rw_mutex.h",
+      "sha256": "ae8507026ab9321fde2978934d39b8c4f534a0002e1ffd5fa130c50b95cfaff6"
+    },
+    {
+      "bytes": 65625,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/remote.h",
+      "sha256": "f9d0690cfd8953697d6fc3163c2be448a7b5b801148808c9b1b360857aeabc44"
+    },
+    {
+      "bytes": 299,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/remote64.h",
+      "sha256": "1e7e8ec8d2b692cf757a431151602f0b6cd391978d640aae3cc0cf874059a02e"
+    },
+    {
+      "bytes": 1645,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/remotectl.h",
+      "sha256": "d8193282c815001f38b27265c4a7938f51ad0c93887aa984b0b888cf8f8d840f"
+    },
+    {
+      "bytes": 7687,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/remotectl1.h",
+      "sha256": "20b651be44a95cc28292c56663b2c6f152aa66a3cfd3b6021367dfe55b14f9e9"
+    },
+    {
+      "bytes": 6036,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/rpcmem.h",
+      "sha256": "363718de80ebcd7c1180477df0b3d5c005cb63fbec7cf6ff0863c3e7c46323b2"
+    },
+    {
+      "bytes": 600,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/rpcmem_internal.h",
+      "sha256": "50384c0e37bbedc30b9adcf4a1079a991bb9b3fb07a199b5663a4c82f5c3fb4d"
+    },
+    {
+      "bytes": 4532,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/sbuf.h",
+      "sha256": "599d7fe72596dd6ef341af657d9c4687929e9ee3f18eef58efd88fc44772a7d5"
+    },
+    {
+      "bytes": 5767,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/sbuf_parser.h",
+      "sha256": "ab148a95aac12b207162bfa7fa86c34d77019f6f79524c3dbff14448a386a410"
+    },
+    {
+      "bytes": 1407,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/shared.h",
+      "sha256": "5137361d91b43e494c912804b5170d1dae552de46b56ff8c5d98a8b6e514164c"
+    },
+    {
+      "bytes": 4178,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/std_dtoa.h",
+      "sha256": "492400f3871f4270f80cd388a2227c5742667b7b03cf6443e5273ac13cc13c51"
+    },
+    {
+      "bytes": 59060,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/uthash.h",
+      "sha256": "c1afb87da2625a8bfa0d48f2135df8ea451f1c6d2554e191a9c58aefed7823c3"
+    },
+    {
+      "bytes": 4588,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/verify.h",
+      "sha256": "cc4967881bc280958af63e014157ad7764594ba010c22156dd5636d4ba8750af"
+    },
+    {
+      "bytes": 2541,
+      "mode": 420,
+      "path": "upstream/fastrpc/inc/version.h",
+      "sha256": "015bb4ef43c1dd80e670cd4afb624073b18ac969122d13961b1b33e1de9ef99d"
+    },
+    {
+      "bytes": 4534,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/BufBound.c",
+      "sha256": "89d4a12b6e9a3712e8a43180e6c1694d11909150a89c6a49984b8a0368b12c65"
+    },
+    {
+      "bytes": 5008,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/Makefile.am",
+      "sha256": "f11c2cba49bd92b405a0d149d61dbfed96f4fc93375855228919d6a9c8a25a5d"
+    },
+    {
+      "bytes": 27590,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_current_process1_stub.c",
+      "sha256": "1454ee8c470ce0c5c4d2222e728687fc82c4558d4e97b889b0550b55d7c5c09d"
+    },
+    {
+      "bytes": 29933,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_current_process_stub.c",
+      "sha256": "4939e0bfe71bebce7dacaef20f8a052a8adc743b0321a7bc0a12e427ad1662a3"
+    },
+    {
+      "bytes": 12769,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_default_listener.c",
+      "sha256": "c74d7cc6087e6d971006ccd220200a9fcefe8ba6fa3220c27b34388de2eec274"
+    },
+    {
+      "bytes": 10072,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_default_listener1_stub.c",
+      "sha256": "18e265e7ac717239262d9fcb95a4106d427c1aa7fd45928ac4b4b1ee09b4ea6e"
+    },
+    {
+      "bytes": 15949,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_default_listener_stub.c",
+      "sha256": "4bde87fa1ae2b54c95ec97c0595c5b3b5360591fa2af80a36dbdb1c18e60444a"
+    },
+    {
+      "bytes": 31973,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_listener1_stub.c",
+      "sha256": "4eab5b51feed327512d571a20bf735e5b1292d223269ff3bc8762d88857b1524"
+    },
+    {
+      "bytes": 36629,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_listener_stub.c",
+      "sha256": "dde2b4a123aff0a37bfa79b58a65d32386a3a56b0f0c5f23e04df3f682f02f77"
+    },
+    {
+      "bytes": 13600,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_perf1_stub.c",
+      "sha256": "21cc5c47b7225ad6403e983606ad5c61734fddd67cc6ee548d600f9552dd1085"
+    },
+    {
+      "bytes": 19104,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adsp_perf_stub.c",
+      "sha256": "098754bb5da02b1b89f1ee6d8aa0a52843b7c84b0a07715e61312e1c33f8c904"
+    },
+    {
+      "bytes": 5942,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adspmsgd.c",
+      "sha256": "e2f5be0ec74a398644b8618b3613ebfee9ead7ee0a9fc7daadb425fce862576d"
+    },
+    {
+      "bytes": 16243,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adspmsgd_adsp1_stub.c",
+      "sha256": "a02e0eef71886a1a1f9e20acc32505f55b9095554c660391d16cba02c23f7099"
+    },
+    {
+      "bytes": 17833,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adspmsgd_adsp_stub.c",
+      "sha256": "073f56080d19b76a649001b51fa97d13da61583b1a043b39bab37109c68f185e"
+    },
+    {
+      "bytes": 13807,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adspmsgd_apps_skel.c",
+      "sha256": "50238dac415232d4f0608a2ee69458c06504620df9a691da64331d56f937731d"
+    },
+    {
+      "bytes": 1845,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/adspmsgd_printf.c",
+      "sha256": "8d7524d9a985f8cec541fdaa1cec08a93de056edf266b1981d2813fdb8d5628f"
+    },
+    {
+      "bytes": 12062,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/apps_mem_imp.c",
+      "sha256": "3cc990d9d7482a182116812b169e28f1085a25ca4cad7ed753912c13cadd84f5"
+    },
+    {
+      "bytes": 23831,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/apps_mem_skel.c",
+      "sha256": "8bbf58d1f042bf4b7dea8c28f69b61b6a1dbdacc2dcb9b93fb67d5fefda7affd"
+    },
+    {
+      "bytes": 16561,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/apps_remotectl_skel.c",
+      "sha256": "a1db690a581ce0f164c74aa4137d20f053a41a342d0d4394909cdf7e2ecb2f94"
+    },
+    {
+      "bytes": 55283,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/apps_std_imp.c",
+      "sha256": "2bb7d12565c495399259f5d1a16333bb14cf79245475ff9e41090563906188f3"
+    },
+    {
+      "bytes": 64247,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/apps_std_skel.c",
+      "sha256": "0e3ff421cf2b7b6f3649fd2c17f0327daad8a5628157159dcebff12f688cdc91"
+    },
+    {
+      "bytes": 88362,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/dspqueue/dspqueue_cpu.c",
+      "sha256": "a23b9203577cf5d5887acb2fe003563dbc90a2408f2a40ccaf14205453c3da68"
+    },
+    {
+      "bytes": 18864,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/dspqueue/dspqueue_rpc_stub.c",
+      "sha256": "0604e4cd5daca3b4273441c57fbae0c91b9d7a3d6a62f6d61ac8a97b279ce634"
+    },
+    {
+      "bytes": 7320,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/dsprpcd.c",
+      "sha256": "c3a431ee2a4feb7385e48139ad78ee4b24f41fc2aaaf1e30a3e1f7e4e0846f4a"
+    },
+    {
+      "bytes": 7597,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/dspsignal.c",
+      "sha256": "2cc8ff657877a85aee62b54db8fd343cbd836dc6de97f71293aaf8cbfbfd86f3"
+    },
+    {
+      "bytes": 147303,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_apps_user.c",
+      "sha256": "daee04f074418978e7e6f4ca450a66e0e32b395bc927e2165dc9940f58a75f71"
+    },
+    {
+      "bytes": 6615,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_cap.c",
+      "sha256": "673e60e4f1952bb05342a4e81dcc672984e34c92ef73c369134e4d84b047d4b9"
+    },
+    {
+      "bytes": 15944,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_config.c",
+      "sha256": "f6e9def6d67b5160bcf056a534ffa4510a4d1826e07f888cc6886a7b16b3dad1"
+    },
+    {
+      "bytes": 6291,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_config_parser.c",
+      "sha256": "09fc5f4eeb9ef61b8246736868277db4fad8eccc31e4ffd29ae73e61b0a05685"
+    },
+    {
+      "bytes": 9078,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_context.c",
+      "sha256": "02d43b7140ca38617a3e9673f4ef1245f9409b2622ede9087fc0201356f7036f"
+    },
+    {
+      "bytes": 6182,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_ioctl.c",
+      "sha256": "6f92fc95eb16e15aae2a8f0405483f3fa3896544e706977a3532259d86bd8f3c"
+    },
+    {
+      "bytes": 9627,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_log.c",
+      "sha256": "6f950b467060a02d3f95bdcc8920e85049950cff2a55d6faa5a654c70248ab3c"
+    },
+    {
+      "bytes": 34687,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_mem.c",
+      "sha256": "4f1537b15adcbe8af967299ff7721ba409624b59d2c7b583617acf3e7ddd6387"
+    },
+    {
+      "bytes": 7487,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_notif.c",
+      "sha256": "c8dc1e23067eba156d6e622b92975f37084f98b6183aea03027f4a3c106f7433"
+    },
+    {
+      "bytes": 10167,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_perf.c",
+      "sha256": "ff9bce7639e5abe37155d717a0fce424ef240cd6c4b17b1ec36bfd1d28afbacb"
+    },
+    {
+      "bytes": 5975,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_pm.c",
+      "sha256": "ceba582fe362d8565356a32b1ed9ffe7bea20d26eedf8e2b35857cc9544a15d9"
+    },
+    {
+      "bytes": 9885,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/fastrpc_procbuf.c",
+      "sha256": "bd94814922707480fa6135481c8bf03cc01ceb2109d03b6559f0523c46f7a546"
+    },
+    {
+      "bytes": 1737,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/gpls.c",
+      "sha256": "5e743690fb34431424941c6940eb0caabe5b307cf248bc49ac7910f039f654d5"
+    },
+    {
+      "bytes": 16835,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/listener_android.c",
+      "sha256": "d2659622e9b192b61d7ff5cbbf38dd348597290521c217155abc51f45ea0a7ab"
+    },
+    {
+      "bytes": 26627,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/log_config.c",
+      "sha256": "5f1774c1b8f8d11cf26e9ff030b65b58b6243f84555ce5e8698a6ba5451cbe99"
+    },
+    {
+      "bytes": 34647,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/mod_table.c",
+      "sha256": "1d785200a12ee1380af383fa582a7b486ae7a1d00e0d1ef5b72e0450d9b67fb7"
+    },
+    {
+      "bytes": 320,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/pl_list.c",
+      "sha256": "321d4631abfa400501582b9bd58e6e901cb5a0c642df0a7be91ab017c2f03d7a"
+    },
+    {
+      "bytes": 1720,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/platform_libs.c",
+      "sha256": "150322eb7f61b45f2c183bdc36d176d8fa8ac0a956fcfecd942847b3a2d06279"
+    },
+    {
+      "bytes": 15733,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/remotectl1_stub.c",
+      "sha256": "32138d8043615beda11392314603d753bf3e0265c1e1d7859ed19921f5987525"
+    },
+    {
+      "bytes": 21249,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/remotectl_stub.c",
+      "sha256": "39cbe2173fccbba45c410050e8e94967ebc97b2930b6ce23bd57c021236fb039"
+    },
+    {
+      "bytes": 7117,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/rpcmem_linux.c",
+      "sha256": "5c737c81f87da36a3d30804e133caa4cbe88f8cefd2861a0e83d59df990a902d"
+    },
+    {
+      "bytes": 12863,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/std_dtoa.c",
+      "sha256": "55d7c5e37caaaedbcd175fe82da6652860b8792aa46ea5ee972a67a76c6182d1"
+    },
+    {
+      "bytes": 3335,
+      "mode": 420,
+      "path": "upstream/fastrpc/src/std_path.c",
+      "sha256": "208b1661377074e45fd7856f8d4f3985ac44016352b4b7d7bcb236565378fbcf"
+    },
+    {
+      "bytes": 1729,
+      "mode": 420,
+      "path": "upstream/fastrpc/test/Makefile.am",
+      "sha256": "aa693d314af478506afbd2aae69d2b47fd277e034f593d855a5f24602563978c"
+    },
+    {
+      "bytes": 34653,
+      "mode": 420,
+      "path": "upstream/fastrpc/test/fastrpc_healthcheck.c",
+      "sha256": "010b6270ecd53c5ea717e28ea829c720207752a785f8c5e334f325bd279da9f9"
+    },
+    {
+      "bytes": 6444,
+      "mode": 420,
+      "path": "upstream/fastrpc/test/fastrpc_test.c",
+      "sha256": "644367dd6c02b4ed4803dec2d237209137518f7957b0bc5b07ed0f2232a592e5"
+    },
+    {
+      "bytes": 1689,
+      "mode": 420,
+      "path": "upstream/qaic/LICENSE.txt",
+      "sha256": "3a15c06f7c0f8e38e884e0a20e739fe0d92c1ac0996928af4ab119170603d1f8"
+    },
+    {
+      "bytes": 1542,
+      "mode": 420,
+      "path": "upstream/qaic/inc/remote.idl",
+      "sha256": "beea202eb5ee1f0adca7af04850511620172898a6e0cd03f227931aba7f22caf"
+    },
+    {
+      "bytes": 14753,
+      "mode": 420,
+      "path": "upstream/qaic/src/Compiler/CommandLineArgs.hs",
+      "sha256": "f1533caa93e29284dab24d9183a831a0c58a267c40f1a3dfb8b559711764189c"
+    },
+    {
+      "bytes": 4748,
+      "mode": 420,
+      "path": "upstream/qaic/src/Compiler/Compile.hs",
+      "sha256": "3cf23f3e90484f3577106f51c4f69a9062447586b99f870d821f9e57aaa20ed9"
+    },
+    {
+      "bytes": 4133,
+      "mode": 420,
+      "path": "upstream/qaic/src/Compiler/Data.hs",
+      "sha256": "b6a186ef5f2cad96b097cf5cc8176e99e02120e989a3f5c67aa8b048064bc410"
+    },
+    {
+      "bytes": 392,
+      "mode": 420,
+      "path": "upstream/qaic/src/Compiler/Version.hs",
+      "sha256": "0458e83d076de78158ac67411cb9f5414ecc8f1c8cf2e061960113db172e3891"
+    },
+    {
+      "bytes": 2241,
+      "mode": 420,
+      "path": "upstream/qaic/src/Control/MonadUtils.hs",
+      "sha256": "86b4bcca1b10b2d80bd0cc204c44dd2594f04fdfedf49a7db70162a75cd8476c"
+    },
+    {
+      "bytes": 1583,
+      "mode": 420,
+      "path": "upstream/qaic/src/Data/ListUtils.hs",
+      "sha256": "925e285da2a2d1cd10d191871aa25a80d5e54e68ee52ff066d6ea4cb1f1cd894"
+    },
+    {
+      "bytes": 19007,
+      "mode": 420,
+      "path": "upstream/qaic/src/Data/LittleBinary.hs",
+      "sha256": "8b4b02bac991f4d28e097f779e273c9640eed0933b980c8d1ec697f701e2823a"
+    },
+    {
+      "bytes": 2132,
+      "mode": 420,
+      "path": "upstream/qaic/src/Data/Omg/Literal.hs",
+      "sha256": "e698fc36ca4ca9407171386c8d8a7beddeb0d0adeab9db50ea6a05ee4141b626"
+    },
+    {
+      "bytes": 3283,
+      "mode": 420,
+      "path": "upstream/qaic/src/Data/Omg/Prim.hs",
+      "sha256": "cb47a9262603d754a83aceeddd1810bbdabd6f78683be804930f78dfb4eb348b"
+    },
+    {
+      "bytes": 575,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/C/Pretty.hs",
+      "sha256": "ada67426e9756c7aa06ce3bac83f99287cf4a2c42fb835f447e949686784a299"
+    },
+    {
+      "bytes": 36043,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/C/TypeDesc.hs",
+      "sha256": "8b66072499d54e522d188513027d1b43a9489a43b8c5d6f649c266d0f8161d64"
+    },
+    {
+      "bytes": 9000,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/Comment.hs",
+      "sha256": "4d9d45fbc6061ac431e63a89dd11a09d8ecccb13c7798db654a8e21c08b4e05d"
+    },
+    {
+      "bytes": 6155,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/Data.hs",
+      "sha256": "28ec6fe42e8bdf4da4b4274544ce3673e343e13d6e05ac9c8e8b9ab3afa32e2a"
+    },
+    {
+      "bytes": 2677,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/DoxygenComment.hs",
+      "sha256": "d481919319d251f5940ff1f15b7b45c987d4c7681a9fd88d9373a69e978457ec"
+    },
+    {
+      "bytes": 54562,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/Parser.hs",
+      "sha256": "e0fba6e255d6caf31b4ebcf371a6bef4d4035816775e401899bd0cae60f85374"
+    },
+    {
+      "bytes": 443,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/ParserState.hs",
+      "sha256": "2f407e38de38b95a1cb8c44ea08251a1aefab410eedc1ea513222853ec8cfb2b"
+    },
+    {
+      "bytes": 1275,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/SourcePos.hs",
+      "sha256": "06e4175135270f98849461a3baa1a6cd679587e58078dff03065fd993e607955"
+    },
+    {
+      "bytes": 66584,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/ToPalette.hs",
+      "sha256": "5776c3cf77b7230ecb9962524f9c3180d90731bf9371c261d5cbda7515752a1f"
+    },
+    {
+      "bytes": 18274,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Idl/Token.hs",
+      "sha256": "6e3e522464b71e814ad6de112478c1fbc2bedb8ab132a484262b1ccd227250de"
+    },
+    {
+      "bytes": 4165,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Palette/Alignment.hs",
+      "sha256": "c329d14cf5fd1c52c5be1a4e0d202d2fd3b92e33cc343de6c05b3dd96636609d"
+    },
+    {
+      "bytes": 24661,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Palette/Data.hs",
+      "sha256": "22bdef1dff964fd1311fe44f045f43253d64cc58b6beecafe8495f3cf265f07e"
+    },
+    {
+      "bytes": 12110,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Preprocessor/Cpp.hs",
+      "sha256": "996decda7a96dd7746b872610a793051e50eab7e6acfabf29ede3b9bdfa8f19e"
+    },
+    {
+      "bytes": 2014,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Allocator.c",
+      "sha256": "a56e2e6f4b09de1f959e9ef0185ea1b2312eb848c6debd1781d5a420a99f1127"
+    },
+    {
+      "bytes": 22911,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Args.hs",
+      "sha256": "2cb0823bb0425bb7cdf21acd7826d895fe69cba88b2dd99a132c7937eab94d2f"
+    },
+    {
+      "bytes": 3111,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/CStub.c",
+      "sha256": "5f7bd861ad40c089bde8cc93b68d0687e3f3a240cbab1bcff9b60eb494ce4214"
+    },
+    {
+      "bytes": 1919,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Cfg.hs",
+      "sha256": "b501b73fcac18cf5f45adf3e1a361c3510e70260a5769cf6b0c405b19ccb2afe"
+    },
+    {
+      "bytes": 5019,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Code.hs",
+      "sha256": "1d80ea2686f10bed5aa01864e23d63ad708721cabe16adbeca4b8d7d59eb5699"
+    },
+    {
+      "bytes": 4526,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Env.c",
+      "sha256": "3f1e229596e18da85c1645fa5d29375319471680e774eb0d70aa01c20a4b7c28"
+    },
+    {
+      "bytes": 2452,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/IdlBackend.hs",
+      "sha256": "25083de7c7e61b3f64ee9a402cba0b3e1827b183a560884f18461f3c1990d024"
+    },
+    {
+      "bytes": 3208,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Literal.hs",
+      "sha256": "60eb21b2972626247b2c234b2e005e92d1aeca78a099654977200549a3b28a62"
+    },
+    {
+      "bytes": 35778,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Pack.hs",
+      "sha256": "68be4ee92a8dbd1c84d21ce611e952940e6033c2aefee8eaf83eedc684b9930b"
+    },
+    {
+      "bytes": 1018,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Skel.c",
+      "sha256": "8599e41d6349df9312ae8ee9b884e636824308171febe3575dd879f26346ce87"
+    },
+    {
+      "bytes": 5430,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Slim.c",
+      "sha256": "f5c3c8d88284bf606c6b44858b17a80a67f03e1f3c81955d7d7240551d43504d"
+    },
+    {
+      "bytes": 1387,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Stub.c",
+      "sha256": "8fcd0627db58983a55b7a359e1d0b3eafbb1908d38a55752d525284eacbf2377"
+    },
+    {
+      "bytes": 25982,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/ToCSkel.hs",
+      "sha256": "215b66485b5da2254f16d983e17982f3b33070ea690a4d1535738d380eace691"
+    },
+    {
+      "bytes": 23831,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/ToCStub.hs",
+      "sha256": "cf7e7f1b7f153ce84e0b50e8e124215f21e0441a721cc2e9817022ce01825177"
+    },
+    {
+      "bytes": 33986,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/ToHeader.hs",
+      "sha256": "1f4fbf3a1ec51fe3a8783b2f725de625cab34561835a49921bda3f944508c24f"
+    },
+    {
+      "bytes": 3486,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/ToSkel.hs",
+      "sha256": "a77bbb4795832be65e41f4cda3b0e7b03d1417c91df6b44f8694f0d054521d6e"
+    },
+    {
+      "bytes": 3585,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/ToStub.hs",
+      "sha256": "5e8c38fab4297e9f201a035e87c5b8060e11169c8c0b4e51d57cb94af7d88b6e"
+    },
+    {
+      "bytes": 496,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/SO/Wstring.c",
+      "sha256": "fd5909430e31e923a8463667a33e1bea217ae5f95939561584500f7c0cc8616f"
+    },
+    {
+      "bytes": 5506,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/Alignment.hs",
+      "sha256": "18c2c606038ea8dbbda0240c351088757b1198fbb8dbf1637f71e80000acc7c3"
+    },
+    {
+      "bytes": 10470,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/Data.hs",
+      "sha256": "239b49b950d182da533b40e21590e3415bdae21789d1d0596c7b94188cfbe648"
+    },
+    {
+      "bytes": 18509,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/Doc.hs",
+      "sha256": "40ee7cf1183c0db6463e6574a9ad4f63ff427f9a431c091b7b750246a9e222a3"
+    },
+    {
+      "bytes": 2447,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/Names.hs",
+      "sha256": "f0df0f43df78bf2287195e09f73c745d2809e09c6bf3dc7cc415beddeb238b43"
+    },
+    {
+      "bytes": 3249,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/Ref.hs",
+      "sha256": "1b3c4632441b08da5bdb440b22bf24e494e8d1dafe08886a2d133bb5859c1212"
+    },
+    {
+      "bytes": 35324,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/Serialize.hs",
+      "sha256": "a12fdce48b25aa3c7751afe42ca42a6382de0ea9f4a0ca85fb692d8af37cd6f8"
+    },
+    {
+      "bytes": 2777,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/State.hs",
+      "sha256": "70b7bb7d79eeeeb5cb7012ca32472718702d77492a2239b39b7ba6469b4b1c4e"
+    },
+    {
+      "bytes": 42427,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/ToSlim.hs",
+      "sha256": "5fda2b110c9b1d5256cd70e8284014bcda32371b78731f347c55e43e8be6aa0b"
+    },
+    {
+      "bytes": 8569,
+      "mode": 420,
+      "path": "upstream/qaic/src/Language/Slim/TypeRefMap.hs",
+      "sha256": "0aae52bbfc3138b44cedf2f783036f047376e407f62bb5de1ccf5f06107bdaff"
+    },
+    {
+      "bytes": 5869,
+      "mode": 420,
+      "path": "upstream/qaic/src/Makefile",
+      "sha256": "5d7e6960dbe6eff6d46fe256cf4534e594ef7fe3245898dcb674df3650e0e81c"
+    },
+    {
+      "bytes": 5627,
+      "mode": 420,
+      "path": "upstream/qaic/src/Qidlc.hs",
+      "sha256": "5ceea7e29db9317f2beb459026913856ec0295ed2553c1633912e953bfc61452"
+    },
+    {
+      "bytes": 17021,
+      "mode": 420,
+      "path": "upstream/qaic/src/System/Console/GetOpt.hs",
+      "sha256": "7af0f0344b7d4b548ad8cea124d9cd639114539092ecf179e3d7321550e3fc9c"
+    },
+    {
+      "bytes": 549,
+      "mode": 420,
+      "path": "upstream/qaic/src/System/FilePathUtils.hs",
+      "sha256": "fd63a85425e9b64399762f70ce0e201b36c0fa2b6775c4e49ae63d05300e99ba"
+    },
+    {
+      "bytes": 391,
+      "mode": 420,
+      "path": "upstream/qaic/src/file2hs/file2hs.cabal",
+      "sha256": "6aa4755b05a3e1f60213f7f4e5a6519cb078219558f9bb995c4494502abdd20f"
+    },
+    {
+      "bytes": 728,
+      "mode": 420,
+      "path": "upstream/qaic/src/file2hs/file2hs.hs",
+      "sha256": "138b35573ee4d6e48c7ff2911fc153b47905dd5a5beeecb59cbe661a86cdbb21"
+    },
+    {
+      "bytes": 2942,
+      "mode": 420,
+      "path": "upstream/qaic/src/qaic.cabal",
+      "sha256": "c27f82fabc467ec8c4eee782e8fb9a4833f02f55d6a83db99117a1810718d910"
+    }
+  ],
+  "schema": "sp11-native-compute-source-manifest-v1"
+}

@@ -6,9 +6,9 @@
   "capabilities": [
     "camera"
   ],
+  "description": "IMX681 camera support using the coherent libcamera runtime package set.",
   "lexr": {
-    "minimum_inclusive": "0.5.0",
-    "tested_through_inclusive": "0.5.0"
+    "minimum_inclusive": "0.7.0"
   },
   "targets": [
     {

@@ -36,6 +36,10 @@ payload/kernel-debs/
 sp11-qcom-x1e-kernel-build/
 kernel-build/
 source/
+# Reviewed component source snapshots, not local kernel build trees.
+!/userspace/sensors/libqmi/source/
+!/userspace/sensors/libssc/source/
+!/userspace/sensors/iio-sensor-proxy/source/
 sp11-kernel-source.env
 *.build
 *.buildinfo
@@ -62,3 +66,7 @@ report-*/
 !payload/audio/*.bin
 
 .vscode/
+
+# Reviewed raw-source kits, not generated kernel checkout/build directories.
+!userspace/native-compute/source/
+!userspace/cdsp-capabilities/source/

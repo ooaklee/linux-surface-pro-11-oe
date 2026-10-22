@@ -1,0 +1,72 @@
+The libqmi releases are generated using meson.
+
+
+1) For major releases:
+    * Increment minor meson 'version' component (eg 1.x.y -> 1.x+1.0).
+    * Assuming API/ABI compatibility, increment both current and age.
+
+2) For stable branch releases:
+    * Increment micro meson 'version' component (eg 1.x.y -> 1.x.y+1).
+
+3) Configure and build the whole project, making sure gtk-doc and introspection
+   are enabled:
+    $ meson setup build \
+        --prefix=/usr \
+        --buildtype=release \
+        -Dintrospection=true \
+        -Dgtk_doc=true
+    $ ninja -C build
+
+4) Run the test suite and install locally:
+    $ ninja -C build dist
+    $ sudo ninja -C build install
+
+5) Push changes to a release MR on gitlab
+    * Use a commit title like "release: bump version to 1.38.0"
+    * Once CI passes merge the PR.
+
+6) Add and push a signed tag:
+    $ git tag -s 1.38.0
+      (use a description like "Release 1.38.0")
+    $ git push tag 1.38.0
+
+7) Create directories for the manpages and gtk-doc documentation in
+   freedesktop.org, and also update the 'latest' links:
+    $ ssh fd.o
+    [fd.o] $ cd ${libqmi}/man/
+    [fd.o] $ rm latest
+    [fd.o] $ mkdir -p ${VERSION}
+    [fd.o] $ ln -s ${VERSION} latest
+    [fd.o] $ cd ${libqmi}/libqmi-glib/
+    [fd.o] $ rm latest
+    [fd.o] $ mkdir -p ${VERSION}
+    [fd.o] $ ln -s ${VERSION} latest
+
+8) Generate HTML for the manpages:
+    $ roffit < build/docs/man/qmicli.1 > qmicli.1.html
+    $ roffit < build/docs/man/qmi-network.1 > qmi-network.1.html
+    $ roffit < build/docs/man/qmi-firmware-update.1 > qmi-firmware-update.1.html
+
+9) Upload manpages in HTML to freedesktop.org:
+    $ scp *.1.html fd.o:${libqmi}/man/${VERSION}/
+
+10) Upload the HTML files to freedesktop.org:
+    $ scp build/docs/reference/libqmi-glib/libqmi-glib-1.0/* fd.o:${libqmi}/${VERSION}/
+
+11) For major releases:
+     * Fork new stable branch (e.g. qmi-${MAJOR}-${MINOR})
+     * Post-release version bump in the master branch, increment minor meson 'version' component.
+         - Use a commit message like "build: unstable release version bump to 1.39.0"
+     * Post-release version bump in the stable branch, increment micro meson 'version' component.
+         - Use a commit message like "build: unstable release version bump to 1.38.1"
+
+12) For stable branch releases:
+     * Post-release version bump, increment micro meson 'version' component.
+         - Use a commit message like "build: unstable release version bump to 1.38.1"
+
+-------------------------------------------------------------------------------
+
+*) Verifying the release signature requires the public key of the person who
+   signed it, e.g.:
+
+    $ curl https://www.freedesktop.org/software/libqmi/0xAECE0239C6606AD5.asc | gpg --import
