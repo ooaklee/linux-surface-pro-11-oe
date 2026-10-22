@@ -1,0 +1,26 @@
+{
+  "activeEffects": "Opening reserves a FastRPC session; GET_DSP_INFO cache miss and close can send kernel-internal control RPC. Close does not attest DSP release ACK. No whole-command timeout guarantee.",
+  "attributeSource": {
+    "ARCH_VER": 6,
+    "UNSIGNED_PD_SUPPORT": 1,
+    "path": "inc/remote.h",
+    "revision": "a56e9d4de3614a8d8f4b0e15ff561350c4b686e3",
+    "sha256": "f9d0690cfd8953697d6fc3163c2be448a7b5b801148808c9b1b360857aeabc44",
+    "url": "https://github.com/qualcomm/fastrpc"
+  },
+  "authoredLicence": "BSD-3-Clause",
+  "deviceExecuted": false,
+  "intent": "Prepare native Linux capability collection independently of the unqualified SDK worker; no live test or feature-parity claim",
+  "kernelPinScope": "Current ordinary checkout source only, not a statement about exact source of the running Surface kernel",
+  "kernelSemanticsPins": {
+    "drivers/misc/fastrpc.c": "86e0ce31b6129b419076f443eb886890c12a5b9ee18f8e56f5ad740f287cf9f7",
+    "include/uapi/misc/fastrpc.h": "1b75dd9e95a2cda193cff7b9ba4a306642c9f6e1454bf99771b3a1e5862b1132"
+  },
+  "kernelUAPILicence": "GPL-2.0 WITH Linux-syscall-note",
+  "runtimeDependencies": "Linux libc and FastRPC kernel UAPI/device only; no SDK, Windows runtime or copied firmware",
+  "runtimeQualified": false,
+  "revision": "r2",
+  "revisionNotes": "Retain failed r1 source/build: first library audit rejected the standard AArch64 loader before units ran. r2 permits only libc plus that exact loader and additionally checks ELF architecture/interpreter. Actual OpenCode source review prompted explicit unknown cache freshness and argument errno; independent peer prompted help-output error handling. No kernel cache or firmware policy changed.",
+  "schema": "sp11-native-cdsp-caps-source-provenance-v1",
+  "sourceCompositionOnly": true
+}

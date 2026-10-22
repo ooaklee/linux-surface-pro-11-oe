@@ -1,0 +1,4 @@
+*
+!Dockerfile
+!ubuntu.sources
+!.dockerignore

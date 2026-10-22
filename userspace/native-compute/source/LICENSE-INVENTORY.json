@@ -1,0 +1,12 @@
+{
+  "schema": "sp11-native-source-license-inventory-v1",
+  "scope": "Collection inventory only; original per-file notices govern. This does not relicense upstream components or grant patent rights.",
+  "components": [
+    {"prefix": "native/", "license": "BSD-3-Clause", "text": "LICENSES/BSD-3-Clause.txt"},
+    {"prefix": "tools/", "license": "BSD-3-Clause", "text": "LICENSES/BSD-3-Clause.txt"},
+    {"prefix": "upstream/qaic/", "license": "BSD-3-Clause-Clear", "text": "LICENSES/BSD-3-Clause-Clear-Qualcomm.txt", "notice": "upstream/qaic/LICENSE.txt"},
+    {"prefix": "upstream/fastrpc/", "license": "Mixed BSD-3-Clause and BSD-3-Clause-Clear; inspect individual notices", "texts": ["LICENSES/BSD-3-Clause-FastRPC.txt", "LICENSES/BSD-3-Clause-Clear-Qualcomm.txt"], "notice": "upstream/fastrpc/LICENSE.txt", "additionalEmbeddedNotices": ["upstream/fastrpc/src/rpcmem_linux.c", "upstream/fastrpc/inc/uthash.h"]},
+    {"path": "interfaces/linux/fastrpc.h", "license": "GPL-2.0 WITH Linux-syscall-note", "texts": ["LICENSES/GPL-2.0.txt", "LICENSES/Linux-syscall-note.txt"]}
+  ],
+  "containerDependencies": "Public Ubuntu packages retain their own licences. No container layers or binary dependencies are redistributed in this source kit."
+}

@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Generate this interface with QAIC --standard-types (-st).
+#include "remote.idl"
+
+/*
+ * This uniquely named interface is a native compute foundation, not a claim
+ * that a DSP image, loader, service or hardware transport has been qualified.
+ * Input sequences are limited by the implementation to 4096 elements.
+ */
+interface sp11_native_compute_v1 : remote_handle64 {
+    /* Empty input succeeds with total zero. */
+    long sum(in sequence<int32_t> values, rout int64_t total);
+    /* Empty input is an invalid parameter; negative-only inputs are valid. */
+    long max(in sequence<int32_t> values, rout int32_t maximum);
+};

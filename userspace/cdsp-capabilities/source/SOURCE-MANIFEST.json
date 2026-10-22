@@ -1,0 +1,70 @@
+{
+  "files": {
+    "LICENSES/BSD-3-Clause.txt": {
+      "bytes": 1518,
+      "mode": 420,
+      "sha256": "c02ecb07af10211cd039e085b0eae0e4e79b0d9c3ebda931718ea9365b591888"
+    },
+    "LICENSES/GPL-2.0.txt": {
+      "bytes": 18600,
+      "mode": 420,
+      "sha256": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa"
+    },
+    "LICENSES/Linux-syscall-note.txt": {
+      "bytes": 1258,
+      "mode": 420,
+      "sha256": "8e378ab93586eb55135d3bc119cce787f7324f48394777d00c34fa3d0be3303f"
+    },
+    "Makefile": {
+      "bytes": 951,
+      "mode": 420,
+      "sha256": "e2031224ec1d38677db39bcdfbaadafa536a4ba9920ed80a60599b3fc9bc5b49"
+    },
+    "README.txt": {
+      "bytes": 4712,
+      "mode": 420,
+      "sha256": "0e8c29b6342f6690824be432c44afd1472448bac050e7da9ecbc1148c419ad1f"
+    },
+    "SOURCE-PROVENANCE.json": {
+      "bytes": 1800,
+      "mode": 420,
+      "sha256": "51ad2366c46a54180abd56d05a060d2dc041cc2e5fd88240d4227e9c580f3897"
+    },
+    "cdsp-caps.c": {
+      "bytes": 3675,
+      "mode": 420,
+      "sha256": "a2fd4b7220a69785723536275bd19a0ca2b98ea2914fe5b9f2d0f64b70c47ba1"
+    },
+    "include/cdsp-caps.h": {
+      "bytes": 1907,
+      "mode": 420,
+      "sha256": "7a8e35734dfc008b6532e75794a36c513cd38ef03a7e7b65904786963d084c22"
+    },
+    "include/fastrpc.h": {
+      "bytes": 4455,
+      "mode": 420,
+      "sha256": "1b75dd9e95a2cda193cff7b9ba4a306642c9f6e1454bf99771b3a1e5862b1132"
+    },
+    "main.c": {
+      "bytes": 2468,
+      "mode": 420,
+      "sha256": "8514b8b310f816e2ffc00cdb658a9e48fd314ab40c3ed2695ee3a1cf1dbdb858"
+    },
+    "tests/check-cli.py": {
+      "bytes": 5218,
+      "mode": 420,
+      "sha256": "b9eb04c81aefd9b82474843e60f0d95d8d53cdb2b9d9589d7a239469d8fc4052"
+    },
+    "tests/query-unit.c": {
+      "bytes": 10853,
+      "mode": 420,
+      "sha256": "d1878ee58c64d43854f884071a6381955fe8f5bce55c9edfe31823e79fcf8da5"
+    },
+    "tests/run-build.py": {
+      "bytes": 6155,
+      "mode": 420,
+      "sha256": "57af26c036c2d42a88e0e418d335b08246e9fb22308b462af1e031deb0b65ff9"
+    }
+  },
+  "schema": "sp11-native-cdsp-caps-source-manifest-v1"
+}

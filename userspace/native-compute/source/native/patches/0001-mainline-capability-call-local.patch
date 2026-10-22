@@ -1,0 +1,23 @@
+Subject: [PATCH] fastrpc: make capability ioctl scratch state call-local
+
+The upstream-kernel adapter may receive simultaneous capability queries
+from multiple threads or domains. Do not share the ioctl request and
+response buffer between those calls. Keep the wire layout, initialization
+and device-fd-based domain selection unchanged.
+
+This patch applies to Qualcomm FastRPC a56e9d4de3614a8d8f4b0e15ff561350c4b686e3.
+It does not modify the kernel UAPI or the source copyright and licence.
+
+diff --git a/src/fastrpc_ioctl.c b/src/fastrpc_ioctl.c
+--- a/src/fastrpc_ioctl.c
++++ b/src/fastrpc_ioctl.c
+@@ -139,7 +139,8 @@ int ioctl_getinfo(int dev, uint32_t *info) {
+ 
+ int ioctl_getdspinfo(int dev, int domain, uint32_t attr, uint32_t *capability) {
+   int ioErr = AEE_SUCCESS;
+-  static struct fastrpc_ioctl_capability cap = {0};
++  /* Capability queries may run concurrently across threads and domains. */
++  struct fastrpc_ioctl_capability cap = {0};
+ 
+   if (attr >= PERF_V2_DRIVER_SUPPORT && attr < FASTRPC_MAX_ATTRIBUTES) {
+     *capability = 0;
