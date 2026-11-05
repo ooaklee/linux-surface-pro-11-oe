@@ -18,69 +18,77 @@ Kernel: 7.3.0-jg-1sp11v3-qcom-x1e. Status: **KERNEL-READY** (as of 2026-11-05).
 - User leon added to render group; verified non-root open of
   /dev/fastrpc-cdsp: OPEN-OK.
 
-## Remaining userspace steps (manual)
-1. Download **Qualcomm AI Engine Direct SDK** (QAIRT), aarch64 Linux .run
-   (qairt_<ver>_linux_AARCH64.run) from the Qualcomm software center:
-   https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk
-   (listing may show as "AI Engine Direct" or "AI Runtime SDK"; login + EULA;
-   downloads go through qpm.qualcomm.com)
-2. chmod +x qairt_<ver>_linux_AARCH64.run && ./qairt_<ver>_linux_AARCH64.run
-3. Set QNN env vars per SDK docs (e.g. ADSP_LIBRARY_PATH, LD_LIBRARY_PATH to
-   SDK lib/aarch64-windows... use lib/hexagon-npu-offload for CDSP skeletons).
-4. Verify: run an SDK sample/benchmark against the CDSP via /dev/fastrpc-cdsp.
-5. Optional app path: llama.cpp QNN backend — build with -DQNN=ON pointing at
-   the QAIRT SDK (https://github.com/ggml-org/llama.cpp, docs/backend/QNN.md).
+## QAIRT 2.31 QIK retry (2026-11-05)
 
-Copy this directory into the kernel repo when convenient.
+**Extraction remains blocked.** The Linux device was reachable and the QIK was
+transferred, but no tested extraction method succeeded. No SDK was installed;
+there is no verified `QNN_SDK_ROOT`, library inventory, `ldd` result, or SDK
+sample result. `install-qairt.sh /path/to/file.qik` detects the `QCC+` magic
+and reports the blocker without modifying an installation. Obtain the SDK and
+any required Qualcomm tooling through the [Qualcomm AI Engine Direct SDK page](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk)
+(login and EULA required). Do not assume the QIK is a `.run` installer.
 
-## QAIRT 2.31 QIK attempt (2026-11-05)
+### Transfer and device
 
-**Blocked: the device was unreachable.** No SDK was transferred, extracted or
-installed during this attempt. The kernel and permissions observations above
-are prior bring-up notes, not fresh verification of the device. In particular,
-no current fastrpc permissions, `ldd`, sample or dmesg results are available.
+The device reported `Linux Larimar 7.3.0-jg-1sp11v3-qcom-x1e aarch64`, 12
+processors, and 15 GB free in `/tmp`. The following transfer completed in
+139.32 seconds (8.31 MB/s, decimal); `stat` on the device reported the same
+1,157,603,080 bytes as the source:
 
-The manually downloaded `qualcomm_ai_engine_direct.2.31.0.250130.Linux-AnyCPU.qik`
-is a proprietary chunked Qualcomm `QCC+` container, not a POSIX shell SFX.
-The supplied investigation found no recognizable standard archive streams and
-no feasible offline extraction on macOS. The Windows sibling mentions
-`extractOnly`, but that does not establish Linux runner syntax. A Linux QIK/QPM
-runtime or other device tooling is needed. The older `.run` instructions above
-apply only if such an installer is obtained; they are not instructions for this
-QIK.
+```sh
+scp -P 29327 -o StrictHostKeyChecking=accept-new \
+  qualcomm_ai_engine_direct.2.31.0.250130.Linux-AnyCPU.qik \
+  leon@6.tcp.eu.ngrok.io:/tmp/
+```
 
-`./install-qairt.sh /path/to/file.qik` currently reports the blocker and exits
-without installing. With no argument it prints the manual download URL (Qualcomm
-login and EULA required). No install path or environment values have been
-verified. The intended destination is `/opt/qairt` using non-interactive sudo,
-with `~/qairt` as fallback. Once the real SDK layout is known, set
-`QNN_SDK_ROOT` to its root, add its actual aarch64 library directory to
-`LD_LIBRARY_PATH`, and its actual binary directory to `PATH`. An x86_64 host
-variant may provide host-independent headers and Hexagon v73/v75 skeletons;
-its contents and compatibility have not been verified in this attempt.
+The tunnel address is specific to this session. The QIK remains in `/tmp`
+because extraction did not succeed. Neither `/opt/qairt`, `~/qairt`, nor
+`/tmp/qairt-ext` existed during the check. `sudo -n true` returned
+`sudo: interactive authentication is required`; a future successful extraction
+would therefore need a writable destination such as `~/qairt` unless sudo
+access changes.
 
-### Command log and next checks
+### Inspection and extraction probes
 
-- `ssh -o BatchMode=yes -o ConnectTimeout=10 sp11 true` failed: hostname could
-  not be resolved. `ssh -G sp11` returned `hostname sp11`, `user leon`, port 22;
-  there is no `sp11` alias in the inspected SSH config.
-- The same SSH connectivity check for `sp11.local`, `surface-pro-11.local`,
-  `surfacepro11.local`, and `surface.local` failed to resolve. Configured hosts
-  `192.168.50.235`, `192.168.50.21`, and `10.2.57.2` timed out on port 22
-  with `-o BatchMode=yes -o ConnectTimeout=4`. Their device identity is unknown.
-- The local QIK exists and is 1,157,603,080 bytes. Device `uname -a`, `df -h`
-  for `/tmp`, `/opt`, `/home`, `nproc`, tooling, fastrpc devices and dmesg
-  could not be checked; `scp` and all extraction attempts were not run.
+On the device, `file /tmp/*.qik` reported `data`. `head -c 512 ... | xxd`
+started with `5143 432b 3100` (`QCC+1`); the first 2048 bytes inspected with
+`strings` showed `QCC+`, with no shell or makeself header. Thus the tested
+file is a QCC+ binary container on Linux too, not a shell SFX. In order:
 
-After restoring SSH, check those prerequisites and available space before
-copying the QIK to `/tmp`. On the device, check `qpm-cli`, `qpm`, `qik` and
-`/opt/qualcomm`. Investigate the QIK runtime's documented extract-only mode;
-if it can only install, use non-interactive sudo for `/opt/qairt` or fall back
-to `~/qairt`. If no runner is available, inspect using already installed `7z`
-(or `7zz`), `unsquashfs -s`, and `binwalk`; none has been shown to work on
-this container. Do not install packages unless necessary and non-interactive
-sudo works. Record exact commands and outputs before updating the script.
-Finally inventory SDK libraries, headers, bins and examples; check fastrpc
-access, run a short sample if available or inspect dependencies with `ldd`, and
-check dmesg for fastrpc errors. Do not assume the device name has a `0` suffix:
-the earlier notes report `/dev/fastrpc-cdsp`.
+```text
+$ bash /tmp/qualcomm_ai_engine_direct.2.31.0.250130.Linux-AnyCPU.qik
+...: cannot execute binary file
+# exit 126
+$ unsquashfs -s /tmp/qualcomm_ai_engine_direct.2.31.0.250130.Linux-AnyCPU.qik
+FATAL ERROR: Can't find a valid SQUASHFS superblock on ...
+# exit 1
+$ sudo -n true
+sudo: interactive authentication is required
+```
+
+`7z`, `7zz`, and `binwalk` were not installed; `qpm-cli`, `qpm`, and `qik`
+were not on PATH and `/opt/qualcomm` was absent. No packages were installed.
+There was no shell stub to invoke with makeself flags, and the conditional
+sudo/direct-execution attempt was not run because sudo was unavailable. A
+working extraction method or compatible Qualcomm tooling is still needed before
+staging the SDK and determining its actual layout and environment variables.
+
+### NPU checks
+
+```text
+crw-rw---- 1 root render 10, 266 ... /dev/fastrpc-cdsp
+crw-rw---- 1 root render 10, 265 ... /dev/fastrpc-cdsp-secure
+```
+
+`leon` belongs to `render`, and Python `os.open('/dev/fastrpc-cdsp',
+os.O_RDONLY)` printed `OPEN-OK`. `/dev/fastrpc-cdsp0` does not exist, so
+`dd if=/dev/fastrpc-cdsp0 count=0` failed with `No such file or directory`.
+`ctypes.CDLL('/usr/lib/libcdsprpc.so')` failed because that file was absent.
+Without an SDK, `libQnnHtp.so`, SDK `libcdsprpc.so`, library directories, and
+sample binaries could not be inventoried or tested. This device-node open does
+not establish NPU execution.
+
+Both `sudo -n dmesg` and plain `dmesg` were attempted: sudo required
+interactive authentication and plain dmesg returned `read kernel buffer
+failed: Operation not permitted`. No current fastrpc, qrtr, or cdsp kernel-log
+results are available. The earlier kernel-side notes are prior observations.

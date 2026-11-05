@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# QAIRT 2.31 QIK installation is blocked until a Linux QIK method is tested.
+# QAIRT 2.31 QCC+ QIK extraction remains blocked on the tested device.
 set -euo pipefail
 
 if (( $# == 0 )); then
@@ -15,9 +15,12 @@ if [[ ! -f $1 || ! -r $1 ]]; then
     printf 'Cannot read QIK file: %s\n' "$1" >&2
     exit 1
 fi
-# QCC+ is a proprietary container, not an executable shell installer. No
-# extraction command is known to work yet; do not guess or modify an install.
+# The tested Linux QIK starts with QCC+ and could not be extracted by the
+# available tools. Do not run an unknown payload or modify an installation.
+if [[ $(LC_ALL=C head -c 4 "$1") == 'QCC+' ]]; then
+    printf '%s\n' 'QCC+ container detected; bash and unsquashfs did not extract the tested QIK.' >&2
+fi
 printf '%s\n' \
     'Installation blocked: no extraction method has been verified for this QIK.' \
-    'A Linux QIK/QPM runtime or other on-device tooling is needed; see README.md.' >&2
+    'See README.md for tested probes and device results.' >&2
 exit 1
