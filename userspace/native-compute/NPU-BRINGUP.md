@@ -18,15 +18,88 @@ Kernel: 7.3.0-jg-1sp11v3-qcom-x1e. Status: **KERNEL-READY** (as of 2026-11-05).
 - User leon added to render group; verified non-root open of
   /dev/fastrpc-cdsp: OPEN-OK.
 
-## QAIRT 2.31 QIK retry (2026-11-05)
+## QAIRT 2.31 QIK retry (2026-11-05) — historical note
 
 **Extraction remains blocked.** The Linux device was reachable and the QIK was
-transferred, but no tested extraction method succeeded. No SDK was installed;
-there is no verified `QNN_SDK_ROOT`, library inventory, `ldd` result, or SDK
-sample result. `install-qairt.sh /path/to/file.qik` detects the `QCC+` magic
-and reports the blocker without modifying an installation. Obtain the SDK and
-any required Qualcomm tooling through the [Qualcomm AI Engine Direct SDK page](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk)
-(login and EULA required). Do not assume the QIK is a `.run` installer.
+transferred, but no tested extraction method succeeded (the QIK container starts
+with `QCC+` and is not a `.run` installer). Superseded by the 2.51 zip install
+below. Obtain the SDK through the [Qualcomm AI Engine Direct SDK page](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk)
+(login and EULA required).
+
+## QAIRT 2.51.0.260929 zip install (2026-11-05) — VERIFIED
+
+The full zip was extracted on the Mac at `~/Downloads/qairt/2.51.0.260929`
+(6.9 GB). A subset was staged, transferred, and installed on the device.
+
+### Staging and transfer (macOS)
+
+Subset tarball (from the extracted zip, NOT the QIK):
+
+    bin/aarch64-oe-linux-gcc11.2/     (75 MB)
+    lib/aarch64-oe-linux-gcc11.2/     (469 MB)
+    lib/hexagon-v73/ lib/hexagon-v75/ lib/hexagon-v79/
+    include/                          (6.4 MB)
+    examples/QNN/converter/models/    (2.1 MB)
+    examples/QNN/NetRun/
+
+- Tarball: 307 MB gz (789 MB extracted on device).
+- Transfer: `scp -P 29327 -o StrictHostKeyChecking=accept-new` to device
+  `/tmp/` — 40 s over the ngrok TCP tunnel.
+- Install: `mkdir -p ~/qairt && tar xzf /tmp/qairt-subset.tar.gz -C ~/qairt`
+  → `~/qairt/2.51.0.260929/...`; `du -sh ~/qairt` = 789 MB.
+  (macOS bsdtar emits harmless `LIBARCHIVE.xattr.com.apple.quarantine`
+  warnings on GNU tar.)
+
+### Verified layout on device
+
+`~/qairt/2.51.0.260929/lib/aarch64-oe-linux-gcc11.2/` contains libQnnHtp.so,
+libQnnHtpPrepare.so, libQnnSystem.so, libQnnHtpV73/V75/V79Stub.so (stubs are
+HERE, not under hexagon-*). `lib/hexagon-v73/unsigned/` contains the skels:
+libQnnHtpV73Skel.so, libQnnHexagonSkel_dspApp.so, libcdsprc.so is NOT there.
+
+### Environment (exact, verified paths)
+
+    R=$HOME/qairt/2.51.0.260929
+    export QNN_SDK_ROOT=$R
+    export LD_LIBRARY_PATH=$R/lib/aarch64-oe-linux-gcc11.2
+    export ADSP_LIBRARY_PATH=$R/lib/hexagon-v73/unsigned
+
+There is no `lib/hexagon-v73/dsp` in this zip — the skel dir is
+`lib/hexagon-v73/unsigned`. Android-only paths (/vendor/dsp/cdsp etc.) do not
+exist on this OE image and were dropped from ADSP_LIBRARY_PATH.
+
+### Validator result — DSP backend FAILS: libcdsprpc.so missing
+
+    qnn-platform-validator --backend dsp
+    → "Should be able to access atleast one of libraries from : libcdsprpc.so"
+    → "Missing shared libraries: libcdsprpc.so"
+    → Backend DSP Prerequisites: Absent.
+    → Backend Hardware : Supported / Backend Libraries : Not Found
+
+Hardware detection passes (fastrpc nodes visible), but the userspace FastRPC
+RPC shim `libcdsprpc.so` does not exist anywhere on the device image or in the
+SDK zip — it is normally shipped in the device OS (e.g. /vendor/lib on
+Android) or as a separate QAIRT "linuxOE" companion, and is not present in
+this zip distribution. This is the current blocker for any HTP/CDSP execution.
+
+`--backend cpu/gpu` are not accepted by this validator build (dsp/gpu/all only).
+
+### qnn-net-run sample — no runnable prebuilt model in the zip
+
+`examples/QNN/converter/models/qnn_model_float.bin` is a POSIX tar of two
+`.raw` weight tensors for the converter sample, NOT a QNN model. Running it
+yields `Initialization failure` (identical with libQnnCpu.so and libQnnHtp.so),
+which is expected: the SDK zip ships no prebuilt, runnable model. A real test
+needs a model compiled with qairt-converter (x86_64 host tool) or a
+built sample-app .so.
+
+### Next steps
+
+1. Obtain `libcdsprpc.so` for aarch64-oe-linux (check the QAIRT "linuxOE
+   companion" / Poky distro packages, or build fastrpc userspace from source).
+2. Compile a tiny model on the Mac with `qairt-converter` (x86_64 binaries are
+   in the zip) or build examples/QNN/SampleApp on-device, then re-test with
+   `qnn-net-run --backend libQnnHtp.so`.
 
 ### Transfer and device
 
