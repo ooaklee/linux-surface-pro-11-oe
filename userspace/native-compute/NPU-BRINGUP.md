@@ -457,3 +457,41 @@ Both `sudo -n dmesg` and plain `dmesg` were attempted: sudo required
 interactive authentication and plain dmesg returned `read kernel buffer
 failed: Operation not permitted`. No current fastrpc, qrtr, or cdsp kernel-log
 results are available. The earlier kernel-side notes are prior observations.
+
+## Round 7 (2026-11-06): root testsig/vendor-dsp route
+
+Staged on device (as root, `/vendor/dsp/cdsp/`, from QAIRT 2.51.0.260929,
+first placed 00:58, refreshed 01:11):
+
+- `libQnnHtpV73.so`, `libQnnHtpV73Skel.so` (from `lib/hexagon-v73/unsigned/`)
+- `libQnnHtpV73QemuDriver.so`
+
+Environment:
+
+```sh
+export QNN_SDK_ROOT=$HOME/qairt/2.51.0.260929
+export LD_LIBRARY_PATH=$QNN_SDK_ROOT/lib/aarch64-oe-linux-gcc11.2:$HOME/qairt/lib-local
+export ADSP_LIBRARY_PATH="/vendor/dsp/cdsp;$QNN_SDK_ROOT/lib/hexagon-v73/unsigned"
+# also tried: ADSP_LIBRARY_PATH=/vendor/dsp/cdsp alone
+```
+
+HTP run verdict: FAIL. `qnn-net-run --backend libQnnHtp.so` (relu model,
+`/tmp/round4-qnn-smoke`) as user `leon` exits 11 with "Device Creation
+failure"; `./device-probe` still reports `deviceCreate=14001` (near
+`hardware_unavailable=14002`, `access_denied=14004`) and "PrepareLib isn't
+loaded!". As root it gets further but fails exit 9 "Initialization failure".
+Both `ADSP_LIBRARY_PATH` variants behave identically. CPU backend remains OK.
+
+Diagnostics: `/dev/fastrpc-cdsp` and `-secure` exist (root:render, `leon` in
+render); CDSP remoteproc is `running`; dmesg shows repeated
+`qcom-apm gprsvc ... DSP returned error[1001006] 3` around probe attempts and
+`no reserved DMA memory for FASTRPC` at boot. SecureBoot efivar reads
+`\x06 \0 \0 \0 \0` (trailing byte 0 = Secure Boot disabled).
+`/sys/module/fastrpc/parameters/` does not exist on this kernel (module
+parameters not exposed).
+
+Conclusion: with unsigned skels staged in `/vendor/dsp/cdsp` and Secure Boot
+off, the cdsp domain still refuses the FastRPC session. Next candidates:
+Qualcomm testsig route (dsp signatures), signed skels, or kernel/DSP-image
+version matching (1001006 from the APM/gprsvc side suggests the DSP-side
+audio-PDR path erroring, not file access).
