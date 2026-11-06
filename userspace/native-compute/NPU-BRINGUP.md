@@ -1,5 +1,23 @@
 # NPU Bring-Up — Surface Pro 11 (Snapdragon X Elite X1E841GE)
 
+## Current status / remaining blocker
+
+**TL;DR:** QNN inference works end-to-end on the **CPU** backend (custom ReLU
+model, exit 0, correct output). **NPU/HTP execution is blocked**: the DSP
+rejects the unsigned `libQnnHtpV73Skel.so`
+(`openSessionForPriority status=0x80000580`, `deviceCreate=14001`). Fixing
+this requires signing the skel with a testsig (Hexagon signing tools and root)
+— the documented hard blocker. See Round 4 below for full details.
+
+## Getting QAIRT
+
+QAIRT SDK 2.51.0.260929 was downloaded from the Qualcomm Software Center:
+<https://softwarecenter.qualcomm.com/catalog/item/qualcomm_ai_engine_direct>
+(page "Qualcomm® AI Engine Direct SDK"), selecting **OS type: Linux**,
+**Arch: x86**, **Distribution: Debian**, which yields the Linux x86-64 `.zip`.
+That archive was transferred to the device and installed under `~/qairt`
+(see `install-qairt.sh`).
+
 ## Round 4 — 2026-11-06: FastRPC loads; HTP device creation fails
 
 This section supersedes the earlier missing-`libcdsprpc.so` blocker and

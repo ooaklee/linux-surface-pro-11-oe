@@ -33,6 +33,19 @@ and verify the image, flash it with Etcher, and configure Secure Boot and USB
 boot. **Already running Linux?** Follow the release's Lexr download and
 validation commands, then the [Lexr USB workflow](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/installation-media.md#2-review-the-usb-target).
 
+## NPU (Hexagon / Qualcomm AI)
+
+QAIRT SDK 2.51 and a self-built fastrpc userspace (`libcdsprpc.so` et al.,
+built on-device) are installed and verified on the Snapdragon X Elite.
+QNN inference works end-to-end on the **CPU** backend; **NPU (HTP) execution
+is blocked** because the DSP rejects the unsigned Hexagon skel images —
+unblocking requires testsig signing with the Hexagon tools and root access.
+
+Details, environment setup and per-round findings live in
+[userspace/native-compute/NPU-BRINGUP.md](userspace/native-compute/NPU-BRINGUP.md);
+helper scripts: [userspace/native-compute/build-fastrpc.sh](userspace/native-compute/build-fastrpc.sh)
+and [userspace/native-compute/install-qairt.sh](userspace/native-compute/install-qairt.sh).
+
 ## About this repository
 
 ![Ubuntu with KDE Plasma desktop running on the Surface Pro 11 with the patched qcom-x1e kernel](assets/desktop/2026-07-15-sp11-kde-plasma-desktop.png)
