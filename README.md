@@ -1,10 +1,23 @@
 # ARM64 Linux on Microsoft Surface Pro 11
 
+## Current kernel release
+
+As of 8 November 2026, the maintained OLED/Ubuntu 26.04.1 system runs the
+experimental [7.3 v3 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v3).
+Use [Lexr 0.7.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.7.0-rc.3)
+and its [version-matched kernel guide](https://github.com/ooaklee/lexr.sh/blob/v0.7.0-rc.3/docs/operator-manual/kernel-management.md).
+[Announcement #79](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/79)
+records the evidence and remaining limits. Retain a verified working fallback
+and working userspace; the v3 publication does not require reinstalling an
+already matching local v3 kernel.
+
 ## Compatible distributions and image downloads
 
-These experimental ARM64 live images target the Surface Pro 11 **X1E/OLED**
-and include [Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
+The previously published experimental ARM64 live images below target the
+Surface Pro 11 **X1E/OLED** and include
+[Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
 and the [SP11 v23 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23).
+They retain those original identities and have not been rebuilt with v3.
 Read each release's download instructions and hardware testing limits before
 choosing an image.
 
@@ -35,15 +48,18 @@ validation commands, then the [Lexr USB workflow](https://github.com/ooaklee/lex
 
 ## NPU (Hexagon / Qualcomm AI)
 
-QAIRT SDK 2.51 and a self-built fastrpc userspace (`libcdsprpc.so` et al.,
-built on-device) are installed and verified on the Snapdragon X Elite.
-QNN inference works end-to-end on the **CPU** backend; **NPU (HTP) execution
-is blocked** because the DSP rejects the unsigned Hexagon skel images —
-unblocking requires testsig signing with the Hexagon tools and root access.
+A dated QAIRT 2.51 smoke experiment produced the expected result on the
+**CPU** backend. **No NPU (HTP) inference succeeded**: device creation failed
+before context creation or graph execution. Signing, firmware and transport
+compatibility remain investigation paths; the validator's testsig advice does
+not establish the cause. Installed FastRPC artifact digests were checked,
+but their exact source revision and build provenance remain unknown.
 
 Details, environment setup and per-round findings live in
 [userspace/native-compute/NPU-BRINGUP.md](userspace/native-compute/NPU-BRINGUP.md);
-helper scripts: [userspace/native-compute/build-fastrpc.sh](userspace/native-compute/build-fastrpc.sh)
+the separate QAIRT 2.48 research inventory and remaining integration gates
+are tracked in [issue 78](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/78).
+Helper scripts: [userspace/native-compute/build-fastrpc.sh](userspace/native-compute/build-fastrpc.sh)
 and [userspace/native-compute/install-qairt.sh](userspace/native-compute/install-qairt.sh).
 
 ## About this repository
@@ -67,7 +83,8 @@ packages are published on the [OE releases page](https://github.com/ooaklee/linu
 
 ## Current targets and evidence
 
-The primary recorded X1E hardware target is:
+The primary recorded X1E hardware target is below. Hardware inventory fields
+are historical; the running software was inspected on 8 November 2026.
 
 | Item | Value |
 | --- | --- |
@@ -77,14 +94,19 @@ The primary recorded X1E hardware target is:
 | Firmware/UEFI | `175.222.235`, dated 2026-02-23 |
 | Internal disk | Samsung `MZ9L4512HBLU-00BMV-SAMSUNG`, 476.9 GiB NVMe |
 | Windows source checked | Windows 11 Home Insider Preview build `29585` |
-| Kernel used for these images | [`7.2.0-jg-0sp11v23`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23), based on Linux 7.2.0 |
-| Exact kernel source | [`ce78e6ebc3d7…`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/ce78e6ebc3d70c4a316b5721a62478ca87d6cb46) |
+| Operating system checked | Ubuntu 26.04.1 |
+| Running kernel checked | [`7.3.0-jg-1sp11v3-qcom-x1e`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v3) |
+| Exact v3 source | [`8ca6aefb8fb7`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/8ca6aefb8fb73d7da5c19a536d4ce3f027e2f725) |
+| Maintained kernel source / default branch | [`sp11/ubuntu-qcom-x1e-7.3.y`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/ubuntu-qcom-x1e-7.3.y) |
 
-The [v23 release notes](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23)
-and [manifest](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/download/sp11-qcom-x1e-7.2.0-jg-0sp11v23/lexr-kernel-release-manifest.json)
-identify the kernel, matching device trees and tested userspace combinations.
-The table below spans several integration versions; it does not certify every
-feature on every image above.
+The [v3 release notes](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v3)
+and [manifest](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/download/sp11-qcom-x1e-7.3.0-jg-1sp11v3/lexr-kernel-release-manifest.json)
+identify the original packages and source archive. Fresh inspection matched
+three installed modules and the kernel configuration to the qualified
+artifacts; protected boot-image byte equality was not newly checked.
+The feature table combines dated evidence from several integration versions,
+not a new complete v3 regression run. The images above retain their separate
+[v23 identities and testing scope](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23).
 
 Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
 older-version scope; 🧪 experimental hardware result, not supported; 🧩
@@ -102,7 +124,7 @@ unsupported in the current project; ❓ no evidence found.
 | Direct USB-C DP video | ⚠️ | 🧩 | X1E passed at 6.15-rc6 but has not been rerun against the current USB4 control; direct DP is not USB4 tunnelling. |
 | DisplayPort audio | ❌ | ❌ | The current Denali graph has no DisplayPort DAI. |
 | Wi-Fi | ✅ | 🧩 | X1E [scan, association, traffic and reconnect passed](docs/installed-wifi-clean-flow-test-20260614.md); downstream rfkill handling and distribution firmware remain required. |
-| Bluetooth | ⚠️ | 🧩 | X1E pairing and A2DP music playback work well. Audible volume changes, but the desktop gauge can jump back to its connection-time position; [issue 58](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/58) tracks that indicator desynchronisation. Suspend coverage remains incomplete. |
+| Bluetooth | ⚠️ | 🧩 | X1E pairing and A2DP playback work. The maintainer reports no recent recurrence of the volume-indicator behaviour on the current kernel; [issue 58 was closed on that confirmation](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/58#issuecomment-6718156943). No specific fixing commit or broad speaker regression matrix is established; suspend coverage remains incomplete. |
 | Speakers | ✅ | 🧩 | X1E passed with the [FullIO v19c userspace/kernel pairing](docs/adr/adr-0064-sp11-audio-release-strategy.md); X1P has no separate hardware acceptance. |
 | Microphone | ✅ | 🧩 | X1E PipeWire, browser and local capture passed with the v12 + FullIO v19c pairing in [issue 48's closing acceptance](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/48#issuecomment-5436171174); [kernel PR 21](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/21) supplies the current 4.8 MHz kernel path. |
 | Touchscreen | ✅ | ✅ | X1P physical touch was explicitly tested in [kernel PR 18](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/18); support is downstream project code. |
@@ -112,10 +134,11 @@ unsupported in the current project; ❓ no evidence found.
 | Battery | 🧩 | 🧩 | Provider arbitration is integrated, but no explicit charging and capacity acceptance record was found. |
 | Power profiles | ✅ | 🧩 | X1E desktop mappings for power saver, balanced and performance passed in [kernel PR 16](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/16); `balanced-performance` was exposed but not switched separately. |
 | Suspend/resume | ⚠️ | ❓ | X1E remains partial and [issue 39](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/39) is open. |
-| Front RGB camera | 🧪 | ❌ | X1E raw and processed browser video passed under [kernel PR 22](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/22), but calibration, auto-exposure, privacy and suspend gates remain; X1P has no camera node. |
+| Front RGB camera | 🧪 | ❌ | X1E has historical [raw and processed browser-video results](https://github.com/ooaklee/linux_ms_dev_kit-sp11/pull/22). V3 carries a default-off fixed-gain/direct-exposure experiment and failed-start quarantine correction; the maintained system currently has the experiment disabled (`N`). Enabled-profile smoke evidence is separate. Matching userspace, lifecycle, calibration, privacy and suspend qualification remain necessary; see [issue 54](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/54). X1P has no qualified camera path. |
 | Front privacy LED | 🧩 | ❌ | X1E wiring exists, but polarity, lifetime and privacy behaviour are not qualified. |
 | Rear camera | ❌ | ❌ | [Issue 41](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/41) remains open. |
 | IR/Windows Hello | ❌ | ❌ | [Issue 42](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/42) remains open. |
+| NPU / HTP inference | ❌ | ❌ | A dated X1E CPU-backend smoke test passed, but HTP failed before graph execution. CPU execution and runtime-library discovery do not establish NPU inference; see the [bring-up record](userspace/native-compute/NPU-BRINGUP.md) and [issue 78](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/78). |
 | 5G | ❌ | ❌ | No project support evidence is recorded; the primary installed test target is Wi-Fi-only. |
 
 The upstream boundary is narrower than this table. Linux v7.2's
@@ -145,7 +168,8 @@ and [command reference](https://github.com/ooaklee/lexr.sh/blob/main/docs/refere
 | Remove recognised legacy workarounds or restore a cleanup | [Reversible cleanup](https://github.com/ooaklee/lexr.sh/blob/main/docs/user-guide/reversible-cleanup.md) |
 
 These guides track Lexr's `main` branch. Follow the selected image release's
-instructions and check your CLI version when using the pinned rc.3 companion.
+instructions and check your CLI version when using its pinned 0.5.0-rc.3
+companion. For the v3 kernel, use the version-matched 0.7.0-rc.3 guide above.
 Windows hand-offs contain private, device-bound data; never add them to an
 image, release or public support report.
 
@@ -159,6 +183,8 @@ To use the exact Lexr source selected by this OE checkout, initialise the
 [`cli/lexr`](cli/lexr) submodule and build it with Go 1.26 or newer. It is
 pinned to [v0.5.0-rc.3 at `1209416`](https://github.com/ooaklee/lexr.sh/commit/120941632db2d2b086983c6cd2e90320d25a0999),
 the revision used for the image releases above.
+This historical pin has not been advanced by publishing Lexr 0.7.0-rc.3;
+install that release separately when following the current v3 kernel guide.
 
 ```sh
 git clone --recurse-submodules https://github.com/ooaklee/linux-surface-pro-11-oe.git
