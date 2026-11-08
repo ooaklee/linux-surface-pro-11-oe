@@ -13,6 +13,12 @@ Last reviewed: 2026-08-31
 source revision, runs the maintained recipe in a Linux ARM64 container and
 publishes only a fresh, closed package bundle.
 
+For the exact 7.2.5 v8 source, boot delivery, build CLI and acceptance limits,
+see the [v8 qualification checkpoint](../qualification-sp11-7.2.5-v8-20261004.md).
+That existing experimental bundle is not the repository's default/stable
+branch and has no claimed v8 ISO. Do not relabel a rebuild or a newer source
+tip as the already-tested artifact.
+
 ## Before you begin
 
 - Install Docker and confirm that its daemon supports Linux ARM64 containers.
