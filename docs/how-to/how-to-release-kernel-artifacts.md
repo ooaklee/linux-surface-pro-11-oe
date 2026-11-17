@@ -49,7 +49,7 @@ build_dir=build/lexr/kernel-v19
 lexr kernel build \
   --repository-root . \
   --git-url https://github.com/ooaklee/linux_ms_dev_kit-sp11 \
-  --git-branch sp11/integration-7.2.x \
+  --git-branch sp11/ubuntu-qcom-x1e-7.3.y \
   --output-dir "$build_dir" \
   --reset-source \
   --jobs 8
