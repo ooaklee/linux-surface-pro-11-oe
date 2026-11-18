@@ -8,7 +8,9 @@ Use [Lexr 0.7.1-rc.1](https://github.com/ooaklee/lexr.sh/releases/tag/v0.7.1-rc.
 and its [version-matched kernel guide](https://github.com/ooaklee/lexr.sh/blob/v0.7.1-rc.1/docs/operator-manual/kernel-management.md).
 [Announcement #83](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/83)
 records the evidence and remaining limits. Retain a verified working fallback
-and working userspace.
+and working userspace; v15 is a publish-consolidation release identical in
+code to the v14 qualification baseline, supersedes the earlier 7.3 releases,
+and does not require reinstalling an already matching local v15 kernel.
 
 ## Compatible distributions and image downloads
 
