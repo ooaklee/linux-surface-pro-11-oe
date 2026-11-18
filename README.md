@@ -2,14 +2,13 @@
 
 ## Current kernel release
 
-As of 8 November 2026, the maintained OLED/Ubuntu 26.04.1 system runs the
-experimental [7.3 v3 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v3).
-Use [Lexr 0.7.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.7.0-rc.3)
-and its [version-matched kernel guide](https://github.com/ooaklee/lexr.sh/blob/v0.7.0-rc.3/docs/operator-manual/kernel-management.md).
-[Announcement #79](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/79)
+As of 17 November 2026, the maintained OLED/Ubuntu 26.04.1 system runs the
+stable [7.3 v15 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v15).
+Use [Lexr 0.7.1-rc.1](https://github.com/ooaklee/lexr.sh/releases/tag/v0.7.1-rc.1)
+and its [version-matched kernel guide](https://github.com/ooaklee/lexr.sh/blob/v0.7.1-rc.1/docs/operator-manual/kernel-management.md).
+[Announcement #83](https://github.com/ooaklee/linux-surface-pro-11-oe/issues/83)
 records the evidence and remaining limits. Retain a verified working fallback
-and working userspace; the v3 publication does not require reinstalling an
-already matching local v3 kernel.
+and working userspace.
 
 ## Compatible distributions and image downloads
 
@@ -17,7 +16,8 @@ The previously published experimental ARM64 live images below target the
 Surface Pro 11 **X1E/OLED** and include
 [Lexr v0.5.0-rc.3](https://github.com/ooaklee/lexr.sh/releases/tag/v0.5.0-rc.3)
 and the [SP11 v23 kernel](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23).
-They retain those original identities and have not been rebuilt with v3.
+They retain those original identities and have not been rebuilt with the
+7.3 kernels.
 Read each release's download instructions and hardware testing limits before
 choosing an image.
 
@@ -84,7 +84,7 @@ packages are published on the [OE releases page](https://github.com/ooaklee/linu
 ## Current targets and evidence
 
 The primary recorded X1E hardware target is below. Hardware inventory fields
-are historical; the running software was inspected on 8 November 2026.
+are historical; the running software was inspected on 17 November 2026.
 
 | Item | Value |
 | --- | --- |
@@ -95,17 +95,17 @@ are historical; the running software was inspected on 8 November 2026.
 | Internal disk | Samsung `MZ9L4512HBLU-00BMV-SAMSUNG`, 476.9 GiB NVMe |
 | Windows source checked | Windows 11 Home Insider Preview build `29585` |
 | Operating system checked | Ubuntu 26.04.1 |
-| Running kernel checked | [`7.3.0-jg-1sp11v3-qcom-x1e`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v3) |
-| Exact v3 source | [`8ca6aefb8fb7`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/8ca6aefb8fb73d7da5c19a536d4ce3f027e2f725) |
+| Running kernel checked | [`7.3.0-jg-1sp11v15-qcom-x1e`](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v15) |
+| Exact v15 source | [`54c026b31fa1`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/commit/54c026b31fa1cc8345aae2622b3b0035a3189284) |
 | Maintained kernel source / default branch | [`sp11/ubuntu-qcom-x1e-7.3.y`](https://github.com/ooaklee/linux_ms_dev_kit-sp11/tree/sp11/ubuntu-qcom-x1e-7.3.y) |
 
-The [v3 release notes](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v3)
-and [manifest](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/download/sp11-qcom-x1e-7.3.0-jg-1sp11v3/lexr-kernel-release-manifest.json)
-identify the original packages and source archive. Fresh inspection matched
-three installed modules and the kernel configuration to the qualified
-artifacts; protected boot-image byte equality was not newly checked.
-The feature table combines dated evidence from several integration versions,
-not a new complete v3 regression run. The images above retain their separate
+The [v15 release notes](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.3.0-jg-1sp11v15)
+and [manifest](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/download/sp11-qcom-x1e-7.3.0-jg-1sp11v15/lexr-kernel-release-manifest.json)
+identify the original packages and source archive. The v15 kernel was built
+from the exact source above, published with a matching manifest, and installed
+and validated on the maintained device as the daily driver; the feature table
+still combines dated evidence from several integration versions, not a new
+complete v15 regression run. The images above retain their separate
 [v23 identities and testing scope](https://github.com/ooaklee/linux-surface-pro-11-oe/releases/tag/sp11-qcom-x1e-7.2.0-jg-0sp11v23).
 
 Legend: ✅ hardware-verified; ⚠️ hardware-verified with material limitations or
@@ -169,7 +169,7 @@ and [command reference](https://github.com/ooaklee/lexr.sh/blob/main/docs/refere
 
 These guides track Lexr's `main` branch. Follow the selected image release's
 instructions and check your CLI version when using its pinned 0.5.0-rc.3
-companion. For the v3 kernel, use the version-matched 0.7.0-rc.3 guide above.
+companion. For the v15 kernel, use the version-matched 0.7.1-rc.1 guide above.
 Windows hand-offs contain private, device-bound data; never add them to an
 image, release or public support report.
 
@@ -183,8 +183,8 @@ To use the exact Lexr source selected by this OE checkout, initialise the
 [`cli/lexr`](cli/lexr) submodule and build it with Go 1.26 or newer. It is
 pinned to [v0.5.0-rc.3 at `1209416`](https://github.com/ooaklee/lexr.sh/commit/120941632db2d2b086983c6cd2e90320d25a0999),
 the revision used for the image releases above.
-This historical pin has not been advanced by publishing Lexr 0.7.0-rc.3;
-install that release separately when following the current v3 kernel guide.
+This historical pin has not been advanced by publishing Lexr 0.7.1-rc.1;
+install that release separately when following the current v15 kernel guide.
 
 ```sh
 git clone --recurse-submodules https://github.com/ooaklee/linux-surface-pro-11-oe.git
